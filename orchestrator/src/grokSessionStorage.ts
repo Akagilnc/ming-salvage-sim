@@ -7,11 +7,18 @@
  * `<sessionsRoot>/<encodeURIComponent(cwd)>/<sessionId>/` holding
  * chat_history.jsonl / events.jsonl / state files — so host↔sandbox transfer
  * moves a whole directory (tar over the sandbox exec channel, base64-armored
- * because exec streams text lines), rewriting absolute cwd paths inside the
- * JSON/JSONL files the same way sandcastle's codex storage does.
+ * because exec streams text lines). Absolute cwd path rewrite walks JSON /
+ * JSONL string values and replaces only exact path matches or path-prefix
+ * matches (`from` or `from + "/"`), not raw text substrings — so a sibling
+ * cwd like `/work/tree-2` and dialogue that merely mentions a path stay intact.
+ *
+ * Host tar goes through the #884 chokepoint (`execFileAsyncWithTimeout`) via
+ * dynamic import: this module sits on the vitest setup import chain
+ * (modelRoutes → modelRegistry → grokAgent → here), and a static import of
+ * externalCall would bind real `spawn` before per-file `vi.mock("node:child_process")`
+ * can intercept (spawn-timeout / telemetry git mocks).
  */
 
-import { execFile } from "node:child_process";
 import {
   cp,
   mkdir,
@@ -24,15 +31,11 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
-import { promisify } from "node:util";
 import type * as sc from "@ai-hero/sandcastle";
 import { shellEscape } from "./shellEscape.js";
 
-const execFileP = promisify(execFile);
-
 type Storage = NonNullable<sc.AgentProvider["sessionStorage"]>;
 type HostSessionLookup = Awaited<ReturnType<Storage["findByIdOnHost"]>>;
-type SandboxHandle = Parameters<Storage["captureToHost"]>[0]["handle"];
 
 export interface GrokSessionStorageOptions {
   /** Override the host session root (default `~/.grok/sessions`). */
@@ -43,6 +46,9 @@ export interface GrokSessionStorageOptions {
 
 const bucketFor = (cwd: string): string => encodeURIComponent(cwd);
 
+/** Host tar of a session tree can be large; keep the chokepoint buffer generous. */
+const TAR_MAX_BUFFER = 256 * 1024 * 1024;
+
 async function dirExists(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
@@ -51,12 +57,42 @@ async function dirExists(path: string): Promise<boolean> {
   }
 }
 
-/** Rewrite absolute cwd strings inside the session's text files (json/jsonl). */
+/** Exact path or path-prefix (`from` / `from/…`); never bare substring. */
+function rewritePathString(value: string, from: string, to: string): string {
+  if (value === from) return to;
+  const prefix = from.endsWith("/") ? from : `${from}/`;
+  if (value.startsWith(prefix)) {
+    return `${to}${value.slice(from.length)}`;
+  }
+  return value;
+}
+
+function rewriteJsonValues(value: unknown, from: string, to: string): unknown {
+  if (typeof value === "string") return rewritePathString(value, from, to);
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteJsonValues(item, from, to));
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = rewriteJsonValues(child, from, to);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Rewrite absolute cwd strings inside session text files (json/jsonl).
+ * Whole-file JSON when parseable; otherwise line-oriented JSONL. Non-JSON
+ * lines are left untouched (no split/join substring rewrite).
+ */
 async function rewriteSessionTexts(
   dir: string,
   from: string,
   to: string,
 ): Promise<void> {
+  if (from === to || from.length === 0) return;
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const p = join(dir, entry.name);
@@ -67,8 +103,44 @@ async function rewriteSessionTexts(
     if (!/\.(json|jsonl)$/.test(entry.name)) continue;
     const body = await readFile(p, "utf8");
     if (!body.includes(from)) continue;
-    await writeFile(p, body.split(from).join(to));
+
+    let next: string | undefined;
+    try {
+      next = JSON.stringify(rewriteJsonValues(JSON.parse(body), from, to));
+      // Preserve a trailing newline when the source had one (jsonl convention).
+      if (body.endsWith("\n")) next += "\n";
+    } catch {
+      const lines = body.split("\n");
+      const rewritten = lines.map((line) => {
+        if (line.length === 0 || !line.includes(from)) return line;
+        try {
+          return JSON.stringify(rewriteJsonValues(JSON.parse(line), from, to));
+        } catch {
+          return line;
+        }
+      });
+      next = rewritten.join("\n");
+    }
+    if (next !== undefined && next !== body) {
+      await writeFile(p, next);
+    }
   }
+}
+
+/** #884 chokepoint: host tar via execFileAsyncWithTimeout (never bare child_process). */
+async function hostTar(
+  args: readonly string[],
+  stage: "grok-session:tar-create" | "grok-session:tar-extract",
+): Promise<void> {
+  const {
+    DEFAULT_SUBPROCESS_TIMEOUT_MS,
+    execFileAsyncWithTimeout,
+  } = await import("./externalCall.js");
+  await execFileAsyncWithTimeout("tar", args, {
+    stage,
+    timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
+    maxBuffer: TAR_MAX_BUFFER,
+  });
 }
 
 export function makeGrokSessionStorage(
@@ -121,7 +193,7 @@ export function makeGrokSessionStorage(
 
     captureToHost: async ({ hostCwd, sandboxCwd, sessionId, handle }) => {
       const src = posix.join(sandboxRoot, bucketFor(sandboxCwd), sessionId);
-      const result = await (handle as SandboxHandle).exec(
+      const result = await handle.exec(
         `tar -C ${shellEscape(src)} -cf - . | base64`,
       );
       if (result.exitCode !== 0) {
@@ -137,7 +209,7 @@ export function makeGrokSessionStorage(
       );
       await writeFile(tarPath, Buffer.from(result.stdout.replace(/\s+/g, ""), "base64"));
       try {
-        await execFileP("tar", ["-C", target, "-xf", tarPath]);
+        await hostTar(["-C", target, "-xf", tarPath], "grok-session:tar-extract");
       } finally {
         await rm(dirname(tarPath), { recursive: true, force: true });
       }
@@ -161,15 +233,18 @@ export function makeGrokSessionStorage(
         const copy = join(scratch, "session");
         await cp(src, copy, { recursive: true });
         await rewriteSessionTexts(copy, hostCwd, sandboxCwd);
-        const { stdout } = await execFileP(
-          "tar",
-          ["-C", copy, "-cf", "-", "."],
-          { encoding: "buffer", maxBuffer: 256 * 1024 * 1024 } as never,
+        // Write tar to a file (not stdout buffer) so the #884 utf8 chokepoint
+        // can own the host subprocess without encoding:buffer escape hatches.
+        const tarPath = join(scratch, "session.tar");
+        await hostTar(
+          ["-C", copy, "-cf", tarPath, "."],
+          "grok-session:tar-create",
         );
+        const tarBytes = await readFile(tarPath);
         const dst = posix.join(sandboxRoot, bucketFor(sandboxCwd), sessionId);
-        const push = await (handle as SandboxHandle).exec(
+        const push = await handle.exec(
           `mkdir -p ${shellEscape(dst)} && base64 -d | tar -C ${shellEscape(dst)} -xf -`,
-          { stdin: (stdout as unknown as Buffer).toString("base64") },
+          { stdin: tarBytes.toString("base64") },
         );
         if (push.exitCode !== 0) {
           throw new Error(
