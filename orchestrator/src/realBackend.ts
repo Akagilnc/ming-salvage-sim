@@ -1006,48 +1006,50 @@ export function providerAuthFromCore(
 }
 
 /**
- * #913 — single family-worker auth provision seam (merger / cmr / ship).
+ * #945 — path identity for worker credential provision.
  *
- * Before this helper, the three family mount*Auth methods each inlined the same
- * best-effort codex + grok + agy + claude token provision (family auth ×3).
- * Callers pass a role-specific temp-dir prefix (`merger` / `cmr` / `ship`) so
- * concurrent workers never share credential dirs; role-specific extras (gh token,
- * providerAuth) stay on the thin mount wrappers.
+ * - `family`: per-run `mkdtemp` under `~/.sc-orchestrator` + `rolePrefix`;
+ *   missing host codex ⇒ `codexAuthDir` undefined (no always-mount).
+ * - `slice`: stable per-issue dirs via {@link buildAuthPaths}; missing host
+ *   codex still leaves the codex dir with container config + AGENTS (always-mount).
  */
-export function provisionFamilyWorkerAuth(input: {
+export type WorkerAuthPathPolicy =
+  | { readonly kind: "family"; readonly rolePrefix: string }
+  | { readonly kind: "slice"; readonly issueNumber: number };
+
+/**
+ * #945 — single worker-auth provision seam (family ×3 + single-slice mountAuth).
+ *
+ * Credential steps (codex copy / container config / AGENTS / grok / agy / claude)
+ * live here once. Callers inject path-policy only — no twin bodies.
+ */
+export function provisionWorkerAuth(input: {
   readonly home: string;
-  /** mkdtemp name stem — yields `${rolePrefix}-codex-auth-` / `-grok-auth-` / `-agy-`. */
-  readonly rolePrefix: string;
   readonly homeEnvFile: string;
+  readonly pathPolicy: WorkerAuthPathPolicy;
   readonly codexFast?: boolean;
 }): FamilyWorkerAuthCore {
-  const { home, rolePrefix, homeEnvFile, codexFast = false } = input;
+  const { home, homeEnvFile, pathPolicy, codexFast = false } = input;
   const root = join(home, ".sc-orchestrator");
+  mkdirSync(root, { recursive: true, mode: 0o700 });
 
-  let codexAuthDir: string | undefined;
-  let tempCodexDir: string | undefined;
-  try {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    tempCodexDir = mkdtempSync(join(root, `${rolePrefix}-codex-auth-`));
-    copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-    chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-    // Container is the sandbox boundary — write minimal config, never host config.toml (#378).
-    writeContainerCodexConfig(join(tempCodexDir, "config.toml"), codexFast);
-    // #911: replace any host AGENTS.md with container home environment body.
-    provisionCodexHomeAgents(tempCodexDir, homeEnvFile);
-    codexAuthDir = tempCodexDir;
-  } catch {
-    // codex auth absent / half-built → reclaim mkdtemp dir so it does not leak.
-    if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-      rmSync(tempCodexDir, { recursive: true, force: true });
-    }
-  }
+  const codexAuthDir = provisionCodexAuthDir({
+    home,
+    root,
+    homeEnvFile,
+    codexFast,
+    pathPolicy,
+  });
 
   let grokAuthDir: string | undefined;
   let tempGrokDir: string | undefined;
   try {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    tempGrokDir = mkdtempSync(join(root, `${rolePrefix}-grok-auth-`));
+    const grokPrefix =
+      pathPolicy.kind === "family"
+        ? `${pathPolicy.rolePrefix}-grok-auth-`
+        : `grok-auth-${pathPolicy.issueNumber}-`;
+    tempGrokDir = mkdtempSync(join(root, grokPrefix));
+    chmodSync(tempGrokDir, 0o700);
     copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
     chmodSync(join(tempGrokDir, "auth.json"), 0o600);
     grokAuthDir = tempGrokDir;
@@ -1057,7 +1059,11 @@ export function provisionFamilyWorkerAuth(input: {
     }
   }
 
-  const agyDir = provisionAgyAuthDir(home, root, `${rolePrefix}-agy-`);
+  const agyPrefix =
+    pathPolicy.kind === "family"
+      ? `${pathPolicy.rolePrefix}-agy-`
+      : `slice-agy-${pathPolicy.issueNumber}-`;
+  const agyDir = provisionAgyAuthDir(home, root, agyPrefix);
 
   let claudeToken: string | undefined;
   try {
@@ -1069,6 +1075,73 @@ export function provisionFamilyWorkerAuth(input: {
   }
 
   return { codexAuthDir, grokAuthDir, agyDir, claudeToken };
+}
+
+/**
+ * Codex auth dir under path-policy:
+ * - family: mkdtemp; host auth missing ⇒ undefined (reclaim half-built dir)
+ * - slice: stable `auth-${issue}`; always return dir (config + AGENTS even without auth.json)
+ */
+function provisionCodexAuthDir(input: {
+  readonly home: string;
+  readonly root: string;
+  readonly homeEnvFile: string;
+  readonly codexFast: boolean;
+  readonly pathPolicy: WorkerAuthPathPolicy;
+}): string | undefined {
+  const { home, root, homeEnvFile, codexFast, pathPolicy } = input;
+
+  let codexDir: string | undefined;
+
+  if (pathPolicy.kind === "slice") {
+    const paths = buildAuthPaths(pathPolicy.issueNumber, home);
+    rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
+    // Owner-only dir: holds copied credential material.
+    mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
+    codexDir = paths.hostCodexAuthDir;
+    try {
+      copyFileSync(paths.srcCodexAuth, join(codexDir, "auth.json"));
+      chmodSync(join(codexDir, "auth.json"), 0o600);
+    } catch {
+      // No host codex auth → still always-mount (config + AGENTS below).
+    }
+  } else {
+    try {
+      codexDir = mkdtempSync(join(root, `${pathPolicy.rolePrefix}-codex-auth-`));
+      copyFileSync(join(home, ".codex", "auth.json"), join(codexDir, "auth.json"));
+      chmodSync(join(codexDir, "auth.json"), 0o600);
+    } catch {
+      // codex auth absent / half-built → reclaim mkdtemp dir so it does not leak.
+      if (codexDir !== undefined) {
+        rmSync(codexDir, { recursive: true, force: true });
+      }
+      return undefined;
+    }
+  }
+
+  // Single write site: container is the sandbox boundary — never host config.toml (#378).
+  writeContainerCodexConfig(join(codexDir, "config.toml"), codexFast);
+  provisionCodexHomeAgents(codexDir, homeEnvFile);
+  return codexDir;
+}
+
+/**
+ * #913 — family thin wrapper over {@link provisionWorkerAuth} (merger / cmr / ship).
+ * Role-specific extras (gh token, providerAuth) stay on the mount wrappers.
+ */
+export function provisionFamilyWorkerAuth(input: {
+  readonly home: string;
+  /** mkdtemp name stem — yields `${rolePrefix}-codex-auth-` / `-grok-auth-` / `-agy-`. */
+  readonly rolePrefix: string;
+  readonly homeEnvFile: string;
+  readonly codexFast?: boolean;
+}): FamilyWorkerAuthCore {
+  return provisionWorkerAuth({
+    home: input.home,
+    homeEnvFile: input.homeEnvFile,
+    codexFast: input.codexFast,
+    pathPolicy: { kind: "family", rolePrefix: input.rolePrefix },
+  });
 }
 
 /**
@@ -2790,6 +2863,8 @@ export class RealBackend implements Backend {
   // ── auth mount (spike contract) ────────────────────────────────────────────
   // `protected` (not private) so the auth-mount tests can drive it over a real
   // temp $HOME (assert auth.json copied + the minimal container config written).
+  // #945: thin slice wrapper over {@link provisionWorkerAuth} (shared core +
+  // path-policy). Always-mount codex semantics live in the `slice` policy.
   protected mountAuth(issueNumber: number): {
     authDir: string;
     claudeToken?: string;
@@ -2802,73 +2877,25 @@ export class RealBackend implements Backend {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
     const home = this.opts.home ?? homedir();
-    const paths = buildAuthPaths(issueNumber, home);
-    rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
-    // Owner-only dir: this holds copied credential material (auth.json /
-    // config.toml). 0o700 keeps it off world-readable multi-user hosts
-    // (coderabbit R2, major).
-    mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
-    // The Codex auth is BEST-EFFORT too (#384 R2 codex P2 — symmetric to the
-    // Claude token below). With ORCHESTRATOR_CODER_MODEL switched to a Claude coder
-    // (e.g. "sonnet"), a host with Claude auth but no `~/.codex/auth.json` must
-    // still start the worker — a missing codex auth degrades the codex leg, it does
-    // not throw and block the Claude coder. So the env-only model switch works both
-    // ways.
-    try {
-      copyFileSync(paths.srcCodexAuth, join(paths.hostCodexAuthDir, "auth.json"));
-      // Copied credential file → owner-only (was world-readable 0o644).
-      chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
-    } catch {
-      // No host codex auth → the codex leg degrades (no creds in the mounted dir).
-    }
-    // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-    // bwrap is impossible). The host config.toml is host-personal (notify/plugins/
-    // workspace-write) and irrelevant here — only auth.json crosses. Write the
-    // minimal container config instead of copying the host's (#378). Always written
-    // so the dir is a valid mount even when codex auth was absent.
-    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
-    // #911: replace any host AGENTS.md that might otherwise reach the worker via
-    // CODEX_HOME with the container home environment body (one source, dual mount).
-    provisionCodexHomeAgents(paths.hostCodexAuthDir, this.resolveHomeEnvFile());
-    // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
-    // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
-    // mounts an empty-ish dir for config.toml). Presence gate = copy success.
-    let grokAuthDir: string | undefined = mkdtempSync(`${paths.hostGrokAuthDir}-`);
-    try {
-      chmodSync(grokAuthDir, 0o700);
-      copyFileSync(paths.srcGrokAuth, join(grokAuthDir, "auth.json"));
-      chmodSync(join(grokAuthDir, "auth.json"), 0o600);
-    } catch {
-      // No host grok auth → skip mount; reclaim the half-built dir.
-      rmSync(grokAuthDir, { recursive: true, force: true });
-      grokAuthDir = undefined;
-    }
-    // #905: agy OAuth — reuse the shared CMR seam so single-slice sandboxes that
-    // route to agy get a real token mount (not host-smoke-green / container-red).
-    const agyDir = provisionAgyAuthDir(
+    const core = provisionWorkerAuth({
       home,
-      join(home, ".sc-orchestrator"),
-      `slice-agy-${issueNumber}-`,
-    );
-    // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
-    // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
-    // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
-    // missing token degrades the Claude leg (undefined) rather than throwing and
-    // blocking the Codex coder before it can start (mirrors ShipAuth's optional
-    // claudeToken).
-    let claudeToken: string | undefined;
-    try {
-      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim() || undefined;
-    } catch {
-      claudeToken = undefined;
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+      pathPolicy: { kind: "slice", issueNumber },
+    });
+    // Slice policy always returns a codex dir (stable per-issue always-mount).
+    const authDir = core.codexAuthDir;
+    if (authDir === undefined) {
+      throw new Error(
+        `mountAuth(#${issueNumber}): slice path-policy must always return codexAuthDir`,
+      );
     }
     return {
-      authDir: paths.hostCodexAuthDir,
-      claudeToken,
-      grokAuthDir,
-      agyDir,
-      // Same projection as family mount*Auth — single derivation, no hand-map.
-      providerAuth: providerAuthFromCore({ claudeToken, grokAuthDir, agyDir }),
+      authDir,
+      claudeToken: core.claudeToken,
+      grokAuthDir: core.grokAuthDir,
+      agyDir: core.agyDir,
+      providerAuth: providerAuthFromCore(core),
     };
   }
 
