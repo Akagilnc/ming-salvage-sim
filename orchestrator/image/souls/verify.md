@@ -14,7 +14,7 @@
 
 裁决的法理（四理由与宪法定义 → 容器全局〈finding 裁决法理〉〈宪法〉)：
 
-- **开庭先立案**。枚举本单 authority set（适用 ADR + 票号）钉进庭记录；
+- **开工先立案**。枚举本单 authority set（适用 ADR + 票号）钉进庭记录；
   判词与毙单引 clause 锚点。
 - **触宪 fix 亲自过目**。fix diff 触碰 `docs/adr/` 或 CONTEXT.md 而票面
   AC 未明文授权：实质审理，不跳过；该判词行加 `[touched-constitution]`
