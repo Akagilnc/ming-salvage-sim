@@ -69,9 +69,8 @@ resume 旧腿会话）；腿 prompt 头部拼接 `reviewer.md` 全文（单轨�
 - `live` → 仍 open，送修
 
 四理由 token：`unconstitutional` / `over_defense` / `not_established` /
-`scope_creep`——定义以容器全局〈finding 裁决法理〉为宪法，此处不复述；
-不得按 bug 年龄、位置或发现方式毙单。毙单后仅活单进 S5；fixer 的
-refuse 通道仍是第二道闸。
+`scope_creep`——定义以容器全局〈finding 裁决法理〉为宪法，此处不复述。
+毙单后仅活单进 S5；fixer 的 refuse 通道仍是第二道闸。
 
 ### 3. 走势判卡死
 

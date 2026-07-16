@@ -9,16 +9,21 @@
  * greps across ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and this file; keep the
  * two lists in sync when amending the law.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const imageDir = join(here, "..", "..", "image");
+const soulsDir = join(imageDir, "souls");
 const homeClaudeMd = readFileSync(join(imageDir, "home", "CLAUDE.md"), "utf8");
-const verifySoul = readFileSync(join(imageDir, "souls", "verify.md"), "utf8");
-const fixerSoul = readFileSync(join(imageDir, "souls", "fixer.md"), "utf8");
+const verifySoul = readFileSync(join(soulsDir, "verify.md"), "utf8");
+const fixerSoul = readFileSync(join(soulsDir, "fixer.md"), "utf8");
+/** Every soul body (symlinked cmr_* resolve to verify.md — harmless re-read). */
+const allSouls = readdirSync(soulsDir)
+  .filter((f) => f.endsWith(".md"))
+  .map((f) => [f, readFileSync(join(soulsDir, f), "utf8")] as const);
 const receiptContracts = readFileSync(
   join(here, "..", "..", "src", "stationReceiptContracts.ts"),
   "utf8",
@@ -40,8 +45,10 @@ const LAW_ANCHORS = [
 /** Definition-body sentences that must never grow a second copy in souls. */
 const DEFINITION_ONLY = [
   "出事概率多大？后果多重？下游有没有兜底",
+  "出了事下游有没有兜底",
   "bug 早于 fixed point、位于邻接文件或偶然被发现",
   "驳修法，不改宪法",
+  "难修不是驳回理由",
 ] as const;
 
 describe("#947 container-global home CLAUDE.md is the single source of the four-reason law", () => {
@@ -69,10 +76,13 @@ describe("#947 souls point at the law instead of copying it", () => {
     expect(fixerSoul).toMatch(/finding 裁决法理/);
   });
 
-  it("no definition body survives in any soul (single source, rule 19)", () => {
-    for (const sentence of DEFINITION_ONLY) {
-      expect(verifySoul).not.toContain(sentence);
-      expect(fixerSoul).not.toContain(sentence);
+  it("no definition body survives in ANY soul (single source, rule 19; owner-ordered full sweep)", () => {
+    for (const [name, body] of allSouls) {
+      for (const sentence of DEFINITION_ONLY) {
+        expect(body, `${name} carries a definition body: 「${sentence}」`).not.toContain(
+          sentence,
+        );
+      }
     }
   });
 
