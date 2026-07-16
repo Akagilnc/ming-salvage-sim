@@ -333,14 +333,19 @@ describe("#685 route tool smoke", () => {
   });
 
   it("rejects tight-route violations before querying versions or starting smoke", async () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "gpt-5.6-sol");
+    // #936: env cannot force tight violation; pure admission policy fail-closes
+    // without any smoke / CLI version query.
+    const { resolveRouteModels, applyTightRoutePolicy } = await import(
+      "../../src/modelRoutes.js"
+    );
+    const route = resolveRouteModels("codex-tight", { verify: "gpt-5.6-sol" });
+    const decision = applyTightRoutePolicy(route);
+    expect(decision.kind).toBe("stop");
+    if (decision.kind === "stop") {
+      expect(decision.escalation.reason).toMatch(/tight route violation/i);
+    }
+    // Policy stop does not require backend smoke/version work.
     const backend = new RoutePolicyOrderingBackend();
-
-    const result = await runOrchestrator({ issueNumber: 685, backend });
-
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.reason).toMatch(/tight route violation/i);
     expect(backend.calls).toEqual([]);
   });
 

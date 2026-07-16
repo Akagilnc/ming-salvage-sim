@@ -607,28 +607,13 @@ export function ensureExcluded(existing: string, pattern: string): string {
 }
 
 /**
- * The git ref to cut a fresh slice worktree FROM (integ-cmr 256 r3,
- * worktree_base_stale).
+ * Git ref to cut a fresh worktree from (integ-cmr 256 r3 + #936 / #934 ID-009).
  *
- * `ensureBaseRef` runs `git fetch origin <base>`, which updates
- * `refs/remotes/origin/<base>` (and FETCH_HEAD) but does NOT move the local
- * `refs/heads/<base>`. So deriving with the bare local `<base>` could cut from a
- * stale local branch behind upstream — violating #244's "从 main 派生 =
- * up-to-date" invariant and diverging from the spike's explicit
- * `git worktree add … origin/main`. When the fetch succeeded, cut from
- * `origin/<base>` (the just-refreshed remote-tracking ref); only when the fetch
- * failed (offline / a local-only base with no remote) fall back to the local
- * `<base>` so the cut is never blocked.
- *
- * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
- * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
- * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
- * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
- * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
- * a `fetch` that happened to resolve it) can never shadow the local family base
- * carrying this run's accumulated waves (agy R1). A standalone single-slice run
- * leaves `localOnly` false, so its `main` cut is byte-identical to before
- * (`origin/main` when fetched, local fallback otherwise).
+ * - `localOnly` (family base): always the bare local ref.
+ * - fetch succeeded: `origin/<base>` (just-refreshed remote-tracking).
+ * - fetch failed with a configured remote: throw — never fall back to a
+ *   stale local base.
+ * - fetch failed with no remote (local-only source): bare local ref.
  *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
@@ -636,9 +621,17 @@ export function cutRefFor(
   base: string,
   fetchedOk: boolean,
   localOnly = false,
+  opts: { readonly hasRemote?: boolean } = {},
 ): string {
   if (localOnly) return base;
-  return fetchedOk ? `origin/${base}` : base;
+  if (fetchedOk) return `origin/${base}`;
+  if (opts.hasRemote === true) {
+    throw new Error(
+      `git fetch origin ${base} failed; refusing stale local base fallback ` +
+        `(#936 / #934 ID-009). Repair network/remote and retry.`,
+    );
+  }
+  return base;
 }
 
 /**
@@ -2713,8 +2706,11 @@ export class RealBackend implements Backend {
     // harness path (base="main", no `familyBase` option) keeps the fetch +
     // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
+    const hasRemote =
+      typeof this.opts.remote === "string" && this.opts.remote.trim() !== "";
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk, localOnly);
+    // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
+    const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
@@ -2776,89 +2772,46 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Refresh the base ref so the slice is cut from an up-to-date `base`, and
-   * REPORT whether the fetch succeeded so {@link cutRefFor} can choose the
-   * origin/<base> remote-tracking ref vs the local fallback (integ-cmr 256 r3,
-   * worktree_base_stale). Sandcastle notes the caller is responsible for the
-   * ref's currency (d.ts:211); a `git fetch` failure (offline / local-only base)
-   * must NOT block worktree creation, so this is best-effort and returns false
-   * on any fault (the caller then derives from the local `<base>`).
+   * Refresh the base ref so the slice is cut from an up-to-date `base`.
+   * Returns whether the fetch succeeded so {@link cutRefFor} can choose
+   * `origin/<base>` vs local-only / fail-closed (integ-cmr 256 r3 + #936 ID-009).
    */
   private ensureBaseRef(base: string): boolean {
     try {
       this.sh("git", ["fetch", "origin", base], this.workingRepo);
       return true;
     } catch {
-      // offline or a local-only base ⇒ proceed with the local ref.
       return false;
     }
   }
 
-  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
-    try {
-      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
-    } catch {
-      // no worktrees / git error ⇒ none existing.
-      return undefined;
-    }
-  }
-
-  // ── S1: write the snapshot into the worktree (clean-room) ──────────────────
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    // F3 — git-ignore the snapshot BEFORE writing it, so a coder's `git add -A`
-    // can never stage the host-fetched clean-room snapshot into the reviewed /
-    // pushed branch (branchStrategy:{type:'head'} commits in place). The
-    // per-worktree info/exclude is the right scope: it is local to this resident
-    // worktree, needs no checked-in change to the target repo, and survives the
-    // agent run. Best-effort: an exclude failure must not block the (still
-    // useful) snapshot write — but it is attempted first so the common path is
-    // always covered.
-    this.excludeFromGit(worktree, SNAPSHOT_FILENAME);
-    const target = join(worktree.path, SNAPSHOT_FILENAME);
-    writeFileSync(target, JSON.stringify(snapshot, null, 2), "utf8");
-  }
-
   /**
-   * Add `pattern` to the repo's git `info/exclude` (idempotent via
-   * {@link ensureExcluded}), so a `git add -A`/`git add .` in the resident
-   * worktree never stages it (F3). `git rev-parse --git-path info/exclude` run
-   * inside a linked worktree resolves to the SHARED common-dir exclude
-   * (git keeps `info/exclude` in the common git dir, not per-worktree) — that is
-   * fine and intended here: every slice excludes the SAME snapshot filename, and
-   * {@link ensureExcluded} is idempotent, so concurrent slices appending the same
-   * pattern never duplicate or conflict. Best-effort: a git/fs fault here must
-   * not block the snapshot write itself (the checked-in root `.gitignore` belt
-   * still covers the common case).
+   * Resident worktree discovery (#936 / #934 ID-009).
+   * Discovery failure must NOT create a second worktree — propagate loud.
+   * Empty porcelain (no worktrees) is success → undefined (typed fresh).
    */
-  private excludeFromGit(worktree: WorktreeHandle, pattern: string): void {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
+    let out: string;
     try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktree.path,
+      out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
+    } catch (err) {
+      throw new Error(
+        `worktree discovery failed for issue #${issueNumber}; refusing to create ` +
+          `a second worksite (#936 / #934 ID-009): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
       );
-      const abs = excludePath.startsWith("/")
-        ? excludePath
-        : join(worktree.path, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // No exclude file yet (or info/ missing) — start from empty + mkdir.
-      }
-      const next = ensureExcluded(existing, pattern);
-      if (next !== existing) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, next, "utf8");
-      }
-    } catch {
-      // Best-effort: a divergent git layout must not block the snapshot write.
-      // The root .gitignore (checked-in belt) still covers the common case.
     }
+    return resolveExistingWorktreeFromPorcelain(out, issueNumber);
+  }
+
+  /** #936: snapshot dual court deleted — no-op retained for Backend interface. */
+  async writeSnapshot(
+    _worktree: WorktreeHandle,
+    _snapshot: IssueSnapshot,
+  ): Promise<void> {
+    void _worktree;
+    void _snapshot;
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────

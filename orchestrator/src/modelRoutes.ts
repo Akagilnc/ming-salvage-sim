@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -82,7 +81,7 @@ export type ModelSlotMap = Readonly<Record<ModelRouteSlot, string>>;
 export interface ModelRouteLeg {
   readonly family: ModelFamily;
   readonly slug: string;
-  /** Best-effort preset leg. Env-declared legs intentionally omit this marker. */
+  /** Best-effort preset leg. Programmatic non-preset legs omit this marker. */
   readonly optional?: true;
 }
 export type ModelRouteLegCollectionMap = Readonly<
@@ -298,7 +297,7 @@ function loadRoutePresetsFromFile(
  *    (still one file source — not a second in-code table)
  * 4. if the chosen file is absent or unreadable → fail-loud
  *
- * Slot env overrides still win later in `resolveRouteModels` / `activeModelRoute`.
+ * #936: slot/CMR env overrides are deleted; production resolve uses presets only.
  */
 export function getRoutePresets(
   env: ModelRouteEnv = process.env,
@@ -322,24 +321,16 @@ export function getRoutePresets(
   return fromFile;
 }
 
-/** #923 — retired env; presence fails loud with migration hint (never silent). */
+/**
+ * #923 — retired env; presence fails loud with migration hint (never silent).
+ * #936 / #934 ID-002: single-slot model + CMR leg env overrides are deleted;
+ * route presets + issue Coder-Rec own staffing. This retired-name guard stays
+ * so a leftover host export still fails closed rather than silently no-op.
+ */
 export const RETIRED_REVIEWER_MODEL_ENV = "ORCHESTRATOR_REVIEWER_MODEL";
-const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
-  coder: "ORCHESTRATOR_CODER_MODEL",
-  coderFix: "ORCHESTRATOR_CODER_FIX_MODEL",
-  ship: "ORCHESTRATOR_SHIP_MODEL",
-  merger: "ORCHESTRATOR_MERGER_MODEL",
-  cmrCompleteness: "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
-  cmrCorrectness: "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
-  verify: "ORCHESTRATOR_VERIFY_MODEL",
-  fixer: "ORCHESTRATOR_FIXER_MODEL",
-  cleanup: "ORCHESTRATOR_CLEANUP_MODEL",
-  docRelease: "ORCHESTRATOR_DOCRELEASE_MODEL",
-};
 
 /**
- * #923: `ORCHESTRATOR_REVIEWER_MODEL` is retired. The verify slot is the sole
- * judge identity — use `ORCHESTRATOR_VERIFY_MODEL`. Never silently ignore.
+ * #923: `ORCHESTRATOR_REVIEWER_MODEL` is retired. Never silently ignore.
  */
 export function assertRetiredReviewerModelEnv(env: ModelRouteEnv = process.env): void {
   const raw = env[RETIRED_REVIEWER_MODEL_ENV];
@@ -347,14 +338,34 @@ export function assertRetiredReviewerModelEnv(env: ModelRouteEnv = process.env):
   const value = raw.trim();
   if (value === "") return;
   throw new Error(
-    `${RETIRED_REVIEWER_MODEL_ENV} is retired (#923); use ORCHESTRATOR_VERIFY_MODEL ` +
-      "instead (the verify slot now staffs both S3/S6 judge openings and the " +
-      `verify station). Got: ${value}`,
+    `${RETIRED_REVIEWER_MODEL_ENV} is retired (#923); route presets and issue ` +
+      "Coder-Rec own staffing (#936 / #934 ID-002) — do not set per-slot model " +
+      `env overrides. Got: ${value}`,
   );
 }
-const ENV_BY_LEG_COLLECTION: Readonly<Record<ModelRouteLegCollection, string>> = {
-  cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
-};
+
+/**
+ * #936 / #934 ID-002: env names that used to override single slots / CMR legs.
+ * Production resolve ignores them (deleted); exported so ops/docs can name the set.
+ */
+export const RETIRED_SLOT_MODEL_ENVS = [
+  "ORCHESTRATOR_CODER_MODEL",
+  "ORCHESTRATOR_CODER_FIX_MODEL",
+  "ORCHESTRATOR_SHIP_MODEL",
+  "ORCHESTRATOR_MERGER_MODEL",
+  "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
+  "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
+  "ORCHESTRATOR_VERIFY_MODEL",
+  "ORCHESTRATOR_FIXER_MODEL",
+  "ORCHESTRATOR_CLEANUP_MODEL",
+  "ORCHESTRATOR_DOCRELEASE_MODEL",
+  "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
+] as const;
+
+/** No-op: slot/CMR env overrides are ignored (deleted), not migrated. */
+export function assertRetiredSlotModelEnvs(_env: ModelRouteEnv = process.env): void {
+  void _env;
+}
 
 function assertKnownSlot(slot: string): asserts slot is ModelRouteSlot {
   if (!SLOT_SET.has(slot)) {
@@ -842,37 +853,26 @@ export function tightRouteViolationDetails(route: ResolvedModelRoute): string {
     .join(", ");
 }
 
+/**
+ * #936 / #934 ID-002: slot and CMR leg env overrides are deleted. Kept as
+ * empty pure helpers so call sites that still import the names compile once
+ * and fail closed via {@link assertRetiredSlotModelEnvs} at resolve time.
+ * @deprecated Use programmatic `resolveRouteModels` overrides in tests only.
+ */
 export function routeOverridesFromEnv(env: ModelRouteEnv): ModelRouteOverrides {
   assertRetiredReviewerModelEnv(env);
-  const overrides: Partial<Record<ModelRouteSlot, string>> = {};
-  for (const slot of MODEL_ROUTE_SLOTS) {
-    const value = env[ENV_BY_SLOT[slot]]?.trim();
-    if (value !== undefined && value !== "") overrides[slot] = value;
-  }
-  return overrides;
+  assertRetiredSlotModelEnvs(env);
+  return {};
 }
 
+/**
+ * @deprecated #936 — CMR leg env override deleted; always empty.
+ */
 export function routeLegCollectionOverridesFromEnv(
   env: ModelRouteEnv,
 ): ModelRouteLegCollectionOverrides {
-  const overrides: Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>> =
-    {};
-  for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
-    const value = env[ENV_BY_LEG_COLLECTION[collection]]?.trim();
-    if (value !== undefined && value !== "") {
-      if (value.startsWith("[") || value.startsWith("{")) {
-        throw new Error(
-          `${ENV_BY_LEG_COLLECTION[collection]} must be comma-separated CMR leg slugs, not JSON; ` +
-            "repair_hint: rewrite the route env as CSV, for example gpt-5.6-sol,agy",
-        );
-      }
-      overrides[collection] = value
-        .split(",")
-        .map((slug) => slug.trim().replace(/^["']|["']$/g, ""))
-        .filter((slug) => slug !== "");
-    }
-  }
-  return overrides;
+  assertRetiredSlotModelEnvs(env);
+  return {};
 }
 
 export function activeModelRoute(
@@ -887,24 +887,31 @@ export function activeModelRoute(
   return route;
 }
 
+/**
+ * Production route resolve: `ORCHESTRATOR_ROUTE` + presets only.
+ * No per-slot / CMR env overrides (#936 / #934 ID-002).
+ */
 export function resolveActiveModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
-  // assertRetiredReviewerModelEnv is also inside routeOverridesFromEnv; call
-  // early so even empty-override paths surface the migration error first.
   assertRetiredReviewerModelEnv(env);
+  assertRetiredSlotModelEnvs(env);
   return resolveRouteModels(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
-    routeOverridesFromEnv(env),
-    routeLegCollectionOverridesFromEnv(env),
+    {},
+    {},
     {},
     env,
   );
 }
 
+/**
+ * Tight-family policy is always fail-closed (#936 / #934 ID-002).
+ * Interactive continue seam deleted — violations always stop.
+ */
 export function applyTightRoutePolicy(
   route: ResolvedModelRoute,
-  opts: {
+  _opts: {
     readonly interactive?: boolean;
     readonly warn?: (message: string) => void;
     readonly confirm?: (message: string) => boolean;
@@ -913,26 +920,24 @@ export function applyTightRoutePolicy(
   if (route.tightFamilyViolations.length > 0) {
     const details = tightRouteViolationDetails(route);
     const message = `tight route violation for ${route.routeName}: ${details}`;
-    if (opts.interactive === true) {
-      opts.warn?.(message);
-      if (opts.confirm?.(message) === true) {
-        return { kind: "continue", route };
-      }
-    }
     return {
       kind: "stop",
       escalation: {
         reason: "tight route violation",
         diagnosis:
-          `${message}. Non-interactive orchestrator startup stops instead of ` +
-          "crashing or silently continuing; rerun with a route/model override " +
-          "that preserves the tight-family invariant, or explicitly confirm in an interactive run.",
+          `${message}. Orchestrator startup stops fail-closed; rerun with a ` +
+          "route preset (`ORCHESTRATOR_ROUTE`) that preserves the tight-family " +
+          "invariant, or change issue Coder-Rec staffing.",
       },
     };
   }
   return { kind: "continue", route };
 }
 
+/**
+ * Runtime tight policy — same fail-closed decision as {@link applyTightRoutePolicy}.
+ * Interactive confirm path deleted (#936).
+ */
 export async function applyRuntimeTightRoutePolicy(
   route: ResolvedModelRoute,
   opts: {
@@ -941,77 +946,38 @@ export async function applyRuntimeTightRoutePolicy(
     readonly confirm?: (message: string) => boolean | Promise<boolean>;
   } = {},
 ): Promise<TightRoutePolicyDecision> {
-  if (route.tightFamilyViolations.length === 0) {
-    return { kind: "continue", route };
-  }
-  const message = `tight route violation for ${route.routeName}: ${tightRouteViolationDetails(route)}`;
-  if (opts.interactive === true) {
-    opts.warn?.(message);
-    const confirmed = await (opts.confirm ?? askContinue)(message);
-    if (confirmed) return { kind: "continue", route };
-  }
-  return applyTightRoutePolicy(route, { interactive: false });
-}
-
-async function askContinue(message: string): Promise<boolean> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const answer = await rl.question(`${message}\nContinue anyway? [y/N] `);
-    return /^(y|yes)$/i.test(answer.trim());
-  } finally {
-    rl.close();
-  }
+  void opts;
+  return applyTightRoutePolicy(route);
 }
 
 /**
- * Apply design-time Coder-Rec selection onto a resolved route (#767).
+ * Apply design-time Coder-Rec selection onto a resolved route (#767 / #936).
  *
- * Ops env `ORCHESTRATOR_CODER_MODEL` still wins *slot selection* (explicit
- * override). An explicit `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative
- * for just coderFix. Env does **not** skip validation of a present Coder-Rec
- * mark (#906 S1): broken / unregistered marks fail closed at admission so
- * mid-run relay `resolveCoderRecOrder` cannot be the first throw.
- * Otherwise,
- * only an explicit `Coder-Rec:` marking in the issue body overrides the active
+ * Only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
- * broken / unregistered marking throws (fail-closed; #906) — never silent
- * fallthrough to the default order.
+ * broken / unregistered marking throws (fail-closed; #906). Env no longer owns
+ * any slot (#934 ID-002).
  * #920: no review/CMR conflict filter — selection is pure roster position;
- * {@link withCoderSlot} only rewrites coder (+ coderFix unless preserved).
+ * {@link withCoderSlot} only rewrites coder (+ coderFix).
  */
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
   issueBody: string | undefined,
-  env: ModelRouteEnv = process.env,
+  _env: ModelRouteEnv = process.env,
 ): {
   readonly route: ResolvedModelRoute;
   readonly entry: CoderRosterEntry | undefined;
+  /** @deprecated Always false — env slot override deleted (#936). */
   readonly skippedForEnvOverride: boolean;
   /** True when no Coder-Rec line was present — route coder left untouched. */
   readonly skippedForMissingMarking: boolean;
 } {
-  // #906 S1: always admit/validate a present mark before any env short-circuit.
-  // resolveCoderRecOrder: absent → default order (no throw); present broken /
-  // unknown → throws CoderRecError. Env may still own the *slot* below.
+  void _env;
+  // #906 S1: always admit/validate a present mark.
   if (issueBody !== undefined && issueBody.length > 0) {
     void resolveCoderRecOrder(issueBody);
   }
 
-  const coderEnvOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
-  if (coderEnvOverride !== undefined && coderEnvOverride !== "") {
-    return {
-      route,
-      entry: undefined,
-      skippedForEnvOverride: true,
-      skippedForMissingMarking: false,
-    };
-  }
-  const preserveCoderFix =
-    env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
-    env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== "";
   const parsed =
     issueBody !== undefined && issueBody.length > 0
       ? parseCoderRec(issueBody)
@@ -1029,7 +995,7 @@ export function applyCoderRecToRoute(
   const entry = selectCoderRecEntry(order);
   if (
     route.slots.coder === entry.slug &&
-    (preserveCoderFix || route.slots.coderFix === entry.slug)
+    route.slots.coderFix === entry.slug
   ) {
     return {
       route,
@@ -1039,7 +1005,7 @@ export function applyCoderRecToRoute(
     };
   }
   return {
-    route: withCoderSlot(route, entry.slug, { preserveCoderFix }),
+    route: withCoderSlot(route, entry.slug),
     entry,
     skippedForEnvOverride: false,
     skippedForMissingMarking: false,

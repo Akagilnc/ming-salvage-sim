@@ -2473,7 +2473,7 @@ export async function runVerifyCmr(
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
     const stopSummary = stageFailureStopSummary({
       status: "cmr_failed",
-      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}`,
       repairHint: "repair the CMR route environment and rerun the family barrier",
     });
     await familyBackend.recordAborted?.({

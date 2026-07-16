@@ -468,19 +468,17 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
       source: "family",
-      classification: "infra_failure",
-      // #922: route env mismatch aborts during CMR setup → cmr_failed.
-      stopReason: "cmr_failed",
+      // #936: deleted CMR leg env override is ignored — preset admits (success).
+      classification: "success",
+      stopReason: "success",
       sourceStopSummary: expect.objectContaining({
-        reason: "cmr_failed",
-        repairHint: expect.stringContaining("route environment"),
+        reason: "success",
       }),
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr_route_env",
-        helperSeam: "model_route_cmr_leg_env",
-        envShape: "json-written-csv-read",
-        status: "aborted",
-        dispatches: [],
+        helperSeam: "model_route_deleted_slot_env_ignored",
+        envShape: "ignored-cmr-leg-override",
+        status: "ok",
       }),
     });
     expect(rowsById.get("376-route-freeze-after-import")?.sourceEvidence).toMatchObject({
@@ -494,9 +492,9 @@ describe("#451 dogfood replay fixture", () => {
       seam: "runner_startup_route",
       helperSeam: "model_route_startup_policy",
       routeName: "claude-tight",
+      // Pure unit still sees tight violation; public ignition ignores deleted env.
       violationReason: "tight route violation",
-      status: "escalate",
-      dispatchedBeforeAbort: [],
+      envOverrideIgnored: true,
     });
     expect(rowsById.get("376-closure-context-positive")?.sourceEvidence).toMatchObject({
       seam: "runner",
