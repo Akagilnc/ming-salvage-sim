@@ -99,6 +99,7 @@ import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
   modelIdForSlug,
+  resolveModelSlug,
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
@@ -2690,10 +2691,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // sourceRepo to the local repo) the container's git remote is the local path,
     // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
     // (codex #384). Mirrors ship/coder.
-    // #768: pin the baked skill's CMR_CODEX_MODEL to the frozen route's codex
-    // cmrReview leg. Without this, route labels (ORCHESTRATOR_CMR_REVIEW_LEGS /
-    // .cmr-route.json) can say sol while codex-review.sh still defaults to
-    // gpt-5.5 — leg execution ≠ route label. Derive from reviewLegs; never hardcode.
+    // #768: pin the baked skill's CMR_CODEX_MODEL + CMR_CODEX_EFFORT to the
+    // frozen route's codex cmrReview leg. Without this, route labels
+    // (ORCHESTRATOR_CMR_REVIEW_LEGS / .cmr-route.json) can say sol while
+    // codex-review.sh still defaults to gpt-5.5 / medium — leg execution ≠
+    // route/registry authority. Derive from reviewLegs; never hardcode.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
@@ -2705,6 +2707,13 @@ export class RealFamilyBackend implements FamilyBackend {
       // Resolve effort-variant registry slugs (e.g. gpt-5.6-sol-low) to the CLI
       // model id the baked codex-review.sh expects — not the registry key.
       env.CMR_CODEX_MODEL = modelIdForSlug(codexReviewLeg.slug);
+      // Effort authority = registry row for the slug. codex-review.sh reads
+      // CMR_CODEX_EFFORT (default medium); omitting it collapses sol-low/high
+      // variants to medium and defeats route/registry effort selection.
+      const entry = resolveModelSlug(codexReviewLeg.slug);
+      if (entry.provider === "codex" && entry.options?.effort !== undefined) {
+        env.CMR_CODEX_EFFORT = entry.options.effort;
+      }
     }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
