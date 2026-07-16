@@ -304,18 +304,20 @@ export function getRoutePresets(
   env: ModelRouteEnv = process.env,
 ): Readonly<Record<string, ModelRoutePreset>> {
   const path = resolveRoutePresetsPath(env);
-  if (cachedRoutePresets !== undefined && cachedRoutePresetsPath === path) {
-    return cachedRoutePresets;
-  }
+  // Resolve loadPath BEFORE the cache check. Missing custom falls back to
+  // DEFAULT; cache key must be the path actually loaded, otherwise every call
+  // under a missing custom path recomputes loadPath=DEFAULT but checks against
+  // the requested custom path → always miss → re-read factory every time.
+  // Custom file appearing later changes loadPath → intentional miss → reload.
   let loadPath = path;
   if (!existsSync(path) && path !== DEFAULT_ROUTE_PRESETS_PATH) {
     loadPath = DEFAULT_ROUTE_PRESETS_PATH;
   }
+  if (cachedRoutePresets !== undefined && cachedRoutePresetsPath === loadPath) {
+    return cachedRoutePresets;
+  }
   const fromFile = loadRoutePresetsFromFile(loadPath);
   cachedRoutePresets = fromFile;
-  // Key cache by the path actually loaded (loadPath), not the requested path.
-  // Missing custom → factory fallback must not pin factory content under the
-  // missing path; if that path later appears, the next call must re-resolve.
   cachedRoutePresetsPath = loadPath;
   return fromFile;
 }

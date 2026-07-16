@@ -14,6 +14,7 @@ import {
   activeModelRoute,
   applyRelayBatonToRoute,
   applyTightRoutePolicy,
+  getRoutePresets,
   resetRoutePresetsCacheForTests,
   resolveRouteModels,
   routeSmokeEntries,
@@ -274,6 +275,24 @@ describe("#916 route presets config load + priority", () => {
     const route = resolveRouteModels("late-custom", {});
     expect(route.routeName).toBe("late-custom");
     expect(route.slots.coder).toBe("gpt-5.6-terra");
+  });
+
+  // G5 follow-up: cache check must compare against loadPath (resolved after
+  // missing-custom → DEFAULT fallback), not the requested custom path. Otherwise
+  // every getRoutePresets under a missing custom path re-reads factory JSON.
+  it("cache-hits factory DEFAULT when missing custom path is resolved twice without reset", () => {
+    const dir = mkdtempSync(join(tmpdir(), "route-presets-916-"));
+    tempDirs.push(dir);
+    const path = join(dir, "route-presets-missing.json"); // never created
+
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    const first = getRoutePresets();
+    const second = getRoutePresets();
+    // Same object ⇒ loadPath-keyed cache hit (no second factory I/O).
+    expect(second).toBe(first);
+    expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
   });
 });
 
