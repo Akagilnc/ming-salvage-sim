@@ -55,9 +55,15 @@ import {
 } from "./telemetry.js";
 import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import {
+  AdoptionPersistFailedError,
+} from "./dispatchRetry.js";
+import {
   dispatchMonitoredCliWorker,
+  isWorkerTerminationFailedError,
   readLogActivity,
+  silenceWholeMinutes,
   terminateSpawnedChild,
+  WorkerTerminationFailedError,
   type MonitoredCliDispatchInput,
   type WorkerMonitorDeps,
 } from "./workerMonitor.js";
@@ -791,13 +797,32 @@ export async function dispatchWorkerWithMonitor(
         try {
           await opts.onMonitorHandleSpawned(handle);
         } catch (error) {
-          await terminateSpawnedChild(child, opts?.monitorDeps);
+          // #934 ID-006: exact terminate; unconfirmed exit → worker_termination_failed + PID.
+          // #934 ID-004: adoption failure is non-retryable (AdoptionPersistFailedError).
+          try {
+            await terminateSpawnedChild(child, opts?.monitorDeps, {
+              instanceId: handle.instanceId,
+            });
+          } catch (termErr) {
+            if (isWorkerTerminationFailedError(termErr)) {
+              const base =
+                error instanceof Error ? error.message : String(error);
+              throw new WorkerTerminationFailedError({
+                ...(termErr.pid !== undefined ? { pid: termErr.pid } : {}),
+                instanceId: handle.instanceId,
+                message:
+                  `${base}; worker_termination_failed` +
+                  (termErr.pid !== undefined ? ` pid=${termErr.pid}` : "") +
+                  ` instanceId=${handle.instanceId}`,
+              });
+            }
+          }
           try {
             await exitPromise;
           } catch {
             // Preserve the original spawn-persist error if child cleanup fails.
           }
-          throw error;
+          throw new AdoptionPersistFailedError(error);
         }
       }
       const monitorDeps = opts?.monitorDeps;
@@ -815,6 +840,17 @@ export async function dispatchWorkerWithMonitor(
       const race = await exitPromise;
       // One-shot re-read so first_output_at is not left null when bytes exist.
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
+      // #934 ID-007: on-demand whole-minute silence report from last-activity.
+      // Pure observation — never kill/retry/relay/park/fail.
+      const lastActivity = readLogActivity(handle, monitorDeps);
+      if (lastActivity !== undefined) {
+        const quietMin = silenceWholeMinutes(lastActivity.mtimeMs);
+        if (quietMin > 0) {
+          console.info(
+            `[orchestrator] worker ${spec.id} silence_whole_minutes=${quietMin}`,
+          );
+        }
+      }
       const exitCode = race.kind === "exit" ? race.exitCode : null;
       const killSignal = race.kind === "killed" ? race.signal : null;
       if (backend.awaitMonitoredCliWorker === undefined) {

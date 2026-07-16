@@ -827,26 +827,24 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  *
- * #683: when this timer DOES fire (or an external monitor hits idle first),
- * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
- * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
+ * #683 / #937: when this Sandcastle timer DOES fire, {@link RealBackend.runAgentSandbox}
+ * routes through {@link handleIdleThreshold} — probe the worker's pool
+ * (429 → wait-for-reset). Host silence never kills (#934 ID-007).
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
 /**
  * #683 context threaded beside Sandcastle run options for the internal-timeout
- * fallback. The live CLI monitor owns the normal idle disposition.
- * (Sandcastle does not know this field).
+ * fallback (Sandcastle does not know this field).
  *
  * `workerPid` is optional at the call site — production dispatch paths leave it
  * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
  * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
- * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
+ * hand-stuff a fake pid.
  *
- * 429 fallback semantic: by the time Sandcastle surfaces
- * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
- * fallback may park a quota wall, but never owns hang-kill; live worker kills
- * belong exclusively to the #684 monitor handle.
+ * 429 fallback: park a quota wall when applicable. Host PID-tree hang kill is
+ * deleted (#937); process ownership is ChildProcess handle + adoption-failure
+ * terminateSpawnedChild only.
  */
 export interface QuotaProbeRunContext {
   /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
@@ -3549,8 +3547,8 @@ export class RealBackend implements Backend {
   private activeSandboxWorkerPid: number | undefined;
 
   /**
-   * Record the OS pid from the live sandbox handle so hang kill after idle
-   * probe has a real target. No-op for non-positive / non-integer values.
+   * Record the OS pid from the live sandbox handle for quota-probe context.
+   * No-op for non-positive / non-integer values. Not a host kill path (#937).
    */
   protected noteActiveSandboxWorkerPid(pid: number): void {
     if (Number.isInteger(pid) && pid > 0) {

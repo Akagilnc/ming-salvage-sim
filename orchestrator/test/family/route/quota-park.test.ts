@@ -180,7 +180,6 @@ function quotaWaitError(opts: {
       reason: "quota limited (429); wait for reset",
     },
     applied: {
-      killed: false,
       ledgerEntry: {
         event: "quota_wait_for_reset",
         pool,
@@ -876,7 +875,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     const bare = new QuotaWaitForResetError({
       disposition: errNoStep.disposition,
       applied: {
-        killed: false,
         ledgerEntry: {
           ...errNoStep.applied.ledgerEntry!,
           step: undefined as unknown as "S3",

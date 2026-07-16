@@ -236,13 +236,56 @@ export function silenceWholeMinutes(
 }
 
 /**
+ * #934 ID-006 — exact-handle termination could not confirm the child exited
+ * after SIGTERM + SIGKILL. Carries PID evidence (never a PID-tree walk).
+ */
+export class WorkerTerminationFailedError extends Error {
+  readonly reason = "worker_termination_failed" as const;
+  readonly pid: number | undefined;
+  readonly instanceId: string | undefined;
+
+  constructor(input: {
+    readonly pid?: number;
+    readonly instanceId?: string;
+    readonly message?: string;
+  }) {
+    const pidPart =
+      input.pid !== undefined && input.pid > 0 ? ` pid=${input.pid}` : "";
+    const idPart =
+      input.instanceId !== undefined && input.instanceId.length > 0
+        ? ` instanceId=${input.instanceId}`
+        : "";
+    super(
+      input.message ??
+        `worker_termination_failed: exact ChildProcess handle still live after SIGKILL${pidPart}${idPart}`,
+    );
+    this.name = "WorkerTerminationFailedError";
+    this.pid = input.pid;
+    this.instanceId = input.instanceId;
+  }
+}
+
+export function isWorkerTerminationFailedError(
+  err: unknown,
+): err is WorkerTerminationFailedError {
+  return (
+    err instanceof WorkerTerminationFailedError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { readonly name?: unknown }).name === "WorkerTerminationFailedError")
+  );
+}
+
+/**
  * Exact-handle termination for spawn-adoption failure (#934 ID-006).
  * Signals the detached process group of the ChildProcess when possible;
- * never walks a PID tree or global name match.
+ * never walks a PID tree or global name match. After SIGKILL, waits briefly
+ * and throws {@link WorkerTerminationFailedError} if exit is unconfirmed.
  */
 export async function terminateSpawnedChild(
   child: ChildProcess,
   deps?: WorkerMonitorDeps,
+  opts?: { readonly instanceId?: string },
 ): Promise<void> {
   const d = resolveDeps(deps);
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -269,5 +312,13 @@ export async function terminateSpawnedChild(
   await d.sleepMs(100);
   if (child.exitCode === null && child.signalCode === null) {
     signalGroupOrChild("SIGKILL");
+    await d.sleepMs(100);
   }
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  throw new WorkerTerminationFailedError({
+    ...(child.pid !== undefined ? { pid: child.pid } : {}),
+    ...(opts?.instanceId !== undefined ? { instanceId: opts.instanceId } : {}),
+  });
 }

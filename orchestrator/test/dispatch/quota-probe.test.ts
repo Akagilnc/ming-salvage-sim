@@ -65,7 +65,6 @@ describe("#683 bridge-child quota wall serialization", () => {
         reason: "quota limited (429); wait for reset",
       },
       applied: {
-        killed: false,
         ledgerEntry: {
           event: "quota_wait_for_reset",
           pool: "zai",
@@ -188,7 +187,6 @@ describe("#683/#937 applyIdleDisposition (no host kill + preserve ledger)", () =
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(false);
     expect(ledger).toEqual([]);
     expect(result.ledgerEntry).toBeUndefined();
   });
@@ -213,7 +211,6 @@ describe("#683/#937 applyIdleDisposition (no host kill + preserve ledger)", () =
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(false);
     expect(killed).toEqual([]);
     expect(result.ledgerEntry).toEqual({
       event: "quota_wait_for_reset",
@@ -241,7 +238,6 @@ describe("#683/#937 applyIdleDisposition (no host kill + preserve ledger)", () =
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(false);
     expect(result.ledgerEntry?.resetAt).toBeUndefined();
     expect(result.ledgerEntry?.pool).toBe("opencode-go");
     expect(result.ledgerEntry?.event).toBe("quota_wait_for_reset");
@@ -447,7 +443,6 @@ describe("#683 handleIdleThreshold (production composition)", () => {
     });
     expect(out.pool).toBe("zai");
     expect(out.disposition.kind).toBe("wait_for_reset");
-    expect(out.applied.killed).toBe(false);
     expect(killed).toEqual([]);
     expect(ledger).toHaveLength(1);
   });
@@ -491,7 +486,6 @@ describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)
             reason: "quota limited (429); wait for reset",
           },
           applied: {
-            killed: false,
             ledgerEntry: {
               event: "quota_wait_for_reset",
               pool: "zai",
@@ -523,7 +517,7 @@ describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)
             pool: "unknown",
             reason: "idle threshold exceeded; quota probe ok",
           },
-          applied: { killed: false },
+          applied: {},
           pool: "unknown",
           probe: { kind: "ok" },
         }),

@@ -2,7 +2,7 @@
  * #686 — relay dispatch: baton handoff across quota walls / hangs / self-report.
  *
  * Seams under test (owner ratification 2026-07-08 + 2026-07-10 deltas):
- *   1. parseRelayTag — shape-validated <relay> terminal (fail-closed)
+ *   1. free-log parseRelayTag DELETED (#937 ID-007) — inventory pin
  *   2. resource handoff triggers (quota/capacity/blocked) via applyResourceFailureHandoff
  *   3. resource failure NEVER calls resetBeforeRetry (#661 boundary)
  *   4. state_summary → ledger + ephemeral relay brief; resume from any baton
@@ -48,7 +48,6 @@ import {
   forkQuotaWallAt683Point,
   isCapacityRelayError,
   isRelayChainReadyForReviewGate,
-  parseRelayTag,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,
   type RelayHandoffLedgerEvent,
@@ -72,78 +71,15 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 
-describe("#686 relay tag contract (fail-closed)", () => {
-  it("uses explicit resource and decision-gate signal bits without reading prose", () => {
-    expect(
-      parseRelayTag(
-        `<relay>{"resource":true,"phase":"build","state_summary":"partial","remaining":"continue"}</relay>`,
-      ),
-    ).toMatchObject({ kind: "phase_complete", phase: "build" });
-    expect(
-      parseRelayTag(
-        `<relay>{"decision_gate":true,"state_summary":"need a ruling"}</relay>`,
-      ),
-    ).toEqual({
-      kind: "decision_gate",
-      state_summary: "need a ruling",
-    });
-  });
-
-  it("accepts phase_complete build|clear with state_summary + remaining", () => {
-    const stdout = [
-      "建造完成，待清障。",
-      `<relay>{"phase_complete":"build","state_summary":"142 tests pending","remaining":"clear mechanical reds"}</relay>`,
-    ].join("\n");
-    expect(parseRelayTag(stdout)).toEqual({
-      kind: "phase_complete",
-      phase: "build",
-      state_summary: "142 tests pending",
-      remaining: "clear mechanical reds",
-    });
-  });
-
-  it("accepts the blocked variant", () => {
-    const stdout = `<relay>{"blocked":{"reason":"design gap on schema","state_summary":"half of apply wired","remaining":"need human on ADR"}}</relay>`;
-    expect(parseRelayTag(stdout)).toEqual({
-      kind: "blocked",
-      reason: "design gap on schema",
-      state_summary: "half of apply wired",
-      remaining: "need human on ADR",
-    });
-  });
-
-  it("malformed relay is NOT phase_complete (fail-closed)", () => {
-    expect(parseRelayTag("no tag here").kind).toBe("malformed");
-    expect(
-      parseRelayTag(`<relay>{"phase_complete":"build"}</relay>`).kind,
-    ).toBe("malformed");
-    expect(
-      parseRelayTag(
-        `<relay>{"phase_complete":"done","state_summary":"x","remaining":"y"}</relay>`,
-      ).kind,
-    ).toBe("malformed");
-    expect(
-      parseRelayTag(`<relay>not-json</relay>`).kind,
-    ).toBe("malformed");
-    // Mixed / extra keys → malformed (strict)
-    expect(
-      parseRelayTag(
-        `<relay>{"phase_complete":"build","state_summary":"a","remaining":"b","blocked":true}</relay>`,
-      ).kind,
-    ).toBe("malformed");
-  });
-
-  it("reads the LAST <relay> tag when the worker iterates", () => {
-    const stdout = [
-      `<relay>{"phase_complete":"build","state_summary":"old","remaining":"x"}</relay>`,
-      `<relay>{"phase_complete":"clear","state_summary":"new","remaining":"收口"}</relay>`,
-    ].join("\n");
-    const parsed = parseRelayTag(stdout);
-    expect(parsed).toMatchObject({
-      kind: "phase_complete",
-      phase: "clear",
-      state_summary: "new",
-    });
+describe("#937 free-log relay parse surface deleted (ID-007/016)", () => {
+  it("production module no longer exports parseRelayTag", async () => {
+    const relay = await import("../../src/relayDispatch.js");
+    expect("parseRelayTag" in relay).toBe(false);
+    const src = readFileSync(
+      join(import.meta.dirname, "../../src/relayDispatch.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/export function parseRelayTag/);
   });
 });
 
@@ -1132,11 +1068,8 @@ describe("#686 fork at #683 quota disposition point", () => {
 });
 
 describe("#686 relay chain ends at normal review gate", () => {
-  it("closing baton (no relay tag / normal terminal) → review gate, no exemption", () => {
-    // 收口者无 relay tag — normal coder terminal is the exit.
-    expect(parseRelayTag("CODER_STEP_COMPLETE\ncommitted ok").kind).toBe(
-      "malformed",
-    );
+  it("closing baton (no free-log relay tag / normal terminal) → review gate, no exemption", () => {
+    // Free-log <relay> parse deleted (#937); gate uses completion flags only.
     expect(
       isRelayChainReadyForReviewGate({
         closingBatonCompleted: true,
@@ -1175,7 +1108,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         reason: "quota limited (429); wait for reset",
       },
       applied: {
-        killed: false,
         ledgerEntry: {
           event: "quota_wait_for_reset",
           pool: pool as "grok" | "zai",
@@ -1199,7 +1131,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     }
   });
 
-  it("mechanical-retry exhaustion with live baton → relay (not durable abort)", async () => {
+  it("mechanical-retry exhaustion is canonical failed edge (no baton relay) #937", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-exhaust-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-relay-exhaust",
@@ -1314,24 +1246,20 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       now: () => NOW,
     });
 
+    // #934 ID-004 / #937: process-root exhaustion is a canonical failed edge —
+    // never a mechanical_retry_exhausted baton handoff.
     const handoff = result.stepLedger.find(
       (e) => e.event === "relay_baton_handoff",
     );
-    expect(handoff).toMatchObject({
-      event: "relay_baton_handoff",
-      trigger: "mechanical_retry_exhausted",
-      toModelId: "terra@med",
-    });
+    expect(handoff).toBeUndefined();
     expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(false);
-    // #767's final roster advance selects the Terra coding baton.
-    expect(coderModels).toContain("gpt-5.6-terra");
-    // The S2 relay belongs only to that coder step. The normal S3 reviewer must
-    // select its own channel from its reviewer route, not inherit the coder's
-    // billing pool or baton brief.
-    expect(reviewerDispatches).toHaveLength(1);
-    expect(reviewerDispatches[0]?.ctx.billingPool).toBeUndefined();
-    expect(reviewerDispatches[0]?.ctx.relayBrief).toBeUndefined();
-    expect(result.status).not.toBe("error");
+    // Only the wall-hit model was dispatched (no relay baton re-entry).
+    expect(coderModels.every((m) => m === "grok-4.5")).toBe(true);
+    expect(coderFails).toBeGreaterThanOrEqual(1);
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary?.summary ?? "").toMatch(
+      /dispatch attempts|mechanical redispatch|process crashed/i,
+    );
   });
 
   it("S2 quota relay on normal route selects Terra while Sol remains reviewer", async () => {
@@ -2188,7 +2116,6 @@ describe("#686 R2 production seams", () => {
                 reason: "quota limited (429); wait for reset",
               },
               applied: {
-                killed: false,
                 ledgerEntry: {
                   event: "quota_wait_for_reset",
                   pool: "grok",

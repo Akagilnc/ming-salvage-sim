@@ -182,11 +182,17 @@ describe("#684/#937 worker monitor handles", () => {
     await terminateSpawnedChild(child, {
       killPid: (pid, signal) => {
         killed.push({ pid, signal });
+        // Confirm exit for ID-006 (mock ChildProcess does not get OS exit events
+        // when only negative-pid group signals fire in restricted sandboxes).
+        Object.defineProperty(child, "exitCode", {
+          value: 1,
+          configurable: true,
+        });
         try {
           process.kill(pid, 0);
           process.kill(pid, signal);
         } catch {
-          // group may not exist in restricted sandboxes; ChildProcess.kill still runs
+          // group may not exist in restricted sandboxes
         }
       },
       sleepMs: async () => {},
@@ -198,6 +204,36 @@ describe("#684/#937 worker monitor handles", () => {
     } catch {
       // already reaped
     }
+  });
+
+  it("NEGATIVE: unconfirmed exit after SIGKILL raises worker_termination_failed", async () => {
+    const { WorkerTerminationFailedError } = await import(
+      "../../src/workerMonitor.js"
+    );
+    const child = {
+      pid: 4242,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill: () => true,
+    };
+    await expect(
+      terminateSpawnedChild(child as never, {
+        killPid: () => {
+          // Deliberately leave exitCode null → unconfirmed.
+        },
+        sleepMs: async () => {},
+      }, { instanceId: "test-instance" }),
+    ).rejects.toBeInstanceOf(WorkerTerminationFailedError);
+    await expect(
+      terminateSpawnedChild(child as never, {
+        killPid: () => {},
+        sleepMs: async () => {},
+      }, { instanceId: "test-instance" }),
+    ).rejects.toMatchObject({
+      reason: "worker_termination_failed",
+      pid: 4242,
+      instanceId: "test-instance",
+    });
   });
 
   it("dispatchWorkerWithMonitor waits for exit only — silence does not kill", async () => {

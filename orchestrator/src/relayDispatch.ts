@@ -8,7 +8,6 @@
  * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
  */
 
-import { z } from "zod";
 import type { CoderRosterEntry } from "./coderRoster.js";
 import type { IdleDisposition } from "./quotaProbe.js";
 import type { StepId } from "./types.js";
@@ -23,129 +22,8 @@ import {
   type ParkOrRelayDecision,
 } from "./quotaPoolTable.js";
 
-// ── <relay> tag contract ───────────────────────────────────────────────────
-
-const nonEmpty = z.string().trim().min(1);
-
-const phaseCompleteSchema = z
-  .object({
-    phase_complete: z.enum(["build", "clear"]),
-    state_summary: nonEmpty,
-    remaining: nonEmpty,
-  })
-  .strict();
-
-const blockedSchema = z
-  .object({
-    blocked: z
-      .object({
-        reason: nonEmpty,
-        state_summary: nonEmpty,
-        remaining: nonEmpty.optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-const resourceSignalSchema = z
-  .object({
-    resource: z.literal(true),
-    phase: z.enum(["build", "clear"]),
-    state_summary: nonEmpty,
-    remaining: nonEmpty,
-  })
-  .strict();
-
-export type RelayTagOutcome =
-  | {
-      readonly kind: "phase_complete";
-      readonly phase: "build" | "clear";
-      readonly state_summary: string;
-      readonly remaining: string;
-    }
-  | {
-      readonly kind: "blocked";
-      readonly reason: string;
-      readonly state_summary: string;
-      readonly remaining?: string;
-    }
-  | {
-      readonly kind: "decision_gate";
-      readonly state_summary: string;
-      readonly remaining?: string;
-    }
-  | { readonly kind: "malformed"; readonly reason: string };
-
-/**
- * Parse the worker's `<relay>{…}</relay>` terminal. A `decision_gate` key is an
- * independent worker-pressed bell; sibling cargo cannot suppress it. Resource
- * relay keeps its shape contract. Legacy #686 shapes remain readable.
- */
-export function parseRelayTag(stdout: string): RelayTagOutcome {
-  const re = /<relay>([\s\S]*?)<\/relay>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { kind: "malformed", reason: "worker emitted no <relay> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "relay tag was not valid JSON" };
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "relay tag was not a JSON object" };
-  }
-  if (Object.prototype.hasOwnProperty.call(parsed, "decision_gate")) {
-    const cargo = parsed as Record<string, unknown>;
-    const stateSummary =
-      typeof cargo.state_summary === "string" && cargo.state_summary.trim().length > 0
-        ? cargo.state_summary
-        : last.trim();
-    const remaining =
-      typeof cargo.remaining === "string" && cargo.remaining.trim().length > 0
-        ? cargo.remaining
-        : undefined;
-    return {
-      kind: "decision_gate",
-      state_summary: stateSummary,
-      ...(remaining !== undefined ? { remaining } : {}),
-    };
-  }
-  const resource = resourceSignalSchema.safeParse(parsed);
-  if (resource.success) {
-    return {
-      kind: "phase_complete",
-      phase: resource.data.phase,
-      state_summary: resource.data.state_summary,
-      remaining: resource.data.remaining,
-    };
-  }
-  const blocked = blockedSchema.safeParse(parsed);
-  if (blocked.success) {
-    const b = blocked.data.blocked;
-    return {
-      kind: "blocked",
-      reason: b.reason,
-      state_summary: b.state_summary,
-      ...(b.remaining !== undefined ? { remaining: b.remaining } : {}),
-    };
-  }
-  const phase = phaseCompleteSchema.safeParse(parsed);
-  if (phase.success) {
-    return {
-      kind: "phase_complete",
-      phase: phase.data.phase_complete,
-      state_summary: phase.data.state_summary,
-      remaining: phase.data.remaining,
-    };
-  }
-  return {
-    kind: "malformed",
-    reason: "relay tag failed shape validation (fail-closed)",
-  };
-}
+// #937 / #934 ID-007: free-log <relay> parser (parseRelayTag) deleted.
+// Decision gates via typed station escalate; resource handoff is capacity/quota_wall.
 
 // ── ledger + ephemeral baton brief (#937 / #934 ID-007) ──────────────────────
 
@@ -155,14 +33,22 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
  */
 export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 
+/**
+ * Live production constructors: quota_wall, capacity, mechanical_retry_exhausted, pool_dead.
+ * Free-log hang/self_report/phase_complete constructors deleted (#937); retired literals
+ * remain only for historical ledger rows.
+ */
 export type RelayHandoffTrigger =
   | "quota_wall"
   | "capacity"
-  | "hang_with_live_pool"
-  | "self_reported_blocked"
-  | "phase_complete"
   | "pool_dead"
-  | "mechanical_retry_exhausted";
+  | "mechanical_retry_exhausted"
+  /** @deprecated free-log hang constructor deleted (#937); ledger history only. */
+  | "hang_with_live_pool"
+  /** @deprecated free-log self-report constructor deleted (#937); ledger history only. */
+  | "self_reported_blocked"
+  /** @deprecated free-log phase_complete constructor deleted (#937); ledger history only. */
+  | "phase_complete";
 
 /**
  * Append-only ledger row when a baton hands off (#686).

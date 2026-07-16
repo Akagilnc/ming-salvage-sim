@@ -38,7 +38,6 @@ vi.mock("node:child_process", async (importOriginal) => {
         gitExecControl.timeoutOptions.push(options);
         gitExecControl.releaseHungGit = () => {
           callback(Object.assign(new Error("git timed out"), {
-            killed: true,
             signal: "SIGTERM",
           }), "", "");
         };

@@ -49,7 +49,6 @@ function quotaWaitError(): QuotaWaitForResetError {
       reason: "quota limited (429); wait for reset",
     },
     applied: {
-      killed: false,
       ledgerEntry: {
         event: "quota_wait_for_reset",
         pool: "zai",

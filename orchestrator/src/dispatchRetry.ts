@@ -18,7 +18,45 @@
 
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import { capacityRelayErrorFrom } from "./relayDispatch.js";
+import { isWorkerTerminationFailedError } from "./workerMonitor.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
+
+/**
+ * #934 ID-004 / #937: adoption/persist failure after exact-handle terminate.
+ * Must not enter process-root mechanical retry (would re-spawn on the same
+ * fixed position after the prior instance was already terminated).
+ */
+export class AdoptionPersistFailedError extends Error {
+  readonly reason = "adoption_persist_failed" as const;
+
+  constructor(cause: unknown) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    super(`adoption_persist_failed: ${msg}`);
+    this.name = "AdoptionPersistFailedError";
+    if (cause instanceof Error) this.cause = cause;
+  }
+}
+
+export function isAdoptionPersistFailedError(
+  err: unknown,
+): err is AdoptionPersistFailedError {
+  return (
+    err instanceof AdoptionPersistFailedError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { readonly name?: unknown }).name === "AdoptionPersistFailedError")
+  );
+}
+
+/** Non-retryable throws that surface after exact-handle cleanup or durable edge. */
+function isNonRetryableDispatchThrow(err: unknown): boolean {
+  return (
+    isQuotaWaitForResetError(err) ||
+    capacityRelayErrorFrom(err) !== undefined ||
+    isWorkerTerminationFailedError(err) ||
+    isAdoptionPersistFailedError(err)
+  );
+}
 
 /**
  * Total process-root dispatch attempts for one fixed position (1 initial +
@@ -126,10 +164,10 @@ export interface MechanicalRetryOptions {
  * `opts.callerOwns` claims it, in which case it is re-thrown (thrown outcome) or
  * returned (resolved outcome) for the caller's own semantic layer to handle.
  *
- * #686: resource failures (quota wall / hang-with-live-pool) are NEVER retried
- * here and NEVER trigger `resetBeforeRetry` — they surface for relay disposition.
+ * #686/#937: resource failures (quota / capacity) and adoption/termination
+ * failures are NEVER retried here and NEVER trigger `resetBeforeRetry`.
  * On process-failure exhaustion the annotated result is a relay *candidate*
- * (caller may hand off via roster+pool lookup) rather than a silent durable abort.
+ * (#686 isRelayCandidateExhaustion) rather than a silent durable abort.
  */
 export async function withMechanicalRetry(
   spec: WorkerSpec,
@@ -198,11 +236,8 @@ export async function withMechanicalRetry(
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
-      // #683/#686: resource failures park/relay — never mechanical-retry
-      // (would thrash the same pool / destroy uncommitted drift via reset).
-      if (isQuotaWaitForResetError(err)) throw err;
-      const capacityError = capacityRelayErrorFrom(err);
-      if (capacityError !== undefined) throw capacityError;
+      // #683/#686/#937: resource / adoption / termination — never mechanical-retry.
+      if (isNonRetryableDispatchThrow(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
@@ -231,12 +266,8 @@ export async function withMechanicalRetry(
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
-  // Otherwise return the last process-level failure, ANNOTATING the reason with the
-  // generic dispatch attempt count (#598 crit 6 — durable abort names the failed
-  // step [added by the caller] AND the attempt count, using the existing
-  // stop-reason vocabulary, no new field). #686: exhaustion is a relay *candidate*
-  // (board depth) rather than a silent durable abort — the annotation keeps the
-  // existing vocabulary while signalling the caller may hand off.
+  // Exhaustion annotates attempt count and remains a #686 relay candidate
+  // (isRelayCandidateExhaustion). Not a park; runner may hand off baton.
   const attempts = MAX_DISPATCH_ATTEMPTS;
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
@@ -284,12 +315,8 @@ export async function retryProcessCrash<T>(
     try {
       return await fn();
     } catch (err) {
-      // #683/#686/#909: resource failures park/relay — NEVER mechanical-retry
-      // (same discipline as withMechanicalRetry; merger thrashing a 429 wall
-      // would burn attempts and risk resetBeforeRetry drift).
-      if (isQuotaWaitForResetError(err)) throw err;
-      const capacityError = capacityRelayErrorFrom(err);
-      if (capacityError !== undefined) throw capacityError;
+      // #683/#686/#909/#937: resource / adoption / termination — NEVER retry.
+      if (isNonRetryableDispatchThrow(err)) throw err;
       lastError = err;
     }
   }

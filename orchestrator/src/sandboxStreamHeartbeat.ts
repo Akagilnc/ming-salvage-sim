@@ -1,28 +1,20 @@
 /**
- * #899 hotfix (2026-07-15) — keep the monitored bridge's stdout alive while
- * Sandcastle runs.
+ * #899 hotfix / #937 — keep the monitored bridge's stdout alive while
+ * Sandcastle runs (observational last-activity / first_output_at only).
  *
- * The #684 idle monitor judges worker liveness ONLY by growth of the bridge
- * child's stdout log (worker-logs/<step>.log). Sandcastle in log-to-file mode
- * drains the entire agent stream to its own file and keeps stdout byte-silent
- * between the startup pointer lines and the final output, so every healthy
- * sandbox step longer than the idle threshold was killed as a hang: #899's
- * resumed S2 died 3× at exactly the 10-minute general tier, and #808 had
- * already met the same disease on Sonnet legs (it widened Claude's tier to
- * 30 minutes instead of fixing the channel).
+ * Host silence sentencing is deleted (#937 / #934 ID-007): silence never
+ * kills, retries, or relays. Heartbeats still matter so log last-activity and
+ * first_output_at telemetry can observe real agent progress while Sandcastle
+ * drains the agent stream to its own file (bridge stdout would otherwise stay
+ * silent between startup lines and final output).
  *
- * Fix at the sc.run boundary: inject Sandcastle's own file-logging
- * `onAgentStreamEvent` callback (built for "forwarding the agent's output
- * stream to external observability systems") and forward real agent activity
- * to stdout as a throttled heartbeat. A live agent keeps the monitored log
- * growing; a truly silent agent produces no heartbeat, so the idle threshold
- * still fires. Sandcastle swallows callback errors, so the writer needs no
- * guard of its own.
+ * Inject Sandcastle's file-logging `onAgentStreamEvent` and forward real agent
+ * activity to stdout as a throttled heartbeat. Same wrap forces completionSignal: [] (#928).
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** One heartbeat line at most per window; well under every idle tier. */
+/** One heartbeat line at most per window (observational log growth only). */
 export const STREAM_HEARTBEAT_THROTTLE_MS = 30_000;
 
 interface HeartbeatSandboxOptions {
@@ -57,7 +49,7 @@ function sanitizeName(name: string): string {
  * #928 / #919 F2 — shared Sandcastle invoke wrap used by RealBackend and
  * RealFamilyBackend:
  *   - force `completionSignal: []` (omit is NOT off; sandcastle defaults a password)
- *   - inject monitor stream heartbeat for #684 idle liveness
+ *   - inject stream heartbeat for observational log last-activity (not host kill)
  *
  * Behavior-identical to the former dual inlined copies; one helper, two call sites.
  */
