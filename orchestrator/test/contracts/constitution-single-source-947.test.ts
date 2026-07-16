@@ -72,9 +72,12 @@ describe("#947 container-global home CLAUDE.md is the single source of the four-
 });
 
 describe("#947 souls point at the law instead of copying it", () => {
-  it("verify.md and fixer.md reference the容器全局 law by name", () => {
-    expect(verifySoul).toMatch(/finding 裁决法理/);
-    expect(fixerSoul).toMatch(/finding 裁决法理/);
+  it("every law-consuming soul references the container-global law by name", () => {
+    const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
+    const coderSoul = readFileSync(join(soulsDir, "coder.md"), "utf8");
+    for (const soul of [verifySoul, fixerSoul, reviewerSoul, coderSoul]) {
+      expect(soul).toMatch(/finding 裁决法理/);
+    }
   });
 
   it("no definition body survives in ANY soul (single source, rule 19; owner-ordered full sweep)", () => {

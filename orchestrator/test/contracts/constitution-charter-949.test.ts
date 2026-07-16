@@ -57,6 +57,8 @@ describe("#949 judge handles constitution-touching fixes with judgment, not a tr
   it("verify.md adjudicates touched-constitution diffs and ledgers them loudly", () => {
     expect(verifySoul).toContain("[touched-constitution]");
     expect(verifySoul).toContain("docs/adr/");
+    expect(verifySoul).toContain("CONTEXT.md");
+    expect(verifySoul).toMatch(/容器\s*全局法文件/);
     expect(verifySoul).toMatch(/实质审理/);
     expect(verifySoul).toMatch(/escalate/);
   });
@@ -68,7 +70,8 @@ describe("#949 judge handles constitution-touching fixes with judgment, not a tr
 });
 
 describe("#949 fixer opens its round by enumerating the authority set", () => {
-  it("fixer.md carries the enumeration duty", () => {
+  it("fixer.md carries the enumeration duty and the clause-anchor duty", () => {
     expect(fixerSoul).toContain("authority set");
+    expect(fixerSoul).toContain("clause 锚点");
   });
 });
