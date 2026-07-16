@@ -227,7 +227,8 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { verify: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
-    // Default preset for verify on "normal" is the ratified xhigh Sol officer.
+    // Default preset for verify on "normal" is gpt-5.6-sol (registry effort:
+    // medium — #916; no role-forced xhigh at dispatch).
     const resolved = resolveRouteModels("normal", {});
     expect(resolved.slots.verify).toBe("gpt-5.6-sol");
     // bad explicit still caught above; the targeted proves verify slot participates in fail-closed

@@ -44,7 +44,6 @@ import {
 } from "./coderRoster.js";
 import { execFileAsyncWithTimeout } from "./externalCall.js";
 import {
-  effortForLiveOfficer,
   modelFamilyForSlug,
   resolveModelSlug,
 } from "./modelRegistry.js";
@@ -1756,17 +1755,14 @@ function modelStampFor(spec: WorkerSpec): TelemetryModelStamp {
     family = null;
   }
   try {
+    // Report the registry effort that dispatch actually uses (#916: no
+    // role/soul live-officer override that would lie about runtime effort).
     const entry = resolveModelSlug(spec.model);
     const opts = entry.options;
     if (opts !== undefined && "effort" in opts) {
       const e = (opts as { readonly effort?: unknown }).effort;
       if (typeof e === "string") effort = e;
     }
-    const live = effortForLiveOfficer(spec.model, {
-      role: spec.role,
-      soul: spec.soul,
-    });
-    if (live !== undefined) effort = live;
   } catch {
     // unknown slug — leave effort null
   }

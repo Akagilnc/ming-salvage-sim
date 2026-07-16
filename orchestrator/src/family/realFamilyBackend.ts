@@ -100,7 +100,6 @@ import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
-  effortForLiveOfficer,
   isBillingPoolDispatchId,
   resolveModelSlugForPool,
   unavailableProviderAuth,
@@ -525,9 +524,11 @@ export class RealFamilyBackend implements FamilyBackend {
    * without spinning a real `sc.run`.
    */
   protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+    // Effort comes from the registry row for `spec.model` only (#916: no
+    // role/soul hard override of reasoning effort at dispatch).
     return agentForSlug(
       spec.model,
-      effortForLiveOfficer(spec.model, spec),
+      undefined,
       isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
     );
   }
