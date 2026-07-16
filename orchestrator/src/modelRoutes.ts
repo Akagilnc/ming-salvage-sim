@@ -167,10 +167,23 @@ function parseRoutePresetLeg(raw: unknown, routeName: string): ModelRouteLeg {
     throw new Error(`route preset "${routeName}": cmrReview leg missing slug`);
   }
   const slug = record.slug.trim();
-  const family =
-    typeof record.family === "string" && MODEL_FAMILIES.has(record.family as ModelFamily)
-      ? (record.family as ModelFamily)
-      : modelFamilyForSlug(slug);
+  // family omitted → derive from registry. family present but not a known
+  // ModelFamily → fail-loud (Gemini R2 G3 / family/914 online). Do not
+  // silently fall back to modelFamilyForSlug on typos like "openai".
+  let family: ModelFamily;
+  if (record.family === undefined) {
+    family = modelFamilyForSlug(slug);
+  } else if (
+    typeof record.family === "string" &&
+    MODEL_FAMILIES.has(record.family as ModelFamily)
+  ) {
+    family = record.family as ModelFamily;
+  } else {
+    throw new Error(
+      `route preset "${routeName}": cmrReview leg "${slug}" has invalid family ` +
+        `"${String(record.family)}"`,
+    );
+  }
   if (record.optional === true) {
     return { family, slug, optional: true };
   }
@@ -209,6 +222,14 @@ function parseRoutePreset(
     throw new Error(`route preset "${routeName}" missing legCollections`);
   }
   const legsRoot = record.legCollections as Record<string, unknown>;
+  // Mirror SLOT_SET: reject unknown keys (Gemini R2 G4 / family/914 online).
+  for (const key of Object.keys(legsRoot)) {
+    if (!LEG_COLLECTION_SET.has(key)) {
+      throw new Error(
+        `route preset "${routeName}" has unknown legCollection "${key}"`,
+      );
+    }
+  }
   const cmrRaw = legsRoot.cmrReview;
   if (!Array.isArray(cmrRaw) || cmrRaw.length === 0) {
     throw new Error(`route preset "${routeName}" missing non-empty cmrReview legs`);

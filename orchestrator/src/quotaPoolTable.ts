@@ -175,10 +175,13 @@ export function billingPoolForModelRef(
   // Defensive for untyped callers (runner/relay paths): guard before any
   // string-typed registry/roster peek (Gemini R1 / family/914 online).
   if (typeof modelRef !== "string") return undefined;
+  // Single normalized token for roster + registry + pool membership.
+  // MODEL_SLUG_REGISTRY keys are lowercase; trim+lower matches that surface
+  // (Gemini R2 G2 / family/914 online).
   const needle = modelRef.trim().toLowerCase();
   if (needle.length === 0) return undefined;
 
-  switch (lookupCoderRosterEntry(modelRef)?.pool) {
+  switch (lookupCoderRosterEntry(needle)?.pool) {
     case "supergrok":
       return "grok-build";
     case "codex":
@@ -188,7 +191,7 @@ export function billingPoolForModelRef(
   }
 
   const fromProvider = billingPoolFromProvider(
-    providerForModelSlug(modelRef) ?? "",
+    providerForModelSlug(needle) ?? "",
   );
   if (fromProvider !== undefined) return fromProvider;
 
