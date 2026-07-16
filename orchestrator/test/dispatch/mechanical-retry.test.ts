@@ -252,6 +252,28 @@ describe("#909 retryProcessCrash must not thrash on quota wait", () => {
     );
     expect(calls).toBe(MAX_DISPATCH_ATTEMPTS);
   });
+
+  it("#934 ID-004: five 15s intervals separate the six process-root attempts", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    await expect(
+      retryProcessCrash(
+        async () => {
+          calls += 1;
+          throw new Error("merger agent crashed mid-resolve");
+        },
+        {
+          sleepMs: async (ms) => {
+            sleeps.push(ms);
+          },
+        },
+      ),
+    ).rejects.toThrow(
+      new RegExp(`after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`),
+    );
+    expect(calls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(sleeps).toEqual([15_000, 15_000, 15_000, 15_000, 15_000]);
+  });
 });
 
 // ── #598 integration: coder/ship inherit process-failure retry ──

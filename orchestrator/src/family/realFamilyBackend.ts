@@ -1285,9 +1285,23 @@ export class RealFamilyBackend implements FamilyBackend {
    * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
    * for non-Node diffs. `protected` so a unit test drives the skip branch without a
    * real FS.
+   *
+   * #934 ID-011 / #939: only precise absence (ENOENT) is "not a Node project".
+   * Operational FS errors (ELOOP, EACCES, …) throw — never soft-skip as non-Node.
    */
   protected isNodeProject(cwd: string): boolean {
-    return existsSync(join(cwd, "package.json"));
+    const path = join(cwd, "package.json");
+    try {
+      statSync(path);
+      return true;
+    } catch (err) {
+      if (isFileNotFound(err)) return false;
+      throw new Error(
+        `family verify: package.json probe failed at "${path}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**

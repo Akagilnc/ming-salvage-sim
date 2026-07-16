@@ -371,9 +371,9 @@ describe("#884 ignition→first-dispatch timing (scripted backend)", () => {
 });
 
 describe("#884 driver stage line logs", () => {
-  it("exposes the four owner-named stages", () => {
+  it("exposes the owner-named stages", () => {
     expect([...DRIVER_STAGES].sort()).toEqual(
-      ["admission", "dispatch", "reconcile", "smoke-k"].sort(),
+      ["admission", "dispatch", "reconcile", "recovery", "smoke-k"].sort(),
     );
   });
 

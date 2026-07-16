@@ -454,24 +454,41 @@ export function parseSubIssueCount(parsed: { subIssues?: unknown }): number {
 
 /**
  * Parse the native `blocked_by` dependency list from a CONFIRMED API response
- * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array). Keeps only
- * entries with a numeric `number` + string `state`; tolerates a non-array /
- * malformed value by returning `[]` (a future/odd shape must not crash the gate).
+ * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array).
  *
- * IMPORTANT (integ-cmr 256 r2, F2): this is the CONFIRMED-empty path only. The
- * caller does NOT swallow a thrown `gh`/transport error into `[]` — a failed
- * query fails CLOSED (routes to S0 backend error → S8(error)), because returning
- * `[]` on a transient failure would let a blocked-by-open issue slip past the S0
- * gate and run from a stale base missing upstream changes.
+ * Fail-closed (#934 ID-003 / #936): a non-array body or any malformed entry
+ * throws a deterministic schema error — never soft-decodes to "no blockers"
+ * (would admit a child as unblocked). Transport/`gh`/JSON-parse failures stay
+ * on the caller. Only a confirmed empty array is the legal no-dependency result.
  */
 export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter(
-      (d): d is { number: number; state: string } =>
-        typeof d?.number === "number" && typeof d?.state === "string",
-    )
-    .map((d) => ({ number: d.number, state: d.state }));
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `blocked_by schema error: expected array, got ${
+        parsed === null ? "null" : typeof parsed
+      }`,
+    );
+  }
+  const out: GhBlockedBy[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const d = parsed[i];
+    if (
+      d !== null &&
+      typeof d === "object" &&
+      typeof (d as { number?: unknown }).number === "number" &&
+      typeof (d as { state?: unknown }).state === "string"
+    ) {
+      out.push({
+        number: (d as { number: number }).number,
+        state: (d as { state: string }).state,
+      });
+      continue;
+    }
+    throw new Error(
+      `blocked_by schema error: malformed entry at index ${i}`,
+    );
+  }
+  return out;
 }
 
 /**
@@ -2484,12 +2501,11 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
-   * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
-   * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
-   * let a blocked-by-OPEN issue (the pinned S0 three-way reject) run from a stale
-   * base missing upstream changes. `parseBlockedBy` still returns [] for a
-   * CONFIRMED empty/non-array response (the genuinely-empty case).
+   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2 + #934 ID-003).
+   * A thrown gh / transport / JSON-parse / schema error propagates via
+   * `phase("S0", …)` → S8(error), NOT a no-blockers ([]) default — failing open
+   * is the riskier leak: it would let a blocked-by-OPEN issue run from a stale
+   * base missing upstream changes. Only a confirmed empty array is no-deps.
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
     return this.phase(step, "fetchBlockedBy", () => {

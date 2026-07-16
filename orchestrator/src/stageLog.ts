@@ -2,10 +2,11 @@
  * #884 — driver stage line logs.
  *
  * One attributable line per phase entry so a silent hang can be blamed on the
- * last entered stage (smoke-k / reconcile / admission / dispatch).
+ * last entered stage (recovery / smoke-k / reconcile / admission / dispatch).
  */
 
 export const DRIVER_STAGES = [
+  "recovery",
   "admission",
   "reconcile",
   "smoke-k",

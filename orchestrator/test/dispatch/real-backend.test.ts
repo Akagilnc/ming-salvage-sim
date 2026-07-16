@@ -2837,26 +2837,27 @@ describe("realBackend parseBlockedBy", () => {
     expect(parseBlockedBy([])).toEqual([]);
   });
 
-  it("drops malformed entries (missing/typed-wrong number or state)", () => {
-    expect(
+  it("throws on malformed entries (missing/typed-wrong number or state)", () => {
+    // #934 ID-003: deterministic schema errors fail closed — never soft-filter
+    // into a partial/empty blocker set that would admit work as unblocked.
+    expect(() =>
       parseBlockedBy([
         { number: 1, state: "open" },
-        { number: "2", state: "open" }, // number wrong type → dropped
-        { number: 3 }, // missing state → dropped
-        { state: "open" }, // missing number → dropped
-        null,
+        { number: "2", state: "open" },
       ]),
-    ).toEqual([{ number: 1, state: "open" }]);
+    ).toThrow(/blocked_by schema error: malformed entry at index 1/);
+    expect(() => parseBlockedBy([{ number: 3 }])).toThrow(/malformed entry/);
+    expect(() => parseBlockedBy([{ state: "open" }])).toThrow(/malformed entry/);
+    expect(() => parseBlockedBy([null])).toThrow(/malformed entry/);
   });
 
-  it("returns [] for a non-array response (future/odd shape, never throws)", () => {
-    // NOTE: this is the CONFIRMED-response empty path. A THROWN gh/transport
-    // error is NOT routed here — fetchBlockedBy fails CLOSED (S8 error) on a
-    // throw; only a confirmed non-array response degrades to [].
-    expect(parseBlockedBy({})).toEqual([]);
-    expect(parseBlockedBy("weird")).toEqual([]);
-    expect(parseBlockedBy(undefined)).toEqual([]);
-    expect(parseBlockedBy(null)).toEqual([]);
+  it("throws on a non-array response (schema error, never soft-empty)", () => {
+    // #934 ID-003: non-array must not become [] (would admit children as unblocked).
+    // Transport/`gh` throws stay outside this decoder; confirmed bad shape fails here.
+    expect(() => parseBlockedBy({})).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy("weird")).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy(undefined)).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy(null)).toThrow(/blocked_by schema error: expected array/);
   });
 });
 

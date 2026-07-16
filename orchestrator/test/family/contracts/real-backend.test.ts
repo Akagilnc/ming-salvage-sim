@@ -27,6 +27,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -598,6 +599,28 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // No verifyCwd, and resolveVerifyCwd returns undefined (non-Node diff).
     new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
     expect(calls).toEqual([]); // nothing installed, nothing run
+  });
+
+  it("ID-011: package.json probe operational error (ELOOP) fails closed — never soft-skip as non-Node", async () => {
+    // existsSync returns false on ELOOP; the old isNodeProject then treated the
+    // project as non-Node and legally skipped verify. Probe must throw instead.
+    const root = trackTempDir("verify-eloop-");
+    const loopPath = join(root, "package.json");
+    symlinkSync(loopPath, loopPath);
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        throw new Error("verify commands must not run after probe failure");
+      }
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    const backend = new SpyBackend(
+      opts(root, { resolveVerifyCwd: () => undefined }),
+    );
+    await expect(backend.runVerifyForTest()).rejects.toThrow(
+      /package\.json probe failed|ELOOP|too many levels/i,
+    );
   });
 
   it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", async () => {
