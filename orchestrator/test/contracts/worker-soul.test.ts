@@ -345,6 +345,18 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
+  it("scope_creep means inventing behavior, not where a real bug was found", () => {
+    for (const soulName of ["verify.md", "fixer.md"] as const) {
+      const soul = readSoul(soulName);
+      expect(soul).toMatch(/scope_creep|越权加戏/);
+      expect(soul).toMatch(/修法[\s\S]*authority \/ spec.*未授权.*新行为/);
+      expect(soul).toMatch(/早于.*fixed point/);
+      expect(soul).toMatch(/邻接文件/);
+      expect(soul).toMatch(/偶然.*发现/);
+      expect(soul).toMatch(/真问题.*fix_now/);
+    }
+  });
+
   it("production CMR prompts always require the configured <judge> Output.object tag", () => {
     // #930: production family courts bind Output.object({tag:"judge"}) — same
     // live seat as single-slice S3/S6. Prompt must require the judge tag.

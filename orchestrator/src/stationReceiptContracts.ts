@@ -79,7 +79,8 @@ function zodFail(prefix: string, err: z.ZodError): ContractResult<never> {
  * - `unconstitutional` — 违宪（与已拍定 ADR / owner 决策 / 验收文相抵）
  * - `over_defense` — 过度防御（护栏类处方答不上三问）
  * - `not_established` — 事实不成立（主张对不上真实代码）
- * - `scope_creep` — 越权加戏（修它 = 发明 spec 里没有的行为）
+ * - `scope_creep` — 越权加戏（修法发明 authority/spec 未授权的新行为；
+ *   bug 早于 fixed point、位于邻接文件或偶然发现均不属于此理由）
  *
  * Aligns with ADR 0130 fixer second-gate refuse channel: same four reasons,
  * different seat (judge kill table vs fixer refuse). Hard-to-fix is never a reason.
