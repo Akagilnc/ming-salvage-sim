@@ -1,0 +1,5 @@
+# Constitution files — owner review required to land on main
+# (owner ruling 2026-07-16: souls protection = CODEOWNERS + ro-mount;
+#  ADR/CONTEXT extension explicitly rejected as over-defense — do not add.)
+/orchestrator/image/souls/ @Akagilnc
+/orchestrator/image/home/CLAUDE.md @Akagilnc
