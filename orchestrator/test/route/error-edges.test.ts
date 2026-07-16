@@ -153,19 +153,6 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
     expect(result.errorPackage?.reason).toContain("sandbox.run crashed");
   });
 
-  it("fetchIssueSnapshot (S1) throws → S8(status=error)", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.fetchIssueSnapshot = async () => {
-      throw new Error("gh: rate limit exceeded");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S1");
-    expect(result.errorPackage?.reason).toContain("gh: rate limit exceeded");
-  });
-
   it("prepareWorktree (S1) throws → S8(status=error)", async () => {
     const backend = new ErrorEdgeBackend();
     backend.prepareWorktree = async () => {

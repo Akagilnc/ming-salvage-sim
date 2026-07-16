@@ -160,14 +160,15 @@ describe("S0 input gate — reject cases (#248)", () => {
     // exactly the "no brief" case — S0 still advances to S1.
     const backend = new GateTestBackend({ ...COMPLIANT_META });
 
-    // S0 does NOT reject on a missing brief — it advances to S1 (fetchIssueSnapshot).
+    // S0 does NOT reject on a missing brief — it advances to S1 (prepareWorktree).
     // It resolves (the stub coder's committed:false routes to an S8 error RESULT,
     // never a throw), so `await` it directly — NO `.catch` (online R1 Gemini): a
     // bare `.catch(()=>{})` would swallow a real reject (e.g. an S0/S1 runtime crash,
     // or a regression that re-adds the brief throw), masking the very failure this
     // test guards against.
     await runOrchestrator({ issueNumber: 248, backend });
-    expect(backend.calls).toContain("fetchIssueSnapshot(248)");
+    // #936: snapshot dual court deleted — S1 prepares worktree only.
+    expect(backend.calls).toContain("prepareWorktree(248, main)");
     expect(backend.calls.length).toBeGreaterThan(1); // not stopped at the gate
   });
 
@@ -223,7 +224,7 @@ describe("S0 input gate — reject cases (#248)", () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("S0 input gate — pass case (#248)", () => {
-  it("compliant leaf (no parent) passes S0 and calls fetchIssueSnapshot in S1", async () => {
+  it("compliant leaf (no parent) passes S0 and prepares worktree in S1", async () => {
     // We only need to see S1 fire; we don't need the full run to succeed.
     // Use a backend whose S1+ methods record calls but runStep returns a stub
     // that lets the ADR 0030 worker sequence proceed.
@@ -244,17 +245,15 @@ describe("S0 input gate — pass case (#248)", () => {
     const backend = new CompliantBackend();
     const result = await runOrchestrator({ issueNumber: 248, backend });
 
-    // Gate let it through → S1 load_context ran.
-    expect(backend.calls).toContain("fetchIssueSnapshot(248)");
+    // Gate let it through → S1 prepareWorktree ran (#936: no snapshot court).
+    expect(backend.calls).toContain("prepareWorktree(248, main)");
     // Full run succeeded.
     expect(result.status).toBe("success");
   });
 
-  it("compliant meta passes S0 and calls S0 then S1 in order (gate-to-context sequencing)", async () => {
-    // leafWithParentMeta is byte-identical to COMPLIANT_META: IssueMeta has no
-    // parent field, so this test cannot verify parent mapping. What it actually
-    // pins is that S0 calls fetchIssueMeta first, then S1 calls fetchIssueSnapshot —
-    // i.e. the gate-to-context call ordering is correct.
+  it("compliant meta passes S0 then S1 in order (gate-to-worktree sequencing)", async () => {
+    // Pins that S0 calls fetchIssueMeta, then S1 calls prepareWorktree —
+    // i.e. the gate-to-worktree call ordering is correct (#936).
     const leafWithParentMeta: IssueMeta = {
       ...COMPLIANT_META,
       number: 248, // same shape as COMPLIANT_META; parent-in-GitHub is outside IssueMeta
@@ -278,9 +277,12 @@ describe("S0 input gate — pass case (#248)", () => {
     const result = await runOrchestrator({ issueNumber: 248, backend });
 
     expect(result.status).toBe("success");
-    // S0 only reads lightweight meta — fetchIssueSnapshot is S1, not S0.
-    expect(backend.calls[0]).toBe("fetchIssueMeta(248)");
-    expect(backend.calls[1]).toBe("fetchIssueSnapshot(248)");
+    // Scene discovery first; then S0 meta; S1 prepareWorktree (no snapshot).
+    const metaIdx = backend.calls.indexOf("fetchIssueMeta(248)");
+    const wtIdx = backend.calls.indexOf("prepareWorktree(248, main)");
+    expect(metaIdx).toBeGreaterThanOrEqual(0);
+    expect(wtIdx).toBeGreaterThan(metaIdx);
+    expect(backend.calls).not.toContain("fetchIssueSnapshot(248)");
   });
 });
 
@@ -323,7 +325,7 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
     });
     // The ledger-merged口径 excused #247, so the gate did NOT throw — S1 ran and
     // the run reached success (no re-rejection of a just-released child).
-    expect(backend.calls).toContain("fetchIssueSnapshot(248)");
+    expect(backend.calls.some((c) => c.startsWith("prepareWorktree(248"))).toBe(true);
     expect(result.status).toBe("success");
   });
 

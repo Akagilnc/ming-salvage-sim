@@ -135,10 +135,7 @@ describe("#422 model route presets", () => {
       resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] }),
     ).toThrow(/unknown cmr review leg slug/i);
     expect(() =>
-      activeModelRoute({
-        ORCHESTRATOR_ROUTE: "normal",
-        ORCHESTRATOR_VERIFY_MODEL: "gpt-5.5",
-      }),
+      resolveRouteModels("normal", { verify: "gpt-5.5" }),
     ).toThrow(/unknown model slug/i);
   });
 
@@ -260,36 +257,37 @@ describe("#422 model route presets", () => {
     ]);
   });
 
-  it("reads ORCHESTRATOR_ROUTE plus slot env overrides for runtime selection", () => {
+  it("reads ORCHESTRATOR_ROUTE only; slot/CMR env overrides are ignored (#936)", () => {
     expect(
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
       }).slots.coder,
     ).toBe("grok-4.5");
 
-    expect(() =>
+    // Leftover env must NOT restaff (override deleted).
+    expect(
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
         ORCHESTRATOR_SHIP_MODEL: "sonnet",
-      }),
-    ).toThrow(/tight route violation/i);
+      }).slots.ship,
+    ).toBe("gpt-5.6-sol-low");
 
     expect(
       modelForSlot("ship", {
         ORCHESTRATOR_ROUTE: "normal",
         ORCHESTRATOR_SHIP_MODEL: "gpt-5.6-terra",
       }),
-    ).toBe("gpt-5.6-terra");
+    ).toBe("sonnet");
 
-    expect(() =>
+    expect(
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
         ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.6-sol,opus",
-      }),
-    ).toThrow(/tight route violation/i);
+      }).legCollections.cmrReview.map((l) => l.slug),
+    ).toEqual(["gpt-5.6-sol", "grok-4.5", "agy"]);
   });
 
-  it("keeps route override slugs separate from worker JSON leg objects", () => {
+  it("ignores worker JSON leg env; only route presets staff CMR legs (#936)", () => {
     const route = activeModelRoute({
       ORCHESTRATOR_ROUTE: "claude-tight",
       ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify([
@@ -301,16 +299,6 @@ describe("#422 model route presets", () => {
       "gpt-5.6-sol",
       "grok-4.5",
       "agy",
-    ]);
-
-    const overridden = activeModelRoute({
-      ORCHESTRATOR_ROUTE: "normal",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.6-sol", \'opus\'',
-    });
-
-    expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.6-sol",
-      "opus",
     ]);
   });
 
@@ -422,10 +410,10 @@ describe("#422 model route presets", () => {
     ]);
   });
 
-  it("turns tight-route violations into a structured non-interactive stop decision", () => {
+  it("turns tight-route violations into a structured fail-closed stop decision", () => {
     const route = resolveRouteModels("claude-tight", { verify: "opus" });
 
-    const decision = applyTightRoutePolicy(route, { interactive: false });
+    const decision = applyTightRoutePolicy(route);
 
     expect(decision.kind).toBe("stop");
     if (decision.kind === "stop") {
@@ -434,113 +422,39 @@ describe("#422 model route presets", () => {
     }
   });
 
-  it("lets the interactive policy seam warn and continue only on explicit confirmation", () => {
+  it("interactive continue seam is deleted — confirmation cannot bypass tight policy (#936)", async () => {
     const route = resolveRouteModels("claude-tight", { verify: "opus" });
-    const warnings: string[] = [];
-
     const declined = applyTightRoutePolicy(route, {
       interactive: true,
-      warn: (message) => warnings.push(message),
-      confirm: () => false,
-    });
-    const accepted = applyTightRoutePolicy(route, {
-      interactive: true,
-      warn: (message) => warnings.push(message),
       confirm: () => true,
     });
-
-    expect(declined.kind).toBe("stop");
-    expect(accepted.kind).toBe("continue");
-    expect(warnings.some((message) => message.includes("verify=opus(claude)"))).toBe(true);
-  });
-
-  it("runtime tight-route policy accepts an async interactive confirmation seam", async () => {
-    const route = resolveRouteModels("claude-tight", { verify: "opus" });
-    const decision = await applyRuntimeTightRoutePolicy(route, {
+    const runtime = await applyRuntimeTightRoutePolicy(route, {
       interactive: true,
       confirm: async () => true,
     });
-
-    expect(decision.kind).toBe("continue");
+    expect(declined.kind).toBe("stop");
+    expect(runtime.kind).toBe("stop");
   });
 
-  it("runner startup returns a structured non-interactive escalate before backend work", async () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
-    vi.resetModules();
-
-    class BackendShouldNotRun implements Backend {
-  async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
-    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-  }
-      async findResumeState(): Promise<undefined> {
-        throw new Error("backend should not run");
-      }
-      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
-        throw new Error("backend should not run");
-      }
-      async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
-        throw new Error("backend should not run");
-      }
-      async fetchIssueSnapshot(_issueNumber: number): Promise<IssueSnapshot> {
-        throw new Error("backend should not run");
-      }
-      async prepareWorktree(): Promise<WorktreeHandle> {
-        throw new Error("backend should not run");
-      }
-      async writeSnapshot(): Promise<void> {}
-      async runStep(): Promise<StepOutput> {
-        throw new Error("backend should not run");
-      }
-      async writeLedger(): Promise<void> {}
+  it("runner startup fails closed on tight violation before productive backend work", async () => {
+    // Programmatic tight violation is the only way left after env overrides die.
+    const route = resolveRouteModels("claude-tight", { verify: "opus" });
+    const decision = applyTightRoutePolicy(route);
+    expect(decision.kind).toBe("stop");
+    if (decision.kind === "stop") {
+      expect(decision.escalation.diagnosis).toContain("verify=opus(claude)");
     }
-
-    const { runOrchestrator } = await import("../../src/runner.js");
-    const result = await runOrchestrator({
-      issueNumber: 422,
-      backend: new BackendShouldNotRun(),
-    });
-
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S0");
-    expect(result.errorPackage?.reason).toContain("verify=opus(claude)");
   });
 
-  it("family runner startup returns a structured non-interactive escalation before backend work", async () => {
+  it("family admit uses preset route only — leftover slot env does not restaff", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
     vi.resetModules();
 
-    const familyBackend: FamilyBackend = {
-      async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<MergeResult> {
-        throw new Error("family backend should not run");
-      },
-      async appendFamilyLedger(_entry: FamilyLedgerEntry): Promise<void> {
-        throw new Error("family backend should not run");
-      },
-      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
-        throw new Error("family backend should not run");
-      },
-    };
-    const singleSliceBackend = {
-      async findResumeState(): Promise<undefined> {
-        throw new Error("single slice backend should not run");
-      },
-    } as unknown as Backend;
-
-    const { runFamily } = await import("../../src/family/runner.js");
-    const result = await runFamily({
-      epic: { issue: 376, children: [{ issue: 428, blockedBy: [] }] },
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/376-base",
-    });
-
-    expect(result.status).toBe("escalated");
-    expect(result.familyBase).toBe("family/376-base");
-    expect(result.escalation?.reason).toMatch(/tight route violation/i);
-    expect(result.escalation?.diagnosis).toContain("verify=opus(claude)");
-    expect(result.children).toEqual([{ issue: 428, status: "skipped" }]);
+    const { resolveActiveModelRoute: resolve } = await import("../../src/modelRoutes.js");
+    const route = resolve();
+    // Env asked for opus verify; preset keeps sol (override deleted).
+    expect(route.slots.verify).toBe("gpt-5.6-sol");
+    expect(route.tightFamilyViolations).toEqual([]);
   });
 });

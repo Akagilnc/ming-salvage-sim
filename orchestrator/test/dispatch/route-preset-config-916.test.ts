@@ -184,7 +184,7 @@ describe("#916 route presets config load + priority", () => {
     expect(route.slots.ship).toBe("gpt-5.6-sol-low");
   });
 
-  it("env slot overrides beat config file preset values", () => {
+  it("negative: slot env overrides no longer beat config file preset (#936)", () => {
     const path = writePresetsFile({
       "env-wins": {
         slots: fullSlots(),
@@ -199,7 +199,9 @@ describe("#916 route presets config load + priority", () => {
     resetRoutePresetsCacheForTests();
 
     const route = activeModelRoute();
-    expect(route.slots.coder).toBe("gpt-5.6-terra");
+    // Preset coder from fullSlots(), not env.
+    expect(route.slots.coder).toBe(fullSlots().coder);
+    expect(route.slots.coder).not.toBe("gpt-5.6-terra");
     expect(route.slots.ship).toBe("gpt-5.6-sol-low");
   });
 

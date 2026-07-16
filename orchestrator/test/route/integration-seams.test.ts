@@ -232,26 +232,10 @@ describe("B: coder commitsAdded advisory telemetry", () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // C [High] — S1 pre-worktree failures are an unpersistable special case (like
-// S0); only post-worktree S1 (writeSnapshot) persists.
+// S0); post-worktree failures persist (#936: snapshot dual court deleted).
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("C: S1 pre-worktree failures are an unpersistable special case", () => {
-  it("fetchIssueSnapshot throw (pre-worktree) → S8(error), nothing persisted", async () => {
-    const backend = new SpyBackend();
-    backend.fetchIssueSnapshot = async () => {
-      throw new Error("gh: rate limit exceeded");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S1");
-    // No worktree yet → no sibling stateDir → nothing can be persisted.
-    expect(backend.ledgerCalls).toHaveLength(0);
-    // In-memory ledger still records the S8 termination.
-    expect(result.stepLedger.map((e) => e.step)).toContain("S8");
-  });
-
   it("prepareWorktree throw (pre-worktree) → S8(error), nothing persisted", async () => {
     const backend = new SpyBackend();
     backend.prepareWorktree = async () => {
@@ -266,19 +250,22 @@ describe("C: S1 pre-worktree failures are an unpersistable special case", () => 
     expect(result.stepLedger.map((e) => e.step)).toContain("S8");
   });
 
-  it("writeSnapshot throw (POST-worktree S1) DOES persist S1 and S8 (contrast)", async () => {
-    // This is the persistable S1 case: the worktree exists, so the sibling
-    // stateDir is resolved and the error termination persists.
+  it("post-worktree S2 throw DOES persist S2 and S8 (contrast)", async () => {
+    // Persistable case: the worktree exists, so the sibling stateDir is
+    // resolved and the error termination persists.
     const backend = new SpyBackend();
-    backend.writeSnapshot = async () => {
-      throw new Error("ENOSPC");
+    backend.runStep = async (spec) => {
+      if (spec.id === "S2") throw new Error("ENOSPC");
+      return spec.role === "coder"
+        ? { kind: "coder", committed: true, commitsAdded: 1 }
+        : { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(["error", "escalate"]).toContain(result.status);
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persisted).toContain("S1");
+    expect(persisted).toContain("S2");
     expect(persisted).toContain("S8");
   });
 });

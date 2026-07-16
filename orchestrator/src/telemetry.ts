@@ -366,7 +366,10 @@ export interface TelemetryCoderRecProvenance {
   readonly selected: string | null;
   /** True when selected is not the head of the order. */
   readonly wasFallback: boolean | null;
-  /** True when ORCHESTRATOR_CODER_MODEL env forced the coder. */
+  /**
+   * Historical: env slot override forced the coder. Always false after #936
+   * (ID-002 deleted per-slot model env overrides).
+   */
   readonly envOverride: boolean | null;
 }
 
@@ -1794,8 +1797,7 @@ function coderRecProvenance(
   ctx: DispatchContext,
 ): TelemetryCoderRecProvenance | null {
   const body = ctx.issueSnapshot?.body;
-  const envRaw = process.env.ORCHESTRATOR_CODER_MODEL?.trim();
-  const envOverride = envRaw !== undefined && envRaw.length > 0;
+  // #936: env slot override deleted — Coder-Rec provenance is issue body only.
   let order: readonly string[] | null = null;
   let primarySlug: string | null = null;
   if (body !== undefined && body.length > 0) {
@@ -1808,8 +1810,8 @@ function coderRecProvenance(
       primarySlug = null;
     }
   }
-  // Non-coder legs with no Coder-Rec body and no env override: nothing to stamp.
-  if (order === null && !envOverride && spec.kind !== "coder") {
+  // Non-coder legs with no Coder-Rec body: nothing to stamp.
+  if (order === null && spec.kind !== "coder") {
     return null;
   }
   const selected = spec.model;
@@ -1822,7 +1824,7 @@ function coderRecProvenance(
     order,
     selected,
     wasFallback,
-    envOverride,
+    envOverride: false,
   };
 }
 

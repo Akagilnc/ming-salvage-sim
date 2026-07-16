@@ -502,15 +502,19 @@ describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
     expect(cutRefFor("main", /*fetchedOk*/ true)).toBe("origin/main");
   });
 
-  it("falls back to the local <base> when the fetch failed (offline / local-only)", () => {
-    // A fetch failure (offline, or a local-only base with no remote) must not
-    // block the cut — fall back to the local ref rather than a missing origin/.
-    expect(cutRefFor("main", /*fetchedOk*/ false)).toBe("main");
+  it("falls back to the local <base> only when there is no remote (#936 ID-009)", () => {
+    expect(cutRefFor("main", /*fetchedOk*/ false, false, { hasRemote: false })).toBe("main");
+  });
+
+  it("refuses stale local base when remote is configured and fetch failed (#936)", () => {
+    expect(() =>
+      cutRefFor("main", /*fetchedOk*/ false, false, { hasRemote: true }),
+    ).toThrow(/refusing stale local base fallback/i);
   });
 
   it("preserves a non-default base name in both branches", () => {
     expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
-    expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
+    expect(cutRefFor("release-1.x", false, false, { hasRemote: false })).toBe("release-1.x");
   });
 
   // #291: a family base is a LOCAL branch on the dedicated clone (ADR 0022

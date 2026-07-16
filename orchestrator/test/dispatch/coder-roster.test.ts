@@ -389,21 +389,20 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     expect(applied.route.slots.coder).toBe(base.slots.coder);
   });
 
-  it("lets ORCHESTRATOR_CODER_MODEL win over the design-time marking", () => {
+  it("negative: leftover CODER_MODEL env does not skip Coder-Rec (#936)", () => {
     const base = resolveRouteModels("normal", { coder: "sonnet" });
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
       { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(true);
-    expect(applied.route.slots.coder).toBe("sonnet");
+    expect(applied.skippedForEnvOverride).toBe(false);
+    // Coder-Rec wins; env override is deleted.
+    expect(applied.route.slots.coder).toBe("grok-4.5");
   });
 
-  it("#906 S1: env override still validates a present Coder-Rec mark (no silent skip)", () => {
+  it("#906 S1: broken Coder-Rec mark fails closed even with leftover env", () => {
     const base = resolveRouteModels("normal", { coder: "sonnet" });
-    // Dirty mark must throw even when env owns the coder slot — otherwise
-    // mid-run relay bare-calls resolveCoderRecOrder and dies uncaught.
     expect(() =>
       applyCoderRecToRoute(
         base,
@@ -418,17 +417,16 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
         { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
-    // Valid mark + env: slot stays env/route; no throw.
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
       { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(true);
-    expect(applied.route.slots.coder).toBe("sonnet");
+    expect(applied.skippedForEnvOverride).toBe(false);
+    expect(applied.route.slots.coder).toBe("grok-4.5");
   });
 
-  it("preserves an explicit coderFix env override while applying Coder-Rec to coder", () => {
+  it("Coder-Rec rewrites both coder and coderFix (no env preserve path) (#936)", () => {
     const base = resolveRouteModels("normal", { coderFix: "opus" });
     const applied = applyCoderRecToRoute(
       base,
@@ -438,7 +436,7 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
 
     expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.route.slots.coder).toBe("grok-4.5");
-    expect(applied.route.slots.coderFix).toBe("opus");
+    expect(applied.route.slots.coderFix).toBe("grok-4.5");
   });
 
   it("recomputes tight-family violations after Coder-Rec substitutes a tight-family coder", () => {
@@ -801,28 +799,18 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(backend.coderModels[0]).toBe("grok-4.5");
   });
 
-  it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
+  it("resume: fetchIssueMeta throw degrades to route preset (no snapshot dual court) (#936)", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
-    class MetaThrowSnapshotOkBackend extends CoderRecResumeAfterS5Backend {
+    class MetaThrowBackend extends CoderRecResumeAfterS5Backend {
       override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
         throw new Error("meta unavailable");
       }
-      override async fetchIssueSnapshot(
-        issueNumber: number,
-      ): Promise<IssueSnapshot> {
-        return {
-          number: issueNumber,
-          body: CODER_REC_BODY,
-          comments: [],
-          agentBrief: "",
-        };
-      }
     }
-    const backend = new MetaThrowSnapshotOkBackend();
+    const backend = new MetaThrowBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // Snapshot body supplies Coder-Rec; first entry stays (no round advance).
-    expect(backend.coderModels[0]).toBe("grok-4.5");
+    // #936: no snapshot fallback — continue with route preset coder.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
   });
 
   it("resume: both re-fetch throws degrade to route preset without error termination", async () => {

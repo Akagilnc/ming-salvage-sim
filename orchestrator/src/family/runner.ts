@@ -27,16 +27,18 @@ import { runOrchestrator } from "../runner.js";
 import { mintRunId } from "../runId.js";
 import {
   applyRelayBatonToRoute,
-  applyRuntimeTightRoutePolicy,
   familyRelaySlotsForWall,
   knownLiveBillingPoolsFromRoute,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
-  resolveActiveModelRoute,
   routeSmokeFailure,
   type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import {
+  admitRouteFromEnv,
+  admissionRouteFailureDiagnosis,
+} from "../admissionPreflight.js";
 import {
   CoderRecError,
   lookupCoderRosterEntry,
@@ -1307,56 +1309,35 @@ export async function runFamily(
   // A durable family sidecar is shared across restarts, so it needs an
   // invocation-scoped identity just like the single-slice runner.
   const runId = mintRunId();
-  let modelRoute: ResolvedModelRoute;
-  try {
-    modelRoute = resolveActiveModelRoute();
-  } catch (err) {
-    const reason =
-      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+  // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
+  // No env slot overrides, no interactive continue.
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
     const children = input.epic.children.map((child) => ({
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
     return {
       status: "escalated",
       familyBase: input.familyBase,
       escalation: {
-        reason: "startup route failure",
-        diagnosis: reason,
+        reason: admitted.escalation.reason,
+        diagnosis,
       },
       stopSummary: infraFailureStopSummary({
-        summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
-        repairHint: "repair the family runner route environment before rerun",
+        summary: `${admitted.escalation.reason}: ${diagnosis}`,
+        repairHint:
+          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
       }),
       children,
       ...(input.epic.admissionSkipped !== undefined &&
       input.epic.admissionSkipped.length > 0
         ? { admissionSkipped: input.epic.admissionSkipped }
-      : {}),
+        : {}),
     };
   }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator:family] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
-    return {
-      status: "escalated",
-      familyBase: input.familyBase,
-      escalation: routePolicy.escalation,
-      stopSummary: familyStopSummary({
-        status: "escalated",
-        familyBase: input.familyBase,
-        children,
-        escalationReason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
-      }),
-      children,
-    };
-  }
+  let modelRoute: ResolvedModelRoute = admitted.route;
   if (typeof singleSliceBackend.smokeModelRoute !== "function") {
     const reason =
       "route smoke executor is required before family dispatch; backend did not provide smokeModelRoute";

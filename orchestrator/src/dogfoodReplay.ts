@@ -1978,6 +1978,8 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
 }
 
 async function routeEnvMismatchReplay(): Promise<SeamReplay> {
+  // #936 / #934 ID-002: CMR leg env override deleted — leftover export is
+  // ignored; route stays on the preset (no restaff, no JSON/CSV dual parser).
   const backend = new DogfoodCmrFamilyBackend("route-env-mismatch-head");
   const result = await withRouteEnv(
     {
@@ -1991,39 +1993,35 @@ async function routeEnvMismatchReplay(): Promise<SeamReplay> {
         familyBackend: backend,
       }),
   );
-  const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  const failure = abort?.reason ?? "";
-  if (
-    result.ok ||
-    abort?.stopSummary?.reason !== "cmr_failed" ||
-    !failure.includes("must be comma-separated CMR leg slugs") ||
-    !abort.stopSummary.repairHint?.includes("route environment")
-  ) {
+  // Env override ignored → verify/cmr proceeds on preset (not a route-parse abort).
+  if (!result.ok) {
     throw new Error(
-      "dogfood route env mismatch replay did not fail through runVerifyCmr",
+      "dogfood route env mismatch replay expected preset route to ignore deleted CMR env override",
     );
   }
   return {
-    stopSummary: abort.stopSummary,
+    stopSummary: successStopSummary(),
     sourceEvidence: {
       seam: "family_verify_cmr_route_env",
-      helperSeam: "model_route_cmr_leg_env",
-      envShape: "json-written-csv-read",
-      failure,
-      status: "aborted",
+      helperSeam: "model_route_deleted_slot_env_ignored",
+      envShape: "ignored-cmr-leg-override",
+      status: "ok",
       dispatches: backend.dispatches,
     },
   };
 }
 
 async function startupRouteViolationReplay(): Promise<SeamReplay> {
+  // Programmatic tight violation (presets + Coder-Rec only in production).
   const route = resolveRouteModels("claude-tight", {
     coder: "sonnet",
   });
-  const decision = applyTightRoutePolicy(route, { interactive: false });
+  const decision = applyTightRoutePolicy(route);
   if (decision.kind !== "stop") {
     throw new Error("dogfood startup route replay did not stop on tight violation");
   }
+  // #936: leftover ORCHESTRATOR_CODER_MODEL is ignored — preset admits; prove
+  // public ignition does not restaff from deleted env override.
   const backend = new DogfoodSingleSliceBackend();
   const result = await withRouteEnv(
     {
@@ -2036,14 +2034,10 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
         backend,
       }),
   );
-  if (
-    result.status !== "escalate" ||
-    result.stopSummary.reason !== "infra_failure" ||
-    !result.stopSummary.summary.includes("tight route violation") ||
-    backend.dispatched.length > 0
-  ) {
+  // Env asked for sonnet; preset keeps grok — run is not a tight-violation stop.
+  if (result.status === "escalate" && result.stopSummary.summary.includes("tight route violation")) {
     throw new Error(
-      "dogfood startup route replay did not fail through runOrchestrator",
+      "dogfood startup route replay must not restaff from deleted CODER_MODEL env",
     );
   }
   return {
@@ -2056,6 +2050,7 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
       diagnosis: decision.escalation.diagnosis,
       status: result.status,
       dispatchedBeforeAbort: backend.dispatched,
+      envOverrideIgnored: true,
     },
   };
 }
@@ -2722,8 +2717,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-route-env-format-mismatch",
       issue: 376,
-      title: "CMR leg env writer/reader mismatch fails closed",
-      classification: "infra_failure",
+      title: "CMR leg env override deleted — leftover export ignored (#936)",
+      classification: "success",
       stopSummary: routeEnvMismatchSource.stopSummary,
       source: "family",
       sourceStopSummary: routeEnvMismatchSource.stopSummary,
@@ -2742,8 +2737,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-startup-route-tight-violation",
       issue: 376,
-      title: "startup route violation is structured with repair hint",
-      classification: "infra_failure",
+      title:
+        "startup pure tight policy + public ignition ignores deleted slot env (#936)",
+      classification: "success",
       stopSummary: startupRouteViolationSource.stopSummary,
       source: "runner",
       sourceStopSummary: startupRouteViolationSource.stopSummary,

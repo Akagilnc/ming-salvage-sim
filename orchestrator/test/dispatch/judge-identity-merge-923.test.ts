@@ -71,13 +71,13 @@ describe("#923 judge identity merge — model-route slot", () => {
 
   it("S3/S6 stepSpecs take their model from the verify slot", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
     vi.resetModules();
 
     const { stepSpecsForEnv } = await import("../../src/runner.js");
     const specs = stepSpecsForEnv();
-    expect(specs.S3.model).toBe("opus");
-    expect(specs.S6.model).toBe("opus");
+    // normal preset: verify = gpt-5.6-sol
+    expect(specs.S3.model).toBe("gpt-5.6-sol");
+    expect(specs.S6.model).toBe("gpt-5.6-sol");
     // #919 S2 / #923: model-route slot + seat role/soul are all verify.
     // "reviewer" remains multi-model leg-soul vocabulary only.
     expect(specs.S3.role).toBe("verify");
@@ -86,22 +86,21 @@ describe("#923 judge identity merge — model-route slot", () => {
     expect(specs.S6.soul).toBe("verify");
   });
 
-  it("ORCHESTRATOR_VERIFY_MODEL is the sole override for the judge seat", () => {
+  it("ORCHESTRATOR_VERIFY_MODEL env override is deleted (#936); preset owns judge seat", () => {
     expect(
       modelForSlot("verify", {
         ORCHESTRATOR_ROUTE: "normal",
         ORCHESTRATOR_VERIFY_MODEL: "opus",
       }),
-    ).toBe("opus");
+    ).toBe("gpt-5.6-sol");
     expect(
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "normal",
         ORCHESTRATOR_VERIFY_MODEL: "gpt-5.6-terra",
       }).slots.verify,
-    ).toBe("gpt-5.6-terra");
-    expect(routeOverridesFromEnv({ ORCHESTRATOR_VERIFY_MODEL: "opus" })).toEqual({
-      verify: "opus",
-    });
+    ).toBe("gpt-5.6-sol");
+    // routeOverridesFromEnv always empty after #936.
+    expect(routeOverridesFromEnv({ ORCHESTRATOR_VERIFY_MODEL: "opus" })).toEqual({});
   });
 
   it("ORCHESTRATOR_REVIEWER_MODEL set → fail-loud migration hint (never silent ignore)", () => {

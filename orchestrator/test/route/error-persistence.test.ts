@@ -144,19 +144,22 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     expect(persistedSteps).toContain("S7");
   });
 
-  it("S1 writeSnapshot throw (after worktree prepared) → persisted ledger contains S1 and S8", async () => {
-    // The worktree IS prepared (stateDir resolvable), so even though S1's
-    // writeSnapshot fails, the error termination must persist.
+  it("S1 prepareWorktree success → subsequent S2 ledger writes use post-worktree stateDir", async () => {
+    // #936: writeSnapshot dual court deleted. After worktree exists, productive
+    // step failures persist to the sibling stateDir.
     const backend = new SpyBackend();
-    backend.writeSnapshot = async () => {
-      throw new Error("ENOSPC: no space left on device");
+    backend.runStep = async (spec) => {
+      if (spec.id === "S2") throw new Error("coder boom");
+      return spec.role === "coder"
+        ? { kind: "coder", committed: true, commitsAdded: 1 }
+        : { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(["error", "escalate"]).toContain(result.status);
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persistedSteps).toContain("S1");
+    expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
   });
 

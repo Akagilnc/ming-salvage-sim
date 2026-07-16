@@ -320,7 +320,7 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   throw new Error(
     `unknown cmr review leg slug "${slug}". Add a runnable worker model to ` +
       `MODEL_SLUG_REGISTRY, or explicitly register a non-worker CMR leg before ` +
-      `using it in ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS.`,
+      `selecting it in a route preset.`,
   );
 }
 
