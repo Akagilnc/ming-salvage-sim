@@ -34,14 +34,17 @@ import {
 export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 
 /**
- * Live production constructors: quota_wall, capacity, mechanical_retry_exhausted, pool_dead.
- * Free-log hang/self_report/phase_complete constructors deleted (#937); retired literals
- * remain only for historical ledger rows.
+ * Live production constructors: quota_wall (forkQuotaWall), capacity (runner).
+ * Free-log hang/self_report/phase_complete and mechanical_retry_exhausted baton
+ * constructors deleted (#937 / #934 ID-004); retired literals remain only for
+ * historical ledger rows.
  */
 export type RelayHandoffTrigger =
   | "quota_wall"
   | "capacity"
+  /** @deprecated no production constructor (#937); ledger history only. */
   | "pool_dead"
+  /** @deprecated process-root exhaustion is canonical failed edge, not baton (#937 ID-004). */
   | "mechanical_retry_exhausted"
   /** @deprecated free-log hang constructor deleted (#937); ledger history only. */
   | "hang_with_live_pool"
@@ -291,15 +294,10 @@ export function forkQuotaWallAt683Point(input: {
  * #937: decideRelayAfterIdle (idle probe → kill pid tree → hang/relay) deleted
  * with idle kill / PID-tree machinery (#934 ID-006 / ID-007). Quota-wall fork
  * remains {@link forkQuotaWallAt683Point}; resource handoff is
- * {@link applyResourceFailureHandoff}.
+ * {@link applyResourceFailureHandoff}. isRelayCandidateExhaustion deleted —
+ * process-root exhaustion is the phase's canonical failed edge (ID-004), not a
+ * baton handoff.
  */
-
-/** True when a mechanical-retry exhaustion reason is a relay candidate (#686). */
-export function isRelayCandidateExhaustion(
-  reason: string | undefined,
-): boolean {
-  return typeof reason === "string" && /relay candidate/i.test(reason);
-}
 
 export interface ApplyResourceFailureHandoffInput {
   readonly trigger: RelayHandoffTrigger;

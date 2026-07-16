@@ -132,8 +132,9 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(sleeps).toEqual([...DISPATCH_RETRY_BACKOFF_MS]);
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") {
-      // #686 isRelayCandidateExhaustion: exhaustion remains a relay candidate.
-      expect(result.reason).toMatch(/after 6 dispatch attempts; relay candidate/i);
+      // #934 ID-004 / #937: canonical failed edge — attempt count only, no baton.
+      expect(result.reason).toMatch(/after 6 dispatch attempts/i);
+      expect(result.reason).not.toMatch(/relay candidate/i);
     }
   });
 

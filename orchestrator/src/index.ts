@@ -332,7 +332,6 @@ export {
   countRelayHandoffsInLedger,
   forkQuotaWallAt683Point,
   isCapacityRelayError,
-  isRelayCandidateExhaustion,
   isRelayChainReadyForReviewGate,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,

@@ -166,8 +166,8 @@ export interface MechanicalRetryOptions {
  *
  * #686/#937: resource failures (quota / capacity) and adoption/termination
  * failures are NEVER retried here and NEVER trigger `resetBeforeRetry`.
- * On process-failure exhaustion the annotated result is a relay *candidate*
- * (#686 isRelayCandidateExhaustion) rather than a silent durable abort.
+ * On process-failure exhaustion the result is the phase's canonical failed
+ * edge (#934 ID-004) — runner escalateTermination, not a baton handoff.
  */
 export async function withMechanicalRetry(
   spec: WorkerSpec,
@@ -186,7 +186,7 @@ export async function withMechanicalRetry(
       kind: "failed",
       reason:
         `mechanical redispatch budget already exhausted ` +
-        `(after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts; relay candidate)`,
+        `(after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`,
     };
   }
   let last: WorkerResult | undefined;
@@ -266,12 +266,12 @@ export async function withMechanicalRetry(
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
-  // Exhaustion annotates attempt count and remains a #686 relay candidate
-  // (isRelayCandidateExhaustion). Not a park; runner may hand off baton.
+  // #934 ID-004 / #937: exhaustion is the phase's canonical failed edge —
+  // attempt count only (no relay-candidate / baton handoff vocabulary).
   const attempts = MAX_DISPATCH_ATTEMPTS;
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
-    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts; relay candidate)`,
+    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
   };
 }
 
