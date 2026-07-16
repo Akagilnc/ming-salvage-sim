@@ -15,6 +15,7 @@
 import {
   existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -40,6 +41,13 @@ import {
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
 } from "../../src/relayDispatch.js";
+import {
+  RECEIPT_MAX_RETRIES,
+  receiptMaxRetriesForProvider,
+  workerReceiptOutput,
+  coderReceiptOutput,
+} from "../../src/receiptRecovery.js";
+import { coderStationReceiptSchema } from "../../src/stationReceiptContracts.js";
 import { terminateSpawnedChild } from "../../src/workerMonitor.js";
 import type {
   Backend,
@@ -69,6 +77,31 @@ function coderSpec(): WorkerSpec {
     soul: "coder",
     toolchain: [],
   } as WorkerSpec;
+}
+
+function quotaWallError(now: Date, resetAt: Date): QuotaWaitForResetError {
+  return new QuotaWaitForResetError({
+    disposition: {
+      kind: "wait_for_reset",
+      pool: "grok",
+      resetAt,
+      reason: "quota limited",
+    },
+    applied: {
+      killed: false,
+      ledgerEntry: {
+        event: "quota_wait_for_reset",
+        pool: "grok",
+        resetAt: resetAt.toISOString(),
+        reason: "quota limited",
+        step: "S2",
+        workerPid: 1,
+        ts: now.toISOString(),
+      },
+    },
+    pool: "grok",
+    probe: { kind: "quota_limited", resetAt, detail: "429" },
+  });
 }
 
 describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
@@ -120,6 +153,52 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(calls).toBe(1);
     expect(result.kind).toBe("completed");
   });
+
+  it("POSITIVE: non-resumable providers attach maxRetries:0 at receipt helper", () => {
+    expect(receiptMaxRetriesForProvider("grok")).toBe(0);
+    expect(receiptMaxRetriesForProvider("agy")).toBe(0);
+    expect(receiptMaxRetriesForProvider("codex")).toBe(RECEIPT_MAX_RETRIES);
+    expect(receiptMaxRetriesForProvider("claudeCode")).toBe(RECEIPT_MAX_RETRIES);
+    const grokOut = coderReceiptOutput(
+      coderStationReceiptSchema(),
+      "coder",
+      receiptMaxRetriesForProvider("grok"),
+    );
+    expect(grokOut).toMatchObject({ tag: "coder", maxRetries: 0 });
+    const codexOut = workerReceiptOutput(
+      "judge",
+      coderStationReceiptSchema(),
+      receiptMaxRetriesForProvider("codex"),
+    );
+    expect(codexOut).toMatchObject({ maxRetries: RECEIPT_MAX_RETRIES });
+  });
+
+  it("NEGATIVE: QuotaWaitForResetError does not burn onAttempt durable budget", async () => {
+    const attempts: number[] = [];
+    let calls = 0;
+    const err = quotaWallError(
+      new Date("2026-07-10T12:00:00.000Z"),
+      new Date("2026-07-10T13:00:00.000Z"),
+    );
+    await expect(
+      withMechanicalRetry(
+        coderSpec(),
+        {},
+        async () => {
+          calls += 1;
+          throw err;
+        },
+        {
+          onAttempt: async (attempt) => {
+            attempts.push(attempt);
+          },
+          sleepMs: async () => {},
+        },
+      ),
+    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    expect(calls).toBe(1);
+    expect(attempts).toEqual([]);
+  });
 });
 
 describe("#937 unified worker dispatch — ID-006 process ownership", () => {
@@ -151,7 +230,6 @@ describe("#937 unified worker dispatch — ID-006 process ownership", () => {
           readInstanceId: () => "test-instance",
           killPid: (pid, signal) => {
             killed.push(pid);
-            // Deliver the real signal so waitForChildExit can settle.
             try {
               process.kill(pid, signal);
             } catch {
@@ -162,7 +240,6 @@ describe("#937 unified worker dispatch — ID-006 process ownership", () => {
         },
       }),
     ).rejects.toThrow(/adoption persist failed/);
-    // Exact-handle path: at least one signal was attempted (group or child).
     expect(killed.length).toBeGreaterThan(0);
   });
 
@@ -226,18 +303,20 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(canRelayHandoff(seven.slice(0, 6))).toBe(true);
   });
 
-  it("NEGATIVE: silence does not kill via dispatchWorkerWithMonitor", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-silence-"));
+  it("POSITIVE: long-lived silent child is never host-killed (ID-007)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-937-long-silence-"));
     tempDirs.push(dir);
     const killed: number[] = [];
     const backend = {
       resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
-        command: process.platform === "win32" ? "cmd" : "true",
-        args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
+        // Stay alive well past former idle tiers (10/30 min) — compressed via
+        // instant sleepMs inject; real wall is process exit only.
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => {}, 200)"],
         logDir: dir,
         poolId: "zai",
         stepId: "S2",
-        readInstanceId: () => "test-instance",
+        readInstanceId: () => "test-instance-long",
       }),
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
         kind: "completed",
@@ -252,7 +331,9 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
       undefined,
       {
         monitorDeps: {
+          readInstanceId: () => "test-instance-long",
           killPid: (pid) => killed.push(pid),
+          // No idle poll path remains — sleepMs is only used by terminateSpawnedChild.
           sleepMs: async () => {},
         },
       },
@@ -261,34 +342,13 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(killed).toEqual([]);
   });
 
-  it("POSITIVE: parkOrRelayQuotaWall relay returns ephemeral brief, no focus file", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-park-"));
+  it("POSITIVE: parkOrRelayQuotaWall prefers same-model other live pool first (ID-008)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-937-park-order-"));
     tempDirs.push(dir);
     const ledger: Array<Record<string, unknown>> = [];
     const now = new Date("2026-07-10T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
-    const err = new QuotaWaitForResetError({
-      disposition: {
-        kind: "wait_for_reset",
-        pool: "grok",
-        resetAt,
-        reason: "quota limited",
-      },
-      applied: {
-        killed: false,
-        ledgerEntry: {
-          event: "quota_wait_for_reset",
-          pool: "grok",
-          resetAt: resetAt.toISOString(),
-          reason: "quota limited",
-          step: "S2",
-          workerPid: 1,
-          ts: now.toISOString(),
-        },
-      },
-      pool: "grok",
-      probe: { kind: "quota_limited", resetAt, detail: "429" },
-    });
+    const err = quotaWallError(now, resetAt);
 
     const outcome = await parkOrRelayQuotaWall({
       step: "S2",
@@ -318,6 +378,12 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
         },
+        {
+          id: "codex-5h",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med", "luna@med"],
+        },
       ],
       resolveBranchHEAD: async () => "deadbeef",
       hashPrompt: async () => "prompt-hash",
@@ -328,14 +394,65 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
       } as never,
     });
 
-    if (outcome.kind === "relay") {
-      expect(outcome.relayBrief.length).toBeGreaterThan(0);
-      expect(outcome.relayBrief).toMatch(/grok|terra|cursor/i);
-      expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
-    } else {
-      // If the wall is classified park (threshold / no baton), still no focus file.
-      expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
-    }
+    expect(outcome.kind).toBe("relay");
+    if (outcome.kind !== "relay") return;
+    // Same-model alternate live pool first (cursor), not roster-next terra.
+    expect(outcome.nextBaton.modelId).toBe("grok-4.5");
+    expect(outcome.nextBaton.pool).toBe("cursor");
+    expect(outcome.relayBrief).toMatch(/cursor/);
+    expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+  });
+
+  it("NEGATIVE: no-wrap-around when only earlier roster seats are live → park", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-937-no-wrap-"));
+    tempDirs.push(dir);
+    const ledger: Array<Record<string, unknown>> = [];
+    const now = new Date("2026-07-10T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const err = quotaWallError(now, resetAt);
+
+    // Current seat is terra; only earlier roster model (grok) is live → no wrap.
+    const outcome = await parkOrRelayQuotaWall({
+      step: "S2",
+      err,
+      ledger: ledger as never,
+      stateDir: dir,
+      sessionId: "sess",
+      worktreePath: dir,
+      now,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      currentModelId: "terra@med",
+      currentPool: "codex-5h",
+      rosterOrder: resolveCoderRecOrder(
+        "Coder-Rec: grok-4.5 → terra@med → luna@med",
+      ),
+      pools: [
+        {
+          id: "grok-build",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "codex-5h",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med", "luna@med"],
+        },
+      ],
+      resolveBranchHEAD: async () => "deadbeef",
+      hashPrompt: async () => "prompt-hash",
+      backend: {
+        writeLedger: async (entry: Record<string, unknown>) => {
+          ledger.push(entry);
+        },
+      } as never,
+    });
+
+    // No later roster seat with a live pool → park (not wrap to grok).
+    expect(outcome.kind).toBe("park");
+    expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 });
 
@@ -356,17 +473,40 @@ describe("#937 ID-015 / ID-016 delete boundaries", () => {
     expect(killPid).not.toHaveBeenCalled();
   });
 
-  it("POSITIVE: production surface no longer exports idle-kill APIs", async () => {
+  it("POSITIVE: production surface deletes idle-kill + free-log fate machinery", async () => {
     const monitor = await import("../../src/workerMonitor.js");
     const dispatch = await import("../../src/dispatchWorker.js");
     const relay = await import("../../src/relayDispatch.js");
+    const probe = await import("../../src/quotaProbe.js");
+
     expect("killWorkerTree" in monitor).toBe(false);
     expect("collectPidTree" in monitor).toBe(false);
     expect("isWorkerIdle" in monitor).toBe(false);
     expect("isWorkerAlive" in monitor).toBe(false);
+    expect("readLogTail" in monitor).toBe(false);
     expect("resolveWorkerMonitorIdleThresholdMs" in dispatch).toBe(false);
     expect("buildRelayFocusFile" in relay).toBe(false);
     expect("decideRelayAfterIdle" in relay).toBe(false);
     expect("stageRelayFocusFile" in relay).toBe(false);
+    expect("HangWithLivePoolError" in relay).toBe(false);
+    expect("SelfReportedRelayError" in relay).toBe(false);
+    expect("tryParseActionableRelayTag" in relay).toBe(false);
+
+    // killPidTree is not a live production action type on IdleHangActions.
+    const src = readFileSync(
+      join(import.meta.dirname, "../../src/quotaProbe.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/killPidTree\s*:/);
+    expect(src).not.toMatch(/await actions\.killPidTree/);
+    // free-log parsers must not remain as live throw sites in production src.
+    const relaySrc = readFileSync(
+      join(import.meta.dirname, "../../src/relayDispatch.ts"),
+      "utf8",
+    );
+    expect(relaySrc).not.toMatch(/export class HangWithLivePoolError/);
+    expect(relaySrc).not.toMatch(/export class SelfReportedRelayError/);
+    expect(relaySrc).not.toMatch(/export function tryParseActionableRelayTag/);
+    void probe;
   });
 });

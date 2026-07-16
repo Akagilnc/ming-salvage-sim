@@ -262,32 +262,6 @@ export function canRelayHandoff(
   return countRelayHandoffsInLedger(ledger) < max;
 }
 
-/**
- * #686 — hang-with-live-pool resource failure. Silence never invents this
- * (#934 ID-007); when thrown, the runner relays without mechanical-retry /
- * reset. Idle kill / PID-tree ownership is deleted (#937).
- */
-export class HangWithLivePoolError extends Error {
-  readonly workerPid: number;
-  readonly poolId: string;
-  readonly step?: StepId;
-
-  constructor(input: {
-    readonly workerPid: number;
-    readonly poolId: string;
-    readonly step?: StepId;
-  }) {
-    super(
-      `hang with live pool (pid=${input.workerPid}, pool=${input.poolId})` +
-        (input.step !== undefined ? ` on ${input.step}` : ""),
-    );
-    this.name = "HangWithLivePoolError";
-    this.workerPid = input.workerPid;
-    this.poolId = input.poolId;
-    if (input.step !== undefined) this.step = input.step;
-  }
-}
-
 /** #787 checkpoint-local service congestion; relay without quota parking. */
 export class CapacityRelayError extends Error {
   readonly capacity = true;
@@ -316,86 +290,9 @@ export function capacityRelayErrorFrom(err: unknown): CapacityRelayError | undef
   return new CapacityRelayError(err instanceof Error ? err.message : String(err));
 }
 
-export function isHangWithLivePoolError(
-  err: unknown,
-): err is HangWithLivePoolError {
-  return (
-    err instanceof HangWithLivePoolError ||
-    (typeof err === "object" &&
-      err !== null &&
-      (err as { readonly name?: unknown }).name === "HangWithLivePoolError")
-  );
-}
-
-/**
- * #686 — worker self-reported actionable `<relay>` terminal. Resource signals
- * preserve drift and hand off; decision gates park for a human ruling.
- */
-export class SelfReportedRelayError extends Error {
-  readonly tag: Extract<
-    RelayTagOutcome,
-    { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
-  >;
-  readonly step?: StepId;
-  /** Provider session captured with the sidecar result before the relay tag throws. */
-  readonly sessionId?: string;
-
-  constructor(
-    tag: Extract<
-      RelayTagOutcome,
-      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
-    >,
-    step?: StepId,
-    sessionId?: string,
-  ) {
-    const label =
-      tag.kind === "blocked"
-        ? `self-reported blocked: ${tag.reason}`
-        : tag.kind === "phase_complete"
-          ? `phase_complete:${tag.phase}`
-          : `decision_gate:${tag.state_summary}`;
-    super(label);
-    this.name = "SelfReportedRelayError";
-    this.tag = tag;
-    if (step !== undefined) this.step = step;
-    if (sessionId !== undefined) this.sessionId = sessionId;
-  }
-}
-
-export function isSelfReportedRelayError(
-  err: unknown,
-): err is SelfReportedRelayError {
-  return (
-    err instanceof SelfReportedRelayError ||
-    (typeof err === "object" &&
-      err !== null &&
-      (err as { readonly name?: unknown }).name === "SelfReportedRelayError")
-  );
-}
-
-/**
- * Inspect worker stdout / log for a voluntary or blocked `<relay>` tag.
- * Returns undefined when no actionable tag is present (malformed / absent).
- * Decision-gate intent is actionable by key existence even when its cargo is sparse.
- */
-export function tryParseActionableRelayTag(
-  stdout: string,
-):
-  | Extract<
-      RelayTagOutcome,
-      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
-    >
-  | undefined {
-  const parsed = parseRelayTag(stdout);
-  if (
-    parsed.kind === "blocked" ||
-    parsed.kind === "phase_complete" ||
-    parsed.kind === "decision_gate"
-  ) {
-    return parsed;
-  }
-  return undefined;
-}
+// #937: HangWithLivePoolError, SelfReportedRelayError, tryParseActionableRelayTag
+// deleted with free-log fate channel / idle host kill (ID-006 / ID-007). Capacity
+// and quota-wall remain the live resource-failure constructors.
 
 /**
  * Resume only a baton for the exact executable slot being re-entered. A later

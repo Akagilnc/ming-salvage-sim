@@ -17,11 +17,7 @@
  */
 
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
-import {
-  capacityRelayErrorFrom,
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-} from "./relayDispatch.js";
+import { capacityRelayErrorFrom } from "./relayDispatch.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
@@ -193,7 +189,10 @@ export async function withMechanicalRetry(
         continue;
       }
     }
-    await opts?.onAttempt?.(attempt);
+    // #934 ID-004 / #937: durable attempt markers are written only after a
+    // process-level failure classification. Explicit 429/quota / capacity /
+    // resource throws must not burn process-root budget (onAttempt used to
+    // write mechanical_redispatch_attempt before dispatch).
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
@@ -204,8 +203,6 @@ export async function withMechanicalRetry(
       if (isQuotaWaitForResetError(err)) throw err;
       const capacityError = capacityRelayErrorFrom(err);
       if (capacityError !== undefined) throw capacityError;
-      if (isHangWithLivePoolError(err)) throw err;
-      if (isSelfReportedRelayError(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
@@ -215,6 +212,7 @@ export async function withMechanicalRetry(
         kind: "failed",
         reason: `dispatch threw: ${err instanceof Error ? err.message : String(err)}`,
       };
+      await opts?.onAttempt?.(attempt);
       await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
       continue;
     }
@@ -227,6 +225,7 @@ export async function withMechanicalRetry(
     // composition — the generic layer fires only for failures nobody else owns).
     if (opts?.callerOwns?.({ result }) === true) return result;
     last = result;
+    await opts?.onAttempt?.(attempt);
     await opts?.onFailure?.({ result }, attempt);
   }
   // Exhausted. If the last attempt threw and the caller owns the throw→result
@@ -291,8 +290,6 @@ export async function retryProcessCrash<T>(
       if (isQuotaWaitForResetError(err)) throw err;
       const capacityError = capacityRelayErrorFrom(err);
       if (capacityError !== undefined) throw capacityError;
-      if (isHangWithLivePoolError(err)) throw err;
-      if (isSelfReportedRelayError(err)) throw err;
       lastError = err;
     }
   }

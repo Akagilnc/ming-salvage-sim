@@ -328,18 +328,13 @@ export {
   capacityRelayErrorFrom,
   countRelayHandoffsInLedger,
   forkQuotaWallAt683Point,
-  isHangWithLivePoolError,
   isCapacityRelayError,
   isRelayCandidateExhaustion,
   isRelayChainReadyForReviewGate,
-  isSelfReportedRelayError,
   parseRelayTag,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,
-  tryParseActionableRelayTag,
-  HangWithLivePoolError,
   CapacityRelayError,
-  SelfReportedRelayError,
 } from "./relayDispatch.js";
 export type {
   ApplyResourceFailureHandoffInput,

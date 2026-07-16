@@ -13,7 +13,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   statSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +50,6 @@ export interface MonitoredCliDispatchResult {
 
 export interface WorkerMonitorDeps {
   readonly statLog?: (logPath: string) => LogActivitySnapshot;
-  readonly readLogTail?: (logPath: string) => string;
   readonly sleepMs?: (ms: number) => Promise<void>;
   readonly readInstanceId?: (pid: number) => string | undefined;
   /** Signal a process group (negative pid) or single pid. */
@@ -59,13 +57,12 @@ export interface WorkerMonitorDeps {
 }
 
 const defaultDeps: Required<
-  Pick<WorkerMonitorDeps, "statLog" | "readLogTail" | "sleepMs" | "killPid">
+  Pick<WorkerMonitorDeps, "statLog" | "sleepMs" | "killPid">
 > & { readonly readInstanceId: (pid: number) => string | undefined } = {
   statLog: (logPath) => {
     const stat = statSync(logPath);
     return { sizeBytes: stat.size, mtimeMs: stat.mtimeMs };
   },
-  readLogTail: (logPath) => readFileSync(logPath, "utf8"),
   sleepMs: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   readInstanceId: (pid) => readProcessInstanceId(pid),
   killPid: (pid, signal) => {

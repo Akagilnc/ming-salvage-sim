@@ -103,8 +103,6 @@ import {
   resumeRelayFromLedger,
   renderEphemeralRelayBrief,
   isCapacityRelayError,
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import { existsSync } from "node:fs";
@@ -118,7 +116,7 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-  mintJudgeEscalate,
+
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
@@ -3125,13 +3123,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     {
                       onMonitorHandleSpawned: async (handle) => {
                         stepMonitorHandle = handle;
-                        try {
-                          if (isValidStepId(s.id)) {
-                            await persistMonitorHandleAtSpawn(s.id, handle);
-                          }
-                        } catch {
-                          // Best-effort: spawn-time ledger write must not abort
-                          // the worker; post-step emitLedger still records it.
+                        // #934 ID-006 / #937: adoption/persist failure must
+                        // terminate the exact ChildProcess — rethrow so
+                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
+                        if (isValidStepId(s.id)) {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
                         }
                       },
                     },
@@ -3284,47 +3280,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            const escalation: Escalation = {
-              reason: `${step} worker raised a decision gate`,
-              diagnosis: err.tag.state_summary,
-            };
-            // #919 CR U1 + residual R1 / S2/R8: single-slice agent seats are only
-            // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
-            // T2 kind:"judge" escalate on the judge seat; never residual
-            // open-count kind:"reviewer" paper (deleted dead arm).
-            const seatIsJudge = isJudgeSeat({ step });
-            let decisionOutput: StepOutput;
-            if (expectedKind === "coder") {
-              decisionOutput = {
-                kind: "coder",
-                committed: false,
-                commitsAdded: 0,
-                escalate: escalation,
-              };
-            } else if (seatIsJudge) {
-              decisionOutput = mintJudgeEscalate(escalation);
-            } else {
-              // Exhaustive: topology has no third agent seat kind.
-              throw new Error(
-                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
-              );
-            }
-            return await escalateTermination(
-              step,
-              escalation,
-              err.sessionId,
-              "decision",
-              decisionOutput,
-              decisionGateParkStopSummary({
-                summary: `${step} worker raised a decision gate: ${err.tag.state_summary}`,
-                repairHint:
-                  "answer the decision gate, then re-feed to resume the parked worker step",
-              }),
-            );
-          }
+          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
+          // with the fourth fate channel. Decision gates arrive via typed station
+          // escalate; hang no longer invents host kill+relay from silence.
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (write handoff + focus, apply next baton, re-enter).
+          // with a live baton (ephemeral brief, apply next baton, re-enter).
           if (isQuotaWaitForResetError(err)) {
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
@@ -3369,42 +3329,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
           }
-          // #686/#787: resource failures relay without retry; capacity keeps its
-          // pool live so the capacity selector can change checkpoints in-pool.
-          // (never mechanical-retry / never reset).
-          if (
-            (isHangWithLivePoolError(err) ||
-              isSelfReportedRelayError(err) ||
-              isCapacityRelayError(err)) &&
-            canRelayInProcess()
-          ) {
+          // #686/#787/#937: capacity resource failure relays without retry
+          // (never mechanical-retry / never reset). Hang/self-report free-log
+          // constructors deleted with ID-006/007.
+          if (isCapacityRelayError(err) && canRelayInProcess()) {
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
-              ...(isHangWithLivePoolError(err)
-                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
-                : {}),
-              capacity: isCapacityRelayError(err),
+              capacity: true,
             });
-            const trigger = isCapacityRelayError(err)
-              ? ("capacity" as const)
-              : isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : isCapacityRelayError(err)
-                ? "model checkpoint at capacity; drift preserved"
-                : "worker hang with live pool; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
             const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
+              trigger: "capacity",
+              state_summary: "model checkpoint at capacity; drift preserved",
               reason: err instanceof Error ? err.message : String(err),
               currentModelId: modelIdForWallStep(step),
               currentPool,
