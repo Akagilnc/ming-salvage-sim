@@ -2606,20 +2606,28 @@ export class RealFamilyBackend implements FamilyBackend {
    * the claude leg uses the durable OAuth token env var. Mirrors
    * `RealBackend.mountAuth`. The agy token is copied into a per-run dir mounted
    * WRITABLE (the agy CLI writes runtime state under its config dir — #333 gotcha).
+   *
+   * codex cmr R1: EACH leg's auth is BEST-EFFORT (降级链). Core provision is
+   * shared (#913); gh is BEST-EFFORT here (completeness gate degrades without it,
+   * never blocks the cmr worker).
    */
   protected mountCmrAuth(): CmrAuth {
-    // codex cmr R1: EACH leg's auth is BEST-EFFORT (降级链). #913 folds the
-    // triplicated codex/grok/agy/claude provision into provisionFamilyWorkerAuth;
-    // role-specific gh + providerAuth stay here.
+    return this.mountAuthWithGh("cmr");
+  }
+
+  /**
+   * Shared cmr/ship auth mount: core credentials via {@link provisionFamilyWorkerAuth}
+   * plus gh + providerAuth projection. Differs only by `rolePrefix` (temp-dir
+   * identity / cleanup). Policy on gh (best-effort vs hard-required) lives at
+   * the worker preflight, not here.
+   */
+  private mountAuthWithGh(rolePrefix: "cmr" | "ship"): FamilyWorkerAuthWithGh {
     const core = provisionFamilyWorkerAuth({
       home: this.opts.home ?? homedir(),
-      rolePrefix: "cmr",
+      rolePrefix,
       homeEnvFile: this.resolveHomeEnvFile(),
       codexFast: this.opts.codexFast,
     });
-    // gh token → GH_TOKEN for the in-container completeness gate's `gh issue view`
-    // (live issue body = DELIVERED-vs-spec authority). BEST-EFFORT, NOT preflighted:
-    // absence degrades the gate's authority, never blocks the cmr worker.
     return {
       ...core,
       ghToken: this.readGhToken(),
@@ -3034,19 +3042,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * degrades silently.
    */
   protected mountShipAuth(): ShipAuth {
-    // #913: shared core (codex/grok/agy/claude); gh is the ship-only REQUIRE gate
-    // (cmr S336 r10 — preflighted in runShipWorker, not here).
-    const core = provisionFamilyWorkerAuth({
-      home: this.opts.home ?? homedir(),
-      rolePrefix: "ship",
-      homeEnvFile: this.resolveHomeEnvFile(),
-      codexFast: this.opts.codexFast,
-    });
-    return {
-      ...core,
-      ghToken: this.readGhToken(),
-      providerAuth: providerAuthFromCore(core),
-    };
+    // #913: shared core + gh + providerAuth; ship REQUIRE-gh is preflighted in
+    // runShipWorker (cmr S336 r10), not at mount time.
+    return this.mountAuthWithGh("ship");
   }
 
   /**
@@ -3358,23 +3356,25 @@ function lastSessionIdIfPresent(result: unknown): string | undefined {
 }
 
 /**
+ * Shared cmr/ship extras on top of {@link FamilyWorkerAuthCore} (#913 F8):
+ * gh token + typed providerAuth projection. Worker policy on gh differs
+ * (cmr best-effort completeness gate vs ship hard-required `gh pr create`)
+ * and lives at preflight, not in this shape.
+ */
+export type FamilyWorkerAuthWithGh = FamilyWorkerAuthCore & {
+  readonly ghToken?: string;
+  readonly providerAuth?: ProviderAuthAvailability;
+};
+
+/**
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
  * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
  * skill drops that leg, the rest still review), never crashing the whole gate.
- * Core credential fields live on {@link FamilyWorkerAuthCore} (#913).
+ * Core fields on {@link FamilyWorkerAuthCore}; gh is BEST-EFFORT for the
+ * completeness gate (`gh issue view`) — absence degrades authority, never
+ * blocks the cmr worker.
  */
-export interface CmrAuth extends FamilyWorkerAuthCore {
-  /**
-   * The host gh OAuth token (`gh auth token` → {@link SANDBOX_GH_TOKEN_ENV} env), or
-   * undefined if absent. BEST-EFFORT (unlike the ship worker's hard-required gh): the
-   * completeness gate grounds against the live issue body via `gh issue view`, so a
-   * present token keeps that authority intact, but its ABSENCE only DEGRADES the gate
-   * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
-   */
-  readonly ghToken?: string;
-  /** Typed provider availability used before the top-level worker launches. */
-  readonly providerAuth?: ProviderAuthAvailability;
-}
+export type CmrAuth = FamilyWorkerAuthWithGh;
 
 /**
  * The family ship worker's auth (#336). The codex dir is BEST-EFFORT (mirrors
@@ -3383,18 +3383,9 @@ export interface CmrAuth extends FamilyWorkerAuthCore {
  * delivery requires) are LOAD-BEARING — `runShipWorker` preflights both and escalates
  * when either is absent (cmr S336 r8 + r10). A missing codex source degrades that
  * mount rather than crashing the gate.
- * Core credential fields live on {@link FamilyWorkerAuthCore} (#913).
+ * Core fields on {@link FamilyWorkerAuthCore}; shape shares {@link FamilyWorkerAuthWithGh}.
  */
-export interface ShipAuth extends FamilyWorkerAuthCore {
-  /**
-   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
-   * env), or undefined if absent. NOT best-effort: the family delivery is a PR
-   * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
-   */
-  readonly ghToken?: string;
-  /** Typed provider availability used before the top-level worker launches. */
-  readonly providerAuth?: ProviderAuthAvailability;
-}
+export type ShipAuth = FamilyWorkerAuthWithGh;
 
 /**
  * The merger worker's auth (integ-cmr int-r2 A-1). When the active route selects a
@@ -3404,10 +3395,9 @@ export interface ShipAuth extends FamilyWorkerAuthCore {
  * load-bearing (N3: reuse provisionAgyAuthDir / appendAgyAuthMount; fail-closed
  * without token). The merger resolves + commits the merge in place
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
- * Core credential fields live on {@link FamilyWorkerAuthCore} (#913); merger has
- * no role-only extras (no gh / providerAuth).
+ * No role-only extras (no gh / providerAuth) — alias of {@link FamilyWorkerAuthCore}.
  */
-export interface MergerAuth extends FamilyWorkerAuthCore {}
+export type MergerAuth = FamilyWorkerAuthCore;
 
 /**
  * Prefer Sandcastle typed receipt for fate signals (T2 judge + decision gate).

@@ -246,27 +246,16 @@ describe("#913 family mount*Auth wrappers share the core (public shapes)", () =>
   });
 });
 
-describe("#913 structural — single writeContainerCodexConfig consumer on family path", () => {
-  it("realFamilyBackend has no residual isomorphic writeContainerCodexConfig sites", () => {
-    // test/family/review/ → repo orchestrator/src
-    const srcRoot = join(import.meta.dirname ?? ".", "..", "..", "..", "src");
-    const familySrc = readFileSync(join(srcRoot, "family", "realFamilyBackend.ts"), "utf8");
-    const realSrc = readFileSync(join(srcRoot, "realBackend.ts"), "utf8");
-
-    // Family backend no longer inlines the codex config write — shared seam owns it.
+// F7: structural greps deleted. Behavioral coverage lives above (pure
+// provisionFamilyWorkerAuth + mount*Auth public shapes). Keep one adjacent
+// pin: family path must not re-inline writeContainerCodexConfig (shared seam
+// in realBackend owns it).
+describe("#913 structural pin — family path does not re-inline codex config write", () => {
+  it("realFamilyBackend has 0 writeContainerCodexConfig call sites", () => {
+    const familySrc = readFileSync(
+      join(import.meta.dirname ?? ".", "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
+      "utf8",
+    );
     expect(familySrc.match(/writeContainerCodexConfig\s*\(/g) ?? []).toHaveLength(0);
-    // Three mount wrappers call the shared pure provisioner.
-    expect(familySrc.match(/provisionFamilyWorkerAuth\s*\(/g) ?? []).toHaveLength(3);
-    // Shared seam lives once in realBackend and threads codexFast into config write.
-    expect(realSrc).toMatch(/export function provisionFamilyWorkerAuth\b/);
-    expect(realSrc).toMatch(/writeContainerCodexConfig\([\s\S]*?\bcodexFast\b/);
-    // Each family wrapper passes this.opts.codexFast into the shared seam.
-    const wrapperCalls = [
-      ...familySrc.matchAll(/provisionFamilyWorkerAuth\s*\(\s*\{[\s\S]*?\}\s*\)/g),
-    ].map((m) => m[0]);
-    expect(wrapperCalls).toHaveLength(3);
-    for (const call of wrapperCalls) {
-      expect(call).toMatch(/codexFast:\s*this\.opts\.codexFast/);
-    }
   });
 });
