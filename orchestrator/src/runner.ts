@@ -444,12 +444,7 @@ function sliceQuotaWaitPending(
       entry.event === "relay_baton_handoff"
     ) {
       const step = entry.step;
-      if (
-        step === "S2" ||
-        step === "S3" ||
-        step === "S5" ||
-        step === "S6"
-      ) {
+      if (isWorkerStep(step)) {
         return step;
       }
       return "S2";
@@ -1170,6 +1165,11 @@ export function coderModel(env: ModelRouteEnv = process.env): string {
 
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";
 
+/** Type-guard for the single-slice agent worker seats (S2/S3/S5/S6). */
+function isWorkerStep(s: unknown): s is WorkerStepId {
+  return s === "S2" || s === "S3" || s === "S5" || s === "S6";
+}
+
 export function stepSpecsForRoute(
   route: Pick<ResolvedModelRoute, "slots">,
 ): Readonly<Record<WorkerStepId, StepSpec>> {
@@ -1232,7 +1232,7 @@ function activeRelaySmokeEntryKey(
   route: Pick<ResolvedModelRoute, "slots">,
 ): string | undefined {
   // #923: single-slice map lives in modelRoutes (S3/S6 → verify); do not fork it.
-  if (step !== "S2" && step !== "S3" && step !== "S5" && step !== "S6") {
+  if (!isWorkerStep(step)) {
     return undefined;
   }
   const slot = relaySlotForSingleSliceWallStep(step);
@@ -2052,10 +2052,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
     // #955: record seat model on agent steps so resume identity is ledger truth.
-    const stepModelSlug =
-      s === "S2" || s === "S3" || s === "S5" || s === "S6"
-        ? stepSpecs[s].model
-        : undefined;
+    const stepModelSlug = isWorkerStep(s) ? stepSpecs[s].model : undefined;
     const entry = buildPersistentEntry({
       step: s,
       output,
@@ -3776,10 +3773,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
     // (zero readers; dual-write already gone). #926 owns any roster consumption.
     // #955: in-memory parity with emitLedger modelSlug (resume identity).
-    const inMemoryModelSlug =
-      step === "S2" || step === "S3" || step === "S5" || step === "S6"
-        ? stepSpecs[step].model
-        : undefined;
+    const inMemoryModelSlug = isWorkerStep(step)
+      ? stepSpecs[step].model
+      : undefined;
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
