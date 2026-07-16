@@ -1811,7 +1811,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Build the #909 quotaProbe context for a family productive worker.
    * Prefer active billing pool (relay) when present — same rule as single-slice
-   * {@link RealBackend.handleMonitoredWorkerIdle}.
+   * productive dispatch (`ctx.billingPool ?? spec.model`).
    */
   protected familyQuotaProbeContext(
     spec: WorkerSpec,

@@ -121,11 +121,17 @@ export function workerReceiptSchema(): z.ZodType {
 }
 
 /** One typed receipt definition for every worker path. Callers must pass schema. */
+/**
+ * Attach a typed Output.object receipt. Resumable providers use
+ * {@link RECEIPT_MAX_RETRIES} (2); non-resumable (e.g. grok-4.5) must pass
+ * `maxRetries: 0` so malformed SO enters process-root retry (#934 ID-004).
+ */
 export function workerReceiptOutput(
   tag: string,
   schema: z.ZodType,
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
+  return sc.Output.object({ tag, schema, maxRetries });
 }
 
 /**

@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -100,7 +101,9 @@ describe("#604 r2 C2 / #875 — unaccounted prior no longer blocks coder-fix", (
 
     expect(result).toMatchObject({ ok: false, ran: true });
     // Findings-count channel → coder-fix; no coverage-court abort.
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(
       backend.ledger.some(
         (entry) =>
@@ -123,7 +126,9 @@ describe("#604 r2 C2 / #875 — unaccounted prior no longer blocks coder-fix", (
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(
       backend.ledger.some(
         (entry) =>

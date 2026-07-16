@@ -3,9 +3,9 @@
  *
  * Seams under test (owner ratification 2026-07-08 + 2026-07-10 deltas):
  *   1. parseRelayTag — shape-validated <relay> terminal (fail-closed)
- *   2. three handoff triggers (429 preserve; hang-with-live-pool kill+relay; blocked)
+ *   2. resource handoff triggers (quota/capacity/blocked) via applyResourceFailureHandoff
  *   3. resource failure NEVER calls resetBeforeRetry (#661 boundary)
- *   4. state_summary → ledger + next-baton parameter file; resume from any baton
+ *   4. state_summary → ledger + ephemeral relay brief; resume from any baton
  *   5. closing baton → normal review gate (no relay exemption)
  *   6. route pool table + three-tier park/relay at #683 disposition point
  *   7. next baton = #767 roster + pool-orthogonal lookup (换马甲 then 顺位)
@@ -41,21 +41,18 @@ import {
   RELAY_FOCUS_FILENAME,
   MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
-  buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
   CapacityRelayError,
   countRelayHandoffsInLedger,
-  decideRelayAfterIdle,
   forkQuotaWallAt683Point,
   HangWithLivePoolError,
   isHangWithLivePoolError,
   isCapacityRelayError,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
+  renderEphemeralRelayBrief,
   resumeRelayFromLedger,
-  stageRelayFocusFile,
-  tryBuildRelayFocusFile,
   tryParseActionableRelayTag,
   type RelayHandoffLedgerEvent,
 } from "../../src/relayDispatch.js";
@@ -921,14 +918,17 @@ describe("#787 capacity relay", () => {
   });
 });
 
-describe("#686 three handoff triggers", () => {
+describe("#686 three handoff triggers (quota wall fork; #937 idle path deleted)", () => {
   const now = new Date("2026-07-10T12:00:00.000Z");
 
-  it("probe 429 → preserve worktree, record interrupt (no kill, no reset)", async () => {
-    const killPidTree = vi.fn();
-    const result = await decideRelayAfterIdle({
-      probeKind: "quota_limited",
-      resetAt: new Date(now.getTime() + 45 * 60 * 1000),
+  it("probe 429 beyond T → relay preserves worktree (no reset)", () => {
+    const result = forkQuotaWallAt683Point({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "unknown",
+        resetAt: new Date(now.getTime() + 45 * 60 * 1000),
+        reason: "quota limited",
+      },
       now,
       parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
       currentModelId: "grok-4.5",
@@ -951,25 +951,19 @@ describe("#686 three handoff triggers", () => {
           models: ["grok-4.5"],
         },
       ],
-      workerPid: 4242,
-      killPidTree,
     });
-    expect(result.kind).toBe("relay");
-    if (result.kind !== "relay") return;
-    expect(result.preserveWorktree).toBe(true);
+    expect(result.tier).toBe("relay");
     expect(result.nextBaton).toMatchObject({
       modelId: "grok-4.5",
       pool: "cursor",
     });
-    expect(killPidTree).not.toHaveBeenCalled();
   });
 
-  it("hang-with-live-pool → kill pid tree then relay (not same-role retry)", async () => {
-    const killPidTree = vi.fn();
-    const result = await decideRelayAfterIdle({
-      probeKind: "ok",
-      now,
-      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+  it("resource handoff for hang_with_live_pool never calls resetBeforeRetry", async () => {
+    const reset = vi.fn();
+    const handoff = await applyResourceFailureHandoff({
+      trigger: "hang_with_live_pool",
+      state_summary: "worker hang with live pool; drift preserved",
       currentModelId: "grok-4.5",
       currentPool: "grok-build",
       rosterOrder: resolveCoderRecOrder(
@@ -989,95 +983,15 @@ describe("#686 three handoff triggers", () => {
           models: ["terra@med", "luna@med"],
         },
       ],
-      workerPid: 99,
-      killPidTree,
-    });
-    expect(result.kind).toBe("relay");
-    if (result.kind !== "relay") return;
-    expect(result.preserveWorktree).toBe(true);
-    expect(result.trigger).toBe("hang_with_live_pool");
-    expect(killPidTree).toHaveBeenCalledWith(99);
-    expect(result.nextBaton?.modelId).toBe("terra@med");
-  });
-
-  it("self-reported blocked relay tag → relay handoff preserving worktree", async () => {
-    const resetBeforeRetry = vi.fn();
-    const parsed = parseRelayTag(
-      `<relay>{"blocked":{"reason":"stuck on design","state_summary":"mid-apply","remaining":"schema decision"}}</relay>`,
-    );
-    expect(parsed.kind).toBe("blocked");
-    const handoff = await applyResourceFailureHandoff({
-      trigger: "self_reported_blocked",
-      state_summary:
-        parsed.kind === "blocked" ? parsed.state_summary : "",
-      remaining: parsed.kind === "blocked" ? parsed.remaining : undefined,
-      reason: parsed.kind === "blocked" ? parsed.reason : undefined,
-      currentModelId: "grok-4.5",
-      currentPool: "grok-build",
-      rosterOrder: resolveCoderRecOrder(
-        "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      ),
-      pools: [
-        {
-          id: "grok-build",
-          status: "live",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["grok-4.5"],
-        },
-        {
-          id: "codex-5h",
-          status: "live",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["terra@med"],
-        },
-      ],
-      resetBeforeRetry,
-      now: now,
+      resetBeforeRetry: reset,
+      now,
     });
     expect(handoff.kind).toBe("relay");
-    expect(handoff.preserveWorktree).toBe(true);
-    expect(resetBeforeRetry).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
   });
 });
 
-describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
-  it("resource failure path never invokes resetBeforeRetry (negative)", async () => {
-    const resetBeforeRetry = vi.fn(async () => {
-      throw new Error("reset must not run on resource failure");
-    });
-    const handoff = await applyResourceFailureHandoff({
-      trigger: "quota_wall",
-      state_summary: "uncommitted drift mid-build",
-      remaining: "finish apply + tests",
-      currentModelId: "grok-4.5",
-      currentPool: "grok-build",
-      rosterOrder: resolveCoderRecOrder(
-        "Coder-Rec: grok-4.5 → terra@med",
-      ),
-      pools: [
-        {
-          id: "grok-build",
-          status: "dead",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["grok-4.5"],
-        },
-        {
-          id: "codex-5h",
-          status: "live",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["terra@med"],
-        },
-      ],
-      resetBeforeRetry,
-      now: new Date("2026-07-10T12:00:00.000Z"),
-    });
-    expect(handoff.kind).toBe("relay");
-    expect(handoff.preserveWorktree).toBe(true);
-    expect(resetBeforeRetry).not.toHaveBeenCalled();
-  });
-});
-
-describe("#686 state_summary ledger + next-baton parameter file", () => {
+describe("#686 state_summary ledger + ephemeral relay brief (#937)", () => {
   let tmp: string | undefined;
   afterEach(() => {
     if (tmp !== undefined) {
@@ -1086,7 +1000,7 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
     }
   });
 
-  it("writes state_summary into ledger and forwards as .relay-focus.md", () => {
+  it("writes state_summary into ledger and renders ephemeral brief (no focus file)", () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-"));
     const now = new Date("2026-07-10T12:00:00.000Z");
     const entry = buildRelayHandoffLedgerEntry({
@@ -1108,59 +1022,12 @@ describe("#686 state_summary ledger + next-baton parameter file", () => {
       toModelId: "luna@med",
     } satisfies Partial<RelayHandoffLedgerEvent>);
 
-    const focusPath = buildRelayFocusFile(tmp, entry);
-    expect(focusPath).toBe(join(tmp, RELAY_FOCUS_FILENAME));
-    const body = readFileSync(focusPath, "utf8");
+    const body = renderEphemeralRelayBrief(entry);
     expect(body).toContain("142 tests pending, apply half-done");
     expect(body).toContain("luna@med");
     expect(body).toContain("clear reds then 收口");
-  });
-
-  it("excludes promoted .relay-focus.md from git status", () => {
-    tmp = mkdtempSync(join(tmpdir(), "relay-686-exclude-focus-"));
-    execFileSync("git", ["init"], { cwd: tmp, stdio: "ignore" });
-    const entry = buildRelayHandoffLedgerEntry({
-      trigger: "quota_wall",
-      state_summary: "relay focus",
-      remaining: "continue",
-      fromModelId: "grok-4.5",
-      fromPool: "grok-build",
-      toModelId: "luna@med",
-      toPool: "codex-5h",
-      step: "S2",
-      now: new Date("2026-07-10T12:00:00.000Z"),
-    });
-
-    buildRelayFocusFile(tmp, entry);
-
-    expect(
-      execFileSync("git", ["status", "--porcelain"], { cwd: tmp, encoding: "utf8" }),
-    ).toBe("");
-  });
-
-  it("keeps durable baton A's focus consumable when baton B's ledger write fails", () => {
-    tmp = mkdtempSync(join(tmpdir(), "relay-686-atomic-focus-"));
-    const batonA = buildRelayHandoffLedgerEntry({
-      trigger: "quota_wall", state_summary: "A durable", remaining: "finish A",
-      fromModelId: "grok-4.5", fromPool: "grok-build", toModelId: "terra@med",
-      toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:00:00.000Z"),
-    });
-    const focusA = stageRelayFocusFile(tmp, batonA);
-    focusA.commit(); // ledger A committed before the staged focus is promoted.
-
-    const batonB = buildRelayHandoffLedgerEntry({
-      trigger: "quota_wall", state_summary: "B must not replace A", remaining: "finish B",
-      fromModelId: "terra@med", fromPool: "codex-5h", toModelId: "luna@med",
-      toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:30:00.000Z"),
-    });
-    const focusB = stageRelayFocusFile(tmp, batonB);
-    // Simulate the only failed operation: B's durable ledger append. Its staged
-    // file must be discarded, never promoted or allowed to erase A's baton.
-    focusB.discard();
-
-    const durableFocus = readFileSync(join(tmp, RELAY_FOCUS_FILENAME), "utf8");
-    expect(durableFocus).toContain("A durable");
-    expect(durableFocus).not.toContain("B must not replace A");
+    // NEGATIVE: no worktree focus file is produced
+    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 
   it("resume can continue from any baton interrupt via ledger", () => {
@@ -1458,7 +1325,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       trigger: "mechanical_retry_exhausted",
       toModelId: "terra@med",
     });
-    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
+    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(false);
     // #767's final roster advance selects the Terra coding baton.
     expect(coderModels).toContain("gpt-5.6-terra");
     // The S2 relay belongs only to that coder step. The normal S3 reviewer must
@@ -1466,7 +1333,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     // billing pool or baton brief.
     expect(reviewerDispatches).toHaveLength(1);
     expect(reviewerDispatches[0]?.ctx.billingPool).toBeUndefined();
-    expect(reviewerDispatches[0]?.ctx.relayFocusPath).toBeUndefined();
+    expect(reviewerDispatches[0]?.ctx.relayBrief).toBeUndefined();
     expect(result.status).not.toBe("error");
   });
 
@@ -1986,7 +1853,8 @@ describe("#686 R2 production seams", () => {
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
           if (spec.kind === "coder") {
-            // Prove baton applied (terra slug) and focus survived.
+            // Prove baton applied (terra slug) and uncommitted scene survived
+            // (seeded focus file is ordinary drift after #937 — never deleted).
             expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
             expect(existsSync(join(tmp, "uncommitted-baton.txt"))).toBe(true);
             expect(spec.model).toBe("gpt-5.6-terra");
@@ -2034,6 +1902,7 @@ describe("#686 R2 production seams", () => {
         if (prev === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
         else process.env.ORCHESTRATOR_CODER_MODEL = prev;
       }
+      // Seeded focus file remains as worktree drift (never host-cleaned).
       expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -2085,8 +1954,8 @@ describe("#686 R2 production seams", () => {
     }
   });
 
-  it("P2: legacy dispatch forwards relayFocusPath as a run option", async () => {
-    let received: { readonly relayFocusPath?: string } | undefined;
+  it("P2: legacy dispatch forwards relayBrief as a run option", async () => {
+    let received: { readonly relayBrief?: string } | undefined;
     const worktree: WorktreeHandle = {
       branch: "feat/686-focus-forward",
       base: "main",
@@ -2097,12 +1966,13 @@ describe("#686 R2 production seams", () => {
         async runStep(
           _spec: unknown,
           _worktree: unknown,
-          options: { readonly relayFocusPath?: string },
+          options: { readonly relayBrief?: string },
         ): Promise<StepOutput> {
           received = options;
           return { kind: "coder", committed: true, commitsAdded: 1 };
         },
       } as unknown as Backend;
+      const brief = "state_summary: half-done\nremaining: clear reds";
       await legacyDispatchWorker(backend, {
         id: "S2",
         kind: "coder",
@@ -2117,9 +1987,9 @@ describe("#686 R2 production seams", () => {
         toolchain: [],
       }, {
         worktree,
-        relayFocusPath: join(worktree.path, RELAY_FOCUS_FILENAME),
+        relayBrief: brief,
       });
-      expect(received?.relayFocusPath).toBe(join(worktree.path, RELAY_FOCUS_FILENAME));
+      expect(received?.relayBrief).toBe(brief);
     } finally {
       rmSync(worktree.path, { recursive: true, force: true });
     }
@@ -2190,7 +2060,7 @@ describe("#686 R2 production seams", () => {
     expect(canRelayHandoff(ledger.slice(0, 3))).toBe(true);
   });
 
-  it("P1-5: tryBuildRelayFocusFile fails closed without worktree", () => {
+  it("P1-5: ephemeral brief does not require a worktree (#937)", () => {
     const entry = buildRelayHandoffLedgerEntry({
       trigger: "quota_wall",
       state_summary: "x",
@@ -2200,7 +2070,9 @@ describe("#686 R2 production seams", () => {
       toPool: "cursor",
       now: NOW,
     });
-    expect(tryBuildRelayFocusFile(undefined, entry).ok).toBe(false);
+    const brief = renderEphemeralRelayBrief(entry);
+    expect(brief).toContain("x");
+    expect(brief).toContain("cursor");
   });
 
   it("P1-2: HangWithLivePoolError preserves its actionable pool facts", () => {
@@ -2224,68 +2096,20 @@ describe("#686 R2 production seams", () => {
     expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
   });
 
-  it("P1: a sparse worker-log decision_gate durably parks, then an appended answer re-enters the original step", async () => {
+  it("P1: free-log decision_gate is not a host fate channel (#937 ID-007)", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "relay-826-decision-gate-"));
-    const worktree: WorktreeHandle = {
-      branch: "fix/826-decision-gate",
-      base: "main",
-      path: tmp,
-    };
     const rawDecisionGate = '{"decision_gate":{},"unexpected_cargo":[1,2,3]}';
     const workerLog = `<relay>${rawDecisionGate}</relay>`;
     const WORKER_SESSION_ID = "relay-826-worker-session";
-    const persisted: PersistentLedgerEntry[] = [];
-    const resumed: Array<{ step: string; sessionId: string }> = [];
-    let monitorPass = 0;
     const backend = {
-      async smokeModelRoute(route: any): Promise<any> {
-        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
-        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-      },
-      async findResumeState(): Promise<ResumeState | undefined> {
-        if (persisted.length === 0) return undefined;
-        return { worktree, stateDir: tmp, ledger: persisted };
-      },
-      async resumeSession(spec: StepSpec, _worktree: WorktreeHandle, sessionId: string): Promise<StepOutput> {
-        resumed.push({ step: spec.id, sessionId });
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      },
-      async fetchIssueMeta(n: number): Promise<IssueMeta> {
-        return {
-          number: n,
-          isReadyForAgent: true,
-          hasSubIssues: false,
-          isClosed: false,
-          openBlockedBy: [],
-          body: "Coder-Rec: grok-4.5",
-        };
-      },
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return { number: n, body: "Coder-Rec: grok-4.5", comments: [], agentBrief: "" };
-      },
-      async prepareWorktree(): Promise<WorktreeHandle> {
-        return worktree;
-      },
-      async writeSnapshot(): Promise<void> {},
-      async runStep(spec: StepSpec): Promise<StepOutput> {
-        if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      },
-      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
-        persisted.push(entry);
-      },
-      resolveCliMonitorDispatch: () => {
-        monitorPass += 1;
-        if (monitorPass > 1) return undefined;
-        return {
+      resolveCliMonitorDispatch: () => ({
         command: process.execPath,
         args: ["-e", `console.log(${JSON.stringify(workerLog)})`],
         logDir: tmp,
         poolId: "grok-build",
         stepId: "S2",
         readInstanceId: () => "relay-826-test",
-        };
-      },
+      }),
       async awaitMonitoredCliWorker(): Promise<WorkerResult> {
         return {
           kind: "completed",
@@ -2310,63 +2134,14 @@ describe("#686 R2 production seams", () => {
     try {
       await expect(
         dispatchWorkerWithMonitor(backend, spec, {}, undefined, {
-          idleThresholdMs: 60_000,
-          pollIntervalMs: 5,
           monitorDeps: { readInstanceId: () => "relay-826-test" },
         }),
-      ).rejects.toMatchObject({
-        name: "SelfReportedRelayError",
-        tag: { kind: "decision_gate", state_summary: rawDecisionGate },
-        sessionId: WORKER_SESSION_ID,
+      ).resolves.toMatchObject({
+        result: {
+          kind: "completed",
+          sessionId: WORKER_SESSION_ID,
+        },
       });
-
-      monitorPass = 0;
-
-      const first = await runOrchestrator({
-        issueNumber: 826,
-        backend,
-        now: () => NOW,
-      });
-      expect(first.status).toBe("escalate");
-      expect(first.stopSummary).toMatchObject({
-        reason: "decision_gate_park",
-        summary: expect.stringContaining(rawDecisionGate),
-      });
-      expect(
-        first.stepLedger.find(
-          (entry) => entry.step === "S2" && entry.output?.kind === "coder",
-        ),
-      ).toMatchObject({ sessionId: WORKER_SESSION_ID });
-      expect(persisted.at(-1)).toMatchObject({
-        step: "S8",
-        handoffStatus: "escalate",
-        escalationKind: "decision",
-      });
-      // The decision park must retain the worker's actual provider session,
-      // never this orchestration run's fallback UUID.
-      expect(
-        persisted.filter((entry) => entry.step === "S2").at(-1)?.sessionId,
-      ).toBe(WORKER_SESSION_ID);
-
-      persisted.push({
-        step: "S2",
-        event: "escalation_answered",
-        forStep: "S2",
-        answer: "choose policy A",
-        source: "human",
-        sessionId: "human-answer",
-        prompt_hash: "answer",
-        branchHEAD: "head",
-        ts: NOW.toISOString(),
-      });
-
-      const second = await runOrchestrator({
-        issueNumber: 826,
-        backend,
-        now: () => NOW,
-      });
-      expect(second.status).toBe("success");
-      expect(resumed).toContainEqual({ step: "S2", sessionId: WORKER_SESSION_ID });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

@@ -50,21 +50,14 @@ import {
 import { resolveModelSlugForPool } from "./modelRegistry.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
 import {
-  HangWithLivePoolError,
-  SelfReportedRelayError,
-  tryParseActionableRelayTag,
-} from "./relayDispatch.js";
-import {
   createTelemetryLegStamper,
-  readDispatchLogSlice,
   scheduleTelemetryEnvironmentStamp,
 } from "./telemetry.js";
 import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import {
   dispatchMonitoredCliWorker,
-  isWorkerIdle,
-  killWorkerTree,
   readLogActivity,
+  terminateSpawnedChild,
   type MonitoredCliDispatchInput,
   type WorkerMonitorDeps,
 } from "./workerMonitor.js";
@@ -78,7 +71,6 @@ import type {
   WorkerContextRetention,
   WorkerKind,
   WorkerLandingPayload,
-  MonitoredWorkerIdleDisposition,
   WorkerMonitorHandle,
   WorkerResult,
   WorkerSessionMode,
@@ -529,7 +521,7 @@ export async function legacyDispatchWorker(
     fixFocusOptions !== undefined ||
     outcomeLanding !== undefined ||
     ctx.billingPool !== undefined ||
-    ctx.relayFocusPath !== undefined
+    ctx.relayBrief !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
           ...(fixFocusOptions ?? {}),
@@ -537,8 +529,8 @@ export async function legacyDispatchWorker(
           ...(ctx.billingPool !== undefined
             ? { billingPool: ctx.billingPool }
             : {}),
-          ...(ctx.relayFocusPath !== undefined
-            ? { relayFocusPath: ctx.relayFocusPath }
+          ...(ctx.relayBrief !== undefined
+            ? { relayBrief: ctx.relayBrief }
             : {}),
         }
       : undefined;
@@ -635,10 +627,6 @@ export interface DispatchWorkerWithMonitorOptions {
   readonly onMonitorHandleSpawned?: (
     handle: WorkerMonitorHandle,
   ) => void | Promise<void>;
-  /** Idle threshold used by the host-side monitor; production keeps this explicit. */
-  readonly idleThresholdMs?: number;
-  /** Poll cadence for the host-side idle clock. */
-  readonly pollIntervalMs?: number;
   /** Injectable monitor I/O for tests; production uses verified OS helpers. */
   readonly monitorDeps?: WorkerMonitorDeps;
 }
@@ -647,45 +635,11 @@ type ChildExit =
   | { readonly kind: "exit"; readonly exitCode: number | null }
   | { readonly kind: "killed"; readonly signal: NodeJS.Signals };
 
-type MonitorRace = ChildExit;
-
-const DEFAULT_MONITOR_IDLE_THRESHOLD_MS = 10 * 60 * 1000;
-const CLAUDE_MONITOR_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
-const MAX_MONITOR_IDLE_SECONDS = 2_147_483;
-const DEFAULT_MONITOR_POLL_INTERVAL_MS = 250;
-
-/**
- * #808 productive-worker idle monitor budget. The general 10-minute tier keeps
- * genuinely silent workers killable, while Claude's thinking-heavy CLI gets a
- * 30-minute default: W1 telemetry recorded six Sonnet S5 legs being killed by
- * the former threshold before first output under three-container concurrency.
- *
- * `ORCHESTRATOR_WORKER_IDLE_SECONDS` is deliberately resolved for every
- * dispatch, like the route-smoke override, so an in-process operator change
- * applies without reloading this module. Invalid values fall back to the
- * provider tier; the upper bound keeps a seconds-to-milliseconds conversion
- * within a signed 32-bit timer should a caller reuse the value as a delay.
- */
-export function resolveWorkerMonitorIdleThresholdMs(
-  spec: Pick<WorkerSpec, "host">,
-  envValue: string | undefined,
-): number {
-  const defaultMs =
-    spec.host === "claude"
-      ? CLAUDE_MONITOR_IDLE_THRESHOLD_MS
-      : DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
-  if (envValue === undefined || envValue.trim() === "") return defaultMs;
-  const parsed = Number(envValue.trim());
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_MONITOR_IDLE_SECONDS) {
-    return defaultMs;
-  }
-  return parsed * 1000;
-}
-
 /**
  * Wait for a monitored child to leave the process table.
  * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
  * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.
+ * #937: no idle race — silence is observational only (#934 ID-007).
  */
 function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
   const toExit = (
@@ -830,13 +784,14 @@ export async function dispatchWorkerWithMonitor(
         telemetryCtx,
         backend,
       );
-      // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
-      // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
+      // SPAWN-TIME persist seam: handle is available before waitForChildExit.
+      // Adoption-record failure terminates the exact ChildProcess/process group
+      // (#934 ID-006) — no PID-tree walk.
       if (opts?.onMonitorHandleSpawned !== undefined) {
         try {
           await opts.onMonitorHandleSpawned(handle);
         } catch (error) {
-          await killWorkerTree(handle);
+          await terminateSpawnedChild(child, opts?.monitorDeps);
           try {
             await exitPromise;
           } catch {
@@ -846,13 +801,9 @@ export async function dispatchWorkerWithMonitor(
         }
       }
       const monitorDeps = opts?.monitorDeps;
-      const idleThresholdMs =
-        opts?.idleThresholdMs ??
-        resolveWorkerMonitorIdleThresholdMs(spec, process.env.ORCHESTRATOR_WORKER_IDLE_SECONDS);
-      const pollIntervalMs =
-        opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
       // Baseline = pre-dispatch size + orchestrator marker line. Growth past this
-      // is worker (or tool) output — not the dispatch marker itself.
+      // is worker (or tool) output — not the dispatch marker itself. Observational
+      // only: silence never kills/retries/relays (#934 ID-007).
       const firstOutputBaseline = firstOutputBaselineBytes(handle);
       const initialActivity = readLogActivity(handle, monitorDeps);
       if (initialActivity !== undefined) {
@@ -861,101 +812,9 @@ export async function dispatchWorkerWithMonitor(
           firstOutputBaseline,
         );
       }
-      // Cancellation seam: when exit wins the race, stop further idle polls /
-      // handleMonitoredWorkerIdle calls. A throw already in-flight is observed
-      // below so it cannot become an unhandledRejection.
-      let monitorCancelled = false;
-      const monitorPromise: Promise<MonitorRace> = (async () => {
-        if (initialActivity === undefined) {
-          return await exitPromise;
-        }
-        let previous = initialActivity;
-        while (
-          !monitorCancelled &&
-          child.exitCode === null &&
-          child.signalCode === null
-        ) {
-          await (monitorDeps?.sleepMs ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
-            pollIntervalMs,
-          );
-          if (monitorCancelled) break;
-          if (child.exitCode !== null || child.signalCode !== null) break;
-          if (!isWorkerIdle(handle, idleThresholdMs, previous, monitorDeps)) {
-            const current = readLogActivity(handle, monitorDeps);
-            if (current !== undefined) {
-              // First growth past post-marker baseline (not merely vs previous).
-              noteFirstOutputIfPastBaseline(
-                current.sizeBytes,
-                firstOutputBaseline,
-              );
-              previous = current;
-            }
-            continue;
-          }
-          if (monitorCancelled) break;
-          const disposition: MonitoredWorkerIdleDisposition =
-            backend.handleMonitoredWorkerIdle !== undefined
-              ? await backend.handleMonitoredWorkerIdle(handle, spec, ctx)
-              : "hang";
-          if (disposition === "wait_for_reset") {
-            // Backends normally throw QuotaWaitForResetError here so runner park
-            // machinery receives the reset timestamp and ledger event.
-            throw new Error(
-              "monitored worker idle disposition returned wait_for_reset without " +
-                "raising the backend's quota park error",
-            );
-          }
-          // Only a positive probe result may classify this as a live-pool hang.
-          // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
-          //
-          // Reject the race with the hang error FIRST, then kill the tree. If we
-          // kill-then-throw, the child signal-exit can settle before the throw and
-          // win Promise.race as `killed`, swallowing HangWithLivePoolError (relay
-          // would never see the hang). Kill is best-effort after the reject.
-          const hangError =
-            disposition === "hang_with_live_pool"
-              ? new HangWithLivePoolError({
-                  workerPid: handle.pid,
-                  poolId: handle.poolId,
-                  step: spec.id,
-                })
-              : new Error(`monitored worker idle hang: ${spec.id}`);
-          const killPromise = killWorkerTree(handle, monitorDeps);
-          try {
-            throw hangError;
-          } finally {
-            await killPromise.catch(() => undefined);
-          }
-        }
-        return await exitPromise;
-      })();
-      const race = await Promise.race([exitPromise, monitorPromise]);
-      // Observe the race loser. If exit/kill won while handleMonitoredWorkerIdle
-      // was still in flight, a late QuotaWaitForResetError (or other throw) must
-      // be swallowed-with-log — never an unhandledRejection that can crash Node.
-      if (race.kind === "exit" || race.kind === "killed") {
-        monitorCancelled = true;
-        void monitorPromise.then(
-          () => undefined,
-          (err: unknown) => {
-            console.warn(
-              `[orchestrator] monitored idle handler settled after child exit: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          },
-        );
-      }
-      // Quick-exit / race-won-by-exit: poll loop may never have observed growth.
+      const race = await exitPromise;
       // One-shot re-read so first_output_at is not left null when bytes exist.
-      // Stamp time ≈ process exit (poll-granularity semantics, not true TTFB).
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
-      // Always consult the result-sidecar mapper — even on signal exit. A worker
-      // may have written a valid completed sidecar in the narrow window before
-      // SIGTERM; skipping the mapper would fabricate failed and change dispatch
-      // semantics (telemetry must not). Hang dispositions reject monitorPromise
-      // (above) before kill settles, so they never reach this branch. Late
-      // post-exit handler throws stay swallowed.
       const exitCode = race.kind === "exit" ? race.exitCode : null;
       const killSignal = race.kind === "killed" ? race.signal : null;
       if (backend.awaitMonitoredCliWorker === undefined) {
@@ -995,26 +854,8 @@ export async function dispatchWorkerWithMonitor(
           reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
         };
       }
-      // #686/#826: actionable worker-log relay tags become either resource
-      // handoff signals or a decision-gate park. Malformed/absent tags are
-      // ignored here.
-      // #786: token extract uses the same log slice (GC happens later at terminal).
-      try {
-        const logText = readDispatchLogSlice(
-          handle.logPath,
-          handle.logStartOffset,
-        );
-        if (logText !== null) {
-          const tag = tryParseActionableRelayTag(logText);
-          if (tag !== undefined) {
-            throw new SelfReportedRelayError(tag, spec.id, result.sessionId);
-          }
-        }
-      } catch (err) {
-        if (err instanceof SelfReportedRelayError) throw err;
-        // Log read failures are non-fatal — fall through with the worker result.
-      }
-      // Final reconcile in case await path delayed past more log growth.
+      // #937 / #934 ID-007: free-log relay/decision parsing is deleted — process
+      // exit + typed sidecar are the only host fate channels.
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
       telemetry.stampCollect(
         { kind: "result", result },

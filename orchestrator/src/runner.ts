@@ -101,11 +101,10 @@ import {
   isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
-  tryStageRelayFocusFile,
+  renderEphemeralRelayBrief,
   isCapacityRelayError,
   isHangWithLivePoolError,
   isSelfReportedRelayError,
-  RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import { existsSync } from "node:fs";
@@ -1425,7 +1424,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    */
   let stickyJudgeAdvanceCoderSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
-  let activeRelayFocusPath: string | undefined;
+  let activeRelayBrief: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
   // #924: coder persistent session across S2 → S5 rounds (declared early so
@@ -1912,8 +1911,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
     activeRelayStep === dispatchStep ? currentBillingPool : undefined;
-  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
-    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const relayBriefForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayBrief : undefined;
   const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
     if (
       activeRelayStep !== completedStep ||
@@ -1921,7 +1920,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       escalateOf(completed) !== undefined
     ) return;
     currentBillingPool = undefined;
-    activeRelayFocusPath = undefined;
+    activeRelayBrief = undefined;
     activeRelayStep = undefined;
   };
 
@@ -2640,7 +2639,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
     // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
-    // commits + `.relay-focus.md` are the payload. Relay state is read from the
+    // commits + baton state are the payload. Relay state is read from the
     // FULL resume ledger preserves every relay marker.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
@@ -2728,10 +2727,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
-      if (worktree.path !== undefined) {
-        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
-        if (existsSync(focus)) activeRelayFocusPath = focus;
-      }
+      activeRelayBrief = renderEphemeralRelayBrief(relayResume);
     }
   }
 
@@ -2754,7 +2750,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let stepSessionId: string | undefined;
     // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
     // when the worker was spawned as a host-side CLI process. Persisted on the
-    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    // ledger so resume can rebuild the monitor handle for log last-activity without global pgrep.
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
     let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
@@ -3012,7 +3008,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   modelSlug: workerSpec.model,
                 };
               }
-              const focusPath = relayFocusForDispatch(step);
+              const relayBrief = relayBriefForDispatch(step);
               const priorJudgeVerdicts = isJudgeSeat({ step })
                 ? priorJudgeVerdictRowsFromLedger(ledger)
                 : undefined;
@@ -3028,7 +3024,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(billingPool !== undefined
                   ? { billingPool }
                   : {}),
-                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                ...(relayBrief !== undefined ? { relayBrief } : {}),
                 // #925: prior judge verdict rows for session-loss recovery /
                 // trajectory (runner never synthesises a narrative summary).
                 ...(priorJudgeVerdicts !== undefined &&
@@ -3200,13 +3196,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 });
                 if (handoff.kind === "relay" && handoff.ledgerEntry) {
                   const entry = handoff.ledgerEntry;
-                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
-                  if (!staged.ok) {
-                    return await errorTermination(
-                      step,
-                      new Error(staged.reason),
-                    );
-                  }
                   const marker: LedgerEntry = {
                     step: isValidStepId(entry.step) ? entry.step : step,
                     event: "relay_baton_handoff",
@@ -3240,9 +3229,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         },
                         stateDir,
                       );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(
+                    } catch {
+                      return await errorTermination(
                         step,
                         new Error(
                           `relay handoff ledger write failed after mechanical retry exhaustion`,
@@ -3250,13 +3238,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       );
                     }
                   }
-                  try {
-                    staged.focus.commit();
-                  } catch (focusErr) {
-                    return await errorTermination(step, focusErr);
-                  }
                   ledger.push(marker);
-                  activeRelayFocusPath = staged.focus.path;
+                  activeRelayBrief = renderEphemeralRelayBrief(entry);
                   completeMechanicalRetryInvocation(step);
                   applyRelayBaton(handoff.nextBaton, step);
                   continue orchestratorStepLoop;
@@ -3380,8 +3363,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
+            if (outcome.relayBrief !== undefined) {
+              activeRelayBrief = outcome.relayBrief;
             }
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
@@ -3413,7 +3396,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ? err.tag.state_summary
               : isCapacityRelayError(err)
                 ? "model checkpoint at capacity; drift preserved"
-                : "worker hang with live pool; pid tree killed; drift preserved";
+                : "worker hang with live pool; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining
@@ -3432,13 +3415,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             });
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
               const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination(
-                  step,
-                  new Error(staged.reason),
-                );
-              }
               const marker: LedgerEntry = {
                 step: isValidStepId(entry.step) ? entry.step : step,
                 event: "relay_baton_handoff",
@@ -3467,17 +3443,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stateDir,
                   );
                 } catch {
-                  staged.focus.discard();
                   return await errorTermination(step, err);
                 }
               }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination(step, focusErr);
-              }
               ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
+              activeRelayBrief = renderEphemeralRelayBrief(entry);
               completeMechanicalRetryInvocation(step);
               applyRelayBaton(handoff.nextBaton, step);
               continue orchestratorStepLoop;
@@ -3687,7 +3657,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
-      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
+      // #684: pass the monitor handle so resume can rebuild log last-activity observation.
       await emitLedger(
         step,
         output,

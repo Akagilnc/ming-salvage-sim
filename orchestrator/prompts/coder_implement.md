@@ -24,10 +24,10 @@ Before reporting completion, verify that your deliverable is committed and a
 real commit exists in the worktree history. If there is no deliverable, exit
 truthfully as failed or explain it through your decision gate.
 
-If `.relay-focus.md` is present at the worktree root, read that baton handoff
-brief (`state_summary` / remaining) from a prior resource-relay (#686) before
-continuing. Continue from that scene — do not reset or discard uncommitted work
-that the previous baton left.
+If `ORCHESTRATOR_RELAY_BRIEF` is set, read that ephemeral baton handoff brief
+(`state_summary` / remaining) from a prior resource-relay before continuing.
+Continue from that scene — do not reset or discard uncommitted work that the
+previous baton left.
 
 If `ORCHESTRATOR_FIX_FINDINGS_PATH` is set, read that runner-owned JSON file
 before acting. On a resumed decision escalation it may contain

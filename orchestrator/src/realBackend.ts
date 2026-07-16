@@ -796,6 +796,8 @@ export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
+/** #937 ephemeral relay brief rendered at dispatch (not a worktree file). */
+export const SANDBOX_RELAY_BRIEF_ENV = "ORCHESTRATOR_RELAY_BRIEF";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -3074,6 +3076,9 @@ export class RealBackend implements Backend {
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
+    if (options?.relayBrief !== undefined && options.relayBrief.length > 0) {
+      env[SANDBOX_RELAY_BRIEF_ENV] = options.relayBrief;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
@@ -3669,35 +3674,6 @@ export class RealBackend implements Backend {
     _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     return workerResultFromMonitorSidecar(handle, exitCode);
-  }
-
-  /**
-   * #683: probe at the live #684 monitor threshold. The monitor owns the
-   * verified pid-tree kill; this backend only applies the quota state machine
-   * and records a wait row when the pool returns 429.
-   */
-  async handleMonitoredWorkerIdle(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
-    const result = await handleIdleThreshold({
-      // #686: a same-model relay may have changed provider/billing pool. Probe
-      // the active dispatch pool carried by the runner whenever it is present.
-      modelRef: ctx.billingPool ?? spec.model,
-      worker: { pid: handle.pid, step: spec.id },
-      actions: {
-        killPidTree: () => undefined,
-        // Runner parkQuotaWaitForReset writes the single durable marker with
-        // real audit fields — avoid a second placeholder write here.
-        recordLedger: async () => undefined,
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
-    });
-    if (result.disposition.kind === "wait_for_reset") {
-      throw new QuotaWaitForResetError(result);
-    }
-    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────

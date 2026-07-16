@@ -233,7 +233,7 @@ type FamilyQuotaWallDecision =
       readonly nextBaton: NextRelayBaton;
       readonly appliedRoute: ResolvedModelRoute;
       readonly wallSlots: ReadonlyArray<ModelRouteSlot>;
-      readonly focusPath: string | undefined;
+      readonly relayBrief: string | undefined;
     };
 
 /** Family barrier / merge wall phases that share the park/relay machine. */
@@ -524,7 +524,7 @@ async function decideFamilyQuotaWall(opts: {
     nextBaton: outcome.nextBaton,
     appliedRoute,
     wallSlots,
-    focusPath: outcome.focusPath,
+    relayBrief: outcome.relayBrief,
   };
 }
 

@@ -212,13 +212,17 @@ describe("#884 external-call clocks", () => {
       /protected sh\([\s\S]*?shWithClock\(/,
     );
     expect(familyDriver).toMatch(/shWithClock\(/);
+    // #937 / #934 ID-004: spawn path still clocks via spawnDetached / shWithClock,
+    // but the 120s spawn-ack wall clock + ExternalCallTimeoutError kill path is gone.
     expect(workerMonitor).toMatch(/dispatch:\$\{input\.stepId\}:spawn/);
-    expect(workerMonitor).toMatch(/ExternalCallTimeoutError/);
-    const spawnTimer = workerMonitor.match(
-      /const timer = setTimeout\(async \(\) => \{([\s\S]*?)\}, spawnTimeoutMs\)/,
-    );
-    expect(spawnTimer?.[1] ?? "").toMatch(/ExternalCallTimeoutError/);
-    expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGTERM"\)/);
-    expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGKILL"\)/);
+    expect(workerMonitor).toMatch(/spawnDetached\(/);
+    expect(workerMonitor).toMatch(/shWithClock\(/);
+    expect(workerMonitor).not.toMatch(/ExternalCallTimeoutError/);
+    expect(workerMonitor).not.toMatch(/SPAWN_ACK_TIMEOUT_MS/);
+    expect(workerMonitor).not.toMatch(/spawnTimeoutMs/);
+    // Adoption-failure cleanup still signals TERM then KILL on the exact handle.
+    expect(workerMonitor).toMatch(/terminateSpawnedChild/);
+    expect(workerMonitor).toMatch(/SIGTERM/);
+    expect(workerMonitor).toMatch(/SIGKILL/);
   });
 });

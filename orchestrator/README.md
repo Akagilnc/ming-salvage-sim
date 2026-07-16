@@ -61,9 +61,9 @@ Canonical corollaries are locked by positive routing tests under
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
 - **Completion = clean exit + legal sidecar / typed envelope (#928 / ADR 0131).**
   `*_STEP_COMPLETE` passwords and `completionSignal` fields are retired. All
-  seats are single-iteration (`maxIter=1`); monitor liveness is heartbeat / log
-  growth only (PR #917). Exit 0 without a usable sidecar must not masquerade as
-  completed.
+  seats are single-iteration (`maxIter=1`); host monitor silence is observational
+  only (log last-activity whole minutes — never kill/retry/relay/park; #937).
+  Exit 0 without a usable sidecar must not masquerade as completed.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
    runner dispatches ship again. The worker verifies whether the branch's exact
    delivery already exists and returns success without duplicate push, PR, or
@@ -217,14 +217,13 @@ Startup is fail-closed: if the route smoke fails, the run records an
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
 
-**Current legacy runtime only:** the driver process itself is quiet between
-phase boundaries, so a silent half-hour with a running container can be normal
-work. The current monitor uses worker-log idleness (> 15 min without growth)
-and a worker-local PID kill before relaying onto the surviving drift. This is
-not the canonical contract: Sandcastle owns idle timeout / hang cancel after the
-agent stream goes quiet, Policy owns relay/wait/decision, and #898 removes the
-PID-based path. #928: completion is clean exit + legal sidecar (heartbeat-only
-liveness; no completion-signal password).
+**Worker silence (#937 / #934 ID-007):** a quiet half-hour with a running
+container can be normal work. Host-side silence reporting reuses existing
+dispatch/agent-stream/worker-log last-activity and is observational only —
+it never probes quota, kills a PID tree, retries, relays, parks, or fails.
+Process ownership is the exact ChildProcess / process-group handle at spawn
+(adoption-failure cleanup only; no idle kill / spawn-ack wall clock). #928:
+completion is clean exit + legal sidecar (no completion-signal password).
 
 ### 6. Decision gates (parks) and answers
 
@@ -427,8 +426,8 @@ time-to-first-token.
 
 | scenario | what the stamp means | error bound |
 | --- | --- | --- |
-| Long-running worker | Idle monitor poll that first sees `log size > baseline` | ≈ `pollIntervalMs` (default **250ms** in `dispatchWorker`) |
-| Quick-exit (exit wins race before any poll sees growth) | One-shot post-exit reconcile re-read | ≈ **process exit time** (may be much later than true first byte) |
+| Long-running worker | One-shot / post-exit reconcile that first sees `log size > baseline` | ≈ process-exit granularity after #937 (no idle poll race) |
+| Quick-exit | One-shot post-exit reconcile re-read | ≈ **process exit time** (may be much later than true first byte) |
 | No post-marker growth by collect time | Field is `null` | — |
 
 Consumers computing "time-to-first-output" as
@@ -489,4 +488,4 @@ replacement Actions and Sandcastle controls land.
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
-| worker looks hung (legacy path) | the current monitor judges by heartbeat / log idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs (#928: no completion-signal password) | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
+| worker looks hung | host silence is observational only (#937) — no idle kill / PID-tree; capacity/quota walls still park or relay via durable ledger + ephemeral baton brief (no `.relay-focus.md`); completion is clean exit + legal sidecar (#928) | wait for process exit / typed outcome; on explicit 429/capacity use the existing park/relay owner; never invent hang-kill from log quiet |

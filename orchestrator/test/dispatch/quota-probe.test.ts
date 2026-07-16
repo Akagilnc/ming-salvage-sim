@@ -567,7 +567,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
   /**
    * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
    * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
-   * is dispatchWorkerWithMonitor + handleMonitoredWorkerIdle (see integration).
+   * is explicit 429/quota walls (see quota-probe-integration + #937 silence).
    * workerPid is captured from the sandbox handle during invoke (not hand-stuffed).
    */
   const here = dirname(fileURLToPath(import.meta.url));

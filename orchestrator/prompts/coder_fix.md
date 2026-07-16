@@ -9,7 +9,7 @@ Read the role soul first (live-mounted):
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
 you. Use the runner parameters `ORCHESTRATOR_ISSUE_NUMBER` / `ISSUE_NUMBER`,
 `ORCHESTRATOR_REPO`, `.orchestrator-fix-findings.json`, optional `.fix-focus.md`,
-and optional `.relay-focus.md`; the fix-findings path may carry an
+and optional `ORCHESTRATOR_RELAY_BRIEF`; the fix-findings path may carry an
 `escalationAnswer`. Invoke the baked skills selected by the soul.
 The soul owns character and adjudication taste; this prompt + skills own the
 mechanical method.
@@ -24,8 +24,8 @@ escalate instead of guessing from stale local findings or snapshot text.
 
 When `.fix-focus.md` is present, members listed in each supplied finding family
 are in scope in addition to marked finding identities: run same-type sweeps per
-family (not per isolated finding) before committing. When `.relay-focus.md` is
-present, continue from that baton handoff — do not reset uncommitted work.
+family (not per isolated finding) before committing. When `ORCHESTRATOR_RELAY_BRIEF`
+is set, continue from that baton handoff — do not reset uncommitted work.
 If the fix-findings JSON contains `escalationAnswer`, apply that human answer
 and do not repeat the same escalation unless a concrete blocker remains.
 
