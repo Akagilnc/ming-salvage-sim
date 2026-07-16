@@ -44,7 +44,7 @@ export async function parkQuotaWaitForReset(opts: {
   readonly stateDir: string | undefined;
   readonly sessionId: string;
   readonly backend: Backend;
-  readonly resolveBranchHEAD: () => Promise<string>;
+  readonly resolveBranchHEAD: () => Promise<string | undefined>;
   readonly hashPrompt: (
     promptFile: string | undefined,
     step: SliceStepId,
@@ -128,7 +128,7 @@ export async function parkOrRelayQuotaWall(opts: {
   readonly stateDir: string | undefined;
   readonly sessionId: string;
   readonly backend: Backend;
-  readonly resolveBranchHEAD: () => Promise<string>;
+  readonly resolveBranchHEAD: () => Promise<string | undefined>;
   readonly hashPrompt: (
     promptFile: string | undefined,
     step: SliceStepId,

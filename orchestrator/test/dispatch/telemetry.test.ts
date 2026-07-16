@@ -1320,26 +1320,19 @@ describe("#786 telemetry pure helpers", () => {
     }
   });
 
-  it("buildDispatchStamp records Coder-Rec order from issue body when present", () => {
+  it("buildDispatchStamp does not copy deleted snapshot/Coder-Rec court", () => {
     const stamp = buildDispatchStamp({
       legId: "leg-1",
       spec: baseSpec({ model: "grok-4.5" }),
-      ctx: {
-        issueSnapshot: {
-          number: 786,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med\n\nbody",
-          comments: [],
-          agentBrief: "",
-        },
-      },
+      ctx: {},
       dispatchedAt: "2026-07-11T00:00:00.000Z",
       now: () => "2026-07-11T00:00:00.000Z",
     });
-    expect(stamp.issue).toBe(786);
+    expect(stamp.issue).toBeNull();
     expect(stamp.coderRec).not.toBeNull();
     expect(stamp.coderRec?.selected).toBe("grok-4.5");
-    expect(stamp.coderRec?.order?.length).toBeGreaterThan(0);
-    expect(stamp.coderRec?.wasFallback).toBe(false);
+    expect(stamp.coderRec?.order).toBeNull();
+    expect(stamp.coderRec?.wasFallback).toBeNull();
   });
 
   it("buildEnvironmentStamp reuses route-smoke cliVersions", () => {

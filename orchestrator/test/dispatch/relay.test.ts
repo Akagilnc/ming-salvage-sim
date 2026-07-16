@@ -785,8 +785,11 @@ describe("#787 capacity relay", () => {
 
       expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
       // First S5 seat (after Coder-Rec) is grok; capacity relays onto codex.
-      expect(coderFixModels[0]).toMatch(/grok|terra/);
-      expect(coderFixModels.some((m) => /terra|luna/.test(m))).toBe(true);
+      expect(coderFixModels).toEqual([
+        "grok-4.5",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+      ]);
       expect(result.stepLedger).toContainEqual(
         expect.objectContaining({
           event: "relay_baton_handoff",
@@ -925,21 +928,24 @@ describe("#787 capacity relay", () => {
 
         expect(result.status, JSON.stringify(result, null, 2)).not.toBe("error");
         // Capacity on terra must relay to another codex seat (luna) and continue.
-        expect(reviewerModels.some((m) => m.startsWith(`${capacityStep}:`))).toBe(
-          true,
-        );
-        expect(reviewerModels).toContain(`${capacityStep}:gpt-5.6-luna`);
+        expect(
+          reviewerModels.filter((model) => model.startsWith(`${capacityStep}:`)),
+        ).toEqual([
+          `${capacityStep}:gpt-5.6-terra`,
+          `${capacityStep}:gpt-5.6-terra`,
+          `${capacityStep}:gpt-5.6-luna`,
+        ]);
         const handoff = result.stepLedger.find(
           (entry) =>
-            entry.event === "relay_baton_handoff" && entry.step === capacityStep,
+            entry.event === "relay_baton_handoff" &&
+            entry.step === capacityStep &&
+            entry.toModelId === "luna@med",
         );
         expect(handoff).toMatchObject({
           trigger: "capacity",
           toPool: "codex-5h",
         });
-        expect(handoff).toMatchObject({
-          toModelId: expect.stringMatching(/luna|terra/),
-        });
+        expect(handoff).toMatchObject({ toModelId: "luna@med" });
       } finally {
         // #936: route preset via vi.stubEnv; cleaned by afterEach
         rmSync(worktree.path, { recursive: true, force: true });

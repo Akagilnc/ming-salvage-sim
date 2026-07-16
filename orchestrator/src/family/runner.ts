@@ -1294,7 +1294,9 @@ export async function runFamily(
   const runId = mintRunId();
   // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
   // No env slot overrides, no interactive continue.
-  const admitted = admitRouteFromEnv();
+  const admitted = input.admittedRoute === undefined
+    ? admitRouteFromEnv()
+    : { kind: "ready" as const, route: input.admittedRoute.route };
   if (admitted.kind === "stop") {
     const children = input.epic.children.map((child) => ({
       issue: child.issue,
@@ -1321,7 +1323,7 @@ export async function runFamily(
     };
   }
   let modelRoute: ResolvedModelRoute = admitted.route;
-  if (typeof singleSliceBackend.smokeModelRoute !== "function") {
+  if (input.admittedRoute === undefined && typeof singleSliceBackend.smokeModelRoute !== "function") {
     const reason =
       "route smoke executor is required before family dispatch; backend did not provide smokeModelRoute";
     const children = input.epic.children.map((child) => ({
@@ -1339,13 +1341,19 @@ export async function runFamily(
       children,
     };
   }
-  let currentCliVersions: Readonly<Record<string, string | undefined>>;
+  let currentCliVersions: Readonly<Record<string, string | undefined>> = {};
   try {
+    if (input.admittedRoute !== undefined) {
+      currentCliVersions = singleSliceBackend.currentCliVersions
+        ? await singleSliceBackend.currentCliVersions(modelRoute)
+        : {};
+    } else {
     logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
     currentCliVersions = singleSliceBackend.currentCliVersions
       ? await singleSliceBackend.currentCliVersions(modelRoute)
       : {};
     modelRoute = await singleSliceBackend.smokeModelRoute(modelRoute, currentCliVersions);
+    }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const children = input.epic.children.map((child) => ({
@@ -1363,7 +1371,7 @@ export async function runFamily(
       children,
     };
   }
-  const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
+  const degradation = input.admittedRoute ?? degradeOptionalRouteSmokeFailures(modelRoute);
   modelRoute = degradation.route;
   const smokeFailure = routeSmokeFailure(modelRoute, Date.now(), undefined, currentCliVersions);
   if (smokeFailure !== undefined) {

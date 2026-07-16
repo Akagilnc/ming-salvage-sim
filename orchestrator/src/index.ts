@@ -235,8 +235,6 @@ export type {
   Finding,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   LedgerEntry,
   LedgerBookkeepingEvent,
   QuotaWaitForResetEvent,

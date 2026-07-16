@@ -156,7 +156,6 @@ import type {
   FindingRepairScope,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -275,7 +274,7 @@ function buildPersistentEntry(opts: {
   runId: string;
   sessionId: string;
   prompt_hash: string;
-  branchHEAD: string;
+  branchHEAD?: string;
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
@@ -293,8 +292,8 @@ function buildPersistentEntry(opts: {
     runId: opts.runId,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
-    branchHEAD: opts.branchHEAD,
     ts: opts.ts,
+    ...(opts.branchHEAD !== undefined ? { branchHEAD: opts.branchHEAD } : {}),
   };
   // Only add output if defined — keeps the runner-action shape clean.
   if (opts.output !== undefined) {
@@ -1317,14 +1316,6 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   });
 }
 
-function untrustedExecutableInstructionSummary(
-  _snapshot: IssueSnapshot,
-): StopSummary | undefined {
-  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
-  // structured IssueSnapshot.agentBrief field is executable runner input.
-  return undefined;
-}
-
 /**
  * Decision-kind escalate park stop summary.
  * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
@@ -2009,15 +2000,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    *
    * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
    * optional `backend.worktreeHead`. When that optional read fails or returns
-   * empty → warning + omit (empty string), never silent branch-name fallback.
-   * Backends without `worktreeHead` (zero-container fakes) still record the
-   * branch name as the only available reference.
+   * empty → warning + omit, never silent branch-name fallback.
    */
-  async function resolveBranchHEAD(): Promise<string> {
-    if (worktree === undefined) return "";
-    if (backend.worktreeHead === undefined) {
-      return worktree.branch;
-    }
+  async function resolveBranchHEAD(): Promise<string | undefined> {
+    if (worktree === undefined || backend.worktreeHead === undefined) return undefined;
     try {
       const sha = await backend.worktreeHead(worktree);
       if (sha !== undefined && sha.length > 0) {
@@ -2026,14 +2012,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       console.warn(
         "[orchestrator] optional branchHEAD read returned empty (omit)",
       );
-      return "";
+      return undefined;
     } catch (err) {
       console.warn(
         `[orchestrator] optional branchHEAD read failed (omit): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return "";
+      return undefined;
     }
   }
 

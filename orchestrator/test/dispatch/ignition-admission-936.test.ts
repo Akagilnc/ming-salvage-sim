@@ -15,6 +15,7 @@ import {
   admitCoderRec,
   admitRouteFromEnv,
   admitTightRoute,
+  readMetadataWithRetry,
 } from "../../src/admissionPreflight.js";
 import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
@@ -50,10 +51,18 @@ class CountingBackend implements Backend {
   smokeCalls = 0;
   prepareCalls = 0;
   resumeState: ResumeState | undefined;
+  workingRepoCalls = 0;
+  smokeFailure: Error | undefined;
+
+  workingRepoPath(): string {
+    this.workingRepoCalls += 1;
+    return "/tmp/should-not-create-worksite";
+  }
 
   async smokeModelRoute(route: import("../../src/modelRoutes.js").ResolvedModelRoute) {
     this.smokeCalls += 1;
     this.calls.push("smokeModelRoute");
+    if (this.smokeFailure !== undefined) throw this.smokeFailure;
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
@@ -170,6 +179,66 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(ghCalls).toBe(0);
     expect(cloneCalls).toBe(0);
     expect(result.children).toEqual([]);
+  });
+
+  it("public family driver: final Coder-Rec route smoke fails before worksite creation", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const backend = new CountingBackend();
+    backend.smokeFailure = new Error("nonce smoke failed");
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) return "[]";
+      if (joined.includes("dependencies/blocked_by")) return "[]";
+      if (joined.includes("issue view")) {
+        return JSON.stringify({
+          number: 934,
+          body: "Coder-Rec: grok-4.5 → sol@med",
+          author: { login: "Akagilnc" },
+        });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => backend,
+    });
+    expect(result.status).toBe("escalated");
+    expect(result.escalation).toEqual({
+      reason: "startup route smoke failure",
+      diagnosis: "route smoke failed: nonce smoke failed",
+    });
+    expect(backend.smokeCalls).toBe(1);
+    expect(backend.workingRepoCalls).toBe(0);
+  });
+
+  it("metadata transient retry uses six total attempts; deterministic failures use one", () => {
+    let transientAttempts = 0;
+    expect(() =>
+      readMetadataWithRetry(() => {
+        transientAttempts += 1;
+        throw Object.assign(new Error("temporary reset"), { code: "ECONNRESET" });
+      }),
+    ).toThrow(/temporary reset/);
+    expect(transientAttempts).toBe(6);
+
+    let deterministicAttempts = 0;
+    expect(() =>
+      readMetadataWithRetry(() => {
+        deterministicAttempts += 1;
+        throw new SyntaxError("bad JSON contract");
+      }),
+    ).toThrow(/bad JSON contract/);
+    expect(deterministicAttempts).toBe(1);
   });
 });
 

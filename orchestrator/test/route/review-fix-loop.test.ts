@@ -2264,13 +2264,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep() {
         observedLanding = JSON.parse(
           readFileSync(
@@ -2361,13 +2357,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep(_spec, _worktree, options) {
         observedLanding = options?.fixFindingsLanding;
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2435,13 +2427,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep(_spec, _worktree, options) {
         observedMount = options?.fixFindingsLanding;
         observedLanding = JSON.parse(

@@ -152,14 +152,13 @@ describe("#256 true-value ledger — content prompt_hash + SHA branchHEAD", () =
     expect(s2.branchHEAD).toBe("f".repeat(40));
   });
 
-  it("falls back to name: hash + branch name when no true-value helpers exist", async () => {
+  it("falls back to name: hash and omits branchHEAD when no Git helper exists", async () => {
     const backend = new SeamExtensionBackend(true, false);
     // do NOT enable true-value helpers
     await runOrchestrator({ issueNumber: 256, backend });
     const s2 = backend.persisted.find((e) => e.step === "S2")!;
     expect(s2.prompt_hash.startsWith("name:")).toBe(true);
-    // branchHEAD falls back to the branch name (v0.1 behaviour preserved).
-    expect(s2.branchHEAD).toBe(WT.branch);
+    expect(s2).not.toHaveProperty("branchHEAD");
   });
 
   it("runner-action steps hash the step id (name:) — they have no promptFile", async () => {

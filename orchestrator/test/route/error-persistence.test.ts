@@ -157,7 +157,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(["error", "escalate"]).toContain(result.status);
+    expect(result.status).toBe("escalate");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
