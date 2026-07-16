@@ -993,6 +993,20 @@ export interface FamilyWorkerAuthCore {
 }
 
 /**
+ * #913 — map core credential presence → typed providerAuth (cmr / ship wrappers).
+ * Single derivation; callers must not re-list the claude/grok/agy checks.
+ */
+export function providerAuthFromCore(
+  core: FamilyWorkerAuthCore,
+): ProviderAuthAvailability {
+  return {
+    claude: core.claudeToken !== undefined,
+    grok: core.grokAuthDir !== undefined,
+    agy: core.agyDir !== undefined,
+  };
+}
+
+/**
  * #913 — single family-worker auth provision seam (merger / cmr / ship).
  *
  * Before this helper, the three family mount*Auth methods each inlined the same

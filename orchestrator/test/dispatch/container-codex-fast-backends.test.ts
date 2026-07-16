@@ -128,14 +128,14 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     }
   });
 
-  it("keeps production write sites consuming codexFast (#913: family shares one seam)", () => {
+  it("keeps single-slice mountAuth write sites consuming codexFast", () => {
+    // Family-path structural greps (0× writeContainerCodexConfig / 3×
+    // provisionFamilyWorkerAuth + codexFast threading) live in
+    // family-worker-auth-913.test.ts — do not re-list them here (#913 F3).
+    // This file owns single-slice RealBackend.mountAuth write-site rails plus
+    // the behavioral family service_tier cases above.
     const realSrc = readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8");
-    const familySrc = readFileSync(
-      join(here, "..", "..", "src", "family", "realFamilyBackend.ts"),
-      "utf8",
-    );
 
-    // Single-slice mountAuth still writes config with this.opts.codexFast.
     const realWriteCalls: string[] = [];
     for (const match of realSrc.matchAll(/writeContainerCodexConfig\s*\(/g)) {
       const openParen = match.index! + match[0].length - 1;
@@ -156,16 +156,5 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     expect(realWriteCalls.some((c) => /\bcodexFast\b/.test(c) && !c.includes("this.opts"))).toBe(
       true,
     );
-
-    // #913: family no longer inlines writeContainerCodexConfig — three wrappers
-    // thread this.opts.codexFast into the shared provisionFamilyWorkerAuth seam.
-    expect(familySrc.match(/writeContainerCodexConfig\s*\(/g) ?? []).toHaveLength(0);
-    const wrapperCalls = [
-      ...familySrc.matchAll(/provisionFamilyWorkerAuth\s*\(\s*\{[\s\S]*?\}\s*\)/g),
-    ].map((m) => m[0]);
-    expect(wrapperCalls).toHaveLength(3);
-    for (const call of wrapperCalls) {
-      expect(call).toMatch(/codexFast:\s*this\.opts\.codexFast/);
-    }
   });
 });
