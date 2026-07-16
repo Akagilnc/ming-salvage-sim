@@ -12,9 +12,12 @@ import { resolveModelSlug } from "../../src/modelRegistry.js";
 import {
   MODEL_ROUTE_SLOTS,
   activeModelRoute,
+  applyRelayBatonToRoute,
+  applyTightRoutePolicy,
   resetRoutePresetsCacheForTests,
   resolveRouteModels,
   routeSmokeEntries,
+  withCoderSlot,
 } from "../../src/modelRoutes.js";
 import {
   DEFAULT_POOL_MODELS,
@@ -230,6 +233,80 @@ describe("#916 route presets config load + priority", () => {
     expect(route.slots.coder).toBe("gpt-5.6-terra");
     expect(route.slots.ship).toBe("sonnet");
     expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
+  });
+});
+
+describe("#914 C1 custom tightFamilies survive route mutations", () => {
+  // Disease: withCoderSlot / withSingleRouteSlot re-fetched tightFamilies via
+  // tightFamiliesForRoute(routeName) → process.env, not the resolve-time env.
+  // Custom ORCHESTRATOR_ROUTE_PRESETS_PATH only in the resolve env arg dropped
+  // policy to [] after mutation — teeth gone.
+  it("withCoderSlot still enforces tightFamilies resolved from custom presets path env", () => {
+    const path = writePresetsFile({
+      "custom-tight": {
+        tightFamilies: ["claude"],
+        slots: fullSlots(),
+        legCollections: {
+          cmrReview: [
+            { family: "codex", slug: "gpt-5.6-sol" },
+            { family: "other", slug: "grok-4.5" },
+          ],
+        },
+      },
+    });
+    // Resolve with env ARG only — process.env is NOT stubbed with the path.
+    // Mutations must not re-consult process.env for tightFamilies.
+    resetRoutePresetsCacheForTests();
+    const route = resolveRouteModels(
+      "custom-tight",
+      {},
+      {},
+      {},
+      { ORCHESTRATOR_ROUTE_PRESETS_PATH: path },
+    );
+    expect(route.tightFamilies).toEqual(["claude"]);
+    expect(route.tightFamilyViolations).toEqual([]);
+
+    const mutated = withCoderSlot(route, "opus");
+    expect(mutated.tightFamilies).toEqual(["claude"]);
+    expect(mutated.tightFamilyViolations).toEqual([
+      { slot: "coder", slug: "opus", family: "claude" },
+      { slot: "coderFix", slug: "opus", family: "claude" },
+    ]);
+    expect(applyTightRoutePolicy(mutated, { interactive: false }).kind).toBe(
+      "stop",
+    );
+  });
+
+  it("applyRelayBatonToRoute / withSingleRouteSlot keep custom tight policy teeth", () => {
+    const path = writePresetsFile({
+      "custom-tight": {
+        tightFamilies: ["claude"],
+        slots: fullSlots(),
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    });
+    resetRoutePresetsCacheForTests();
+    const route = resolveRouteModels(
+      "custom-tight",
+      {},
+      {},
+      {},
+      { ORCHESTRATOR_ROUTE_PRESETS_PATH: path },
+    );
+
+    const relayed = applyRelayBatonToRoute(route, { slug: "opus" }, "S7", {
+      slots: ["ship"],
+    });
+    expect(relayed.tightFamilies).toEqual(["claude"]);
+    expect(relayed.tightFamilyViolations).toEqual([
+      { slot: "ship", slug: "opus", family: "claude" },
+    ]);
+    expect(applyTightRoutePolicy(relayed, { interactive: false }).kind).toBe(
+      "stop",
+    );
   });
 });
 
