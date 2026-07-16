@@ -288,6 +288,8 @@ export async function retryProcessCrash<T>(
   opts?: {
     readonly maxAttempts?: number;
     readonly resetBeforeRetry?: () => Promise<void>;
+    /** Injectable wait between attempts (same contract as withMechanicalRetry). */
+    readonly sleepMs?: (ms: number) => Promise<void>;
   },
 ): Promise<T> {
   const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
@@ -301,6 +303,13 @@ export async function retryProcessCrash<T>(
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
+      // #934 ID-004: five 15s intervals between the six process-root attempts
+      // (same clock contract as withMechanicalRetry).
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
+      if (delayMs !== undefined) {
+        const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
+        await sleepMs(delayMs);
+      }
       // #598 r4 (codexB): a failed reset means the state is unknown/dirty — do NOT run
       // `fn` on it. Record the reset failure and retry the reset next iteration (a
       // transient one recovers; a persistent one exhausts into the re-throw below —

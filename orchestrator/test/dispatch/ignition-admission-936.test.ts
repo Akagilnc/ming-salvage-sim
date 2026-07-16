@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,7 +24,13 @@ import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
-import { cutFamilyBase, runFamilyDriver } from "../../src/familyDriver.js";
+import {
+  cutFamilyBase,
+  discoverFamilyResidentScene,
+  planFamilyTerminalReplay,
+  runFamilyDriver,
+} from "../../src/familyDriver.js";
+import { FAMILY_LEDGER_FILENAME } from "../../src/family/realFamilyBackend.js";
 import { entry, s8 } from "../helpers/resume-fixtures.js";
 import type {
   Backend,
@@ -220,6 +226,53 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(result.status).toBe("success");
     expect(result.children).toEqual([]);
     expect(result.admissionSkipped?.map((child) => child.issue)).toEqual([935, 936]);
+    expect(cloneCalls).toBe(0);
+  });
+
+  it("public family driver: malformed blocked_by schema fails closed before worksite", async () => {
+    // #934 ID-003: deterministic dependency schema errors must not soft-empty
+    // into unblocked admission.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    let cloneCalls = 0;
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          { number: 935, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (joined.includes("dependencies/blocked_by")) {
+        // Non-array payload: old soft-decode returned [] and admitted the child.
+        return JSON.stringify({ nodes: [{ number: 1, state: "open" }] });
+      }
+      if (joined.includes("issue view")) {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "Coder-Rec: grok-4.5",
+          author: { login: "Akagilnc" },
+        });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936-schema",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("schema failure must precede clone");
+      },
+    });
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.diagnosis).toMatch(/blocked_by schema error|issue metadata unavailable/i);
     expect(cloneCalls).toBe(0);
   });
 
@@ -439,6 +492,126 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     expect(cutRefFor("family/934-base", true, true, { hasRemote: true })).toBe(
       "family/934-base",
     );
+  });
+
+  it("public family driver: durable post_merge_cleanup terminal replays with zero meta/clone/smoke", async () => {
+    // #934 ID-005 via public family entry: completed durable scene must short-
+    // circuit before route admission / GitHub / clone / smoke.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "definitely-not-a-route-preset");
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-terminal-replay-"));
+    let ghCalls = 0;
+    let cloneCalls = 0;
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        [
+          JSON.stringify({
+            status: "merged",
+            event: "merged",
+            childIssue: 936,
+            familyHeadAfter: "abc123",
+          }),
+          JSON.stringify({
+            status: "post_merge_cleanup",
+            event: "post_merge_cleanup",
+            phase: "final",
+            familyHeadAfter: "abc123",
+            cleanupOutput: {
+              kind: "cleanup",
+              terminal: true,
+              ok: true,
+              branchOutcome: "already_gone",
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+      const result = await runFamilyDriver({
+        epicIssue: 934,
+        sourceRepo: "/tmp/no-such-source",
+        repo: "Akagilnc/ming-salvage-sim",
+        familyBase: "family/934-base",
+        base: "main",
+        promptsDir: "/tmp/prompts",
+        familyPromptsDir: "/tmp/family-prompts",
+        soulsDir: "/tmp/souls",
+        ledgerDir,
+        imageName: "img",
+        sh: () => {
+          ghCalls += 1;
+          throw new Error("terminal replay must not read GitHub");
+        },
+        realBackendFactory: () => {
+          cloneCalls += 1;
+          throw new Error("terminal replay must not clone");
+        },
+      });
+      expect(result.status).toBe("success");
+      expect(result.stopSummary?.reason).toBe("already_done");
+      expect(result.familyHead).toBe("abc123");
+      expect(result.children).toEqual([{ issue: 936, status: "already_done" }]);
+      expect(ghCalls).toBe(0);
+      expect(cloneCalls).toBe(0);
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("public family driver: corrupt resident ledger fails closed with zero external calls", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-corrupt-ledger-"));
+    let ghCalls = 0;
+    let cloneCalls = 0;
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        "{not-valid-jsonl\n",
+        "utf8",
+      );
+      const result = await runFamilyDriver({
+        epicIssue: 934,
+        sourceRepo: "/tmp/no-such-source",
+        repo: "Akagilnc/ming-salvage-sim",
+        familyBase: "family/934-base",
+        base: "main",
+        promptsDir: "/tmp/prompts",
+        familyPromptsDir: "/tmp/family-prompts",
+        soulsDir: "/tmp/souls",
+        ledgerDir,
+        imageName: "img",
+        sh: () => {
+          ghCalls += 1;
+          throw new Error("corrupt scene must not read GitHub");
+        },
+        realBackendFactory: () => {
+          cloneCalls += 1;
+          throw new Error("corrupt scene must not clone");
+        },
+      });
+      expect(result.status).toBe("escalated");
+      expect(result.escalation?.reason).toMatch(/resume state invalid/i);
+      expect(result.escalation?.diagnosis).toMatch(/corrupt/i);
+      expect(ghCalls).toBe(0);
+      expect(cloneCalls).toBe(0);
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: no ledger → fresh; planFamilyTerminalReplay non-terminal → undefined", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-fresh-"));
+    try {
+      expect(discoverFamilyResidentScene(ledgerDir)).toEqual({ kind: "fresh" });
+      expect(planFamilyTerminalReplay([], "family/934-base")).toBeUndefined();
+      expect(
+        planFamilyTerminalReplay(
+          [{ status: "merged", event: "merged", childIssue: 1 }],
+          "family/934-base",
+        ),
+      ).toBeUndefined();
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
   });
 
 });

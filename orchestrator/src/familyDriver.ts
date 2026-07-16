@@ -48,23 +48,34 @@ import { shWithClock } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import {
+  FAMILY_LEDGER_FILENAME,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "./family/realFamilyBackend.js";
+import {
+  familyEscalationState,
+  isValidPostMergeCleanup,
+  mergedSet,
+} from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
 import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
 } from "./family/moduleDeclaration.js";
+import { shouldReclaimFamilyHost } from "./hostReclaim.js";
 import { logDriverStage } from "./stageLog.js";
-import { infraFailureStopSummary } from "./stopSummary.js";
+import {
+  decisionGateParkStopSummary,
+  infraFailureStopSummary,
+} from "./stopSummary.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
   FamilyBackend,
   FamilyAdmissionSkippedChild,
   FamilyEpic,
+  FamilyLedgerEntry,
   FamilyRunInput,
   FamilyRunResult,
   ReconcileGit,
@@ -678,6 +689,158 @@ export interface FamilyDriverOptions {
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
 }
 
+/**
+ * Family Scene Recovery (#934 ID-005 / #936): read resident durable family
+ * ledger before admission/network/worksite. Typed outcomes:
+ *   - fresh: no ledger file → continue productive path
+ *   - resident: parseable ledger present
+ *   - corrupted: ledger present but unreadable/unparseable (preserve, fail loud)
+ */
+export type FamilySceneDiscovery =
+  | { readonly kind: "fresh" }
+  | { readonly kind: "resident"; readonly ledger: ReadonlyArray<FamilyLedgerEntry> }
+  | { readonly kind: "corrupted"; readonly reason: string };
+
+/**
+ * Discover resident family durable truth from `ledgerDir` alone — zero GitHub,
+ * zero clone, zero smoke. Fail-closed on corrupt present ledger.
+ */
+export function discoverFamilyResidentScene(
+  ledgerDir: string,
+): FamilySceneDiscovery {
+  const ledgerPath = join(ledgerDir, FAMILY_LEDGER_FILENAME);
+  if (!existsSync(ledgerPath)) return { kind: "fresh" };
+  let raw: string;
+  try {
+    raw = readFileSync(ledgerPath, "utf8");
+  } catch (err) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger unreadable at ${ledgerPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+  try {
+    const ledger = raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as FamilyLedgerEntry);
+    return { kind: "resident", ledger };
+  } catch (err) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger corrupt at ${ledgerPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+}
+
+/**
+ * Current-schema terminal replay for a resident family ledger (ID-005).
+ * Returns a FamilyRunResult when the durable scene is already terminal
+ * (completed cleanup, or unresolved escalation park/fail). Non-terminal
+ * resident state returns undefined so admission + spine resume continue.
+ */
+export function planFamilyTerminalReplay(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  familyBase: string,
+): FamilyRunResult | undefined {
+  if (shouldReclaimFamilyHost(ledger)) {
+    let familyHead: string | undefined;
+    for (let i = ledger.length - 1; i >= 0; i--) {
+      const entry = ledger[i]!;
+      if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
+        familyHead = entry.familyHeadAfter;
+        break;
+      }
+    }
+    const children = [...mergedSet(ledger)].map((issue) => ({
+      issue,
+      status: "already_done" as const,
+    }));
+    return {
+      status: "success",
+      familyBase,
+      ...(familyHead !== undefined ? { familyHead } : {}),
+      stopSummary: {
+        reason: "already_done",
+        summary:
+          "family durable terminal replay: post_merge_cleanup already completed",
+        ...(familyHead !== undefined
+          ? {
+              metadata: {
+                heads: {
+                  actualFamilyHead: familyHead,
+                  sources: {
+                    actualFamilyHead: "post_merge_cleanup ledger row",
+                  },
+                },
+              },
+            }
+          : {}),
+      },
+      children,
+    };
+  }
+
+  const prior = familyEscalationState(ledger);
+  if (prior === undefined) return undefined;
+  const { escalation, answer } = prior;
+  if (escalation.escalationKind === "decision" && answer !== undefined) {
+    // Answered decision → spine must resume productive work (not terminal).
+    return undefined;
+  }
+  const reason =
+    typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+      ? escalation.reason
+      : "family escalation is not answered";
+  const diagnosis =
+    escalation.escalationKind === "failure"
+      ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+      : escalation.escalationKind !== "decision"
+        ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
+        : "Prior family decision escalation has no later valid escalation_answered ledger event.";
+  const familyHead =
+    typeof escalation.familyHeadAfter === "string" &&
+    escalation.familyHeadAfter.trim().length > 0
+      ? escalation.familyHeadAfter
+      : undefined;
+  const children = [...mergedSet(ledger)].map((issue) => ({
+    issue,
+    status: "already_done" as const,
+  }));
+  const decisionGatePark = escalation.escalationKind === "decision";
+  const heads =
+    familyHead !== undefined
+      ? {
+          actualFamilyHead: familyHead,
+          sources: { actualFamilyHead: "family escalated ledger row" },
+        }
+      : undefined;
+  return {
+    status: "escalated",
+    familyBase,
+    ...(familyHead !== undefined ? { familyHead } : {}),
+    escalation: { reason, diagnosis },
+    stopSummary: decisionGatePark
+      ? decisionGateParkStopSummary({
+          summary: reason,
+          repairHint:
+            "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
+          ...(heads !== undefined ? { heads } : {}),
+        })
+      : infraFailureStopSummary({
+          summary: reason,
+          repairHint:
+            "inspect the family ledger escalation entry and repair before rerun",
+          ...(heads !== undefined ? { heads } : {}),
+        }),
+    children,
+  };
+}
+
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
 export function resolveCodexFast(options: Pick<FamilyDriverOptions, "codexFast">): boolean {
   return options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
@@ -709,6 +872,36 @@ export async function runFamilyDriver(
     readMetadataWithRetry(() => sh(file, args));
   const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
+
+  // #936 / #934 ID-005: Scene Recovery FIRST — resident family durable truth
+  // before route admission, GitHub metadata, smoke, or clone/worksite. Terminal
+  // completed/failed replay with zero external calls; corrupted residue fails
+  // loud and preserves the scene.
+  logDriverStage("recovery", `family scene epic #${options.epicIssue}`);
+  const familyScene = discoverFamilyResidentScene(options.ledgerDir);
+  if (familyScene.kind === "corrupted") {
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: {
+        reason: "resume state invalid",
+        diagnosis: familyScene.reason,
+      },
+      stopSummary: infraFailureStopSummary({
+        summary: familyScene.reason,
+        repairHint:
+          "repair or clear the resident family ledger/worksite before re-entry",
+      }),
+      children: [],
+    };
+  }
+  if (familyScene.kind === "resident") {
+    const terminal = planFamilyTerminalReplay(
+      familyScene.ledger,
+      options.familyBase,
+    );
+    if (terminal !== undefined) return terminal;
+  }
 
   // #936 / #934 ID-002: route Admission/Preflight BEFORE any GitHub metadata
   // read or family clone/worksite creation. Tight/unknown route fails closed
