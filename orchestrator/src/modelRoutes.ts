@@ -344,29 +344,6 @@ export function assertRetiredReviewerModelEnv(env: ModelRouteEnv = process.env):
   );
 }
 
-/**
- * #936 / #934 ID-002: env names that used to override single slots / CMR legs.
- * Production resolve ignores them (deleted); exported so ops/docs can name the set.
- */
-export const RETIRED_SLOT_MODEL_ENVS = [
-  "ORCHESTRATOR_CODER_MODEL",
-  "ORCHESTRATOR_CODER_FIX_MODEL",
-  "ORCHESTRATOR_SHIP_MODEL",
-  "ORCHESTRATOR_MERGER_MODEL",
-  "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
-  "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
-  "ORCHESTRATOR_VERIFY_MODEL",
-  "ORCHESTRATOR_FIXER_MODEL",
-  "ORCHESTRATOR_CLEANUP_MODEL",
-  "ORCHESTRATOR_DOCRELEASE_MODEL",
-  "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
-] as const;
-
-/** No-op: slot/CMR env overrides are ignored (deleted), not migrated. */
-export function assertRetiredSlotModelEnvs(_env: ModelRouteEnv = process.env): void {
-  void _env;
-}
-
 function assertKnownSlot(slot: string): asserts slot is ModelRouteSlot {
   if (!SLOT_SET.has(slot)) {
     throw new Error(`unknown model slot "${slot}"`);
@@ -853,28 +830,6 @@ export function tightRouteViolationDetails(route: ResolvedModelRoute): string {
     .join(", ");
 }
 
-/**
- * #936 / #934 ID-002: slot and CMR leg env overrides are deleted. Kept as
- * empty pure helpers so call sites that still import the names compile once
- * and fail closed via {@link assertRetiredSlotModelEnvs} at resolve time.
- * @deprecated Use programmatic `resolveRouteModels` overrides in tests only.
- */
-export function routeOverridesFromEnv(env: ModelRouteEnv): ModelRouteOverrides {
-  assertRetiredReviewerModelEnv(env);
-  assertRetiredSlotModelEnvs(env);
-  return {};
-}
-
-/**
- * @deprecated #936 — CMR leg env override deleted; always empty.
- */
-export function routeLegCollectionOverridesFromEnv(
-  env: ModelRouteEnv,
-): ModelRouteLegCollectionOverrides {
-  assertRetiredSlotModelEnvs(env);
-  return {};
-}
-
 export function activeModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
@@ -889,13 +844,13 @@ export function activeModelRoute(
 
 /**
  * Production route resolve: `ORCHESTRATOR_ROUTE` + presets only.
- * No per-slot / CMR env overrides (#936 / #934 ID-002).
+ * No per-slot / CMR env overrides (#936 / #934 ID-002). Leftover slot/CMR env
+ * names are ignored (deleted seams), not restaffed.
  */
 export function resolveActiveModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
   assertRetiredReviewerModelEnv(env);
-  assertRetiredSlotModelEnvs(env);
   return resolveRouteModels(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
     {},

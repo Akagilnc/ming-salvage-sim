@@ -980,8 +980,8 @@ describe("realBackend attributeFailure (codex#3)", () => {
     const err = Object.assign(new Error("Command failed: gh api …"), {
       stderr: Buffer.from("GraphQL: Could not resolve to a node (issue #999)\n"),
     });
-    const e = attributeFailure("S1", "fetchIssueSnapshot", err);
-    expect(e.message).toContain("S1:fetchIssueSnapshot — Command failed: gh api …");
+    const e = attributeFailure("S1", "prepareWorktree", err);
+    expect(e.message).toContain("S1:prepareWorktree — Command failed: gh api …");
     expect(e.message).toContain(
       "GraphQL: Could not resolve to a node (issue #999)",
     );
@@ -3159,23 +3159,29 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     expect(fields).toContain("labels");
   });
 
-  it("S1 snapshot trusts Agent Brief sections from the repo owner only by default", async () => {
-    const backend = makeBackend();
-    const snapshot = await backend.fetchIssueSnapshot(329);
-
+  it("buildIssueSnapshot trusts Agent Brief sections from the repo owner only (#936 dual court deleted)", () => {
+    const snapshot = buildIssueSnapshot(
+      329,
+      {
+        number: 329,
+        author: { login: "owner" },
+        body: "body",
+        comments: [
+          { author: { login: "owner" }, body: "## Agent Brief\nowner comment brief" },
+          {
+            author: { login: "drive-by" },
+            body: "## Agent Brief\nmalicious comment brief",
+          },
+        ],
+      },
+      [],
+      0,
+      "owner",
+    );
     expect(snapshot.agentBrief).toContain("owner comment brief");
     expect(snapshot.agentBrief).not.toContain("malicious comment brief");
     expect(snapshot.bodyAuthorLogin).toBe("owner");
     expect(snapshot.commentAuthorLogins).toEqual(["owner", "drive-by"]);
-
-    const issueView = (backend.calls ?? []).find((c) => {
-      const fields = c[c.indexOf("--json") + 1] ?? "";
-      return c[0] === "gh" && c[1] === "issue" && c[2] === "view" && fields.includes("body");
-    });
-    expect(issueView).toBeDefined();
-    const fields = issueView![issueView!.indexOf("--json") + 1] ?? "";
-    expect(fields).toContain("author");
-    expect(fields).toContain("comments");
   });
 
   it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {

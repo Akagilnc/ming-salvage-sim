@@ -2605,41 +2605,9 @@ export class RealBackend implements Backend {
     });
   }
 
-  // ── S1: full snapshot (host gh) ────────────────────────────────────────────
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body. This
-    // preserves the host-side audit/resume artifact; the worker still live-fetches
-    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
-    // 正文 + native metadata").
-    const json = this.phase("S1", "fetchIssueView", () => {
-      const raw = this.sh("gh", [
-        "issue",
-        "view",
-        String(issueNumber),
-        "--repo",
-        this.opts.repo,
-        "--json",
-        "number,title,state,author,body,labels,comments",
-      ]);
-      return JSON.parse(raw) as GhIssueJson;
-    });
-    // The native sub-issue + blocked_by summaries (the same ones S0 reads via the
-    // GraphQL/REST API) complete the snapshot's native metadata. A thrown
-    // gh/transport/parse error propagates → the runner's S1 error termination,
-    // attributed to S1 (not S0) for the US#30 error package.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
-    const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(
-      issueNumber,
-      json,
-      blockedBy,
-      subIssueCount,
-      this.ownerLogin,
-    );
-  }
-
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
+  // #936 / #934 ID-002: snapshot dual court deleted — workers live-fetch issue
+  // truth; no host fetchIssueSnapshot / writeSnapshot on the Backend seam.
   async prepareWorktree(
     issueNumber: number,
     base: string,
@@ -2803,15 +2771,6 @@ export class RealBackend implements Backend {
       );
     }
     return resolveExistingWorktreeFromPorcelain(out, issueNumber);
-  }
-
-  /** #936: snapshot dual court deleted — no-op retained for Backend interface. */
-  async writeSnapshot(
-    _worktree: WorktreeHandle,
-    _snapshot: IssueSnapshot,
-  ): Promise<void> {
-    void _worktree;
-    void _snapshot;
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
@@ -3653,13 +3612,23 @@ export class RealBackend implements Backend {
     return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
-  // ── #255: detect resume residue ────────────────────────────────────────────
+  // ── #255 / #936: detect resume residue ─────────────────────────────────────
+  // ID-005: typed fresh only when BOTH worksite and ledger are absent. A
+  // resident worksite without a readable ledger is corrupted residue — throw so
+  // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
+  // misclassify partial residue as fresh.
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
     const existing = this.findExistingWorktree(issueNumber);
     if (existing === undefined) return undefined;
     const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
-    if (ledger === undefined) return undefined;
+    if (ledger === undefined) {
+      throw new Error(
+        `resident worksite exists without readable ledger for #${issueNumber} ` +
+          `(worktree=${existing.path}, expected ledger=${stateDir}); ` +
+          `refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+      );
+    }
     const worktree = { branch: existing.branch, base: "main", path: existing.path };
     return { worktree, stateDir, ledger };
   }

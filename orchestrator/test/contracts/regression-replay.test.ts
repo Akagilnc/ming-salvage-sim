@@ -594,10 +594,12 @@ describe("#451 dogfood replay fixture", () => {
       sourceStopSummary: expect.objectContaining({
         reason: "success",
       }),
+      // #936: snapshot dual court deleted — host path no longer materializes
+      // untrusted comment Agent Briefs; workers live-fetch in-container.
       sourceEvidence: expect.objectContaining({
         seam: "source_auth",
-        rejectedAuthor: "drive-by",
-        trustedAuthor: "Akagilnc",
+        snapshotDualCourtDeleted: true,
+        sourceKind: "live_worker_fetch",
         executableInstructionSourceAccepted: false,
         status: "success",
         dispatched: expect.arrayContaining(["S2:coder", "S3:verify"]),

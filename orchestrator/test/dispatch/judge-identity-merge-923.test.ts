@@ -18,7 +18,6 @@ import {
   relaySlotForSingleSliceWallStep,
   resolveActiveModelRoute,
   resolveRouteModels,
-  routeOverridesFromEnv,
 } from "../../src/modelRoutes.js";
 
 describe("#923 judge identity merge — model-route slot", () => {
@@ -99,8 +98,6 @@ describe("#923 judge identity merge — model-route slot", () => {
         ORCHESTRATOR_VERIFY_MODEL: "gpt-5.6-terra",
       }).slots.verify,
     ).toBe("gpt-5.6-sol");
-    // routeOverridesFromEnv always empty after #936.
-    expect(routeOverridesFromEnv({ ORCHESTRATOR_VERIFY_MODEL: "opus" })).toEqual({});
   });
 
   it("ORCHESTRATOR_REVIEWER_MODEL set → fail-loud migration hint (never silent ignore)", () => {
@@ -112,9 +109,6 @@ describe("#923 judge identity merge — model-route slot", () => {
       /ORCHESTRATOR_REVIEWER_MODEL.*retired|#923|ORCHESTRATOR_VERIFY_MODEL/i,
     );
     expect(() => activeModelRoute(env)).toThrow(
-      /ORCHESTRATOR_REVIEWER_MODEL|ORCHESTRATOR_VERIFY_MODEL/i,
-    );
-    expect(() => routeOverridesFromEnv(env)).toThrow(
       /ORCHESTRATOR_REVIEWER_MODEL|ORCHESTRATOR_VERIFY_MODEL/i,
     );
     // Empty / whitespace alone is not "set" — no throw.

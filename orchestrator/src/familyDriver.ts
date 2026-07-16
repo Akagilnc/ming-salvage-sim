@@ -36,6 +36,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { admitRouteFromEnv, admissionRouteFailureDiagnosis } from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
@@ -50,6 +51,7 @@ import {
   type SourcedModuleDeclaration,
 } from "./family/moduleDeclaration.js";
 import { logDriverStage } from "./stageLog.js";
+import { infraFailureStopSummary } from "./stopSummary.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
@@ -656,8 +658,32 @@ export async function runFamilyDriver(
   const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
 
+  // #936 / #934 ID-002: route Admission/Preflight BEFORE any GitHub metadata
+  // read or family clone/worksite creation. Tight/unknown route fails closed
+  // with zero network and zero worksite side effects.
+  logDriverStage("admission", `route preflight epic #${options.epicIssue}`);
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
+    const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: {
+        reason: admitted.escalation.reason,
+        diagnosis,
+      },
+      stopSummary: infraFailureStopSummary({
+        summary: `${admitted.escalation.reason}: ${diagnosis}`,
+        repairHint:
+          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
+      }),
+      children: [],
+    };
+  }
+
   // 1. Read the already-cut children from live GitHub (the explicit dependency
-  //    edges a `to-issues` step wrote — decision 1, no LLM inference).
+  //    edges a `to-issues` step wrote — decision 1, no LLM inference). Live
+  //    metadata is part of Admission after route preflight (ID-002/003).
   logDriverStage("admission", `epic #${options.epicIssue}`);
   const epic = readFamilyEpic(options.epicIssue, options.repo, sh);
 
@@ -665,6 +691,7 @@ export async function runFamilyDriver(
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
   //    git, no container) — that clone is the family clone every git op anchors on.
   //    `familyBase` makes a child cut from the LOCAL family base (decision 7).
+  //    Only reached after route admission succeeds.
   const realBackendOptions: RealBackendOptions = {
     codexFast,
     sourceRepo: options.sourceRepo,
