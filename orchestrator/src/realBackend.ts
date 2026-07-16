@@ -111,6 +111,7 @@ import {
 import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
+  resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
   modelFamilyForSlug,
@@ -3128,17 +3129,35 @@ export class RealBackend implements Backend {
    * - non-judge role verify (S9 online-review): not configured here — family
    *   review-loop workers own the verify receipt channel on RealFamilyBackend
    */
-  private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+  private outputFor(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+  ): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
     // S9 online-review must not take JUDGE_RECEIPT.
+    // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
+    // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
+    // a pool rewrite can move a resume-capable slug onto an incapable provider.
+    const pool = isBillingPoolDispatchId(options?.billingPool)
+      ? options.billingPool
+      : undefined;
+    const resumeCapable = resumeCapableForSlug(spec.model, pool);
     if (isJudgeSeat({ id: spec.id })) {
-      return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
+      return workerReceiptOutput(
+        JUDGE_RECEIPT_TAG,
+        judgeStationReceiptSchema(),
+        resumeCapable,
+      );
     }
     if (spec.role === "reviewer") {
-      return workerReceiptOutput("review", workerReceiptSchema());
+      return workerReceiptOutput("review", workerReceiptSchema(), resumeCapable);
     }
     if (spec.role === "coder") {
-      return coderReceiptOutput(coderStationReceiptSchema(), CODER_RECEIPT_TAG);
+      return coderReceiptOutput(
+        coderStationReceiptSchema(),
+        CODER_RECEIPT_TAG,
+        resumeCapable,
+      );
     }
     return undefined;
   }
@@ -3212,8 +3231,9 @@ export class RealBackend implements Backend {
     readonly typedOutput: sc.OutputDefinition | undefined;
     readonly typedOutputUsed: boolean;
   } {
-    void options;
-    const typedOutput = this.outputFor(spec);
+    // #955 r7: options.billingPool must reach resumeCapableForSlug (receipt
+    // maxRetries) — same dispatch pool agentForSlug uses for the real agent.
+    const typedOutput = this.outputFor(spec, options);
     const singleIterOk =
       opts?.requireSingleIter !== true || spec.maxIter === 1;
     const typedOutputUsed = typedOutput !== undefined && singleIterOk;
