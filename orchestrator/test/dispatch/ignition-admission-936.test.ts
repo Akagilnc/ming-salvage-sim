@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -201,6 +201,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
           { number: 936, state: "OPEN", labels: [] },
         ]);
       }
+      if (joined.includes("dependencies/blocked_by")) return "[]";
       if (joined.includes("issue view")) {
         return JSON.stringify({ number: 934, body: "", author: { login: "Akagilnc" } });
       }
@@ -609,6 +610,37 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           "family/934-base",
         ),
       ).toBeUndefined();
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: worksite residue without ledger is corrupted not fresh (ID-005)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-partial-"));
+    const clonePath = mkdtempSync(join(tmpdir(), "family-clone-partial-"));
+    try {
+      // Resident clone with .git, no family ledger → partial residue.
+      mkdirSync(join(clonePath, ".git"), { recursive: true });
+      const scene = discoverFamilyResidentScene(ledgerDir, { clonePath });
+      expect(scene.kind).toBe("corrupted");
+      if (scene.kind === "corrupted") {
+        expect(scene.reason).toMatch(/worksite exists without readable ledger|partial residue/i);
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+      rmSync(clonePath, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: family-base start-head without ledger is corrupted", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-starthead-"));
+    try {
+      writeFileSync(join(ledgerDir, "family-base-start-head"), "abc123\n", "utf8");
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("corrupted");
+      if (scene.kind === "corrupted") {
+        expect(scene.reason).toMatch(/worksite exists without readable ledger/i);
+      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }

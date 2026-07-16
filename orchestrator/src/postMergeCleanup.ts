@@ -90,12 +90,21 @@ export function shouldCloseParentIssue(
 }
 
 function subIssueNodes(parsed: unknown): unknown[] {
+  // Same-class fail-closed decoder as familyDriver (#934 ID-003): schema garbage
+  // must not soft-empty into "no children" parent-close decisions.
   if (Array.isArray(parsed)) return parsed;
-  if (parsed === null || typeof parsed !== "object") return [];
-  const sub = (parsed as { subIssues?: unknown }).subIssues;
-  if (sub === null || typeof sub !== "object") return [];
-  const nodes = (sub as { nodes?: unknown }).nodes;
-  return Array.isArray(nodes) ? nodes : [];
+  if (parsed !== null && typeof parsed === "object") {
+    const sub = (parsed as { subIssues?: unknown }).subIssues;
+    if (sub !== null && typeof sub === "object" && !Array.isArray(sub)) {
+      const nodes = (sub as { nodes?: unknown }).nodes;
+      if (Array.isArray(nodes)) return nodes;
+    }
+  }
+  throw new Error(
+    `sub_issues schema error: expected array or {subIssues:{nodes:[]}}, got ${
+      parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
+    }`,
+  );
 }
 
 function parseLiveSubIssue(node: unknown): LiveSubIssue | undefined {

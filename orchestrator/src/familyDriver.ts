@@ -33,7 +33,8 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -45,8 +46,14 @@ import {
   readMetadataWithRetry,
 } from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
-import { RealBackend, type RealBackendOptions } from "./realBackend.js";
-import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
+import {
+  RealBackend,
+  type RealBackendOptions,
+  parseBlockedBy,
+  type GhBlockedBy,
+  clonePathFor,
+  repoSlug,
+} from "./realBackend.js";
 import {
   FAMILY_LEDGER_FILENAME,
   RealFamilyBackend,
@@ -88,7 +95,11 @@ import type {
 /** One child excluded from this family run before wave scheduling. */
 export interface SkippedFamilyChild {
   readonly issue: number;
-  readonly reason: "closed" | "not_ready_for_agent" | "parent_issue";
+  readonly reason:
+    | "closed"
+    | "not_ready_for_agent"
+    | "parent_issue"
+    | "open_external_blocker";
   readonly message: string;
 }
 
@@ -101,11 +112,20 @@ function subIssueNodes(parsed: unknown): unknown[] {
   // REST native sub-issues endpoint: `gh api repos/O/R/issues/<epic>/sub_issues`.
   if (Array.isArray(parsed)) return parsed;
   // Older/newer gh GraphQL shape retained for pure parser compatibility.
-  if (parsed === null || typeof parsed !== "object") return [];
-  const sub = (parsed as { subIssues?: unknown }).subIssues;
-  if (sub === null || typeof sub !== "object") return [];
-  const nodes = (sub as { nodes?: unknown }).nodes;
-  return Array.isArray(nodes) ? nodes : [];
+  if (parsed !== null && typeof parsed === "object") {
+    const sub = (parsed as { subIssues?: unknown }).subIssues;
+    if (sub !== null && typeof sub === "object" && !Array.isArray(sub)) {
+      const nodes = (sub as { nodes?: unknown }).nodes;
+      if (Array.isArray(nodes)) return nodes;
+    }
+  }
+  // #934 ID-003: deterministic schema garbage must fail closed — never soft-empty
+  // into family-of-one / empty-children admission.
+  throw new Error(
+    `sub_issues schema error: expected array or {subIssues:{nodes:[]}}, got ${
+      parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
+    }`,
+  );
 }
 
 function labelNames(node: unknown): string[] | undefined {
@@ -156,6 +176,8 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
       return `family admission skipped child #${issue}: missing ready-for-agent label`;
     case "parent_issue":
       return `family admission skipped child #${issue}: issue is a parent issue`;
+    case "open_external_blocker":
+      return `family admission skipped child #${issue}: open external blocker(s)`;
   }
 }
 
@@ -228,46 +250,62 @@ export interface OpenExternalBlocker {
   readonly blocker: number;
 }
 
-/** Fail-closed family admission: one or more external blockers are still open. */
-export class FamilyExternalBlockerError extends Error {
-  constructor(readonly openBlockers: ReadonlyArray<OpenExternalBlocker>) {
+/**
+ * #934 ID-002 / root epic OPEN blocker: park the whole family before
+ * clone/smoke/worksite (ID-001 wait-for-external). Distinct from ordinary
+ * per-child external blockers, which only produce a visible filter.
+ */
+export class FamilyRootBlockerError extends Error {
+  constructor(readonly openBlockers: ReadonlyArray<number>) {
     super(
-      `family admission rejected: ${openBlockers.length} external blocker(s) still open — ` +
-        openBlockers.map((b) => `child #${b.child} blocked_by #${b.blocker}`).join("; "),
+      `family admission parked: root epic has open blocker(s) ` +
+        openBlockers.map((n) => `#${n}`).join(", "),
     );
-    this.name = "FamilyExternalBlockerError";
+    this.name = "FamilyRootBlockerError";
   }
 }
 
 /**
- * Family-admission external-blocker gate (online R1 #1; user 2026-06-22, refines ADR
- * 0022 dec6③). An EXTERNAL `blocked_by` (an issue that is NOT one of this epic's
- * children) is never merged into the family ledger, so the commander's wave scheduler
- * cannot clear it. We do NOT lean on each child's family-mode S0 to reject an open
- * external blocker: dec6③ REWIRED the S0 `blocked_by`-closed check to the
- * ledger-merged口径, so an external open blocker is NOT reliably caught at S0 (and
- * relying on that indirection is fragile). Instead, validate them EXPLICITLY here,
- * up front, against the live `state` GitHub returned: ANY external blocker still open
- * fails-closed the WHOLE family run with the concrete offending list (which child,
- * which external issue) so the rejection is actionable. Closed (satisfied) external
- * blockers drop out, and the scheduler (selectWave) then gates ONLY on intra-family
- * blockers — those are the ones the family base can actually merge. A child's S0 still
- * runs against live GitHub as a backstop if an external blocker re-opens mid-run.
+ * Family-admission external-blocker filter (#934 ID-002 supersedes the older
+ * whole-family reject). An EXTERNAL `blocked_by` is never merged into the family
+ * ledger, so the wave scheduler cannot clear it. Ordinary external blockers only
+ * produce a **visible per-child filter** — runnable siblings continue. Closed
+ * (satisfied) external blockers drop out; the scheduler gates only on intra-family
+ * blockers. A child's S0 remains a mid-run backstop if an external blocker re-opens.
  */
-export function assertExternalBlockersCleared(
+export function filterExternalBlockedChildren(
   childNumbers: ReadonlyArray<number>,
   blockedByByChild: ReadonlyMap<number, ReadonlyArray<GhBlockedBy>>,
-): void {
+): {
+  readonly runnable: ReadonlyArray<number>;
+  readonly skipped: ReadonlyArray<SkippedFamilyChild>;
+  readonly openBlockers: ReadonlyArray<OpenExternalBlocker>;
+} {
   const family = new Set(childNumbers);
+  const runnable: number[] = [];
+  const skipped: SkippedFamilyChild[] = [];
   const openBlockers: OpenExternalBlocker[] = [];
   for (const child of childNumbers) {
+    const childOpen: number[] = [];
     for (const b of blockedByByChild.get(child) ?? []) {
       if (!family.has(b.number) && b.state !== "closed") {
         openBlockers.push({ child, blocker: b.number });
+        childOpen.push(b.number);
       }
     }
+    if (childOpen.length > 0) {
+      skipped.push({
+        issue: child,
+        reason: "open_external_blocker",
+        message:
+          `family admission skipped child #${child}: open external blocker(s) ` +
+          childOpen.map((n) => `#${n}`).join(", "),
+      });
+    } else {
+      runnable.push(child);
+    }
   }
-  if (openBlockers.length > 0) throw new FamilyExternalBlockerError(openBlockers);
+  return { runnable, skipped, openBlockers };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -327,20 +365,47 @@ export function inferVerifyCwd(
  * "web"]`. The root's own package.json (if any) is intentionally NOT included as a
  * subproject token here: a changed file is attributed to `<subproject>/…`, and a
  * root project would match everything; the verify default already covers the root.
- * Best-effort: an unreadable clone dir yields [] (the resolver then returns
- * undefined and verify falls back to the clone root).
+ *
+ * #934 ID-011 / #939: operational readdir / package.json probe errors fail closed
+ * (never soft-skip into "no Node subproject"). Only precise absence (ENOENT) of
+ * package.json omits a directory.
  */
-function discoverSubprojects(workingRepo: string): string[] {
+export function discoverSubprojects(workingRepo: string): string[] {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(workingRepo, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (err) {
+    throw new Error(
+      `family verify: failed to readdir subprojects at "${workingRepo}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
-  return entries
-    .filter((e) => e.isDirectory() && existsSync(join(workingRepo, e.name, "package.json")))
-    .map((e) => e.name)
-    .sort();
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const pkg = join(workingRepo, e.name, "package.json");
+    try {
+      statSync(pkg);
+      out.push(e.name);
+    } catch (err) {
+      if (isProbeFileNotFound(err)) continue;
+      throw new Error(
+        `family verify: package.json probe failed at "${pkg}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  return out.sort();
+}
+
+function isProbeFileNotFound(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    (err as { code?: unknown }).code === "ENOENT"
+  );
 }
 
 /**
@@ -401,6 +466,28 @@ export function readFamilyEpic(
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
   const errors: string[] = [];
+
+  // #934 ID-002: read + adjudicate the ROOT epic blocked_by before worksite.
+  // OPEN root blockers park the whole family (ID-001 wait-for-external).
+  try {
+    const rootRaw = sh("gh", [
+      "api",
+      `repos/${repo}/issues/${epicIssue}/dependencies/blocked_by`,
+    ]);
+    const rootBlockedBy = parseBlockedBy(JSON.parse(rootRaw));
+    const openRoot = rootBlockedBy
+      .filter((b) => b.state !== "closed")
+      .map((b) => b.number);
+    if (openRoot.length > 0) {
+      throw new FamilyRootBlockerError(openRoot);
+    }
+  } catch (err) {
+    if (err instanceof FamilyRootBlockerError) throw err;
+    errors.push(
+      `root #${epicIssue} blocked_by: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   for (const child of childNumbers) {
     try {
       const depRaw = sh("gh", [
@@ -412,13 +499,20 @@ export function readFamilyEpic(
       errors.push(`child #${child} blocked_by: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  // #934 ID-002: ordinary external blockers → visible per-child filter only.
+  const externalFilter = filterExternalBlockedChildren(childNumbers, blockedByByChild);
+  for (const skipped of externalFilter.skipped) {
+    console.warn(skipped.message);
+  }
+  const runnableChildren = [...externalFilter.runnable];
+
   let moduleDeclarations: ReturnType<typeof readFamilyModuleDeclarations> = {
     children: new Map(),
   };
   try {
     moduleDeclarations = readFamilyModuleDeclarations(
       epicIssue,
-      childNumbers,
+      runnableChildren,
       repo,
       sh,
       issueBodies,
@@ -429,16 +523,12 @@ export function readFamilyEpic(
   if (errors.length > 0) {
     throw new Error(`issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`);
   }
-  // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
-  // is still open — runs on the initial admission AND on every resume refetch, so a
-  // re-opened external blocker re-rejects on re-entry.
-  assertExternalBlockersCleared(childNumbers, blockedByByChild);
   return buildFamilyEpic(
     epicIssue,
-    childNumbers,
+    runnableChildren,
     blockedByByChild,
     moduleDeclarations,
-    admissionSkippedChildren(admission),
+    [...admissionSkippedChildren(admission), ...externalFilter.skipped],
   );
 }
 
@@ -691,25 +781,50 @@ export interface FamilyDriverOptions {
 
 /**
  * Family Scene Recovery (#934 ID-005 / #936): read resident durable family
- * ledger before admission/network/worksite. Typed outcomes:
- *   - fresh: no ledger file → continue productive path
+ * truth before admission/network/worksite. Typed outcomes:
+ *   - fresh: neither ledger nor worksite residue → continue productive path
  *   - resident: parseable ledger present
- *   - corrupted: ledger present but unreadable/unparseable (preserve, fail loud)
+ *   - corrupted: partial residue or unreadable/unparseable ledger (preserve, fail loud)
  */
 export type FamilySceneDiscovery =
   | { readonly kind: "fresh" }
   | { readonly kind: "resident"; readonly ledger: ReadonlyArray<FamilyLedgerEntry> }
   | { readonly kind: "corrupted"; readonly reason: string };
 
+export interface FamilySceneDiscoveryOptions {
+  /** Deterministic family clone path (ADR 0024); presence of `.git` is worksite residue. */
+  readonly clonePath?: string;
+}
+
 /**
- * Discover resident family durable truth from `ledgerDir` alone — zero GitHub,
- * zero clone, zero smoke. Fail-closed on corrupt present ledger.
+ * Discover resident family durable truth — zero GitHub, zero smoke.
+ * Typed fresh only when BOTH ledger and worksite residue are absent (ID-005).
+ * Worksite residue = family-base start-head file and/or resident clone `.git`.
  */
 export function discoverFamilyResidentScene(
   ledgerDir: string,
+  opts: FamilySceneDiscoveryOptions = {},
 ): FamilySceneDiscovery {
   const ledgerPath = join(ledgerDir, FAMILY_LEDGER_FILENAME);
-  if (!existsSync(ledgerPath)) return { kind: "fresh" };
+  const startHeadPath = join(ledgerDir, FAMILY_BASE_START_HEAD_FILENAME);
+  const hasLedger = existsSync(ledgerPath);
+  const hasStartHead = existsSync(startHeadPath);
+  const hasClone =
+    opts.clonePath !== undefined && existsSync(join(opts.clonePath, ".git"));
+  const hasWorksiteResidue = hasStartHead || hasClone;
+
+  if (!hasLedger && !hasWorksiteResidue) return { kind: "fresh" };
+  if (!hasLedger && hasWorksiteResidue) {
+    const cloneHint =
+      opts.clonePath !== undefined ? `, clone=${opts.clonePath}` : "";
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family worksite exists without readable ledger at ${ledgerDir}` +
+        `${cloneHint}; refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+    };
+  }
+
   let raw: string;
   try {
     raw = readFileSync(ledgerPath, "utf8");
@@ -876,9 +991,18 @@ export async function runFamilyDriver(
   // #936 / #934 ID-005: Scene Recovery FIRST — resident family durable truth
   // before route admission, GitHub metadata, smoke, or clone/worksite. Terminal
   // completed/failed replay with zero external calls; corrupted residue fails
-  // loud and preserves the scene.
+  // loud and preserves the scene. Typed fresh only when ledger AND worksite
+  // residue (clone / start-head) are both absent.
   logDriverStage("recovery", `family scene epic #${options.epicIssue}`);
-  const familyScene = discoverFamilyResidentScene(options.ledgerDir);
+  const home = options.home ?? homedir();
+  const familyClonePath = clonePathFor(
+    home,
+    repoSlug(options.sourceRepo, options.remote),
+    options.epicIssue,
+  );
+  const familyScene = discoverFamilyResidentScene(options.ledgerDir, {
+    clonePath: familyClonePath,
+  });
   if (familyScene.kind === "corrupted") {
     return {
       status: "escalated",
@@ -935,6 +1059,22 @@ export async function runFamilyDriver(
   try {
     epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh, issueBodies);
   } catch (err) {
+    if (err instanceof FamilyRootBlockerError) {
+      const diagnosis =
+        `root epic #${options.epicIssue} is blocked by open upstream issue(s): ` +
+        err.openBlockers.map((n) => `#${n}`).join(", ");
+      return {
+        status: "escalated",
+        familyBase: options.familyBase,
+        escalation: { reason: err.message, diagnosis },
+        stopSummary: decisionGateParkStopSummary({
+          summary: err.message,
+          repairHint:
+            "close or unblock the root epic blocked_by dependencies, then re-feed",
+        }),
+        children: [],
+      };
+    }
     const diagnosis = err instanceof Error ? err.message : String(err);
     return {
       status: "escalated",
