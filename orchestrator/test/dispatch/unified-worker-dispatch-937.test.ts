@@ -477,6 +477,407 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
   });
 });
 
+describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
+  type DispatchContext = import("../../src/types.js").DispatchContext;
+  type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+  type IssueMeta = import("../../src/types.js").IssueMeta;
+  type StepOutput = import("../../src/types.js").StepOutput;
+  type PersistentLedgerEntry = import("../../src/types.js").PersistentLedgerEntry;
+
+  function baseStayPutBackend(
+    tmp: string,
+    dispatch: (
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ) => Promise<WorkerResult>,
+    ledgerWrites: PersistentLedgerEntry[],
+  ): Backend {
+    const worktree: WorktreeHandle = {
+      branch: "feat/937-stayput",
+      base: "main",
+      path: tmp,
+    };
+    return {
+      async smokeModelRoute(route: never): Promise<never> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route as never, async () => ({
+          cliVersion: "test",
+        })) as never;
+      },
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      },
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5",
+        };
+      },
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      },
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        ledgerWrites.push(entry);
+      },
+      dispatchWorker: dispatch,
+    } as Backend;
+  }
+
+  it("POSITIVE: S3 quota no-candidate stay-puts non-terminal with durable audit (#926)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+
+    const tmp = mkdtempSync(join(tmpdir(), "orch-937-stayput-"));
+    tempDirs.push(tmp);
+    const resetAt = new Date("2026-07-10T14:00:00.000Z");
+    const ledgerWrites: PersistentLedgerEntry[] = [];
+    let s3Hits = 0;
+    let s5Hits = 0;
+    let s6Hits = 0;
+
+    const backend = baseStayPutBackend(
+      tmp,
+      async (spec) => {
+        if (spec.id === "S2") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.id === "S3") {
+          s3Hits += 1;
+          throw quotaWallError(
+            new Date("2026-07-10T12:00:00.000Z"),
+            resetAt,
+          );
+        }
+        if (spec.id === "S5") {
+          s5Hits += 1;
+          // First stay-put cycle returns to fixer desk; succeed so the run can
+          // complete without a second consecutive no-baton wall.
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+          };
+        }
+        if (spec.id === "S6") {
+          s6Hits += 1;
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+      ledgerWrites,
+    );
+
+    // #926: first no-candidate stay-put is non-terminal (return via topology).
+    const result = await runOrchestrator({
+      issueNumber: 937,
+      backend,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+      ],
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    // Never terminal solely from the first no-candidate stay-put.
+    expect(result.status).not.toBe("error");
+    expect(s3Hits).toBe(1);
+    // Topology continues to S5 (unusable→fixer) then S6 (judge) without S8 invent.
+    expect(s5Hits).toBe(1);
+    expect(s6Hits).toBe(1);
+
+    const stayPutMem = result.stepLedger.find(
+      (e) => e.event === "coder_advance_stay_put",
+    );
+    expect(stayPutMem).toMatchObject({
+      event: "coder_advance_stay_put",
+      reason: expect.stringMatching(/stay-put|no live baton/i),
+    });
+    const stayPutDisk = ledgerWrites.find(
+      (e) => e.event === "coder_advance_stay_put",
+    );
+    expect(stayPutDisk).toMatchObject({
+      event: "coder_advance_stay_put",
+      reason: expect.stringMatching(/quota wall stay-put on S3/i),
+    });
+  });
+
+  it("POSITIVE: S5 quota no-candidate stay-puts once and returns to judge (#926)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+
+    const tmp = mkdtempSync(join(tmpdir(), "orch-937-s5stay-"));
+    tempDirs.push(tmp);
+    const resetAt = new Date("2026-07-10T14:00:00.000Z");
+    const ledgerWrites: PersistentLedgerEntry[] = [];
+    let s5Hits = 0;
+    let s6Hits = 0;
+
+    const backend = baseStayPutBackend(
+      tmp,
+      async (spec) => {
+        if (spec.id === "S2") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.id === "S3") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "judge",
+              status: "continue",
+              findingDispositions: [
+                {
+                  identityKey: "correctness|x.ts:1|live",
+                  action: "live",
+                },
+              ],
+            },
+          };
+        }
+        if (spec.id === "S5") {
+          s5Hits += 1;
+          throw quotaWallError(
+            new Date("2026-07-10T12:00:00.000Z"),
+            resetAt,
+          );
+        }
+        if (spec.id === "S6") {
+          s6Hits += 1;
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+      ledgerWrites,
+    );
+
+    const result = await runOrchestrator({
+      issueNumber: 937,
+      backend,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+      ],
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    // #926: return to judge (S6), never terminal from first stay-put; no S5 hot-loop.
+    expect(result.status).not.toBe("error");
+    expect(s5Hits).toBe(1);
+    expect(s6Hits).toBe(1);
+    expect(
+      ledgerWrites.filter((e) => e.event === "coder_advance_stay_put"),
+    ).toHaveLength(1);
+    expect(result.errorPackage).toBeUndefined();
+  });
+
+  it("POSITIVE: second consecutive quota stay-put parks for reset — never S8 error (#926)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+
+    const tmp = mkdtempSync(join(tmpdir(), "orch-937-2stay-"));
+    tempDirs.push(tmp);
+    const resetAt = new Date("2026-07-10T14:00:00.000Z");
+    const ledgerWrites: PersistentLedgerEntry[] = [];
+    let s3Hits = 0;
+    let s5Hits = 0;
+
+    const backend = baseStayPutBackend(
+      tmp,
+      async (spec) => {
+        if (spec.id === "S2") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.id === "S3" || spec.id === "S5" || spec.id === "S6") {
+          if (spec.id === "S3") s3Hits += 1;
+          if (spec.id === "S5") s5Hits += 1;
+          throw quotaWallError(
+            new Date("2026-07-10T12:00:00.000Z"),
+            resetAt,
+          );
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+      ledgerWrites,
+    );
+
+    const result = await runOrchestrator({
+      issueNumber: 937,
+      backend,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+      ],
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    // After return-to-judge cycle still no baton → park (ID-001), not S8 error.
+    expect(result.status).toBe("escalate");
+    expect(result.status).not.toBe("error");
+    expect(result.stopSummary?.reason).toBe("provider_degraded");
+    expect(result.stopSummary?.summary ?? "").toMatch(/quota wait for reset/i);
+    expect(
+      ledgerWrites.filter((e) => e.event === "coder_advance_stay_put").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      ledgerWrites.some((e) => e.event === "quota_wait_for_reset"),
+    ).toBe(true);
+    // First stay-put redispatches via topology; second parks — not infinite S5 loop.
+    expect(s3Hits).toBeGreaterThanOrEqual(1);
+    expect(s5Hits).toBeLessThanOrEqual(2);
+  });
+
+  it("NEGATIVE: stay-put writeLedger failure surfaces record_persist_failed", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+
+    const tmp = mkdtempSync(join(tmpdir(), "orch-937-stayfail-"));
+    tempDirs.push(tmp);
+    const resetAt = new Date("2026-07-10T14:00:00.000Z");
+    const worktree: WorktreeHandle = {
+      branch: "feat/937-stayfail",
+      base: "main",
+      path: tmp,
+    };
+
+    const backend = {
+      async smokeModelRoute(route: never): Promise<never> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route as never, async () => ({
+          cliVersion: "test",
+        })) as never;
+      },
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      },
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5",
+        };
+      },
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      },
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "coder_advance_stay_put") {
+          throw new Error("disk full");
+        }
+      },
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.id === "S2") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.id === "S3") {
+          throw quotaWallError(
+            new Date("2026-07-10T12:00:00.000Z"),
+            resetAt,
+          );
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+    } as Backend;
+
+    const result = await runOrchestrator({
+      issueNumber: 937,
+      backend,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+      ],
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason ?? "").toMatch(
+      /record_persist_failed.*coder_advance_stay_put/i,
+    );
+  });
+});
+
 describe("#937 ID-015 / ID-016 delete boundaries", () => {
   it("NEGATIVE: terminateSpawnedChild is a no-op when the child already exited", async () => {
     const { spawn } = await import("node:child_process");

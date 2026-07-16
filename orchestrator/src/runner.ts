@@ -1952,6 +1952,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOutput: StepOutput | undefined;
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  /**
+   * #926 / #937 / #934 ID-008: consecutive review/fix no-baton stay-puts.
+   * First stay-put is non-terminal (return to judge / preserve findings); a
+   * second consecutive typed-429 wall with no baton parks for external reset
+   * (ID-001) — never invents S8 error solely from candidate exhaustion.
+   */
+  let consecutiveReviewFixStayPuts = 0;
   /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
   let pendingBlockingFindingCount = 0;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
@@ -2935,6 +2942,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         let commitTelemetryWorker:
           | { readonly stepId: string; readonly modelSlug: string }
           | undefined;
+        /** Set when catch applies #926 stay-put and breaks to topology. */
+        let reviewFixStayPutRouted = false;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
@@ -3130,7 +3139,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 },
                 durableRetryOpts,
               );
-              if (result.kind === "completed") completeMechanicalRetryInvocation(step);
+              if (result.kind === "completed") {
+                completeMechanicalRetryInvocation(step);
+                // Successful productive dispatch breaks the stay-put streak.
+                consecutiveReviewFixStayPuts = 0;
+              }
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
@@ -3181,20 +3194,117 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // escalate; hang no longer invents host kill+relay from silence.
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
           // with a live baton (ephemeral brief, apply next baton, re-enter).
+          //
+          // #934 ID-008 / #926 / #937: review/fix (S3/S5/S6) no-candidate is
+          // one stay-put seam — durable audit, keep owning coder, never invent
+          // terminal solely from candidate exhaustion, no fabricated judge paper,
+          // no clearing live findings. Topology returns to the persistent judge
+          // (S5→S6) or re-enters the fix desk with preserved findings (S3/S6→S5).
+          // After a full return-to-judge cycle still no baton: park for external
+          // quota reset when the wall is typed 429 (ID-001 park), never S8 error.
+          const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
+          const applyReviewFixStayPut = async (
+            stayReason: string,
+            stateSummary: string,
+            parkErr?: QuotaWaitForResetError,
+          ): Promise<"break" | RunResult> => {
+            const stayModel = modelIdForWallStep(step);
+            const stayTs = new Date().toISOString();
+            const stayEntry = {
+              step,
+              event: "coder_advance_stay_put" as const,
+              reason: stayReason,
+              fromModelId: stayModel,
+              toModelId: stayModel,
+              state_summary: stateSummary,
+              ts: stayTs,
+            };
+            ledger.push(stayEntry);
+            // #926 / #934 ID-015: stay-put audit is required durable truth — not
+            // fail-open. writeLedger failure surfaces as typed failed.
+            if (stateDir !== undefined) {
+              try {
+                await backend.writeLedger(
+                  {
+                    ...stayEntry,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, step, backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: stayTs,
+                  },
+                  stateDir,
+                );
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `record_persist_failed: coder_advance_stay_put audit: ${
+                      writeErr instanceof Error
+                        ? writeErr.message
+                        : String(writeErr)
+                    }`,
+                  ),
+                );
+              }
+            }
+            consecutiveReviewFixStayPuts += 1;
+            // Second consecutive no-baton wall after return-to-judge: wait for
+            // external quota reset (ID-001 park) — never invent terminal from
+            // candidate exhaustion (#926 / ID-008).
+            if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
+              return await parkQuotaWaitForReset({
+                step,
+                err: parkErr,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+              });
+            }
+            if (step === "S5") {
+              // #926: return result to persistent judge (S5→S6). Noop fix
+              // receipt — live findings stay in pending* for S6.
+              output = {
+                kind: "coder",
+                committed: false,
+                commitsAdded: 0,
+              };
+              lastOutput = output;
+              reviewFixStayPutRouted = true;
+              return "break";
+            }
+            // S3/S6: never invent empty judge paper; never clear live findings.
+            // Prefer prior continue paper so route → S5 with the same open set;
+            // otherwise leave output undefined → unusable → S5 topology.
+            if (
+              lastOutput?.kind === "judge" &&
+              lastOutput.status === "continue" &&
+              pendingBlockingFindingCount > 0
+            ) {
+              output = lastOutput;
+            } else {
+              output = undefined;
+            }
+            // pendingBlockingFindings intentionally untouched.
+            reviewFixStayPutRouted = true;
+            return "break";
+          };
+
           if (isQuotaWaitForResetError(err)) {
-            // #934 ID-008 / #937: review/fix seats stay on the owning coder —
-            // no-candidate must not invent park/terminal from silence or
-            // candidate exhaustion (#919 / ADR 0132 topology).
-            const reviewFixStayPut =
-              isJudgeSeat({ step }) || step === "S5";
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
-              if (reviewFixStayPut) {
-                // Stay-put: re-surface as process failure for same-model redispatch.
-                throw new Error(
-                  `quota wall stay-put on ${step} (no live baton): ${err.message}`,
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: no live baton`,
+                  err.message,
+                  err,
                 );
+                if (stay !== "break") return stay;
+                break;
               }
               return await parkQuotaWaitForReset({
                 step,
@@ -3230,10 +3340,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
             });
             if (outcome.kind === "park") {
-              if (reviewFixStayPut) {
-                throw new Error(
-                  `quota wall stay-put on ${step} (park/no baton): ${err.message}`,
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: park/no baton`,
+                  err.message,
+                  err,
                 );
+                if (stay !== "break") return stay;
+                break;
               }
               return outcome.result;
             }
@@ -3247,8 +3361,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // (never mechanical-retry / never reset). Hang/self-report free-log
           // constructors deleted with ID-006/007.
           if (isCapacityRelayError(err) && canRelayInProcess()) {
-            const reviewFixStayPut =
-              isJudgeSeat({ step }) || step === "S5";
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
               capacity: true,
@@ -3265,12 +3377,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               step,
             });
             if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
-              if (reviewFixStayPut) {
-                throw new Error(
-                  `capacity stay-put on ${step} (no live baton): ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
                 );
+                if (stay !== "break") return stay;
+                break;
               }
             }
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
@@ -3321,6 +3434,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const coderHeadAfterStep = expectedKind === "coder"
           ? gitHead(worktree)
           : undefined;
+
+        // #926 stay-put already set topology outputs and preserved live findings —
+        // skip worker-output projection so we do not clear the open set.
+        if (reviewFixStayPutRouted) {
+          if (output !== undefined) lastOutput = output;
+          break;
+        }
 
         // #786: host-git commit observations are strictly sidecar-only.
         // A failed read/write cannot affect the step's ledger or route decision.
