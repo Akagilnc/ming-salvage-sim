@@ -1,33 +1,29 @@
 /**
  * #767 — design-time Coder-Rec roster lookup.
+ * #920 — pool isolation removed: same model may occupy coder + review/CMR seats.
+ * ADR 0132 / #919 CR — round-threshold selection deleted (first seat stay-put).
  *
  * Seams under test:
  *   1. parseCoderRec(issueBody) — read the designer marking line
  *   2. resolveCoderRecOrder — roster-valid fallback order (or default)
- *   3. selectCoderRecEntry — advance after N non-converging review rounds
- *   4. poolSeparationViolation — coder roster entry must not double as a reviewer leg
- *   5. applyCoderRecToRoute / runner dispatch — first valid entry on S2, advance on S5
- *   6. reviewerSlugsFromRoute — includes CMR gate slots (completeness/correctness/verify)
- *   7. runner mid-loop advance — re-smoke before first dispatch of advanced slug
- *   8. runner ledger wiring — 2 completed S6 rounds advance the DISPATCHED coder
- *   9. resume re-fetches issue body so Coder-Rec (+ advance position) survives
- *  10. S0 smokes the final Coder-Rec route once (not preset-then-override)
- *  11. resume Coder-Rec re-fetch degrades safely (meta throw → snapshot;
+ *   3. selectCoderRecEntry — first seat only (no rounds argument)
+ *   4. #920 pool isolation gone — no review-slot conflict filter / exhaust throw
+ *   5. applyCoderRecToRoute / runner dispatch — first valid entry sticky
+ *   6. runner mid-loop — no model rotation / re-smoke after N S6 rounds
+ *   7. resume re-fetches issue body so first-seat Coder-Rec survives
+ *   8. S0 smokes the final Coder-Rec route once (not preset-then-override)
+ *   9. resume Coder-Rec re-fetch degrades safely (meta throw → snapshot;
  *      both throw → route preset + diagnostic, no error termination)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  completedS6RoundsFromLedger,
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
   CoderRecError,
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
-  poolSeparationViolation,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
 } from "../../src/coderRoster.js";
 import {
@@ -187,7 +183,6 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
     const applied = applyCoderRecToRoute(
       base,
       "## Scope\nNo marking here.\n",
-      0,
       {},
     );
     expect(applied.skippedForMissingMarking).toBe(true);
@@ -234,160 +229,86 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
   });
 });
 
-describe("#767 Coder-Rec roster — fallback after non-converging rounds", () => {
-  it("dispatches the first roster-valid entry before the fallback threshold", () => {
+describe("#767 Coder-Rec roster — first seat stay-put (ADR 0132 / #919 CR)", () => {
+  it("selectCoderRecEntry returns only the first roster-valid entry", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
     );
-    expect(selectCoderRecEntry(order, 0).id).toBe("grok-4.5");
-    expect(selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS - 1).id).toBe(
+    expect(selectCoderRecEntry(order).id).toBe("grok-4.5");
+    // Order length must not rotate selection — first seat only.
+    expect(order.map((e) => e.id)).toEqual([
       "grok-4.5",
-    );
-  });
-
-  it("advances to the next entry once the review loop burns the threshold rounds", () => {
-    const order = resolveCoderRecOrder(
-      "Coder-Rec: grok-4.5 → terra@med → luna@med",
-    );
-    expect(selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS).id).toBe(
       "terra@med",
-    );
-    expect(selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2).id).toBe(
       "luna@med",
-    );
-    // Past the end: stay on the last entry (no wrap inventing new coders).
-    expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 99).id,
-    ).toBe("luna@med");
+    ]);
+    expect(selectCoderRecEntry(order).id).toBe("grok-4.5");
   });
 });
 
-describe("#767 Coder-Rec roster — pool separation", () => {
-  it("flags a coder roster entry that doubles as an active reviewer leg", () => {
-    const terra = lookupCoderRosterEntry("terra@med");
-    expect(terra).toBeDefined();
-    expect(
-      poolSeparationViolation(terra!, ["gpt-5.6-sol", "gpt-5.6-terra"]),
-    ).toMatch(/must not double as.*reviewer/i);
-  });
-
-  it("allows a coder whose slug is not among the active reviewer legs", () => {
-    const grok = lookupCoderRosterEntry("grok-4.5");
-    expect(grok).toBeDefined();
-    expect(
-      poolSeparationViolation(grok!, ["gpt-5.6-sol", "opus", "agy"]),
-    ).toBeUndefined();
-  });
-
-  it("skips colliding entries when selecting, preferring the next roster-valid coder", () => {
+describe("#920 pool isolation removed — same model across roles is legal", () => {
+  it("selects the top roster entry even when its slug shares review / CMR seats", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: terra@med → grok-4.5 → luna@med",
     );
-    const selected = selectCoderRecEntry(order, 0, {
-      reviewerSlugs: ["gpt-5.6-terra", "gpt-5.6-sol"],
-    });
-    // terra@med doubles as reviewer → skip to grok-4.5
-    expect(selected.id).toBe("grok-4.5");
+    // Pre-#920 this skipped terra because gpt-5.6-terra was treated as a
+    // reviewer conflict; isolation is gone so the marked top entry wins.
+    expect(selectCoderRecEntry(order).id).toBe("terra@med");
   });
 
-  it("rejects Sol as a Coder-Rec candidate because it occupies the review and gate seats", () => {
+  it("admits Sol as Coder-Rec even when sol occupies review and CMR seats", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
       const base = resolveRouteModels(routeName, {});
-      expect(() => applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {})).toThrow(
-        /no pool-separated coder roster entry/i,
-      );
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", {});
+      expect(applied.entry?.id).toBe("sol@med");
+      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
+      // #899 run8 / AC: cmrReview leg may keep the same slug as coder.
+      expect(
+        applied.route.legCollections.cmrReview.map((leg) => leg.slug),
+      ).toContain("gpt-5.6-sol");
     }
   });
 
-  it("fails closed when every remaining coder would share a reviewer checkpoint", () => {
+  it("never throws a pool-separation exhaustion path on multi-entry collision", () => {
     const order = resolveCoderRecOrder("Coder-Rec: sol@med → terra@med");
-    expect(() =>
-      selectCoderRecEntry(order, 0, {
-        reviewerSlugs: ["gpt-5.6-sol", "gpt-5.6-terra"],
-      }),
-    ).toThrow(/no pool-separated coder roster entry/i);
+    expect(selectCoderRecEntry(order).id).toBe("sol@med");
   });
 
-  it("collects cmrCompleteness / cmrCorrectness / verify gate slots as reviewer pool slugs", () => {
-    const route = resolveRouteModels("normal", {
-      cmrCompleteness: "opus",
-      cmrCorrectness: "grok-4.5",
-      verify: "gpt-5.6-luna",
-    });
-    const slugs = reviewerSlugsFromRoute(route);
-    expect(slugs).toEqual(
-      expect.arrayContaining([
-        route.slots.reviewer,
-        "opus",
-        "grok-4.5",
-        "gpt-5.6-luna",
-        ...route.legCollections.cmrReview.map((leg) => leg.slug),
-      ]),
+  it("keeps a single-entry roster on the top seat (never exhausts)", () => {
+    const order = resolveCoderRecOrder("Coder-Rec: sol@med");
+    expect(order).toHaveLength(1);
+    expect(selectCoderRecEntry(order).id).toBe("sol@med");
+    const applied = applyCoderRecToRoute(
+      resolveRouteModels("normal", {}),
+      "Coder-Rec: sol@med",
+      {},
     );
+    expect(applied.entry?.id).toBe("sol@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
   });
 
-  it("filters a roster entry whose slug equals the cmrCorrectness gate slot", () => {
+  it("does not skip a roster entry that equals the cmrCorrectness gate slot", () => {
     const base = resolveRouteModels("normal", {
       cmrCorrectness: "grok-4.5",
     });
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      0,
       {},
     );
-    // Sol owns every default judging gate, leaving Terra available after the
-    // explicit Grok collision.
-    expect(applied.entry?.id).toBe("terra@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
+    expect(applied.entry?.id).toBe("grok-4.5");
+    expect(applied.route.slots.coder).toBe("grok-4.5");
+    expect(applied.route.slots.cmrCorrectness).toBe("grok-4.5");
   });
 
   /**
-   * #789 — Claude coder backups (sonnet / haiku) use different runnable slugs
-   * from the cmrReview Claude leg (opus). Pool separation is slug-equality,
-   * not family-equality: same Claude pool is fine as long as slugs differ.
+   * #789 still holds as a roster fact (sonnet/haiku ≠ opus); #920 no longer
+   * filters on slug equality — first seat stays put (ADR 0132).
    */
-  it("#789 Claude coder slugs do not collide with the cmrReview opus leg", () => {
-    const sonnet = lookupCoderRosterEntry("sonnet-5");
-    const haiku = lookupCoderRosterEntry("haiku-4.5");
-    expect(sonnet).toBeDefined();
-    expect(haiku).toBeDefined();
-    expect(sonnet!.slug).toBe("sonnet");
-    expect(haiku!.slug).toBe("haiku");
-    expect(sonnet!.slug).not.toBe("opus");
-    expect(haiku!.slug).not.toBe("opus");
-
-    const normal = resolveRouteModels("normal", {});
-    const cmrClaudeSlugs = normal.legCollections.cmrReview
-      .filter((leg) => leg.family === "claude")
-      .map((leg) => leg.slug);
-    expect(cmrClaudeSlugs).toEqual(["opus"]);
-
-    const reviewerSlugs = reviewerSlugsFromRoute(normal);
-    expect(reviewerSlugs).toContain("opus");
-    expect(poolSeparationViolation(sonnet!, reviewerSlugs)).toBeUndefined();
-    expect(poolSeparationViolation(haiku!, reviewerSlugs)).toBeUndefined();
-  });
-
-  it("#789 selectCoderRecEntry keeps sonnet/haiku when only opus is on CMR", () => {
+  it("#789 selectCoderRecEntry keeps first Claude backup seat", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
     );
-    const normal = resolveRouteModels("normal", {});
-    const reviewerSlugs = reviewerSlugsFromRoute(normal);
-
-    // First entry free; after threshold advance to sonnet (not skipped for opus).
-    expect(selectCoderRecEntry(order, 0, { reviewerSlugs }).id).toBe("grok-4.5");
-    expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS, {
-        reviewerSlugs,
-      }).id,
-    ).toBe("sonnet-5");
-    expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2, {
-        reviewerSlugs,
-      }).id,
-    ).toBe("haiku-4.5");
+    expect(selectCoderRecEntry(order).id).toBe("grok-4.5");
   });
 });
 
@@ -421,52 +342,23 @@ describe("#789 Coder-Rec — Claude backup tokens + fallback chain", () => {
     ]);
   });
 
-  it("advances the Claude backup chain after non-converging rounds", () => {
+  it("Claude backup chain stays on first seat", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
     );
-    expect(selectCoderRecEntry(order, 0).id).toBe("grok-4.5");
-    expect(selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS).id).toBe(
-      "sonnet-5",
-    );
-    expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2).id,
-    ).toBe("haiku-4.5");
-    expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 99).id,
-    ).toBe("haiku-4.5");
+    expect(selectCoderRecEntry(order).id).toBe("grok-4.5");
   });
 
-  it("applyCoderRecToRoute wires Claude backup slugs onto coder + coderFix", () => {
+  it("applyCoderRecToRoute wires first Claude backup slug (sticky)", () => {
     const base = resolveRouteModels("normal", {});
     const first = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
-      0,
       {},
     );
     expect(first.entry?.id).toBe("grok-4.5");
     expect(first.route.slots.coder).toBe("grok-4.5");
-
-    const advanced = applyCoderRecToRoute(
-      base,
-      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
-      CODER_REC_FALLBACK_AFTER_ROUNDS,
-      {},
-    );
-    expect(advanced.entry?.id).toBe("sonnet-5");
-    expect(advanced.route.slots.coder).toBe("sonnet");
-    expect(advanced.route.slots.coderFix).toBe("sonnet");
-
-    const last = applyCoderRecToRoute(
-      base,
-      "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
-      CODER_REC_FALLBACK_AFTER_ROUNDS * 2,
-      {},
-    );
-    expect(last.entry?.id).toBe("haiku-4.5");
-    expect(last.route.slots.coder).toBe("haiku");
-    expect(last.route.slots.coderFix).toBe("haiku");
+    expect(first.route.slots.coderFix).toBe("grok-4.5");
   });
 });
 
@@ -480,32 +372,19 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      0,
       {},
     );
     expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
     expect(applied.route.slots.coderFix).toBe("grok-4.5");
-    // Reviewer legs untouched.
-    expect(applied.route.slots.reviewer).toBe(base.slots.reviewer);
-  });
-
-  it("advances the route coder after the fallback threshold of non-converging rounds", () => {
-    const base = resolveRouteModels("normal", {});
-    const applied = applyCoderRecToRoute(
-      base,
-      "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      CODER_REC_FALLBACK_AFTER_ROUNDS,
-      {},
-    );
-    expect(applied.entry?.id).toBe("terra@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
+    // Judge (verify) + CMR legs untouched.
+    expect(applied.route.slots.verify).toBe(base.slots.verify);
   });
 
   it("leaves the route coder untouched when the issue has no Coder-Rec line", () => {
     const base = resolveRouteModels("normal", {});
-    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n", 0, {});
+    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n", {});
     expect(applied.skippedForMissingMarking).toBe(true);
     expect(applied.route.slots.coder).toBe(base.slots.coder);
   });
@@ -515,7 +394,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      0,
       { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
     expect(applied.skippedForEnvOverride).toBe(true);
@@ -530,7 +408,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
       applyCoderRecToRoute(
         base,
         "Coder-Rec: totally-bogus → also-fake",
-        0,
         { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
@@ -538,7 +415,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
       applyCoderRecToRoute(
         base,
         "Please set Coder-Rec carefully.\n",
-        0,
         { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
@@ -546,7 +422,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      0,
       { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
     expect(applied.skippedForEnvOverride).toBe(true);
@@ -558,7 +433,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      0,
       { ORCHESTRATOR_CODER_FIX_MODEL: "opus" },
     );
 
@@ -574,7 +448,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: terra@med",
-      0,
       {},
     );
 
@@ -668,8 +541,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.coderModels.push(spec.model);
         this.events.push(`dispatch:${spec.model}`);
       }
-      if (spec.role === "reviewer") {
-        return { kind: "reviewer", findings: [], findingsCount: 0 };
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
+        return { kind: "judge", status: "converged" };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
@@ -691,7 +564,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.events.push(`dispatch:${spec.model}`);
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      if (spec.role === "reviewer") {
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
         const attempt = this.reviewerAttempts;
         this.reviewerAttempts += 1;
         // S3: initial blocking. S6#1: still-active. S6#2: severity drop
@@ -716,12 +589,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             ],
           };
         }
-        return {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: blockingKey, status: "verified-closed" },
-          ],
-        };
+        return { kind: "judge", status: "converged" };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
@@ -786,13 +654,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.events.push(`dispatch:${spec.model}`);
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      if (spec.role === "reviewer") {
-        return {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: blockingKey, status: "verified-closed" },
-          ],
-        };
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
+        return { kind: "judge", status: "converged" };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
@@ -839,8 +702,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
 
   it("#906: bold Coder-Rec (#899 fixture) applies and dispatches the marked coder", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
-    // Sol alone fails pool-separation on normal route; use a legal bold pair
-    // that still matches the #899 markdown shape (`- **Coder-Rec: …**`).
+    // #920: sol is a legal coder even when it also owns review/CMR seats.
     const backend = new CoderRecBackend(
       "- **Coder-Rec: grok-4.5 → sol@med**\n",
     );
@@ -848,6 +710,27 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
     expect(backend.coderModels).not.toContain("sonnet");
+  });
+
+  it("#899 run8 / #920: sol coder + sol cmrReview leg lights without rejection", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class SolSameModelBackend extends CoderRecBackend {
+      cmrReviewOnSmoke: string[] = [];
+      override async smokeModelRoute(route: any) {
+        this.cmrReviewOnSmoke = route.legCollections.cmrReview.map(
+          (leg: { slug: string }) => leg.slug,
+        );
+        // Same-model coder↔cmrReview must not be rejected at ignition.
+        expect(route.slots.coder).toBe("gpt-5.6-sol");
+        expect(this.cmrReviewOnSmoke).toContain("gpt-5.6-sol");
+        return super.smokeModelRoute(route);
+      }
+    }
+    const backend = new SolSameModelBackend("Coder-Rec: sol@med\n");
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+    expect(result.status).toBe("success");
+    expect(backend.coderModels[0]).toBe("gpt-5.6-sol");
+    expect(backend.cmrReviewOnSmoke).toContain("gpt-5.6-sol");
   });
 
   it("#906: broken Coder-Rec mark fail-closes at admission with zero dispatch", async () => {
@@ -909,14 +792,13 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(smokesBeforeDispatch).toEqual(["smoke:grok-4.5"]);
   });
 
-  it("resume after S5 keeps the Coder-Rec entry at the ledger advance position", async () => {
+  it("resume after S5 keeps the first Coder-Rec entry (no round advance)", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecResumeAfterS5Backend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // 2 completed S6 rounds on the restored ledger advance to Terra; Sol owns
-    // the active judging seats.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
+    // ADR 0132: completed S6 rounds on the restored ledger do not rotate models.
+    expect(backend.coderModels[0]).toBe("grok-4.5");
   });
 
   it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
@@ -939,8 +821,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new MetaThrowSnapshotOkBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // Snapshot body supplies Coder-Rec; 2 S6 rounds advance to Terra.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
+    // Snapshot body supplies Coder-Rec; first entry stays (no round advance).
+    expect(backend.coderModels[0]).toBe("grok-4.5");
   });
 
   it("resume: both re-fetch throws degrade to route preset without error termination", async () => {
@@ -960,7 +842,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       const backend = new BothRefetchThrowBackend();
       const result = await runOrchestrator({ issueNumber: 767, backend });
       expect(result.status).toBe("success");
-      // Coder-Rec is optional: continue with the route preset coder.
+      // Coder-Rec is optional: continue with the route preset coder (normal → terra).
       expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
       expect(info).toHaveBeenCalledWith(
         expect.stringMatching(
@@ -972,84 +854,31 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     }
   });
 
-  it("re-smokes the advanced coder slug before its first mid-loop S5 dispatch", async () => {
+  it("never mid-loop advances / re-smokes a later Coder-Rec seat from S6 count", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    const terraSmokeAt = backend.events.indexOf("smoke:gpt-5.6-terra");
-    const terraDispatchAt = backend.events.indexOf("dispatch:gpt-5.6-terra");
-    expect(terraSmokeAt).toBeGreaterThanOrEqual(0);
-    expect(terraDispatchAt).toBeGreaterThanOrEqual(0);
-    expect(terraSmokeAt).toBeLessThan(terraDispatchAt);
+    expect(backend.events).not.toContain("smoke:gpt-5.6-terra");
+    expect(backend.events).not.toContain("dispatch:gpt-5.6-terra");
+    expect(backend.coderModels.every((m) => m === "grok-4.5")).toBe(true);
   });
 
-  it("advances the DISPATCHED coder after 2 completed S6 rounds via ledger wiring", async () => {
+  it("keeps the DISPATCHED coder on the first seat after multiple completed S6 rounds", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
 
+    // Multi-round S6 path must not rotate the coder model (ADR 0132 / #919 CR).
     const s6Count = backend.ledgerWrites.filter((e) => e.step === "S6").length;
-    expect(s6Count).toBeGreaterThanOrEqual(CODER_REC_FALLBACK_AFTER_ROUNDS);
+    expect(s6Count).toBeGreaterThanOrEqual(2);
 
-    // S2 + S5×2 stay on Grok; the S5 after 2 S6 rounds advances to Terra.
+    // S2 + all S5 stay on Grok — no selection-by-rounds dual-track.
     expect(backend.coderModels[0]).toBe("grok-4.5");
     expect(
       backend.coderModels.filter((m) => m === "grok-4.5").length,
-    ).toBeGreaterThanOrEqual(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
-    expect(backend.coderModels).toContain("gpt-5.6-terra");
-    const firstTerra = backend.coderModels.indexOf("gpt-5.6-terra");
-    expect(firstTerra).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
-  });
-});
-
-describe("#899 non-converging rounds — count completed S6 rounds only", () => {
-  // 2026-07-15 live kill-chain: the in-memory ledger carries BOTH a
-  // worker_monitor_spawned row AND a completion row per S6 round (plus
-  // bookkeeping event rows). Counting raw `step === "S6"` rows doubled one
-  // real round into 2, hit CODER_REC_FALLBACK_AFTER_ROUNDS, advanced the
-  // roster onto the reviewer's own slug (gpt-5.6-sol), and pool separation
-  // then exhausted the roster — silently killing three consecutive runs.
-  it("counts one completed round despite spawn + completion + redispatch rows", () => {
-    expect(
-      completedS6RoundsFromLedger([
-        { step: "S2" },
-        { step: "S3", event: "worker_monitor_spawned" },
-        { step: "S3" },
-        { step: "S4" },
-        { step: "S5", event: "worker_monitor_spawned" },
-        { step: "S5" },
-        { step: "mechanical_redispatch_attempt", event: "mechanical_redispatch_attempt" },
-        { step: "S6", event: "worker_monitor_spawned" },
-        { step: "S6" },
-        { step: "S4" },
-      ]),
-    ).toBe(1);
-  });
-
-  it("counts two rounds across two completed S6 reviews", () => {
-    expect(
-      completedS6RoundsFromLedger([
-        { step: "S6", event: "worker_monitor_spawned" },
-        { step: "S6" },
-        { step: "S6", event: "worker_monitor_spawned" },
-        { step: "S6" },
-      ]),
-    ).toBe(2);
-  });
-
-  it("counts zero when an S6 worker was spawned but never completed", () => {
-    expect(
-      completedS6RoundsFromLedger([
-        { step: "S6", event: "worker_monitor_spawned" },
-      ]),
-    ).toBe(0);
-  });
-
-  it("ignores completed rows of other steps", () => {
-    expect(
-      completedS6RoundsFromLedger([{ step: "S3" }, { step: "S5" }, { step: "S4" }]),
-    ).toBe(0);
+    ).toBe(backend.coderModels.length);
+    expect(backend.coderModels).not.toContain("gpt-5.6-terra");
   });
 });

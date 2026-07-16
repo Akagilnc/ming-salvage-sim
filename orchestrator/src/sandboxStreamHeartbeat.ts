@@ -30,6 +30,8 @@ interface HeartbeatSandboxOptions {
   readonly cwd?: string;
   readonly name?: string;
   readonly logging?: unknown;
+  /** #928: sandcastle password shape (string | string[]); production forces `[]`. */
+  readonly completionSignal?: string | readonly string[];
 }
 
 /** The concrete file-logging shape this helper injects (online r1: typed, not unknown). */
@@ -49,6 +51,27 @@ export interface StreamHeartbeatDeps {
 /** Mirror of sandcastle's own log-filename sanitizer character class. */
 function sanitizeName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9_.-]/g, "-");
+}
+
+/**
+ * #928 / #919 F2 — shared Sandcastle invoke wrap used by RealBackend and
+ * RealFamilyBackend:
+ *   - force `completionSignal: []` (omit is NOT off; sandcastle defaults a password)
+ *   - inject monitor stream heartbeat for #684 idle liveness
+ *
+ * Behavior-identical to the former dual inlined copies; one helper, two call sites.
+ */
+export function withSandcastleInvokeDefaults<T extends HeartbeatSandboxOptions>(
+  options: T,
+  deps?: StreamHeartbeatDeps,
+): T & { completionSignal: string[] } {
+  return withMonitorStreamHeartbeat(
+    {
+      ...options,
+      completionSignal: [] as string[],
+    },
+    deps,
+  ) as T & { completionSignal: string[] };
 }
 
 /**

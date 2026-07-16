@@ -19,11 +19,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CODER_ROSTER,
   lookupCoderRosterEntry,
-  poolSeparationViolation,
   resolveCoderRecOrder,
+  selectCoderRecEntry,
 } from "../../src/coderRoster.js";
 import { modelIdForSlug } from "../../src/modelRegistry.js";
-import { resolveRouteModels } from "../../src/modelRoutes.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
   DEFAULT_POOL_MODELS,
@@ -63,7 +62,7 @@ import {
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../../src/cliMonitorHooks.js";
 import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../../src/dispatchWorker.js";
-import { relayCandidateConflictSlugs, runOrchestrator } from "../../src/runner.js";
+import { runOrchestrator } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -325,7 +324,7 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
     });
   });
 
-  it("preserves pool-separation filter (skip reviewer-colliding slug)", () => {
+  it("#920: roster relay no longer skips a slug that also sits on review seats", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
     );
@@ -337,10 +336,10 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("grok-build", ["grok-4.5"]),
         livePool("codex-5h", ["terra@med", "luna@med"]),
       ],
-      reviewerSlugs: ["gpt-5.6-terra"],
     });
-    expect(next?.modelId).toBe("luna@med");
-    expect(next?.slug).toBe("gpt-5.6-luna");
+    // Pre-#920 reviewerSlugs: ["gpt-5.6-terra"] would skip terra → luna.
+    expect(next?.modelId).toBe("terra@med");
+    expect(next?.slug).toBe("gpt-5.6-terra");
   });
 
   it("returns undefined when no live baton exists anywhere", () => {
@@ -393,8 +392,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
       ],
-      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
-      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
     });
     expect(next).toEqual({
       modelId: "haiku-4.5",
@@ -429,8 +426,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
       ],
-      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
-      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
     });
     expect(next).toEqual({
       modelId: "sonnet-5",
@@ -526,7 +521,7 @@ describe("#787 capacity relay", () => {
     expect(handoff.ledgerEntry?.trigger).toBe("capacity");
   });
 
-  it("uses each capacity candidate's landed-route conflict set", () => {
+  it("#920: capacity relay picks the next same-pool roster entry without conflict filter", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: terra@med → luna@med",
     );
@@ -539,16 +534,15 @@ describe("#787 capacity relay", () => {
       },
     ];
 
+    // Pre-#920 a reviewerSlugsForCandidate collision could veto luna entirely.
     expect(
       selectCapacityRelayBaton({
         currentModelId: "terra@med",
         currentPool: "codex-5h",
         rosterOrder: order,
         pools,
-        reviewerSlugsForCandidate: (candidate) =>
-          candidate.id === "luna@med" ? ["gpt-5.6-luna"] : [],
       }),
-    ).toBeUndefined();
+    ).toMatchObject({ modelId: "luna@med", pool: "codex-5h" });
   });
 
   it("recognizes only model-capacity fingerprints and leaves quota plus ordinary 5xx to retry", () => {
@@ -601,8 +595,8 @@ describe("#787 capacity relay", () => {
             }
             return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
           }
-          if (spec.kind === "reviewer") {
-            return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+            return { kind: "completed", output: { kind: "judge", status: "converged" } };
           }
           if (spec.kind === "ship") {
             return { kind: "completed", output: { kind: "ship", branch: worktree.branch, status: "pushed" } };
@@ -697,7 +691,7 @@ describe("#787 capacity relay", () => {
       }
       async writeLedger(): Promise<void> {}
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
@@ -713,20 +707,14 @@ describe("#787 capacity relay", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S6") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S6") {
           return {
             kind: "completed",
-            output: {
-              kind: "reviewer", findings: [], findingsCount: 0,
-              priorFindingDispositions: [{
-                identityKey: "correctness|runner.ts:1|needs one repair pass",
-                status: "verified-closed",
-              }],
-            },
+            output: { kind: "judge", status: "converged" },
           };
         }
-        if (spec.kind === "reviewer") {
-          return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+          return { kind: "completed", output: { kind: "judge", status: "converged" } };
         }
         if (spec.kind === "ship") {
           return {
@@ -745,10 +733,10 @@ describe("#787 capacity relay", () => {
 
     const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
     const previousCoderFix = process.env.ORCHESTRATOR_CODER_FIX_MODEL;
-    const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
     process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
     process.env.ORCHESTRATOR_CODER_FIX_MODEL = "gpt-5.6-terra";
-    process.env.ORCHESTRATOR_REVIEWER_MODEL = "opus";
+    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
     try {
       const result = await runOrchestrator({
         issueNumber: 873,
@@ -776,8 +764,8 @@ describe("#787 capacity relay", () => {
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
       if (previousCoderFix === undefined) delete process.env.ORCHESTRATOR_CODER_FIX_MODEL;
       else process.env.ORCHESTRATOR_CODER_FIX_MODEL = previousCoderFix;
-      if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-      else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
       rmSync(worktree.path, { recursive: true, force: true });
     }
   });
@@ -833,7 +821,7 @@ describe("#787 capacity relay", () => {
         }
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             reviewerModels.push(`${spec.id}:${spec.model}`);
             if (spec.id === capacityStep && spec.model === "gpt-5.6-terra") {
               return { kind: "failed", reason: "Selected model is at capacity" };
@@ -847,18 +835,10 @@ describe("#787 capacity relay", () => {
             if (spec.id === "S6" && capacityStep === "S6") {
               return {
                 kind: "completed",
-                output: {
-                  kind: "reviewer", findings: [], findingsCount: 0,
-                  priorFindingDispositions: [
-                    {
-                      identityKey: "correctness|runner.ts:1|needs one repair pass",
-                      status: "verified-closed",
-                    },
-                  ],
-                },
+                output: { kind: "judge", status: "converged" },
               };
             }
-            return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+            return { kind: "completed", output: { kind: "judge", status: "converged" } };
           }
           if (spec.kind === "coder") {
             return {
@@ -882,9 +862,9 @@ describe("#787 capacity relay", () => {
       }
 
       const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-      const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+      const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
       process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-      process.env.ORCHESTRATOR_REVIEWER_MODEL = "gpt-5.6-terra";
+      process.env.ORCHESTRATOR_VERIFY_MODEL = "gpt-5.6-terra";
       try {
         const result = await runOrchestrator({
           issueNumber: 787,
@@ -914,8 +894,8 @@ describe("#787 capacity relay", () => {
       } finally {
         if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
         else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-        if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-        else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+        if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+        else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
         rmSync(worktree.path, { recursive: true, force: true });
       }
     },
@@ -1418,11 +1398,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           reviewerDispatches.push({ spec, ctx });
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -1549,11 +1529,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           reviewerModels.push(spec.model);
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -1622,7 +1602,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     }
   });
 
-  it("S3 reviewer quota relay rejects Terra when Terra already owns the coder slot", async () => {
+  it("#920: S3 reviewer quota relay admits Terra even when Terra already owns the coder slot", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-reviewer-wall-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-sol-reviewer-wall",
@@ -1679,9 +1659,16 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           reviewerModels.push(spec.model);
-          throw quotaWaitError("S3", resetAt);
+          // First S3 attempt (sol) walls; after baton→terra, terra completes.
+          if (spec.model === "gpt-5.6-sol") {
+            throw quotaWaitError("S3", resetAt);
+          }
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
         if (skeleton !== undefined) return skeleton;
@@ -1720,16 +1707,16 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         now: () => NOW,
       });
 
-      expect(result.status).toBe("escalate");
+      // Pre-#920 pool separation vetoed Terra as reviewer while it owned coder;
+      // #920 same-model cross-role is legal → S3 baton handoff lands Terra.
       expect(result.stepLedger).toContainEqual(expect.objectContaining({
-        event: "quota_wait_for_reset",
-        step: "S3",
-      }));
-      expect(result.stepLedger).not.toContainEqual(expect.objectContaining({
         event: "relay_baton_handoff",
         step: "S3",
+        toModelId: "terra@med",
       }));
-      expect(reviewerModels).toEqual(["gpt-5.6-sol"]);
+      expect(reviewerModels).toEqual(
+        expect.arrayContaining(["gpt-5.6-sol", "gpt-5.6-terra"]),
+      );
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
@@ -1749,8 +1736,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     };
     const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
     const reviewerModels: string[] = [];
-    const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
-    process.env.ORCHESTRATOR_REVIEWER_MODEL = "opus";
+    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
+    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
 
     class SolReviewerWallPositiveBackend implements Backend {
       async smokeModelRoute(route: any): Promise<any> {
@@ -1796,12 +1783,12 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           reviewerModels.push(spec.model);
           if (spec.model === "opus") throw quotaWaitError("S3", resetAt);
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -1866,66 +1853,40 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
       if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
       else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
-      if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-      else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
     }
   });
 });
 
-describe("#686 reviewer relay candidate conflict set", () => {
+describe("#920 same-model cross-role is legal (ex-#686 conflict filter)", () => {
   const sol = lookupCoderRosterEntry("sol@med")!;
 
-  it.each(["S3", "S6"] as const)(
-    "%s rejects sol when any complete-route CMR or verify leg shares its checkpoint",
-    (wallStep) => {
-      const route = resolveRouteModels("normal", {
-        cmrCompleteness: sol.slug,
-        cmrCorrectness: sol.slug,
-        verify: sol.slug,
-      }, {
-        cmrReview: ["opus", "gpt-5.6-sol", "agy"],
-      });
-
-      const conflicts = relayCandidateConflictSlugs(route, sol, wallStep);
-
-      expect(conflicts).toEqual(
-        expect.arrayContaining([
-          route.slots.coder,
-          route.slots.cmrCompleteness,
-          route.slots.cmrCorrectness,
-          route.slots.verify,
-          ...route.legCollections.cmrReview.map((leg) => leg.slug),
-        ]),
-      );
-      expect(poolSeparationViolation(sol, conflicts)).toMatch(
-        /must not double as.*reviewer/i,
-      );
-    },
-  );
-
-  it.each([
-    "sol@med",
-    "grok-4.5",
-  ] as const)(
-    "allows %s when its only matching slug is the reviewer slot it replaces",
-    (candidateId) => {
-      const candidate = lookupCoderRosterEntry(candidateId)!;
-      const route = resolveRouteModels("normal", {
-        reviewer: candidate.slug,
-        cmrCompleteness: "opus",
-        cmrCorrectness: "opus",
-        verify: "opus",
-      }, {
-        cmrReview: ["opus", "agy"],
-      });
-
-      for (const wallStep of ["S3", "S6"] as const) {
-        const conflicts = relayCandidateConflictSlugs(route, candidate, wallStep);
-        expect(conflicts).not.toContain(candidate.slug);
-        expect(poolSeparationViolation(candidate, conflicts)).toBeUndefined();
-      }
-    },
-  );
+  it("admits sol on roster select and relay baton when every judging seat shares its slug", () => {
+    // Pre-#920 pool separation vetoed sol whenever review/CMR seats shared its slug.
+    expect(selectCoderRecEntry([sol]).id).toBe("sol@med");
+    expect(
+      selectNextRelayBaton({
+        currentModelId: "grok-4.5",
+        currentPool: "grok-build",
+        rosterOrder: resolveCoderRecOrder("Coder-Rec: grok-4.5 → sol@med"),
+        pools: [
+          {
+            id: "grok-build",
+            status: "dead",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["sol@med"],
+          },
+        ],
+      })?.modelId,
+    ).toBe("sol@med");
+  });
 });
 
 /**
@@ -2034,10 +1995,10 @@ describe("#686 R2 production seams", () => {
               output: { kind: "coder", committed: true, commitsAdded: 1 },
             };
           }
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             return {
               kind: "completed",
-              output: { kind: "reviewer", findings: [], findingsCount: 0 },
+              output: { kind: "judge", status: "converged" },
             };
           }
           const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -2110,7 +2071,6 @@ describe("#686 R2 production seams", () => {
           session: "fresh",
           contextRetention: "retain",
           promptFile: "coder.md",
-          completionSignal: "STEP_COMPLETE",
           maxIter: 1,
           model: "grok-4.5",
           soul: "coder",
@@ -2151,7 +2111,6 @@ describe("#686 R2 production seams", () => {
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
-        completionSignal: "STEP_COMPLETE",
         maxIter: 1,
         model: "grok-4.5",
         soul: "coder",
@@ -2309,7 +2268,7 @@ describe("#686 R2 production seams", () => {
       },
       async writeSnapshot(): Promise<void> {},
       async runStep(spec: StepSpec): Promise<StepOutput> {
-        if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
+        if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
@@ -2323,7 +2282,6 @@ describe("#686 R2 production seams", () => {
         args: ["-e", `console.log(${JSON.stringify(workerLog)})`],
         logDir: tmp,
         poolId: "grok-build",
-        completionSignal: "STEP_COMPLETE",
         stepId: "S2",
         readInstanceId: () => "relay-826-test",
         };
@@ -2344,7 +2302,6 @@ describe("#686 R2 production seams", () => {
       session: "fresh",
       contextRetention: "retain",
       promptFile: "coder.md",
-      completionSignal: "STEP_COMPLETE",
       maxIter: 1,
       model: "grok-4.5",
       soul: "coder",

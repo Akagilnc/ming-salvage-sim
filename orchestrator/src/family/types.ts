@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  FindingFamily,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -39,6 +40,7 @@ import type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
+import type { FamilyStageFailureStatus } from "./familyTerminal.js";
 import type { StopSummary } from "../stopSummary.js";
 import type {
   ModelRouteSlot,
@@ -189,7 +191,11 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "route_degraded";
+    | "route_degraded"
+    /** #919 — judge advanceCoder executed on family coderFix seat. */
+    | "coder_advance"
+    /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+    | "coder_advance_stay_put";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -243,7 +249,11 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "route_degraded";
+    | "route_degraded"
+    /** #919 — paired with status coder_advance. */
+    | "coder_advance"
+    /** #919 — paired with status coder_advance_stay_put. */
+    | "coder_advance_stay_put";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -335,8 +345,36 @@ export interface FamilyLedgerEntry {
    * The escalated child's single-slice worker session id on a `child_decision_parked`
    * row (#604 slice 5), forwarded so a later resume re-enters the SAME session
    * (原地 resume, ADR 0062 退出-重入). Absent when the child provider surfaced no id.
+   *
+   * Also: #930 family judge session id on `cmr_reviewed` / `cmr_passed` rows so
+   * the same court can resume across fix rounds (or seed priorJudgeVerdicts
+   * after session loss — same shape as single-slice #925).
    */
   readonly sessionId?: string;
+  /**
+   * #930 — T2 judge status on family court rows (`cmr_reviewed` / `cmr_passed`).
+   * Same enum as single-slice; family does not invent a second closer.
+   */
+  readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
+  /**
+   * #930 — judge finding disposition table on family court rows (kill + live).
+   * Schema-fixed; runner never parses prose for routing.
+   */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  /** #930 — optional advance_coder suggestion on family court continue rows. */
+  readonly advanceCoder?: string;
+  /**
+   * #919 — seat slug before advance / stay-put (coder_advance* audit rows).
+   * Mirrors single-slice LedgerEntry.fromModelId; not an unblock field.
+   */
+  readonly fromModelId?: string;
+  /**
+   * #919 — seat slug after advance, or same as from on stay-put
+   * (coder_advance* audit rows). Not an unblock field.
+   */
+  readonly toModelId?: string;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */
@@ -537,8 +575,8 @@ export interface FamilyBackend {
    * The {@link DispatchContext} for a family worker carries `familyBase` (the
    * caller has only the base string, no single-slice worktree path — PRD #330 R2);
    * `worktree` is optional / backend-inferred. The {@link WorkerResult} is the
-   * same discriminated union: a cmr `red` verdict is `completed` (with a
-   * {@link CmrResult} payload), NOT `failed`.
+   * same discriminated union: a cmr residual red is `completed` with
+   * unusableResidualOpenCountPaper (kind:"reviewer"), NOT `failed`.
    *
    * The runner's family verify-cmr hook always dispatches through the free
    * function `dispatchFamilyWorker(familyBackend, spec, ctx)` (verifyCmr.ts).
@@ -721,6 +759,8 @@ export interface IntegratedCmrResult {
   readonly findings?: readonly Finding[];
   /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
+  /** Cross-round grouped findings + recurring-class markers (#711); cargo only. */
+  readonly findingFamilies?: readonly FindingFamily[];
 }
 
 /**
@@ -1022,15 +1062,21 @@ export interface FamilyChildResult {
 }
 
 /**
- * The family-run outcome (ADR 0022 decision 3④/⑤/⑥).
+ * The family-run outcome (ADR 0022 decision 3④/⑤/⑥ + #922 terminal real names).
  *
  * - `"success"` — every verify barrier passed AND every epic child is merged into
  *   the family base. Only a fully-closed family run is `"success"` (in #293 the
  *   no-op verify always passes, so N independent children that all merge ⇒
  *   `"success"`).
- * - `"verify_failed"` — a verify-cmr barrier returned `ok:false`; `failedPhase`
- *   says which. The spine fails-fast (decision 3④) and returns this so the caller
- *   can distinguish a red run from a clean one (decision 3⑤ "不静默吞").
+ * - Stage failures (#922) — the post-wave final barrier used to mash every stage
+ *   death into `"verify_failed"`. Each stage now has its own terminal name, and
+ *   `stopSummary.reason` uses the same token:
+ *   - `"verify_failed"` — pure verify red (wave barrier, or final-suite verify)
+ *   - `"cmr_failed"` — integrated CMR / missing CMR capability
+ *   - `"ship_failed"` — family ship worker / ship capability
+ *   - `"online_review_failed"` — online review loop did not converge
+ *   - `"merge_failed"` — auto-merge did not complete (non-decision hard fail)
+ *   - `"cleanup_failed"` — post-merge cleanup did not reach terminal success
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤
@@ -1039,30 +1085,38 @@ export interface FamilyChildResult {
  *
  * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
  *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
- *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop. The
- *   run did not merge anything this invocation; a human must triage / answer (the
- *   escalate-resume mechanism, decision 4). Distinct from `verify_failed` (a red
- *   barrier mid-run) — escalation is the resume-entry fail-closed.
+ *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop; OR a
+ *   human decision gate parked the run (`decision_gate_park`). Distinct from
+ *   stage failures — escalation is the answerable / resume-entry pause.
  *
- * Precedence when more than one applies: `"escalated"` (resume-entry, most
- * urgent) > `"verify_failed"` > `"incomplete"` > `"success"`.
+ * Precedence when more than one applies: `"escalated"` (resume-entry / park, most
+ * urgent) > stage failures > `"incomplete"` > `"success"`.
+ *
+ * Stage-failure tokens derive from canonical {@link FamilyStageFailureStatus}
+ * (FAMILY_STAGE_FAILURE_STATUSES) — do not re-list here.
  */
+/** Family-run outcome. Stage failures derive from {@link FamilyStageFailureStatus}. */
 export type FamilyRunStatus =
   | "success"
-  | "verify_failed"
   | "incomplete"
-  | "escalated";
+  | "escalated"
+  | FamilyStageFailureStatus;
 
 /** The family run result. */
 export interface FamilyRunResult {
   /**
-   * The family-run outcome. `"verify_failed"` ⇒ a verify-cmr barrier was red (see
-   * `failedPhase`); the caller MUST NOT treat the run as shippable. #293's no-op
-   * verify always passes, so a complete #293 run is `"success"`; the failure path
-   * is wired + tested (via an injected `verifyCmr`) for #296.
+   * The family-run outcome. Stage-failure statuses (#922) mean a post-child
+   * barrier died at that named stage; the caller MUST NOT treat the run as
+   * shippable. #293's no-op verify always passes, so a complete #293 run is
+   * `"success"`; failure paths are wired + tested (via injected `verifyCmr`
+   * and real `runVerifyCmr`) for #296 / #922.
    */
   readonly status: FamilyRunStatus;
-  /** Which verify-cmr barrier was red (only set when `status==="verify_failed"`). */
+  /**
+   * Which verify barrier phase was red (`wave` | `final`). Set for stage
+   * failures that originated from a verify/cmr barrier call; omitted for
+   * resume-path stage failures that never re-entered the barrier hook.
+   */
   readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
   readonly familyBase: string;

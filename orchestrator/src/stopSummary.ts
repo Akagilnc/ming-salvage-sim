@@ -1,3 +1,5 @@
+import type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+
 export type StopReason =
   | "success"
   | "same_module_still_red"
@@ -13,7 +15,11 @@ export type StopReason =
   | "provider_degraded"
   | "contract_drift"
   | "already_done"
-  | "resumed";
+  | "resumed"
+  // #922 — per-stage family terminal real names (also FamilyRunStatus tokens).
+  // Derived from canonical FAMILY_STAGE_FAILURE_STATUSES — do not re-list.
+  // Family aggregation status and stopSummary.reason use the same word.
+  | FamilyStageFailureStatus;
 
 export interface StopSummary {
   readonly reason: StopReason;

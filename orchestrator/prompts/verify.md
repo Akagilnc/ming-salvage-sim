@@ -10,16 +10,37 @@ If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before reviewing.
 
-## Output
+## Required output
 
-Always emit a typed `<decision>` signal first (`{}` when not escalating, or
-`{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing a gate), then
-opaque `<verify>` cargo JSON. When `$ORCHESTRATOR_OUTCOME_PATH` is set, write
-the same cargo JSON object directly to that path (sidecar is cargo transport).
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set (role cargo only), the always-emitted typed `<onlineReview>` station-receipt
+envelope, and any optional opaque `<verify>` cargo tag.
+
+Emit **one** typed `<onlineReview>` station-receipt envelope. Sandcastle
+validates the traffic shape via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts`
+(`onlineReviewStationReceiptSchema` / `decodeOnlineReviewEnvelope`, tag
+`onlineReview` / `ONLINE_REVIEW_RECEIPT_TAG`) — **do not invent a second field
+vocabulary** and **do not emit a separate decision-gate dual tag**.
+
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"onlineReview"` |
+| `status` | `"completed"` \| `"escalate"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+Thin gate only: completed \| escalate. Converged / findings narrative is cargo,
+never a fate signal on this envelope.
+
+### Role cargo (opaque; not SO-validated)
+
+Write verify cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set (sidecar is cargo
+transport). You may also emit opaque `<verify>` cargo JSON for the same body.
 Shape of the cargo:
-
-On the final multi-iter step you MUST print VERIFY_STEP_COMPLETE on its own
-final line (sandcastle iteration terminator — not optional telemetry).
 
 ```json
 {"converged": true}
@@ -51,3 +72,24 @@ they never block your verdict.
 On a post-fixer fresh re-check include `isRecheck: true` and echo every
 `fixMarkedFindingIdentityKeys` value from the landing file before returning
 `converged:true`; otherwise return `converged:false`.
+
+### Examples
+
+Completed (role cargo carries converged / findings):
+
+```text
+<onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>
+```
+
+Escalation:
+
+```text
+<onlineReview>{"station":"onlineReview","status":"escalate","reason":"<short>","diagnosis":"<what blocks the review>"}</onlineReview>
+```
+
+Rules:
+
+- Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
+- Role cargo never carries escalate — fate is the typed envelope only.
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.

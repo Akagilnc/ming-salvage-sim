@@ -82,7 +82,6 @@ export type {
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
-  hasCompletionSignalInLog,
   instanceMatchesHandle,
   isWorkerAlive,
   isWorkerIdle,
@@ -150,6 +149,25 @@ export type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./family/verifyCmr.js";
+export {
+  FAMILY_STAGE_FAILURE_STATUSES,
+  isFamilyStageFailureStatus,
+  resolveFamilyStageTerminal,
+  stageFailureStopSummary,
+  syncStopSummaryToStageFailure,
+} from "./family/familyTerminal.js";
+export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+// ── #929 terminal → process exit-code map (driver thin shell) ──────────────
+export {
+  TERMINAL_EXIT_CODES,
+  TERMINAL_EXIT_STATUSES,
+  exitCodeForTerminal,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isTerminalExitStatus,
+  runResultExitCode,
+} from "./terminalExitCode.js";
+export type { TerminalExitStatus } from "./terminalExitCode.js";
 export type {
   ChildSlice,
   ConflictResolveRequest,
@@ -254,19 +272,27 @@ export type {
 
 // ── design-time Coder-Rec roster (#767) ─────────────────────────────────────
 export {
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
   CoderRecError,
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
-  poolSeparationViolation,
+  resolveAdvanceCoderSuggestion,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
 } from "./coderRoster.js";
-export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
+export type {
+  AdvanceCoderDecision,
+  CoderPoolId,
+  CoderRosterEntry,
+} from "./coderRoster.js";
+// ── #919 / #926 one advanceCoder execution path (slice + family) ────────────
+export { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
+export type {
+  AdvanceCoderEffectResult,
+  AdvanceCoderProbe,
+} from "./advanceCoderEffect.js";
 export {
   applyCoderRecToRoute,
   applyRelayBatonToRoute,

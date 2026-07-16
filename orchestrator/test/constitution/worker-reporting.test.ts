@@ -1,10 +1,9 @@
 /**
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
- * #911: `*_STEP_COMPLETE` sentinels are multi-iter **required** sandcastle
- * terminators (not optional telemetry; align with prompts/README). Routing
- * behavior is exercised below through worker results and durable ledgers, not
- * source-text bans.
+ * #928: `*_STEP_COMPLETE` passwords retired — completion is clean exit + legal
+ * sidecar / typed envelope. Routing behavior is exercised below through worker
+ * results and durable ledgers, not source-text bans.
  */
 
 import { describe, expect, it } from "vitest";
@@ -86,8 +85,8 @@ class ScriptedRunnerBackend implements Backend {
 }
 
 function validWorkerResult(spec: WorkerSpec): WorkerResult {
-  if (spec.kind === "reviewer") {
-    return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+  if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+    return { kind: "completed", output: { kind: "judge", status: "converged" } };
   }
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) return skeleton;
@@ -225,7 +224,7 @@ describe("#825 Group A family roles", () => {
           if (this.cmrCalls === 1) {
             throw new Error("bad JSON sidecar parser failure");
           }
-          return { kind: "completed", output: { kind: "cmr", findingsCount: 0, converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
+          return { kind: "completed", output: { kind: "judge", status: "converged", successfulLegs: ["opus", "gpt-5.6-sol", "agy"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
         }
         this.shipCalls += 1;
         return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };

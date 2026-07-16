@@ -75,7 +75,6 @@ function coderSpec(session: WorkerSpec["session"] = "fresh"): WorkerSpec {
     contextRetention: "retain",
     skill: "tdd",
     promptFile: "prompts/coder.md",
-    completionSignal: "<done>",
     maxIter: 3,
     model: "opus",
     soul: "coder",
@@ -298,6 +297,12 @@ class CoderCrashBackend implements Backend {
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    // #919: S3/S6 seats are role/kind "verify" but court traffic is T2
+    // kind:"judge". Skeleton verify cargo is family role-outcome only — must
+    // not short-circuit single-slice judge seats before the judge fixture.
+    if (spec.id === "S3" || spec.id === "S6") {
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
+    }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) return skeleton;
     if (spec.kind === "coder" && spec.id === "S2") {
@@ -308,7 +313,7 @@ class CoderCrashBackend implements Backend {
       return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
     }
     if (spec.kind === "reviewer") {
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
     if (spec.kind === "ship") {
       return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
@@ -363,15 +368,17 @@ class ReviewerCrashBackend implements Backend {
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) return skeleton;
-    if (spec.kind === "reviewer") {
+    // #919: single-slice judge seats (S3/S6) use role/kind "verify" but must
+    // return T2 kind:"judge" traffic — not skeleton family verify cargo.
+    if (spec.id === "S3" || spec.id === "S6" || spec.kind === "reviewer") {
       this.reviewerDispatches += 1;
       if (this.reviewerDispatches <= this.reviewerFailures) {
         throw new Error("reviewer container connection dropped mid-run");
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     if (spec.kind === "ship") {
       return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
     }

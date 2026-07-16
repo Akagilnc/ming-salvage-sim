@@ -104,7 +104,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     const steps = result.stepLedger.map((e) => e.step);
     // Prior S0/S1/S2 + resumed fixed topology.
     expect(steps).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -414,7 +414,7 @@ describe("#824 durable mechanical redispatch budget", () => {
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.role === "coder") throw new Error("coder process crashed");
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
@@ -482,20 +482,10 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
-          ],
-        }),
+        entry("S6", { kind: "judge", status: "converged" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
-          ],
-        }),
+        entry("S6", { kind: "judge", status: "converged" }),
       ],
     };
   }
@@ -536,7 +526,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     // Resumed to local handoff purely from ledger truth.
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
   });
 

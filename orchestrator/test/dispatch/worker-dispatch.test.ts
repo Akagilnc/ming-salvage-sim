@@ -143,8 +143,8 @@ class DispatchBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
     throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
@@ -182,7 +182,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched.slice(0, 2)).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/code-review",
+      "S3:verify:verify:fresh:clean:/verify",
     ]);
   });
 
@@ -205,7 +205,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     // S7 is not a worker: the family merger consumes the local child commit.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/code-review",
+      "S3:verify:verify:fresh:clean:/verify",
     ]);
   });
 
@@ -215,7 +215,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
-    expect(byId.S3.promptFile).toBe("reviewer_review.md");
+    expect(byId.S3.promptFile).toBe("judge_station.md");
   });
 
   it("hands the resident worktree to every single-slice worker via DispatchContext", async () => {
@@ -304,7 +304,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          output: { kind: "judge", status: "converged" },
         };
       }
     }
@@ -346,7 +346,7 @@ describe("#331 non-completed WorkerResult routing", () => {
           escalation: { reason: "design blocker", diagnosis: "need a human" },
         };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
   }
 
@@ -368,7 +368,7 @@ describe("#331 non-completed WorkerResult routing", () => {
       if (spec.kind === "coder") {
         return { kind: "failed", reason: "container crashed" };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
   }
 
@@ -405,7 +405,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
         this.landings.push(landing);
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -433,7 +433,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(2);
+    expect(backend.specs.filter((spec) => (spec.kind === "reviewer" || spec.kind === "verify"))).toHaveLength(2);
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
@@ -459,7 +459,7 @@ describe("ADR 0131 reviewer count envelope", () => {
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           this.landings.push(landing);
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             this.reviewerCalls += 1;
             if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
             this.specs.push(spec);
@@ -523,7 +523,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
         this.landings.push(landing);
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -570,7 +570,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     class WrongReviewerKindBackend extends DispatchBackend {
       reviewerCalls = 0;
       override async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -610,7 +610,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S3.stdout",
       resultPath: "/host/ledger/S3.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S3",
       dispatchedAt: "2026-07-15T00:00:00.000Z",
       instanceId: "spawned:4242:2026-07-15T00:00:00.000Z",
@@ -692,10 +691,10 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "coder") {
@@ -753,7 +752,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S3.stdout",
       resultPath: "/host/ledger/S3.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S3",
       dispatchedAt: "2026-07-15T00:00:00.000Z",
       instanceId: "spawned:1001:2026-07-15T00:00:00.000Z",
@@ -763,7 +761,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S6.stdout",
       resultPath: "/host/ledger/S6.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S6",
       dispatchedAt: "2026-07-15T00:00:10.000Z",
       instanceId: "spawned:2002:2026-07-15T00:00:10.000Z",
@@ -865,10 +862,10 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "coder") {
@@ -1046,10 +1043,10 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         return {
@@ -1115,8 +1112,8 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     role: "coder",
     promptFile: "coder_implement.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    // #928: production seats are single-iter; fixture matches that contract.
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python", "typescript"],
   };
@@ -1130,7 +1127,8 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.skill).toBe("/tdd");
     expect(w.host).toBe("claude");
     expect(w.promptFile).toBe("coder_implement.md");
-    expect(w.completionSignal).toBe("CODER_STEP_COMPLETE");
+    expect(Object.prototype.hasOwnProperty.call(w, "completionSignal")).toBe(false);
+    expect(w.maxIter).toBe(1);
   });
 
   it("marks session:'resume' ONLY when the runner threads a resume (crash/escalate path)", () => {
@@ -1221,8 +1219,7 @@ describe("#796 Coder-Rec host dispatch", () => {
           role: "coder",
           promptFile: "coder_implement.md",
           model,
-          completionSignal: "CODER_STEP_COMPLETE",
-          maxIter: 5,
+          maxIter: 1,
           soul: "coder",
           toolchain: [],
         },
@@ -1364,7 +1361,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       this.runStepOutcomeLandings.push(options?.outcomeLanding);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [], findingsCount: 0 };
+        : { kind: "judge", status: "converged" };
     }
     async resumeSession(
       _spec: StepSpec,
@@ -1387,8 +1384,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_implement.md",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    maxIter: 1,
     model: "sonnet",
     soul: "coder",
     toolchain: ["python"],

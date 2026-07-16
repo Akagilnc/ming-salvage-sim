@@ -225,9 +225,11 @@ export function priorCmrFindingsFromFamilyLedger(
       });
       round += 1;
     }
+    // #919 CR N3: live court paper is kind:judge; residual kind:cmr is
+    // historical ledger width only (production residual is kind:reviewer).
     if (
       entry.cmrPass === cmrPass &&
-      entry.output?.kind === "cmr" &&
+      (entry.output?.kind === "judge" || entry.output?.kind === "cmr") &&
       entry.output.findings !== undefined
     ) {
       const blocking = entry.output.findings

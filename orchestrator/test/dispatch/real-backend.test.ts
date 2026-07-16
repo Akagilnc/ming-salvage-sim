@@ -85,28 +85,56 @@ import {
   workerReceiptSchema,
 } from "../../src/receiptRecovery.js";
 import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+  judgeStationReceiptSchema,
+  JUDGE_RECEIPT_TAG,
+} from "../../src/stationReceiptContracts.js";
+import {
   runScriptedStructuredOutput,
   type ScriptedAgent,
 } from "../helpers/scripted-sandcastle-run.js";
 
+/** #924 production coder no-gate / completed envelope (traffic + cargo siblings). */
+const CODER_COMPLETED_ENVELOPE = {
+  station: "coder" as const,
+  status: "completed" as const,
+  committed: true,
+  commitsAdded: 1,
+};
+
+const CODER_NO_COMMIT_ENVELOPE = {
+  station: "coder" as const,
+  status: "completed" as const,
+  committed: false,
+  commitsAdded: 0,
+};
+
+const CODER_ESCALATE_ENVELOPE = {
+  station: "coder" as const,
+  status: "escalate" as const,
+  reason: "owner choice",
+  diagnosis: "contract fork",
+  committed: false,
+  commitsAdded: 0,
+};
+
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
 function agentRunResult({
-  completionSignal,
   stdout,
   commits = [],
   sessionId,
   output,
 }: {
-  readonly completionSignal?: string;
   readonly stdout: string;
   readonly commits?: ReadonlyArray<{ sha: string }>;
   readonly sessionId: string;
   readonly output?: unknown;
 }): AgentRunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
   return {
     branch: "test-agent-branch",
-    completionSignal,
     stdout,
     commits: [...commits],
     iterations: [{ sessionId }],
@@ -883,7 +911,7 @@ describe("realBackend lastSessionId", () => {
 describe("realBackend classifyResumeError", () => {
   it("propagates StructuredOutputError instead of falling back to a fresh run", () => {
     const err = new StructuredOutputError("bad output", {
-      tag: "review",
+      tag: "judge",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -894,7 +922,7 @@ describe("realBackend classifyResumeError", () => {
 
   it("propagates schema-parse style StructuredOutputError with no sessionId", () => {
     const err = new StructuredOutputError("bad output", {
-      tag: "review",
+      tag: "judge",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -997,7 +1025,7 @@ describe("realBackend promptsDirError (F4)", () => {
       new Set([
         "coder_implement.md",
         "coder_fix.md",
-        "reviewer_review.md",
+        "judge_station.md",
       ]),
     );
     // No duplicates.
@@ -1201,12 +1229,12 @@ describe("RealBackend reviewer output contract", () => {
 
   const reviewerSpec: StepSpec = {
     id: "S6",
-    role: "reviewer",
-    promptFile: "reviewer_review.md",
+    // #919 S2: judge seat identity is verify (residual role:reviewer spelling retired).
+    role: "verify",
+    promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
-    soul: "READ-ONLY",
+    soul: "verify",
     toolchain: ["node", "typescript"],
   };
   const coderSpec: StepSpec = {
@@ -1214,7 +1242,6 @@ describe("RealBackend reviewer output contract", () => {
     role: "coder",
     promptFile: "coder_fix.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
     // Production SO seats are single-iter (ADR 0128 / #899). maxIter>1 would
     // suppress decision-gate Output.object and hide the production SO path.
     maxIter: 1,
@@ -1222,7 +1249,9 @@ describe("RealBackend reviewer output contract", () => {
     toolchain: ["node", "typescript"],
   };
 
-  it("rings a coder decision bell even when the rest of the receipt is unusable cargo", () => {
+  it("rings a coder decision bell from T2 escalate envelope even when cargo is unusable", () => {
+    // #924: traffic comes only from the station envelope — legacy {escalate}
+    // without station/status is fail-closed, not a second accept shape.
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1236,9 +1265,12 @@ describe("RealBackend reviewer output contract", () => {
     });
 
     const decoded = backend.probeDecodeOutput(coderSpec, {
+      station: "coder",
+      status: "escalate",
+      reason: "owner decision needed",
+      diagnosis: "contract conflict",
       committed: "not-a-boolean",
       unknownCargo: { any: "bytes" },
-      escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
     });
 
     expect(decoded).toMatchObject({
@@ -1246,8 +1278,8 @@ describe("RealBackend reviewer output contract", () => {
     });
   });
 
-  it("preserves real coder commit cargo when the typed decision gate escalates", () => {
-    // #899 / #384: escalate is orthogonal to committed/commitsAdded — a baseline
+  it("preserves real coder commit cargo when the T2 escalate envelope rings", () => {
+    // #924 / #384: escalate is orthogonal to committed/commitsAdded — a baseline
     // commit that already landed must not be rewritten as zero by the gate path.
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
@@ -1263,7 +1295,12 @@ describe("RealBackend reviewer output contract", () => {
 
     const decoded = backend.probeDecodeOutput(
       coderSpec,
-      { escalate: { reason: "design fork", diagnosis: "owner must choose the contract" } },
+      {
+        station: "coder",
+        status: "escalate",
+        reason: "design fork",
+        diagnosis: "owner must choose the contract",
+      },
       { committed: true, commitsAdded: 2 },
     );
 
@@ -1276,6 +1313,73 @@ describe("RealBackend reviewer output contract", () => {
         diagnosis: "owner must choose the contract",
       },
     });
+  });
+
+  it("fails closed on legacy decision-gate / empty-{} coder paper (no dual channel)", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-no-dual-"),
+    });
+
+    expect(() => backend.probeDecodeOutput(coderSpec, {})).toThrow(
+      /illegal coder station receipt/i,
+    );
+    expect(() =>
+      backend.probeDecodeOutput(coderSpec, {
+        escalate: {
+          reason: "legacy dual-channel shape",
+          diagnosis: "must not accept without station envelope",
+        },
+      }),
+    ).toThrow(/illegal coder station receipt/i);
+  });
+
+  it("rings residual decision_gate as T2 judge escalate (not open-count paper)", () => {
+    // #919 CR: after S3/S6 early-return, residual non-judge decode still used to
+    // mint {kind:"reviewer", findingsCount:0, escalate} — same dual-shape
+    // landmine runner R1 deleted. Gate bell → T2 kind:"judge" status:"escalate".
+    const residualReviewerSpec: StepSpec = {
+      ...reviewerSpec,
+      // Non-S3/S6 so decodeOutput does not early-return to decodeJudgeStationOutput.
+      id: "S4",
+    };
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 919,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-gate-mint-"),
+    });
+
+    const decoded = backend.probeDecodeOutput(residualReviewerSpec, {
+      escalate: {
+        reason: "owner decision needed",
+        diagnosis: "residual AC fork",
+      },
+    });
+
+    expect(decoded).toEqual({
+      kind: "judge",
+      status: "escalate",
+      reason: "owner decision needed",
+      diagnosis: "residual AC fork",
+      escalate: {
+        reason: "owner decision needed",
+        diagnosis: "residual AC fork",
+      },
+    });
+    expect(decoded.kind).not.toBe("reviewer");
   });
 
   it("transports reviewer rows without adjudicating disposition fields", () => {
@@ -1344,8 +1448,10 @@ describe("RealBackend reviewer output contract", () => {
       priorFindingDispositions: [],
     });
 
+    // #925: S3/S6 decode projects residual open-count cargo onto judge form;
+    // findings rows (incl. disposition_reason) remain opaque cargo.
     expect(
-      decoded.kind === "reviewer" ? decoded.findings[0]?.disposition_reason : undefined,
+      decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
     ).toBe("legacy fallback should not win");
   });
 
@@ -1406,13 +1512,115 @@ describe("RealBackend reviewer output contract", () => {
       home: tempHome("rb-home-reviewer-"),
     });
 
-    expect(() =>
+    // #924: traffic fields are required; unknown cargo siblings must not alter
+    // completed fate or force a throw after a legal envelope.
+    expect(
       backend.probeDecodeOutput(coderSpec, {
+        station: "coder",
+        status: "completed",
         committed: true,
         commitsAdded: 1,
         notes: "worker-authored cargo",
       }),
-    ).not.toThrow();
+    ).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+  });
+
+  it("maps status:refused traffic keys and cargo refuseRecords without cargo override", () => {
+    // Envelope refuse keys are traffic; refuseRecords are opaque cargo.
+    // Cargo must not replace traffic keys with a different set.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-refuse-"),
+    });
+
+    const refuseRecord = {
+      identityKey: "correctness|src/a.ts:1|claim",
+      finding: "claim",
+      acceptanceCriterion: "AC-1",
+      conflictReason: "unconstitutional",
+    };
+
+    const decoded = backend.probeDecodeOutput(
+      coderSpec,
+      {
+        station: "coderFix",
+        status: "refused",
+        refusedFindingIdentityKeys: ["correctness|src/a.ts:1|claim"],
+        committed: true,
+        commitsAdded: 1,
+      },
+      {
+        committed: true,
+        commitsAdded: 1,
+        // Hostile cargo: different key set must not win over envelope traffic.
+        refusedFindingIdentityKeys: ["wrong|cargo|key"],
+        refuseRecords: [refuseRecord],
+      },
+    );
+
+    expect(decoded).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+      refusedFindingIdentityKeys: ["correctness|src/a.ts:1|claim"],
+      refuseRecords: [refuseRecord],
+    });
+  });
+
+  it("does not smuggle refusedFindingIdentityKeys from cargo onto status:completed", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-no-smuggle-"),
+    });
+
+    const decoded = backend.probeDecodeOutput(
+      coderSpec,
+      {
+        station: "coder",
+        status: "completed",
+        committed: true,
+        commitsAdded: 1,
+      },
+      {
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: ["smuggled|from|cargo"],
+        refuseRecords: [
+          {
+            identityKey: "smuggled|from|cargo",
+            finding: "x",
+            acceptanceCriterion: "AC",
+            conflictReason: "not_established",
+          },
+        ],
+      },
+    );
+
+    expect(decoded).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+    expect(decoded).not.toHaveProperty("refusedFindingIdentityKeys");
+    expect(decoded).not.toHaveProperty("refuseRecords");
   });
 });
 
@@ -1426,7 +1634,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     role: "coder",
     promptFile: "coder_implement.md",
     model: "gpt-5.6-sol",
-    completionSignal: "CODER_STEP_COMPLETE",
     // Production seats are single-iter with decision-gate SO (#899). Keep
     // fixtures aligned so maxIter>1 cannot hide the Output.object attach path.
     maxIter: 1,
@@ -1435,12 +1642,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   };
   const reviewerSpec: StepSpec = {
     id: "S3",
-    role: "reviewer",
-    promptFile: "reviewer_review.md",
+    // #919 S2: judge seat identity is verify.
+    role: "verify",
+    promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
-    soul: "READ-ONLY",
+    soul: "verify",
     toolchain: ["node", "typescript"],
   };
 
@@ -1540,11 +1747,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("continues to the agent sandbox when all declared tools exist", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     const result = await backend.runStep(coderSpec, {
@@ -1560,7 +1766,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("continues a clean-exit coder when receipt cargo is absent", async () => {
+  it("fails closed when coder typed output is empty {} (no legacy dual-channel accept)", async () => {
+    // #924: production SO schema rejects {}; residual #899 empty-{} completed
+    // path is deleted. Decode must not invent a completed seat from {}.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "worker completed its changes",
@@ -1575,21 +1783,19 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-286",
       }),
-    ).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
+    ).rejects.toThrow(/illegal coder station receipt/i);
   });
 
-  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
-    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
-    // opaque (missing committed/commitsAdded does not force a second invocation).
+  it("attaches station-receipt Output.object for single-iter coder without re-asking opaque cargo", async () => {
+    // #924: T2 station-receipt Output.object is attached; cargo siblings
+    // (committed/commitsAdded) are passthrough — missing cargo does not force
+    // a second invocation.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
-      stdout: "coder completed implementation but omitted its receipt",
+      stdout: "coder completed implementation but omitted cargo siblings",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(
@@ -1608,7 +1814,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
@@ -1617,10 +1823,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: '<coder>{"committed": true}</coder>',
+      stdout:
+        '<coder>{"station":"coder","status":"completed","committed":true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
-      output: { committed: true },
+      output: { station: "coder", status: "completed", committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1633,43 +1840,43 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
+  it("fails the Action on an illegal coder envelope without inventing a park", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
+      stdout: '<coder>{"status":"escalate","reason":"","diagnosis":""}</coder>',
       commits: [],
       sessionId: "sess-coder-bad-gate",
-      output: { escalate: { reason: "", diagnosis: "" } },
+      // Missing station + empty reason/diagnosis — illegal T2 traffic.
+      output: { status: "escalate", reason: "", diagnosis: "" },
     });
 
     await expect(
       backend.runStep({ ...coderSpec, maxIter: 1 }, {
         branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
       }),
-    ).rejects.toThrow(/malformed decision gate/);
+    ).rejects.toThrow(/illegal coder station receipt|coder envelope/i);
     expect(backend.agentOptions).toHaveLength(1);
-    // Dedicated decision-tag SO is attached so Sandcastle can re-ask; post-decode still
-    // fails closed when a malformed bell somehow lands past the schema.
+    // T2 station-receipt SO is attached so Sandcastle can re-ask; post-decode
+    // still fails closed when illegal traffic somehow lands past the schema.
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
+  it("keeps a single Sandcastle invocation when a completed envelope has no cargo siblings", async () => {
     const backend = makeBackend();
     backend.agentResult = {
       branch: "test-agent-branch",
-      stdout: "coder completed implementation but omitted its receipt",
+      stdout: "coder completed without cargo siblings",
       commits: [{ sha: "abc123" }],
       iterations: [{}],
-      // Typed no-gate decision signal present; ordinary cargo may be absent.
-      output: {},
+      output: { station: "coder", status: "completed" },
     } as AgentRunResult;
 
     await expect(
@@ -1688,7 +1895,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // #899: exhaust = Action non-zero for #598; never convert SOE into success cargo.
     const backend = makeBackend();
     const err = new StructuredOutputError("bad output", {
-      tag: "review", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
+      tag: "judge", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
     });
     backend.agentFailures.push(err);
 
@@ -1698,12 +1905,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions).toHaveLength(1);
   });
 
-  it("propagates StructuredOutputError when coder decision-gate retries are exhausted", async () => {
-    // #899: coder signal-only SO exhaust → Action non-zero for #598 redispatch.
+  it("propagates StructuredOutputError when coder station-receipt retries are exhausted", async () => {
+    // #924: coder station-receipt SO exhaust → Action non-zero for #598 redispatch.
     const backend = makeBackend();
     const err = new StructuredOutputError("bad output", {
-      tag: "decision",
-      rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
+      tag: CODER_RECEIPT_TAG,
+      rawMatched: JSON.stringify({ status: "maybe" }),
       commits: [],
       branch: "feat/x",
       sessionId: "sess-coder-exhausted",
@@ -1715,13 +1922,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     })).rejects.toBe(err);
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
   it("fails a resumed typed coder seat when Output.object is absent", async () => {
-    // #899: resume attaches decision-gate SO; missing typed signal must not fall
+    // #924: resume attaches station-receipt SO; missing typed signal must not fall
     // through to opaque cargo / empty success (fourth channel / soft pass).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
@@ -1744,20 +1951,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
-    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
-    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
+  it("attaches station-receipt Output.object when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; #924 attaches T2 station-receipt Output.object
+    // with cargo siblings passthrough.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: "resumed worker completed without a cargo tag",
+      stdout: "resumed worker completed without cargo siblings",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(backend.resumeSession(
@@ -1769,7 +1976,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       sessionId: "prior-coder-session",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
@@ -1781,7 +1988,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // as fresh-run and mask the receipt exhaust.
     const backend = makeBackend();
     const soe = new StructuredOutputError("bad output", {
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -1833,28 +2040,42 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions[0]!.resumeSession).toBe("prior-coder-session");
   });
 
+  it("classifies Effect Die.defect-nested StructuredOutputError as #598 recovery", () => {
+    // Concurrent vitest / Effect runtime may wrap SOE as FiberFailure → Die.defect
+    // rather than cause/error. walkErrorChain must follow defect so CI does not
+    // flake on AssertionError false≠true for isReceiptRecoveryFailure.
+    const soe = new StructuredOutputError("bad output", {
+      tag: CODER_RECEIPT_TAG,
+      rawMatched: undefined,
+      commits: [],
+      branch: "feat/x",
+      sessionId: "sess-die-defect",
+    });
+    const die = { _tag: "Die", defect: soe };
+    const fiber = { _tag: "FiberFailure", cause: die };
+    expect(isReceiptRecoveryFailure(fiber)).toBe(true);
+  });
+
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
     // #899 / ADR 0131: missing findingsCount is unusable review paper — never
-    // synthesize findings.length, never invent findingsCount:0, never mint a
-    // fake kind:"coder" seat, and never throw for abolished #598 shape lane.
-    // Non-reviewer envelope → runner unusable path (S5 + raw artifacts).
-    //
-    // TOPOLOGY PIN: decode returns `{kind:"fixer", committed:false}` as the
-    // existing non-reviewer envelope that S4→S5 already routes — not "this
-    // worker was a fixer". Do not "fix" it to kind:"coder" or a throw.
+    // synthesize findings.length, never invent a fake kind:"coder" seat, and
+    // never throw for abolished #598 shape lane.
+    // #919 AS4: unusable residual open-count paper (kind:reviewer findingsCount:0)
+    // → route S5 + raw artifacts; never kind:fixer placeholder.
     const backend = makeBackend();
 
     expect(
       backend.probeDecodeOutput(reviewerSpec, {
         findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
       }),
-    ).toEqual({ kind: "fixer", committed: false });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
-    ).toEqual({ kind: "fixer", committed: false });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
+    // #919 CR P1 / #925: residual findingsCount:0 is unusable, never silent clean.
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
-    ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
   });
 
   it("fails a typed reviewer seat when Output.object is absent", async () => {
@@ -1876,7 +2097,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -1884,10 +2105,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("lets Sandcastle re-ask reviewer receipts through the shared two-retry definition", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-reask",
+      // Residual open-count 0 is unusable; re-ask SO still attaches for the seat.
       output: { findingsCount: 0, findings: [] },
     });
 
@@ -1898,11 +2119,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
     });
 
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -1912,7 +2133,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   // exercises RealBackend single-slice reviewer open-count + coder decision-gate
   // at the real sc.run boundary (scripted provider, no LLM).
 
-  describe("#899 single-slice production SO four-case matrix", () => {
+  // sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
+  describe.sequential("#899 single-slice production SO four-case matrix", () => {
     const cleanups: string[] = [];
     afterEach(() => {
       while (cleanups.length > 0) {
@@ -1921,39 +2143,43 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }
     });
 
-    it("accepts initial-good open-count via real sc.run (no same-session resume)", async () => {
+    it("accepts initial-good judge verdict via real sc.run (no same-session resume)", async () => {
+      const good = { station: "judge", status: "converged" };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: "review",
-        schema: workerReceiptSchema(),
-        emissions: [{ body: JSON.stringify({ findingsCount: 0, findings: [] }) }],
+        tag: JUDGE_RECEIPT_TAG,
+        schema: judgeStationReceiptSchema(),
+        emissions: [{ body: JSON.stringify(good) }],
         maxRetries: RECEIPT_MAX_RETRIES,
         sessionId: "sess-ss-review-initial-good",
         cleanups,
       });
-      expect(result.output).toMatchObject({ findingsCount: 0 });
+      expect(result.output).toMatchObject(good);
       expect(agent.callCount).toBe(1);
       expect(agent.resumedSessions).toEqual([undefined]);
 
-      // Production decode path: typed open-count → kind:reviewer.
+      // Production decode path: typed judge → kind:judge.
       const backend = makeBackend();
       expect(
         backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
+      ).toEqual({ kind: "judge", status: "converged" });
     });
 
-    it("accepts initial-good decision-gate via real sc.run (no same-session resume)", async () => {
-      const good = {
-        escalate: { reason: "owner choice", diagnosis: "contract fork" },
-      };
+    it("accepts initial-good coder station receipt via real sc.run (no same-session resume)", async () => {
+      const good = CODER_ESCALATE_ENVELOPE;
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: DECISION_GATE_TAG,
-        schema: decisionGateSignalSchema,
+        tag: CODER_RECEIPT_TAG,
+        schema: coderStationReceiptSchema(),
         emissions: [{ body: JSON.stringify(good) }],
         maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-decision-initial-good",
+        sessionId: "sess-ss-coder-initial-good",
         cleanups,
       });
-      expect(result.output).toEqual(good);
+      expect(result.output).toMatchObject({
+        station: "coder",
+        status: "escalate",
+        reason: "owner choice",
+        diagnosis: "contract fork",
+      });
       expect(agent.callCount).toBe(1);
 
       const backend = makeBackend();
@@ -1964,12 +2190,19 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       });
     });
 
-    it("recovers open-count bad→good same-session via real sc.run", async () => {
+    it("recovers judge verdict bad→good same-session via real sc.run", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
-      const good = { findingsCount: 2, findings: [] };
+      const good = {
+        station: "judge",
+        status: "continue",
+        findingDispositions: [
+          { identityKey: "correctness|a.ts:1|x", action: "live" },
+          { identityKey: "correctness|b.ts:2|y", action: "live" },
+        ],
+      };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: "review",
-        schema: workerReceiptSchema(),
+        tag: JUDGE_RECEIPT_TAG,
+        schema: judgeStationReceiptSchema(),
         emissions: [
           { body: JSON.stringify({ findingsCount: -1 }) },
           { body: JSON.stringify(good) },
@@ -1979,7 +2212,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         cleanups,
         agentOut,
       });
-      expect(result.output).toMatchObject({ findingsCount: 2 });
+      expect(result.output).toMatchObject({ station: "judge", status: "continue" });
       expect(agent.callCount).toBe(2);
       expect(agent.resumedSessions).toEqual([
         undefined,
@@ -1990,42 +2223,45 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       const backend = makeBackend();
       expect(
         backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toMatchObject({ kind: "reviewer", findingsCount: 2 });
+      ).toMatchObject({ kind: "judge", status: "continue" });
     });
 
-    it("recovers decision-gate bad→good same-session via real sc.run", async () => {
+    it("recovers coder station-receipt bad→good same-session via real sc.run", async () => {
       const good = {
-        escalate: { reason: "owner", diagnosis: "needs human" },
+        station: "coder",
+        status: "escalate",
+        reason: "owner",
+        diagnosis: "needs human",
       };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: DECISION_GATE_TAG,
-        schema: decisionGateSignalSchema,
+        tag: CODER_RECEIPT_TAG,
+        schema: coderStationReceiptSchema(),
         emissions: [
-          { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+          { body: JSON.stringify({ committed: true }) },
           { body: JSON.stringify(good) },
         ],
         maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-decision-recover",
+        sessionId: "sess-ss-coder-recover",
         cleanups,
       });
-      expect(result.output).toEqual(good);
+      expect(result.output).toMatchObject(good);
       expect(agent.callCount).toBe(2);
       expect(agent.resumedSessions).toEqual([
         undefined,
-        "sess-ss-decision-recover",
+        "sess-ss-coder-recover",
       ]);
     });
 
-    it("propagates StructuredOutputError when open-count maxRetries are exhausted", async () => {
+    it("propagates StructuredOutputError when judge maxRetries are exhausted", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
       try {
         await runScriptedStructuredOutput({
-          tag: "review",
-          schema: workerReceiptSchema(),
+          tag: JUDGE_RECEIPT_TAG,
+          schema: judgeStationReceiptSchema(),
           emissions: [
             { body: JSON.stringify({ findingsCount: -1 }) },
-            { body: JSON.stringify({ findingsCount: -2 }) },
-            { body: JSON.stringify({ findingsCount: -3 }) },
+            { body: JSON.stringify({ status: "maybe" }) },
+            { body: JSON.stringify({ station: "judge" }) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
           sessionId: "sess-ss-review-exhausted",
@@ -2036,32 +2272,32 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
         const soe = err as scRuntime.StructuredOutputError;
-        expect(soe.tag).toBe("review");
+        expect(soe.tag).toBe(JUDGE_RECEIPT_TAG);
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
       }
     });
 
-    it("propagates StructuredOutputError when decision-gate maxRetries are exhausted", async () => {
+    it("propagates StructuredOutputError when coder station-receipt maxRetries are exhausted", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
       try {
         await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-            { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+            { body: JSON.stringify({ status: "maybe" }) },
+            { body: JSON.stringify({ station: "coder" }) },
+            { body: JSON.stringify({ station: "coder", status: "refused" }) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "sess-ss-decision-exhausted",
+          sessionId: "sess-ss-coder-exhausted",
           cleanups,
           agentOut,
         });
         expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
       } catch (err) {
         expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
-        expect((err as scRuntime.StructuredOutputError).tag).toBe(DECISION_GATE_TAG);
+        expect((err as scRuntime.StructuredOutputError).tag).toBe(CODER_RECEIPT_TAG);
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
       }
@@ -2070,8 +2306,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     it("classifies non-resumable open-count maxRetries as recovery failure", async () => {
       await expect(
         runScriptedStructuredOutput({
-          tag: "review",
-          schema: workerReceiptSchema(),
+          tag: JUDGE_RECEIPT_TAG,
+          schema: judgeStationReceiptSchema(),
           emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
           maxRetries: RECEIPT_MAX_RETRIES,
           resumable: false,
@@ -2088,12 +2324,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       });
     });
 
-    it("classifies non-resumable decision-gate maxRetries as recovery failure", async () => {
+    it("classifies non-resumable coder station-receipt maxRetries as recovery failure", async () => {
       await expect(
         runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
-          emissions: [{ body: JSON.stringify({}) }],
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
+          emissions: [{ body: JSON.stringify(CODER_COMPLETED_ENVELOPE) }],
           maxRetries: RECEIPT_MAX_RETRIES,
           resumable: false,
           name: "grok",
@@ -2117,13 +2353,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           this.lastAgentOptions = options;
           this.agentOptions.push(options);
           expect(options.output).toEqual(
-            expect.objectContaining({ tag: "review", maxRetries: RECEIPT_MAX_RETRIES }),
+            expect.objectContaining({ tag: "judge", maxRetries: RECEIPT_MAX_RETRIES }),
           );
           const run = await runScriptedStructuredOutput({
-            tag: "review",
-            schema: workerReceiptSchema(),
+            tag: JUDGE_RECEIPT_TAG,
+            schema: judgeStationReceiptSchema(),
             emissions: [
-              { body: JSON.stringify({ findingsCount: 0, findings: [] }) },
+              { body: JSON.stringify({ station: "judge", status: "converged" }) },
             ],
             maxRetries: RECEIPT_MAX_RETRIES,
             sessionId: "prod-ss-review-initial-good",
@@ -2150,13 +2386,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           path: "/tmp/worktree/issue-899",
         }),
       ).resolves.toMatchObject({
-        output: { kind: "reviewer", findings: [], findingsCount: 0 },
+        output: { kind: "judge", status: "converged" },
       });
       expect(sandcastleCalls).toBe(1);
       expect(agentOut.agent?.callCount).toBe(1);
     });
 
-    it("production RealBackend coder seat: decision-gate SOE exhaust → #598, zero fixer", async () => {
+    it("production RealBackend coder seat: station-receipt SOE exhaust → #598, zero fixer", async () => {
       let sandcastleCalls = 0;
       class ProductionSeatBackend extends PreflightBackend {
         protected override async runAgentSandbox(
@@ -2167,21 +2403,21 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           this.agentOptions.push(options);
           expect(options.output).toEqual(
             expect.objectContaining({
-              tag: DECISION_GATE_TAG,
+              tag: CODER_RECEIPT_TAG,
               maxRetries: RECEIPT_MAX_RETRIES,
             }),
           );
           return (
             await runScriptedStructuredOutput({
-              tag: DECISION_GATE_TAG,
-              schema: decisionGateSignalSchema,
+              tag: CODER_RECEIPT_TAG,
+              schema: coderStationReceiptSchema(),
               emissions: [
-                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-                { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+                { body: JSON.stringify({ status: "maybe" }) },
+                { body: JSON.stringify({ station: "coder" }) },
+                { body: JSON.stringify({ station: "coder", status: "refused" }) },
               ],
               maxRetries: RECEIPT_MAX_RETRIES,
-              sessionId: "prod-ss-decision-exhausted",
+              sessionId: "prod-ss-coder-exhausted",
               cleanups,
             })
           ).result;
@@ -2292,7 +2528,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }).success).toBe(true);
   });
 
-  it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {
+  it("prefers typed Output.object over sidecar/stdout for judge seat receipts", () => {
+    // #919 S2: S3/S6 cargo extract uses the judge tag only — not residual
+    // open-count `<review>` dual channel.
     const backend = makeBackend();
     const payload = { findingsCount: 0, findings: [] };
     const override = {
@@ -2303,8 +2541,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.probeRawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
     expect(
-      backend.probeRawOutputFor({ stdout: '<review>{"findingsCount":0,"findings":[]}</review>' }, reviewerSpec, false),
+      backend.probeRawOutputFor(
+        { stdout: `<${JUDGE_RECEIPT_TAG}>{"findingsCount":0,"findings":[]}</${JUDGE_RECEIPT_TAG}>` },
+        reviewerSpec,
+        false,
+      ),
     ).toEqual(payload);
+    // Residual open-count dual channel is closed on judge seats.
+    expect(
+      backend.probeRawOutputFor(
+        { stdout: '<review>{"findingsCount":0,"findings":[]}</review>' },
+        reviewerSpec,
+        false,
+      ),
+    ).toBeUndefined();
 
     const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
     const outcomePath = join(dir, "outcome.json");
@@ -2333,7 +2583,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       backend.probeRawOutputFor(
         {
           stdout:
-            '<review>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</review>',
+            `<${JUDGE_RECEIPT_TAG}>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</${JUDGE_RECEIPT_TAG}>`,
         },
         reviewerSpec,
         false,
@@ -2388,11 +2638,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
     const backend = makeBackend(home);
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-grok-auth-cleanup",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await backend.runStep(coderSpec, {
@@ -2419,11 +2668,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-496",
-      output: {},
+      // T2 traffic only; cargo siblings come from the outcome sidecar.
+      output: { station: "coder", status: "completed" },
     });
 
     const result = await backend.runStep(
@@ -2453,11 +2702,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // completion report.
     backend.finalGraphCommitCount = 0;
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
       commits: [{ sha: "unreachable-after-reset" }],
       sessionId: "sess-final-graph-truth",
-      output: {},
+      output: CODER_COMPLETED_ENVELOPE,
     });
 
     await expect(
@@ -2483,11 +2731,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     mkdirSync(outcomePath);
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-dir-sidecar",
-      output: {},
+      // Traffic from T2 envelope; cargo fields from stdout when sidecar is unusable.
+      output: { station: "coder", status: "completed" },
     });
 
     const result = await backend.runStep(
@@ -2522,7 +2770,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
       commits: [],
       sessionId: "sess-review-sidecar",
@@ -2545,11 +2792,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      // Residual typed findingsCount:0 is unusable (not silent clean); cargo cannot flip fate.
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-sidecar",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2564,7 +2812,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
       commits: [],
       sessionId: "sess-review-resume-sidecar",
@@ -2588,12 +2835,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-resume-sidecar",
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2604,11 +2851,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-bad-sidecar",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(
@@ -2643,7 +2889,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":9,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-so-landing",
@@ -2666,11 +2911,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
       ),
     ).resolves.toMatchObject({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-so-landing",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2683,7 +2928,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-bad-sidecar",
@@ -2706,7 +2950,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ),
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2719,11 +2963,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     };
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
     const worktree = {
       branch: "feat/issue-286",

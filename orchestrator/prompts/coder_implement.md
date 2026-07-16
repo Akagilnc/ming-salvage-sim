@@ -49,46 +49,57 @@ unless the answer leaves a concrete blocker unresolved.
 
 ## Required output
 
-When you are done (or are escalating), the real completion evidence is the
-single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set, the always-emitted typed `<decision>` signal, the opaque `<coder>` cargo
-tag, and the worker's actual git state.
+When you are done (or are escalating / refusing), the real completion evidence
+is the single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env
+var is set (same payload as the typed tag), the always-emitted typed `<coder>`
+station-receipt envelope, and the worker's actual git state.
 
-**Always emit both tags** (order: decision, then cargo):
+Emit **one** typed `<coder>` station-receipt envelope. Sandcastle validates the
+traffic shape via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts` (`coderStationReceiptSchema` /
+`decodeCoderEnvelope`) — **do not invent a second field vocabulary**.
 
-1. `<decision>` — typed traffic signal only. `{}` when not escalating; or
-   `{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing the gate.
-2. `<coder>` — opaque cargo (`committed` / `commitsAdded`). Never put
-   `escalate` only in cargo and omit `<decision>`.
+### Envelope traffic fields (schema-validated)
 
-Success (no gate):
+| field | meaning |
+| --- | --- |
+| `station` | `"coder"` for implement (this seat); fix seat uses `"coderFix"` |
+| `status` | `"completed"` \| `"refused"` \| `"escalate"` |
+| `refusedFindingIdentityKeys` | required non-empty string[] when `status:"refused"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+Canonical refuse vocabulary is **`refused*` only** — never `refuted*` envelope keys.
+
+### Cargo body (opaque; not SO-validated)
+
+- `committed` (boolean) + `commitsAdded` (integer ≥ 0) — real git state.
+- On refuse: **四理由** (违宪 / 过度防御 / 事实不成立 / 越权加戏 —
+  machine tokens `unconstitutional` / `over_defense` / `not_established` /
+  `scope_creep` from the same T2 module) + evidence prose for the judge live in
+  cargo / the file at `cargoPointer`, **not** as extra envelope fields.
+- You may put cargo siblings on the same `<coder>` JSON object; the framework
+  only re-asks illegal **traffic** shapes.
+
+### Examples
+
+Completed:
 
 ```text
-<decision>{}</decision>
-<coder>{"committed": true, "commitsAdded": 3}</coder>
+<coder>{"station":"coder","status":"completed","committed":true,"commitsAdded":3}</coder>
 ```
 
-Escalation (example shows escalating BEFORE any commit — committed:false, commitsAdded:0):
+Escalation (real commit count even when escalating):
 
 ```text
-<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</decision>
-<coder>{"committed": false, "commitsAdded": 0}</coder>
+<coder>{"station":"coder","status":"escalate","reason":"<short>","diagnosis":"<what blocks you>","committed":false,"commitsAdded":0}</coder>
 ```
 
 Rules:
 
-- Always emit `<decision>` (even when empty `{}`) so Sandcastle can validate the
-  optional gate without binding Output.object to ordinary cargo.
-- `committed` is a boolean and `commitsAdded` is an integer >= 0.
-- **`committed` / `commitsAdded` must ALWAYS reflect the REAL git state, even when
-  escalating.** `commitsAdded` must equal the number of `git commit` commands you
-  actually made in this worker run; if you make multiple commits, report the full
-  count. The runner transports your report without adjudicating it. So
-  if you already made a baseline / fix commit and THEN hit an escalating blocker in
-  the second review, report `committed:true` with the real count on `<coder>` and
-  press the gate on `<decision>` — NOT `committed:false, commitsAdded:0`.
-  `escalate` is orthogonal to the commit count.
-- `escalate`, when present on `<decision>`, contains non-empty `reason` and `diagnosis`.
-- Emit `<coder>` as the last cargo tag; if you iterate, the last pair counts.
-- On the final multi-iter step you MUST print CODER_STEP_COMPLETE on its own
-  final line (sandcastle iteration terminator — not optional telemetry).
+- Emit exactly one final `<coder>` envelope (last wins if you iterate).
+- **`committed` / `commitsAdded` always mirror real git**, including on escalate.
+- Illegal traffic shape is re-asked in-session by Sandcastle; do not rely on the
+  runner to guess a status.
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.

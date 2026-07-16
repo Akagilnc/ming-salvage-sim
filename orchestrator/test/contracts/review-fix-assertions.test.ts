@@ -344,16 +344,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
         // Second fix round closes the remaining finding without overturn.
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              {
-                identityKey: refuseKey,
-                status: "verified-closed",
-                reason: "finding withdrawn after re-review accepted alternate repair path",
-              },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -382,9 +373,9 @@ describe("#677 legal refuse one finding, fix the others", () => {
     expect(result.status).not.toBe("escalate");
     // Fresh re-review after the partial-refuse fix commit
     expect(backend.dispatched).toEqual(
-      expect.arrayContaining(["S5:coder", "S6:reviewer"]),
+      expect.arrayContaining(["S5:coder", "S6:verify"]),
     );
-    const firstS6 = backend.dispatched.indexOf("S6:reviewer");
+    const firstS6 = backend.dispatched.indexOf("S6:verify");
     expect(firstS6).toBeGreaterThan(backend.dispatched.indexOf("S5:coder"));
     // Must not park at S5 refuse
     expect(result.status).toBe("success");
@@ -421,12 +412,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -449,12 +435,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -568,12 +549,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -652,12 +628,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: refuseKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -680,12 +651,17 @@ describe("#677 real S5 fix-commit path wiring", () => {
     expect(result.status).toBe("success");
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toEqual([
-      refuseKey,
-    ]);
+    // #919 M3: refuse traffic keys sole on thin ctx; landing = refuseRecords only.
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(backend.landings[s6Index]).not.toHaveProperty(
+      "refusedFindingIdentityKeys",
+    );
+    expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
+      refuseKey,
+    );
   });
 
   it("crash-resume after S5 with refuse+assertion-touch rebuilds both onto S6", async () => {
@@ -827,12 +803,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: refuseKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
     });
@@ -845,12 +816,17 @@ describe("#677 real S5 fix-commit path wiring", () => {
     // Fresh process: locals were never set in this run — must come from ledger rebuild.
     expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
     expect(backend.landings[s6Index]?.preexistingAssertionTouched).toBe(true);
+    // #919 M3: keys on thin ctx; landing carries refuseRecords only.
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toEqual([
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(backend.landings[s6Index]).not.toHaveProperty(
+      "refusedFindingIdentityKeys",
+    );
+    expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
       refuseKey,
-    ]);
+    );
   });
 });
 
@@ -988,7 +964,7 @@ class FixLoopBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(
@@ -1020,11 +996,11 @@ class FixLoopBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const result = this.opts.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
       return (
-        result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } }
+        result ?? { kind: "completed", output: { kind: "judge", status: "converged" } }
       );
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);

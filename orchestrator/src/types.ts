@@ -16,23 +16,27 @@ import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+// Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
+import type {
+  JudgeFindingDisposition,
+  JudgeVerdictStatus,
+} from "./stationReceiptContracts.js";
+
+export type { JudgeFindingDisposition, JudgeVerdictStatus };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The child-slice step sequence (ADR 0030): the runner owns the visible
+ * The child-slice step sequence (ADR 0030 / #925): the runner owns the visible
  * per-slice review/fix loop.
  *
- *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
- *     → S7 local handoff when clean
- *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
- *     → S8 handoff
+ *   S0 gate → S1 context → S2 implement → S3 judge establish
+ *     converged → S7 local handoff → S8 handoff
+ *     continue  → S5 fix → S6 judge resume → (verdict again)
+ *     escalate  → decision park
  *
- * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
- * S4 is the runner-owned ENVELOPE boundary (信封宪法, ADR 0062): it reads only the
- * blocking findings COUNT (0 → pass, non-0 → fix loop), never the finding content,
- * making per-round verdicts visible in the ledger instead of hiding the loop inside
- * one coder session.
+ * S2 and S5 are coder workers. S3 and S6 are the persistent verify judge.
+ * S4 mechanical open-count classification is dissolved (legacy resume residual).
  */
 /** Executable child-slice topology. The runner routes only these steps. */
 export type SliceStepId =
@@ -141,8 +145,9 @@ export type ToolchainEntry = string;
  * runner. `role` selects which soul to inject (v0.1 one image, two roles);
  * `promptFile` is a versioned file — prompts are never assembled inline.
  *
- * #247 wired `id`, `role`, `promptFile`. #253 fills the remaining fields:
- * `model`, `completionSignal`, `maxIter`, `soul`, `toolchain`.
+ * #247 wired `id`, `role`, `promptFile`. #253 filled `model` / `maxIter` /
+ * `soul` / `toolchain`. #928 retired `completionSignal` — completion is clean
+ * exit + legal sidecar / typed envelope (ADR 0131 / ADR 0132).
  */
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
@@ -159,18 +164,14 @@ export interface StepSpec {
    */
   readonly model: string;
   /**
-   * Signal the agent emits to mark the step complete (Sandcastle `run()` API).
-   * Required so the sandbox knows when to stop and collect structured output.
-   */
-  readonly completionSignal: string;
-  /**
    * Per-seat Sandcastle iteration budget for a single `sandbox.run()`.
    * NOT the fix-loop convergence round limit (runner topology owns that).
    *
-   * #899 / ADR 0128: every selected seat is a single-iteration run (`maxIter: 1`).
-   * The skill finishes inside that one invocation; native structured-output
-   * re-asks (`Output.object` maxRetries) happen in-session and are not extra
-   * outer iterations. There is no outer Ralph multi-iter budget on worker seats.
+   * #899 / ADR 0128 / #928: every selected seat is a single-iteration run
+   * (`maxIter: 1`). The skill finishes inside that one invocation; native
+   * structured-output re-asks (`Output.object` maxRetries) happen in-session
+   * and are not extra outer iterations. There is no outer Ralph multi-iter
+   * budget and no completion-signal early-stop chain on worker seats.
    *
    * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
    * the outer `route()` loop then continues as usual. It is NEVER "the
@@ -250,7 +251,16 @@ export interface FindingDispositionEvidence {
 
 export interface FindingDisposition {
   readonly identityKey: string;
-  readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
+  /**
+   * Terminal / open ledger statuses. `#925` judge kill rows flip to `refuted`
+   * (legal terminal flip alongside fresh-review final flips — ADR 0129).
+   */
+  readonly status:
+    | "unrepaired"
+    | "wont_fix"
+    | "rejected"
+    | "accepted_suppressed"
+    | "refuted";
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly source?: string;
@@ -281,16 +291,27 @@ export interface PriorFindingDisposition {
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
 /**
- * One finding the coder-fix worker legally refused (#677).
+ * One finding the coder-fix worker legally refused (#677 / #927).
  * Prefer another repair; when a finding cannot be fixed without overturning a
- * ratified AC/assertion, refuse that identity, fix the others, commit, and
- * continue to fresh re-review — never a global escalate / decision-gate park.
+ * ratified AC/assertion — or under one of the four legal refuse reasons —
+ * refuse that identity, fix the others, commit, and continue to judge
+ * re-adjudication — never a global escalate / decision-gate park.
+ *
+ * #927: optional `reason` + `evidence` are opaque cargo for the judge
+ * (tokens from LEGAL_REFUSE_REASONS). Runner never routes on these fields.
  */
 export interface ReviewFixRefuseRecord {
   readonly identityKey: string;
   readonly finding: string;
   readonly acceptanceCriterion: string;
   readonly conflictReason: string;
+  /**
+   * #927 four-reason token (`unconstitutional` / `over_defense` /
+   * `not_established` / `scope_creep`) — opaque cargo; judge re-adjudicates.
+   */
+  readonly reason?: string;
+  /** #927 evidence prose for the judge — opaque cargo. */
+  readonly evidence?: string;
 }
 
 export interface CoderOutput {
@@ -298,27 +319,34 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
-   * #677 legal refuse: identity keys the coder-fix worker declined to adopt
-   * (AC/assertion conflict). Valid with a commit that fixes the other findings;
-   * runner threads these to S6 fresh re-review — not escalate/park.
+   * #677 / #927 legal refuse: identity keys the coder-fix worker declined
+   * (envelope traffic). Runner threads these to S6 judge re-adjudicate —
+   * not escalate/park; never burns multi-iter waiting for a completion signal.
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
+  /**
+   * Opaque refuse cargo (#677 AC-conflict detail + #927 four-reason/evidence).
+   * Paired with {@link refusedFindingIdentityKeys}; runner transports only.
+   */
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
 
 /**
- * Output of a reviewer step (S3/S6). `findingsCount` is the self-reported open
- * count (ADR 0131 / #899 routing signal); `findings` rows are cargo for the fixer.
+ * Residual open-count review envelope (legacy / non-judge seats). Not the
+ * S3/S6 main path: single-slice topology routes on judge status
+ * `converged|continue|escalate` (ADR 0131 channel (b) / #925).
+ * `findingsCount` is the self-reported open count on this residual paper;
+ * positive count may project to judge continue, zero/missing → unusable
+ * (not silent converged). `findings` rows are cargo for the fixer.
  * Count is required on this envelope — missing/invalid counts never become
  * `kind: "reviewer"` (typed boundary maps them to unusable cargo).
  */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
-  /** Reviewer-declared open count; validated at the typed worker boundary. */
+  /** Residual declared open count; validated at the typed worker boundary. */
   readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
@@ -329,6 +357,42 @@ export interface ReviewerOutput {
 export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
+}
+
+/**
+ * #925 S3/S6 judge station output. Topology reads only `status` (+ escalate
+ * fields on the escalate branch). Dispositions / advanceCoder / findings are
+ * fixed-schema or cargo — never prose-parsed for routing.
+ *
+ * Family integrated-CMR may ride optional opaque cargo siblings via
+ * `withFamilyJudgeCargo` (#919 / #930). Topology must not close a court by
+ * reading these fields — traffic is the status tri-state only.
+ */
+export interface JudgeResult {
+  readonly kind: "judge";
+  readonly status: JudgeVerdictStatus;
+  /** Present on continue: kill + live rows (schema-fixed). */
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  /** Optional continue suggestion to switch coder roster entry (#926 executes). */
+  readonly advanceCoder?: string;
+  /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
+  readonly findings?: ReadonlyArray<Finding>;
+  /** Escalate doorbell cargo (also mirrored on {@link escalate}). */
+  readonly reason?: string;
+  readonly diagnosis?: string;
+  /** Any agent step may signal it is stuck (route() reads this first). */
+  readonly escalate?: Escalation;
+  /**
+   * Opaque family cargo siblings (telemetry / residual / fixture width).
+   * Topology never routes on these — attach only, never invent a second closer.
+   */
+  readonly cmrPass?: "completeness" | "correctness";
+  readonly successfulLegs?: readonly string[];
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+  readonly evidencePaths?: readonly string[];
+  readonly findingFamilies?: readonly FindingFamily[];
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
@@ -467,6 +531,36 @@ export interface RouteDegradedEvent {
   readonly reason: string;
 }
 
+/**
+ * #926 — judge `advanceCoder` executed: coder slot switched; prior session retired.
+ * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
+ */
+export interface CoderAdvanceEvent {
+  readonly event: "coder_advance";
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  /** Original judge suggestion token (id / alias / slug). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
+/**
+ * #926 — judge `advanceCoder` target unusable: stay on the current coder.
+ * Never a terminal — result returns to the judge desk on the normal continue path.
+ */
+export interface CoderAdvanceStayPutEvent {
+  readonly event: "coder_advance_stay_put";
+  /** Why the advance was refused (`unknown_target`, …). */
+  readonly reason: string;
+  /** Current coder seat (unchanged). */
+  readonly fromModelId: string;
+  /** Same as from — stay-put does not move. */
+  readonly toModelId: string;
+  /** Original judge suggestion (audit). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -474,7 +568,9 @@ export type LedgerBookkeepingEvent =
   | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent
   | MechanicalRedispatchAttemptEvent
-  | RouteDegradedEvent;
+  | RouteDegradedEvent
+  | CoderAdvanceEvent
+  | CoderAdvanceStayPutEvent;
 
 /**
  * The structured output of any worker step.
@@ -555,17 +651,17 @@ export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
 
 /**
  * The DISPATCH MODE for this worker invocation:
- *   - `fresh`  — a brand-new `sandbox.run()`. THE NORMAL CASE for every worker,
- *     including S2 implement and a normal S5 fix round.
+ *   - `fresh`  — a brand-new `sandbox.run()` (S2 establish, every reviewer
+ *     round, or coder when no prior session / model mismatch).
  *   - `resume` — continue a PRIOR agent session via the Sandcastle-native
  *     `resumeSession` path (carrying {@link DispatchContext.resumeSessionId}).
  *
- * ADR 0026 INVARIANT (do not conflate with context retention): `resume` is the
- * CRASH/ESCALATE-resume path ONLY and pins maxIter to 1. A normal coder/fix
- * round must NOT use it (it keeps within-step maxIter). So a worker is `resume`
- * ONLY when the runner is actually threading a `resumeSessionId`; otherwise
- * `fresh`. "Retain context across fix rounds" is a SEPARATE concern — see
- * {@link WorkerSpec.contextRetention} — NOT expressed via `resume`.
+ * #924 / ADR 0132: single-slice coder seats use `resume` for normal S5 fix
+ * rounds that continue the S2-established session (same model). Crash/escalate
+ * resume still threads `resumeSessionId` the same way. Reviewer seats stay
+ * `fresh` every round. A worker is `resume` ONLY when the runner threads a
+ * real `resumeSessionId`; otherwise `fresh`. maxIter remains 1 on every seat
+ * (Ralph outer multi-iter retired).
  */
 export type WorkerSessionMode = "fresh" | "resume";
 
@@ -610,11 +706,10 @@ export interface WorkerSpec {
   /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
   readonly host: WorkerHost;
   /**
-   * The dispatch path for THIS invocation: `fresh` (a new `sandbox.run()`, the
-   * normal case) or `resume` (the crash/escalate-resume path, set ONLY when the
-   * runner threads a {@link DispatchContext.resumeSessionId}). NOT a proxy for
-   * "coder retains context" — see {@link contextRetention} (ADR 0026 invariant:
-   * a normal fix round is `fresh`, never `resume`).
+   * The dispatch path for THIS invocation: `fresh` or `resume` (set ONLY when
+   * the runner threads a {@link DispatchContext.resumeSessionId}). #924: normal
+   * S5 continuity resumes the S2 coder session; crash/escalate resume is the
+   * same channel. See {@link contextRetention} for the retain/clean axis.
    */
   readonly session: WorkerSessionMode;
   /**
@@ -632,11 +727,10 @@ export interface WorkerSpec {
   readonly promptFile: string;
   /** Versioned prompt arguments substituted into the promptFile (still hashed). */
   readonly promptArgs?: Readonly<Record<string, string>>;
-  /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
-  readonly completionSignal: string;
   /**
    * Per-seat Sandcastle iteration budget (NOT the fix-loop round cap).
-   * #899 / ADR 0128: production seats use `1`; SO re-asks are in-session.
+   * #899 / ADR 0128 / #928: production seats use `1`; SO re-asks are in-session.
+   * Completion is clean exit + legal sidecar / typed envelope — no signal field.
    * See {@link StepSpec.maxIter}.
    */
   readonly maxIter: number;
@@ -773,10 +867,14 @@ export interface WorkerLandingPayload {
   /** #677 mechanical signal; reviewer must trace the assertion to authority. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from the prior S5 coder-fix commit — still-active
-   * findings the fixer declined; fresh re-review must adjudicate them.
+   * #927 opaque refuse cargo (four reasons + evidence / #677 AC detail) for
+   * the judge. Runner transports only — never validates reason tokens.
+   *
+   * #919 M7: refuse *traffic keys* live only on thin {@link DispatchContext}
+   * (`refusedFindingIdentityKeys`); landing never dual-writes keys (信封宪法).
+   * On-disk fix-findings JSON may still mirror ctx keys via dispatchWorker.
    */
-  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /** Family PR delivery metadata threaded into the review loop. */
@@ -853,12 +951,27 @@ export interface DispatchContext {
   readonly telemetryDir?: string;
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
-   * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
-   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
-   * work must not take the crash/escalate resume path).
+   * dispatch. #924 / ADR 0132: single-slice coder seats thread this for normal
+   * S5 continuity of the S2-established session (same model), as well as the
+   * crash/escalate reopen path. #925: S3 establishes the judge session; S6
+   * rounds resume it (same model). A worker is `resume` only when the runner
+   * supplies a real id.
    */
   readonly resumeSessionId?: string;
+  /**
+   * #925 — prior judge verdict ledger rows for a new judge after session loss
+   * (or any S6 opening). Runner transports rows as-is into the fix-findings
+   * landing file (`priorJudgeVerdicts` field) so the worker can read them;
+   * never synthesises a narrative summary. Trajectory is reconstructed by the
+   * judge from those structured rows only.
+   */
+  readonly priorJudgeVerdicts?: ReadonlyArray<{
+    readonly step: string;
+    readonly status: JudgeVerdictStatus;
+    readonly advanceCoder?: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly sessionId?: string;
+  }>;
   /**
    * Host-written issue snapshot for audit/resume compatibility. Current workers
    * live-fetch issue truth via gh using runner-injected issue/repo env; this is
@@ -884,8 +997,10 @@ export interface DispatchContext {
   /** #677 runner fact only, never a content verdict. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from S5 — thin identity list for S6 re-review
-   * (runner does not park; fresh reviewer adjudicates still-active refuses).
+   * #677 / #927 legal refuse keys from S5 — thin identity list for S6
+   * judge re-adjudicate (runner does not park or read refuse cargo prose).
+   * Opaque refuseRecords prose rides only on {@link WorkerLandingPayload}
+   * (信封宪法 — thin ctx is traffic keys only).
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
@@ -964,21 +1079,29 @@ export interface DispatchContext {
 export type CoderResult = CoderOutput;
 
 /**
- * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
- * runner-visible: reviewer workers return structured findings so the S4 envelope
- * boundary can count blocking findings (信封宪法, ADR 0062) rather than a bare verdict.
+ * Residual historical open-count paper (legacy / rebuild / non-judge seats).
+ * Alias of {@link ReviewerOutput} — not the main single-slice S3/S6 path.
+ * S3/S6 routes on {@link JudgeResult} status tri-state; S4 mechanical
+ * open-count classification is dissolved (#925 / ADR 0131 channel (b)).
  */
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335/#449). The runner routes only
- * the worker's self-reported findings count; all other reviewer fields are cargo.
+ * Residual family integrated-cmr cargo envelope (#335/#449).
+ * #930: family court **traffic** is {@link JudgeResult} tri-state only;
+ * this shape is residual cargo / legacy fixtures. Topology must not close
+ * a court by reading findingsCount (second open-count closer deleted).
+ *
+ * @deprecated #919 CR N3 — production residual fail-loud is
+ * {@link unusableResidualOpenCountPaper} (`kind:"reviewer"+findingsCount:0`);
+ * live court traffic is {@link JudgeResult}. Prefer those over minting
+ * `kind:"cmr"`. Retained only for residual fixture / ledger width.
  */
 export interface CmrResult {
   readonly kind: "cmr";
   /** Which integrated CMR pass produced this verdict, when known. */
   readonly cmrPass?: "completeness" | "correctness";
-  /** Optional reviewer cargo; routing comes only from findingsCount. */
+  /** Residual cargo flag; not a family closer after #930. */
   readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
@@ -992,7 +1115,10 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Reviewer-declared count. Structured finding rows never supply it. */
+  /**
+   * Residual open-count cargo only. Not a family closer (#930 / #919 E) —
+   * family never mints continue from findingsCount; court fail-louds residual.
+   */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];
@@ -1147,6 +1273,7 @@ export interface DocReleaseResult {
 export type WorkerOutput =
   | CoderResult
   | ReviewerResult
+  | JudgeResult
   | CmrResult
   | ShipResult
   | MergeWorkerResult
@@ -1319,12 +1446,11 @@ export interface LedgerEntry {
   /** Optional CMR route leg removed after smoke failure. */
   readonly droppedLeg?: string;
   /**
-   * ADR0030 finding dispositions persisted at the S4 review/fix boundary.
+   * Finding dispositions persisted at the judge verdict boundary (#925).
    *
-   * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay accepted suppressions and bounded severity reopens instead
-   * of re-deriving them from only the last reviewer payload. Governance data
-   * (accepted suppression), not a runner content-classification (信封宪法, ADR 0062).
+   * Formerly the S4 review/fix boundary (open-count mechanical station). S4 is
+   * dissolved: S3/S6 judge ledger rows now carry kill→`refuted` flips and
+   * governance data. Not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
   /** Runner-owned terminal stop reason summary (#450). */
@@ -1347,7 +1473,6 @@ export interface WorkerMonitorHandle {
   readonly logStartOffset?: number;
   /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly dispatchedAt: string;
   /**
@@ -1371,7 +1496,6 @@ export interface CliMonitorSpawnSpec {
   readonly args: readonly string[];
   readonly logDir: string;
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;

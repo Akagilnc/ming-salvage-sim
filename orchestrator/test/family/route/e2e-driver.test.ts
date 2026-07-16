@@ -181,7 +181,7 @@ class RealGitChildBackend implements Backend {
       execFileSync("git", ["commit", "-q", "-m", `child ${num}`], { cwd: wt });
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -211,10 +211,11 @@ class E2EFamilyBackend extends RealFamilyBackend {
       familyBase: ctx.familyBase!,
       ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
     });
+    // #919 R8: live green is kind:judge status:converged.
+    // residual kind:verdict/cmr + findingsCount:0 is unusable fail-loud (never silent clean).
     return {
-      kind: "verdict",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       evidencePaths: ["cmr/review-summary.json"],
     };

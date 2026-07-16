@@ -460,7 +460,7 @@ export interface TelemetryCollectRecord extends TelemetryRecordBase {
   /**
    * Category for non-success terminals. `null` on completed, and on escalated
    * when the reason is a pure decision (no known failure signature). Escalated
-   * legs that match a known pattern (e.g. missing completion signal →
+   * legs that match a known pattern (e.g. missing sidecar →
    * `honest-incomplete`) keep that category so post-hoc clustering works.
    * Failures that do not match a known pattern are `"unclassified"` (not null).
    */
@@ -976,7 +976,7 @@ export function mentionsHttp429(reasonLower: string): boolean {
  * Map a free-text failure reason onto a telemetry category.
  *
  * Patterns below are taken from the actual throw/return sites (not invented):
- * - shipOutcome / realFamilyBackend cmr+merger — "… did not fire its completion signal"
+ * - missing sidecar / historical "did not fire its completion signal" logs
  * - HangWithLivePoolError — "hang with live pool"
  * - dispatchWorker idle monitor — "monitored worker idle hang"
  * - QuotaWaitForResetError — "quota wait for reset"
@@ -1037,14 +1037,16 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     return "stream-disconnect";
   }
 
-  // ── honest-incomplete (missing completion signal) ─────────────────────────
-  // Real sources (must match first): shipOutcome / cmr / merger:
-  //     `… did not fire its completion signal`
-  //   also: "none (no signal fired before the iteration limit)" fragment alone
+  // ── honest-incomplete (missing sidecar / incomplete handoff) ─────────────
+  // #928: completion is exit + legal sidecar; no completionSignal passwords.
+  // Keep legacy "completion signal" string matches only for historical log
+  // clustering of pre-#928 runs — not as a live control path.
   if (
     lower.includes("honest-incomplete") ||
     lower.includes("honest incomplete") ||
     lower.includes("incomplete response") ||
+    lower.includes("without a workerresult sidecar") ||
+    lower.includes("without a usable sidecar") ||
     lower.includes("did not fire its required completion") ||
     lower.includes("did not fire its completion signal") ||
     lower.includes("no signal fired before the iteration limit") ||

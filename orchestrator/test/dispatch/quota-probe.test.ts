@@ -588,7 +588,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
     role: "coder",
     promptFile: "coder_implement.md",
     model: "gpt-5.6-terra",
-    completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 1,
     soul: "coder",
     toolchain: [],
@@ -741,7 +740,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
         sandbox: {} as AgentSandboxRunOptions["sandbox"],
         agent: {} as AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "CODER_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "coder_implement.md"),
         quotaProbe: undefined,
@@ -839,10 +837,10 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           },
         });
       }
-      if (spec.kind === "reviewer") {
+      if (spec.kind === "reviewer" || spec.id === "S3" || spec.id === "S6") {
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          output: { kind: "judge", status: "converged" },
         };
       }
       if (spec.kind === "ship") {

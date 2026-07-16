@@ -36,6 +36,7 @@ import {
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
 import { findingIdentityKeys } from "./findings.js";
+import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -128,7 +129,9 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
 
 /**
  * Map a {@link StepSpec.role} to its {@link WorkerKind} for the agent steps.
- * S2/S5 coder → `coder`; S3/S6 reviewer → `reviewer`. (Ship/cmr/merge are built
+ * S2/S5 coder → `coder`; S3/S6 verify-judge → `verify` (#919 S2 / M4 live seat).
+ * Residual role:"reviewer" still maps to kind reviewer for historical fixtures
+ * only — live single-slice seats are role:"verify". (Ship/cmr/merge are built
  * directly, not from a role StepSpec.)
  */
 function workerKindForRole(role: StepSpec["role"]): WorkerKind {
@@ -139,16 +142,24 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
 
 /**
  * Context retention by work type (ADR 0026): production workers (coder/fix)
- * RETAIN context across fix rounds ("what I wrote, why"); review workers
- * (reviewer/cmr) start each round CLEAN (clean eyes, cross-model independence).
- * This is DECOUPLED from the dispatch {@link WorkerSessionMode} — a normal coder
- * round is `session:"fresh"` yet `contextRetention:"retain"` (ADR 0026 invariant:
- * normal fix keeps maxIter, NOT the crash/escalate resume path).
+ * RETAIN context across fix rounds ("what I wrote, why"); review / judge seats
+ * start each round CLEAN (clean eyes). This is DECOUPLED from the dispatch
+ * {@link WorkerSessionMode} — a normal coder round is `session:"fresh"` yet
+ * `contextRetention:"retain"` (ADR 0026 invariant: normal fix keeps maxIter,
+ * NOT the crash/escalate resume path).
+ *
+ * #925 S3/S6 judge continuity is `resumeSessionId` only (same agent session).
+ * #919 S2/R7: judge seats (S3/S6 only via isJudgeSeat) force clean via
+ * {@link stepSpecToWorkerSpec}. Family online-review S9 is not a judge seat
+ * and pins clean explicitly on its WorkerSpec.
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
-  // Production workers (coder + post-review fixer) retain context across rounds;
-  // review-like workers start each round clean.
-  return kind === "coder" || kind === "fixer" ? "retain" : "clean";
+  // Production workers (coder + post-review fixer) retain context across rounds.
+  // Online-review verify kind defaults retain here; single-slice S3/S6 force
+  // clean in stepSpecToWorkerSpec (session continuity is resumeSessionId).
+  return kind === "coder" || kind === "fixer" || kind === "verify"
+    ? "retain"
+    : "clean";
 }
 
 function ensureGitExcluded(worktreePath: string, pattern: string): void {
@@ -215,10 +226,20 @@ function writeFixFindingsLandingFile(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
+  const priorJudgeVerdicts =
+    ctx.priorJudgeVerdicts !== undefined && ctx.priorJudgeVerdicts.length > 0
+      ? ctx.priorJudgeVerdicts
+      : undefined;
+  const judgeSeat = isJudgeSeat({ id: spec.id });
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
-    (spec.id === "S6" && spec.kind === "reviewer") ||
-    ctx.escalationAnswer !== undefined;
+    // #925 / #919 S2: S6 judge seat still needs fix-findings landing for
+    // re-adjudication of prior open rows (sole isJudgeSeat predicate).
+    (spec.id === "S6" && judgeSeat) ||
+    ctx.escalationAnswer !== undefined ||
+    // #925 F1: prior judge verdict rows must reach the worker via the same
+    // fix-findings landing seam (session-loss / fresh-after-dead-session).
+    (judgeSeat && priorJudgeVerdicts !== undefined);
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -276,8 +297,19 @@ function writeFixFindingsLandingFile(
         ctx.refusedFindingIdentityKeys.length > 0
           ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
           : {}),
+        // #927: opaque refuse cargo (four reasons + evidence) for judge
+        // re-adjudication — landing only (信封宪法); never from thin ctx.
+        ...(landing?.refuseRecords !== undefined &&
+        landing.refuseRecords.length > 0
+          ? { refuseRecords: landing.refuseRecords }
+          : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
+        // #925 F1: structured prior judge verdict rows only — runner never
+        // synthesises a narrative trajectory summary.
+        ...(priorJudgeVerdicts !== undefined
+          ? { priorJudgeVerdicts }
           : {}),
       },
       null,
@@ -320,9 +352,9 @@ function writeWorkerOutcomeLandingFile(
  * runner call".
  *
  * `session` is supplied by the runner per-invocation: `"resume"` ONLY when it is
- * threading a `resumeSessionId` (the crash/escalate-resume path); `"fresh"`
- * otherwise (the normal S2/S5 path). The default is `"fresh"` — a worker is never
- * marked `resume` by work type alone (ADR 0026; codex cmr R3 finding).
+ * threading a `resumeSessionId` (crash/escalate resume OR #924 S5 continuity of
+ * the S2 coder session); `"fresh"` otherwise. The default is `"fresh"` — a
+ * worker is never marked `resume` by work type alone.
  */
 export function stepSpecToWorkerSpec(
   spec: StepSpec,
@@ -330,16 +362,19 @@ export function stepSpecToWorkerSpec(
   billingPool?: BillingPoolId,
 ): WorkerSpec {
   const kind = workerKindForRole(spec.role);
+  // #919 S2/R7: S3/S6 judge seats are clean-eyes via sole isJudgeSeat predicate
+  // (promptFile is the station contract). S9 kind:verify is online-review, not
+  // judge — skill /verify is unused by RealBackend.runStep for S3/S6.
+  const judgeSeat = isJudgeSeat({ id: spec.id });
   return {
     id: spec.id,
     kind,
     role: spec.role,
     host: workerHostForModel(spec.model, billingPool),
     session,
-    contextRetention: retentionForKind(kind),
+    contextRetention: judgeSeat ? "clean" : retentionForKind(kind),
     skill: SKILL_FOR_KIND[kind],
     promptFile: spec.promptFile,
-    completionSignal: spec.completionSignal,
     maxIter: spec.maxIter,
     model: spec.model,
     soul: spec.soul,
@@ -368,7 +403,6 @@ export function verifyWorkerSpec(
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.verify,
     promptFile: VERIFY_PROMPT_FILE,
-    completionSignal: "VERIFY_STEP_COMPLETE",
     maxIter: 1,
     model,
     soul: "verify",
@@ -391,8 +425,7 @@ export function fixerWorkerSpec(
     contextRetention: "retain",
     skill: SKILL_FOR_KIND.fixer,
     promptFile: FIXER_PROMPT_FILE,
-    completionSignal: "FIXER_STEP_COMPLETE",
-    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
     soul: "fixer",
@@ -420,7 +453,6 @@ export function docReleaseWorkerSpec(
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.docRelease,
     promptFile: DOCRELEASE_PROMPT_FILE,
-    completionSignal: "DOCRELEASE_STEP_COMPLETE",
     maxIter: 1,
     model,
     soul: "docRelease",
@@ -432,10 +464,11 @@ export function docReleaseWorkerSpec(
  * Compatibility wrapper for older Backends: forward a child worker to the
  * existing methods and wrap the return into a {@link WorkerResult}.
  *
- *   - coder (the S2 build worker): when `ctx.resumeSessionId` is set the worker is
- *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
- *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
- *     `completed` (carrying the real per-step `sessionId` when surfaced).
+ *   - coder (S2 build / S5 fix): when `ctx.resumeSessionId` is set the worker is
+ *     dispatched via `backend.resumeSession` (#924 S5 continuity of the S2
+ *     session, or crash/escalate reopen); else via `backend.runStep`. The
+ *     returned `StepOutput | StepResult` is wrapped as `completed` (carrying the
+ *     real per-step `sessionId` when surfaced).
  * This wrapper yields `completed`; unified real workers produce process `failed`
  * and worker-declared `escalated` results directly.
  */
@@ -452,11 +485,13 @@ export async function legacyDispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
-  const runStepKinds = new Set<WorkerKind>(["coder", "reviewer"]);
+  // #919 S2: S3/S6 verify-judge seats use the same runStep/resumeSession path
+  // as residual reviewer; family online-review kind:verify uses family dispatch.
+  const runStepKinds = new Set<WorkerKind>(["coder", "reviewer", "verify"]);
   if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only child coder/reviewer workers are forwarded. ` +
+        `dispatch path — only child coder/reviewer/verify-judge workers are forwarded. ` +
         `Family endgame workers must use the family dispatch seam.`,
     );
   }
@@ -768,7 +803,6 @@ export async function dispatchWorkerWithMonitor(
         args: cliSpec.args,
         logDir: cliSpec.logDir,
         poolId: cliSpec.poolId,
-        completionSignal: cliSpec.completionSignal,
         stepId: cliSpec.stepId,
         ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
         ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
@@ -1046,7 +1080,7 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  */
 export function workerResultToStep(
   result: WorkerResult,
-  expectedKind: "coder" | "reviewer",
+  expectedKind: "coder" | "reviewer" | "verify",
 ): { unwrapped: StepOutput | StepResult | undefined; reason?: string } {
   if (result.kind === "completed") {
     return {
@@ -1060,6 +1094,8 @@ export function workerResultToStep(
     // Attach the escalate to a minimal role-shaped output so route()'s
     // escalate-first edge fires (the runner checks `output.escalate` before the
     // full role schema).
+    // #919 M4 / U1: non-coder agent seats (live role:"verify" judge) mint T2
+    // kind:"judge" escalate — never residual open-count reviewer paper.
     const output: StepOutput =
       expectedKind === "coder"
         ? {
@@ -1068,7 +1104,7 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
-        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: result.escalation };
+        : mintJudgeEscalate(result.escalation);
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)
@@ -1093,7 +1129,6 @@ function workerSpecToStepSpec(spec: WorkerSpec): StepSpec {
     role: spec.role,
     promptFile: spec.promptFile,
     model: spec.model,
-    completionSignal: spec.completionSignal,
     maxIter: spec.maxIter,
     soul: spec.soul,
     toolchain: spec.toolchain,

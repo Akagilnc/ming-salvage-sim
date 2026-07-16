@@ -47,16 +47,16 @@ export interface GrokAgentOptions {
  * Headless streaming-json does NOT emit tool_call events even when tools run
  * (probe: echo OK via bash succeeded; stream only showed thought/text/end).
  *
- * `result` semantics (#899 hotfix, 2026-07-15): sandcastle keeps only the
- * LAST result event's payload as the iteration's `result`/`stdout` — that is
- * what the completion-signal check and the coder `<coder>` receipt extraction
- * read. Grok emits text in per-message chunks, so mapping every chunk to a
- * result event made those checks a last-chunk roulette: on #899 the coder's
- * receipt + CODER_STEP_COMPLETE lived in earlier chunks, iterations never
- * stopped (5× token burn per step) and escalate cargo degraded to
+ * `result` semantics (#899 hotfix, 2026-07-15; #928 exit+sidecar): sandcastle
+ * keeps only the LAST result event's payload as the iteration's
+ * `result`/`stdout` — that is what typed-envelope / sidecar receipt extraction
+ * reads after clean exit. Grok emits text in per-message chunks, so mapping
+ * every chunk to a result event made that a last-chunk roulette: on #899 the
+ * coder's receipt lived in earlier chunks and escalate cargo degraded to
  * committed:false. Chunks now emit text events only and accumulate; the
  * single result event is emitted on `end` with the full turn (codex parity,
- * whose CLI emits one final result record natively).
+ * whose CLI emits one final result record natively). Liveness is heartbeat /
+ * log growth only — not a password string in the stream.
  */
 export function createGrokStreamParser(): (line: string) => Array<
   | { type: "text"; text: string }

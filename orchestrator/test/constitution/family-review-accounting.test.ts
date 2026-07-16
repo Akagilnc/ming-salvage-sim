@@ -30,9 +30,11 @@ import type {
   CmrResult,
   DispatchContext,
   Finding,
+  JudgeResult,
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -67,7 +69,13 @@ class ScriptedCmrBackend implements FamilyBackend {
   private cmrIndex = 0;
 
   constructor(
-    private readonly cmrOutputs: ReadonlyArray<CmrResult> | CmrResult,
+    // CmrResult residual paper OR live kind:judge (with optional cargo siblings).
+    private readonly cmrOutputs:
+      | ReadonlyArray<CmrResult | JudgeResult>
+      | CmrResult
+      | JudgeResult
+      // Allow cargo-bearing live-judge fixtures without excess-property fights.
+      | (JudgeResult & Record<string, unknown>),
   ) {}
 
   async mergeChildIntoFamilyBase(
@@ -140,17 +148,16 @@ function isCourtAbort(ledger: ReadonlyArray<FamilyLedgerEntry>): boolean {
 describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope survives", () => {
   it("unaccounted protected prior + new blocker routes to coder-fix (not contract_drift court death)", async () => {
     // Pre-#875: early closure coverage audit aborted as contract_drift and
-    // starved the fix loop. Post-#875: findings-count channel routes to coder-fix.
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "fresh re-review found a new blocker",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    // starved the fix loop. Post-#875 / #919: live kind:judge continue → coder-fix (residual count never continues).
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "fresh re-review found a new blocker",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -160,18 +167,17 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(isCourtAbort(backend.ledger)).toBe(false);
   });
 
-  it("converged envelope with claimed-fixed keys but no dispositions still ships", async () => {
+  it("live judge converged with claimed-fixed keys but no dispositions still ships", async () => {
     // Pre-#875: missing-disposition coverage audit → contract_drift kill.
-    // Post-#875: findings=0 + converged + exit ok → three-channel pass → ship.
+    // #919: live green is kind:judge status:converged (residual findingsCount:0 unusable).
     const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
       ...CMR_EVIDENCE,
@@ -192,13 +198,13 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     ).toBe(true);
   });
 
-  it("converged envelope with still-active prose disposition still ships when findings=0", async () => {
+  it("live judge converged with still-active prose disposition still ships", async () => {
     // Pre-#875: disposition-enum court (still-active) → contract_drift kill.
     // Post-#875: runner does not read disposition statuses to branch fate.
+    // #919: live green is typed kind:judge (not residual findingsCount:0).
     const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [
@@ -221,16 +227,15 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(isCourtAbort(backend.ledger)).toBe(false);
   });
 
-  it("converged envelope with undeclared successful legs still ships (no leg-accounting death)", async () => {
+  it("live judge converged with undeclared successful legs still ships (no leg-accounting death)", async () => {
     // Pre-#875: leg-accounting court → infra_failure kill with routeAccounting.
     // Post-#875: leg lists are prose; floor/required-leg degradation stays, court dies.
     // claude-tight declares gpt-5.6-sol + agy; listing an EXTRA undeclared "opus"
     // was pure accounting death (not required-leg skip / floor).
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["gpt-5.6-sol", "agy", "opus"],
       ...CMR_EVIDENCE,
     });
@@ -259,9 +264,8 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     // re-court of double-report. claude-tight required = gpt-5.6-sol.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [{ slug: "gpt-5.6-sol", reason: "quota (double-report noise)" }],
       ...CMR_EVIDENCE,
@@ -292,9 +296,8 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
   it("worker-declared zero ships without runner leg-floor adjudication", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: ["opus"],
       ...CMR_EVIDENCE,
     });
@@ -321,16 +324,14 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
   });
 
   it("#875 Opus: the reviewer-declared count routes without array reconciliation", async () => {
-    // findingsCount=99 is the route signal; the single cargo row is not recounted.
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "array has one blocker",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      findingsCount: 99,
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    // Live judge continue from finding cargo; runner does not recount array vs essay.
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "array has one blocker",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -339,7 +340,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(isCourtAbort(backend.ledger)).toBe(false);
     expect(

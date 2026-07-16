@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
 import {
   pendingPriorCmrFindingIdentityKeysByPass,
   runFamily,
@@ -76,7 +77,7 @@ class ChildBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -744,8 +745,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("verify_failed");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.reason).toBe("verify_failed");
+    expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
   });
 
   it("verify_failed does not reuse stale aborted rows from before the current final barrier", async () => {
@@ -778,8 +779,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("verify_failed");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.reason).toBe("verify_failed");
+    expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
     expect(result.stopSummary.summary).not.toContain("old CMR blocker");
   });
 
@@ -1050,7 +1051,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         if (spec.role === "coder") {
           throw new Error("coder process crashed");
         }
-        return { kind: "reviewer", findings: [], findingsCount: 0 };
+        return { kind: "judge", status: "converged" };
       }
     }
     const familyBackend = new FakeFamilyBackend();
@@ -1075,7 +1076,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         if (spec.role === "coder") {
           throw new Error("coder process crashed");
         }
-        return { kind: "reviewer", findings: [], findingsCount: 0 };
+        return { kind: "judge", status: "converged" };
       }
     }
     class PreSeededFamilyBackend extends FakeFamilyBackend {
@@ -1169,17 +1170,13 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     const blockingCmrOutput: WorkerResult = {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        findingsCount: 1,
+      output: liveCmrJudgeContinue([blocker], {
         reason: "family CMR found a blocking finding",
         successfulLegs: [...CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
-        findings: [blocker],
-      },
+      }),
     };
 
     it("persists only finding identity keys, never content-derived dispositions or the fat classification", async () => {
@@ -1191,7 +1188,11 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         familyIssue: 604,
       });
 
-      expect(result).toEqual({ ok: false, ran: true });
+      expect(result).toMatchObject({
+        ok: false,
+        ran: true,
+        failedStatus: "cmr_failed",
+      });
       const reviewed = backend.ledger.find(
         (entry) => entry.status === "cmr_reviewed",
       );

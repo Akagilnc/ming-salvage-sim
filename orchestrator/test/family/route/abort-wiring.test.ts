@@ -28,6 +28,7 @@ import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
+import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 import type {
   Backend,
   DispatchContext,
@@ -82,7 +83,7 @@ class ChildBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -118,14 +119,23 @@ class AbortingFamilyBackend implements FamilyBackend {
     const result =
       this.script.cmr?.(req) ?? {
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       };
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      const cmr = await this.runIntegratedCmr({
+        familyBase: ctx.familyBase!,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: legacyCmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       return {
@@ -233,7 +243,7 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
   it("a clean all-green run writes NO aborted entry", async () => {
     const backend = new AbortingFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     await runFamily({
       epic: epicWith(294),

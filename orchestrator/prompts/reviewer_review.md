@@ -15,12 +15,10 @@ such as `.orchestrator-snapshot.json` are not execution input.
 
 ## Required output
 
-When you are done (or are escalating), the real completion evidence is the
-single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set and the typed `<review>` outcome. For compatibility with older runners,
-emit EXACTLY ONE `<review>` tag on its own containing the same single JSON
-object. On the final multi-iter step you MUST print REVIEWER_STEP_COMPLETE on
-its own final line (sandcastle iteration terminator — not optional telemetry).
+When you are done (or are escalating), completion is a clean process exit plus
+the legal typed receipt / sidecar. Write the single JSON object to
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, and emit EXACTLY ONE
+`<review>` tag on its own containing the same JSON object.
 
 Success:
 

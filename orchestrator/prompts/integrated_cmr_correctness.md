@@ -23,36 +23,44 @@ gate in this worker.
 
 ## Required output
 
-When the review is complete, emit `findings = x` on its own line, replacing `x`
-with the number of findings. This fragment is required even when the count is 0.
-A converged judgement declares `findings = 0`. A not-converged judgement declares
-at least `findings = 1`; without an itemized finding list, declare `findings = 1`
-and explain the reason in the review body, which the fixer reads.
+You are a **family court** of the shared verify judge machine (#930 / ADR 0132):
+closure is the T2 judge tri-state `converged | continue | escalate`, not open-count.
+Emit the official judge station envelope (same contract as single-slice S3/S6).
+CMR leg cargo (successfulLegs / skippedLegs / evidencePaths / prior dispositions)
+may ride as soft siblings — runner routes only on `status`.
 
-Converged:
+Also emit `findings = x` on its own line for human readability (`x` = live open
+count after kills). Never declare `converged` while any finding remains live.
+
+Converged (no further fix rounds on this court):
 
 ```text
-<cmr>{"converged": true, "findingsCount": 0, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<judge>{"station":"judge","status":"converged"}</judge>
 ```
 
-Not converged:
+Continue (send **live** findings to family coder-fix, then this court resumes):
 
 ```text
-<cmr>{"converged": false, "reason": "<short>", "findingsCount": 1, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<judge>{"station":"judge","status":"continue","findingDispositions":[{"identityKey":"<stable-key>","action":"live"}],"findings":[{"severity":"medium","category":"correctness","claim_quote":"<stable claim>","location":"<file-or-scope>","suggested_fix":"<next step>","action":"fix_now"}]}</judge>
 ```
 
-Escalation:
+Escalation (decision-kind park — resume in place after owner answers):
 
 ```text
-<cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>"}}</cmr>
+<judge>{"station":"judge","status":"escalate","reason":"<short>","diagnosis":"<why the court cannot decide>"}</judge>
+```
+
+Soft cargo siblings (optional, not traffic):
+
+```text
+{"successfulLegs":["opus","gpt-5.6-sol"],"skippedLegs":[{"slug":"agy","reason":"quota unavailable"}],"claimedFixedFindingIdentityKeys":[],"priorFindingDispositions":[],"evidencePaths":["cmr/review-summary.json"]}
 ```
 
 Rules:
 
-- The JSON should match one of the shapes above. **Typed SO (Sandcastle
-  maxRetries) only requires `findingsCount`** (plus optional decision-gate
-  `escalate`). Other fields below are **soft cargo** — emit them for
-  downstream workers, but they are not SO schema gates (#899).
+- **Typed SO traffic is the T2 judge verdict** (`status` tri-state + dispositions
+  on continue). Residual `findingsCount` / `<cmr>` shapes are not family closers
+  (#930). Other fields below are **soft cargo**.
 - On any converged verdict, `successfulLegs` **should** list the CMR
   leg slugs that actually produced usable reviews in this pass. Use `opus` for
   the Claude/Opus reviewer leg, `gpt-5.6-sol` for the codex leg, and `agy` for the
@@ -116,10 +124,11 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- Always emit the typed `<cmr>` tag (even when `$ORCHESTRATOR_OUTCOME_PATH` is
-  set and you write the same JSON object to the sidecar). Production CMR seats
-  bind Sandcastle `Output.object` to the `cmr` tag with `maxRetries`; the tag is
-  the traffic-signal channel, not an optional compatibility fallback. If you
-  iterate, the last typed `<cmr>` tag is the one that counts.
-- On the final multi-iter step you MUST print CMR_STEP_COMPLETE on its own final
-  line (sandcastle iteration terminator — not optional telemetry).
+- Always emit the typed `<judge>` tag (even when `$ORCHESTRATOR_OUTCOME_PATH` is
+  set and you write cargo siblings to the sidecar). Production family courts
+  bind Sandcastle `Output.object` to the `judge` tag with the T2 station schema
+  (`station:"judge"` + status tri-state) — same live seat as single-slice S3/S6.
+  Residual open-count / `<cmr>` shapes are not family closers. If you iterate,
+  the last typed `<judge>` tag is the one that counts.
+
+This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.

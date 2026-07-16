@@ -2,7 +2,6 @@ import { createInterface } from "node:readline/promises";
 
 import {
   parseCoderRec,
-  reviewerOverrideForCoderSlug,
   resolveCoderRecOrder,
   selectCoderRecEntry,
   type CoderRosterEntry,
@@ -21,6 +20,7 @@ import {
   type BillingPoolId,
   type NextRelayBaton,
 } from "./quotaPoolTable.js";
+import { isJudgeSeat } from "./judgeStation.js";
 import type { StepId } from "./types.js";
 
 export type RouteSmokeStatus =
@@ -55,9 +55,11 @@ export type RouteSmokeExecutor = (
 
 export const DEFAULT_ROUTE_SMOKE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// #923: reviewer model-route slot retired — verify is the sole judge identity
+// staffing both single-slice S3/S6 openings and the verify station. Worker role
+// / cargo kind "reviewer" and leg souls remain separate from this slot table.
 export const MODEL_ROUTE_SLOTS = [
   "coder",
-  "reviewer",
   "coderFix",
   "ship",
   "merger",
@@ -124,7 +126,6 @@ interface ModelRoutePreset {
 
 const NORMAL_SLOTS: ModelSlotMap = {
   coder: CODER_CODEX_SLUG,
-  reviewer: REVIEWER_CODEX_SLUG,
   coderFix: CODER_CODEX_SLUG,
   ship: "sonnet",
   merger: "sonnet",
@@ -149,7 +150,6 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   "codex-cheap": {
     slots: {
       coder: CODER_CODEX_SLUG,
-      reviewer: REVIEWER_CODEX_SLUG,
       coderFix: CODER_CODEX_SLUG,
       ship: "sonnet",
       merger: "sonnet",
@@ -172,7 +172,6 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     tightFamilies: ["codex"],
     slots: {
       coder: "sonnet",
-      reviewer: "opus",
       coderFix: "sonnet",
       ship: "sonnet",
       merger: "sonnet",
@@ -193,7 +192,6 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   "claude-cheap": {
     slots: {
       coder: CODER_CODEX_SLUG,
-      reviewer: REVIEWER_CODEX_SLUG,
       coderFix: CODER_CODEX_SLUG,
       ship: CODER_CODEX_SLUG,
       merger: CODER_CODEX_SLUG,
@@ -216,7 +214,6 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     tightFamilies: ["claude"],
     slots: {
       coder: CODER_CODEX_SLUG,
-      reviewer: REVIEWER_CODEX_SLUG,
       coderFix: CODER_CODEX_SLUG,
       ship: CODER_CODEX_SLUG,
       merger: CODER_CODEX_SLUG,
@@ -238,9 +235,10 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
 
 const SLOT_SET = new Set<string>(MODEL_ROUTE_SLOTS);
 const LEG_COLLECTION_SET = new Set<string>(MODEL_ROUTE_LEG_COLLECTIONS);
+/** #923 — retired env; presence fails loud with migration hint (never silent). */
+export const RETIRED_REVIEWER_MODEL_ENV = "ORCHESTRATOR_REVIEWER_MODEL";
 const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   coder: "ORCHESTRATOR_CODER_MODEL",
-  reviewer: "ORCHESTRATOR_REVIEWER_MODEL",
   coderFix: "ORCHESTRATOR_CODER_FIX_MODEL",
   ship: "ORCHESTRATOR_SHIP_MODEL",
   merger: "ORCHESTRATOR_MERGER_MODEL",
@@ -251,6 +249,22 @@ const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
   cleanup: "ORCHESTRATOR_CLEANUP_MODEL",
   docRelease: "ORCHESTRATOR_DOCRELEASE_MODEL",
 };
+
+/**
+ * #923: `ORCHESTRATOR_REVIEWER_MODEL` is retired. The verify slot is the sole
+ * judge identity — use `ORCHESTRATOR_VERIFY_MODEL`. Never silently ignore.
+ */
+export function assertRetiredReviewerModelEnv(env: ModelRouteEnv = process.env): void {
+  const raw = env[RETIRED_REVIEWER_MODEL_ENV];
+  if (raw === undefined) return;
+  const value = raw.trim();
+  if (value === "") return;
+  throw new Error(
+    `${RETIRED_REVIEWER_MODEL_ENV} is retired (#923); use ORCHESTRATOR_VERIFY_MODEL ` +
+      "instead (the verify slot now staffs both S3/S6 judge openings and the " +
+      `verify station). Got: ${value}`,
+  );
+}
 const ENV_BY_LEG_COLLECTION: Readonly<Record<ModelRouteLegCollection, string>> = {
   cmrReview: "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
 };
@@ -439,8 +453,8 @@ export function degradeOptionalRouteSmokeFailures(route: ResolvedModelRoute): {
 
 /**
  * Override the coder slot (and coderFix unless explicitly env-overridden) for
- * design-time Coder-Rec (#767). Sol's owner-ratified route also moves the
- * per-slice reviewer to Opus, so the selected coder never self-reviews.
+ * design-time Coder-Rec (#767). #920: same-model cross-role is legal — does not
+ * rewrite verify / cmrReview when the coder slug overlaps those seats.
  * Preserves prior smoke status for the new slug when the same slug was already
  * smoked under another key; otherwise marks the new keys unverified so the
  * runner's route-smoke gate can (re)verify before dispatch.
@@ -452,27 +466,12 @@ export function withCoderSlot(
 ): ResolvedModelRoute {
   const trimmed = coderSlug.trim();
   assertKnownWorkerSlug(trimmed);
-  const reviewerOverride = reviewerOverrideForCoderSlug(trimmed);
   const slots: ModelSlotMap = {
     ...route.slots,
     coder: trimmed,
     ...(opts.preserveCoderFix ? {} : { coderFix: trimmed }),
-    ...(reviewerOverride !== undefined ? { reviewer: reviewerOverride } : {}),
   };
-  // Sol is an owner-approved coder only when Opus remains the primary reviewer
-  // throughout the review loop. Remove Sol's default CMR review leg as well as
-  // replacing the per-slice reviewer, otherwise the final route fails the
-  // #767 pool-separation gate against its own CMR checkpoint.
-  const legCollections: ModelRouteLegCollectionMap = {
-    ...route.legCollections,
-    ...(reviewerOverride !== undefined
-      ? {
-          cmrReview: route.legCollections.cmrReview.filter(
-            (leg) => leg.slug !== trimmed,
-          ),
-        }
-      : {}),
-  };
+  const legCollections = route.legCollections;
   const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
     slots,
     legCollections,
@@ -501,13 +500,15 @@ export function withCoderSlot(
 
 /**
  * Single-slice wall-step → route slot (child runner only).
- * S3/S6 → reviewer, S5 → coderFix, else coder. Family barriers MUST NOT use
- * this map alone: they reuse S3/S7 ids but consume cmr* and ship slots.
+ * S3/S6 → verify (#923: judge identity), S5 → coderFix, else coder. Family
+ * barriers MUST NOT use this map alone: they reuse S3/S7 ids but consume cmr*
+ * and ship slots.
  */
 export function relaySlotForSingleSliceWallStep(
   wallStep: StepId,
 ): ModelRouteSlot {
-  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
+  // #919 S1: sole isJudgeSeat for S3/S6 seat membership (not hand-written OR).
+  if (isJudgeSeat({ step: wallStep })) return "verify";
   if (wallStep === "S5") return "coderFix";
   return "coder";
 }
@@ -601,8 +602,8 @@ function withSingleRouteSlot(
  *
  * - When `opts.slots` is provided (family barrier path), rewrite those exact
  *   ModelRouteSlots that `dispatchFamilyWorker` reads (cmr slots, ship, verify, ...).
- * - Otherwise use the single-slice StepId map: S3/S6 → reviewer, S5 → coderFix,
- *   else coder (+coderFix via {@link withCoderSlot}).
+ * - Otherwise use the single-slice StepId map: S3/S6 → verify (#923), S5 →
+ *   coderFix, else coder (+coderFix via {@link withCoderSlot}).
  *
  * Does not carry sticky state — callers own that. Apply is load-bearing:
  * identity / coder-only apply on a family cmr/ship wall must fail consumed-slot nails.
@@ -644,25 +645,6 @@ export function knownLiveBillingPoolsFromRoute(
     if (pool !== undefined) live.add(pool);
   }
   return [...live];
-}
-
-/**
- * All self-review peers in a complete landed route except one slot owned by
- * the relay candidate. Exclusion is by slot identity: a matching slug in any
- * other slot or CMR review leg remains a conflict.
- */
-export function routeConflictSlugsExcluding(
-  route: Pick<ResolvedModelRoute, "slots" | "legCollections">,
-  excludedSlot: ModelRouteSlot,
-): ReadonlyArray<string> {
-  return [
-    ...(excludedSlot === "coder" ? [] : [route.slots.coder]),
-    ...(excludedSlot === "reviewer" ? [] : [route.slots.reviewer]),
-    ...(excludedSlot === "cmrCompleteness" ? [] : [route.slots.cmrCompleteness]),
-    ...(excludedSlot === "cmrCorrectness" ? [] : [route.slots.cmrCorrectness]),
-    ...(excludedSlot === "verify" ? [] : [route.slots.verify]),
-    ...route.legCollections.cmrReview.map((leg) => leg.slug),
-  ];
 }
 
 export function routeSmokeFailure(
@@ -771,6 +753,7 @@ export function tightRouteViolationDetails(route: ResolvedModelRoute): string {
 }
 
 export function routeOverridesFromEnv(env: ModelRouteEnv): ModelRouteOverrides {
+  assertRetiredReviewerModelEnv(env);
   const overrides: Partial<Record<ModelRouteSlot, string>> = {};
   for (const slot of MODEL_ROUTE_SLOTS) {
     const value = env[ENV_BY_SLOT[slot]]?.trim();
@@ -817,6 +800,9 @@ export function activeModelRoute(
 export function resolveActiveModelRoute(
   env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
+  // assertRetiredReviewerModelEnv is also inside routeOverridesFromEnv; call
+  // early so even empty-override paths surface the migration error first.
+  assertRetiredReviewerModelEnv(env);
   return resolveRouteModels(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
     routeOverridesFromEnv(env),
@@ -901,14 +887,12 @@ async function askContinue(message: string): Promise<boolean> {
  * route's coder slot — unmarked issues keep the route preset. A present but
  * broken / unregistered marking throws (fail-closed; #906) — never silent
  * fallthrough to the default order.
- * Entries are checked against every complete-route peer other than the coder
- * slot they replace. Sol's resulting per-slice reviewer pairing is still
- * modeled by {@link withCoderSlot}; it does not exempt any CMR checkpoint.
+ * #920: no review/CMR conflict filter — selection is pure roster position;
+ * {@link withCoderSlot} only rewrites coder (+ coderFix unless preserved).
  */
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
   issueBody: string | undefined,
-  nonConvergingRounds: number,
   env: ModelRouteEnv = process.env,
 ): {
   readonly route: ResolvedModelRoute;
@@ -949,14 +933,8 @@ export function applyCoderRecToRoute(
     };
   }
   const order = resolveCoderRecOrder(issueBody);
-  const entry = selectCoderRecEntry(order, nonConvergingRounds, {
-    reviewerSlugsForCandidate: (candidate) => {
-      const candidateRoute = withCoderSlot(route, candidate.slug, {
-        preserveCoderFix,
-      });
-      return routeConflictSlugsExcluding(candidateRoute, "coder");
-    },
-  });
+  // #920 / ADR 0132: first roster seat only (sticky stay-put). No rounds arg.
+  const entry = selectCoderRecEntry(order);
   if (
     route.slots.coder === entry.slug &&
     (preserveCoderFix || route.slots.coderFix === entry.slug)

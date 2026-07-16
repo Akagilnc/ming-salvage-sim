@@ -40,7 +40,29 @@ import type {
   FamilyEscalation,
   MergeRequest,
 } from "../../../src/family/types.js";
-import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../../src/types.js";
+import type {
+  DispatchContext,
+  Finding,
+  JudgeResult,
+  WorkerResult,
+  WorkerSpec,
+} from "../../../src/types.js";
+import {
+  liveCmrJudgeContinue,
+  legacyCmrScriptToWorkerOutput,
+} from "../../helpers/judge-fixtures.js";
+import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
+
+/**
+ * Test-fake boundary (#919 E / R7 / CR N2): scripts may declare positive
+ * findingsCount as continue intent — mint **live** kind:judge continue here.
+ * Production residual is {@link unusableResidualOpenCountPaper} only.
+ */
+function cmrScriptToWorkerOutput(
+  cmr: IntegratedCmrResult,
+): JudgeResult | ReturnType<typeof unusableResidualOpenCountPaper> {
+  return legacyCmrScriptToWorkerOutput(cmr);
+}
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -105,10 +127,12 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
+    // Default green is boolean converged without open-count — fake emits live
+    // kind:judge (happy 直出). findingsCount:0 stays residual unusable
+    // (never silent pass; #919 M2/R7).
     const result =
       this.script.cmr?.(req) ?? {
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       };
     return result.findings === undefined ? { ...result, findings: [] } : result;
@@ -118,7 +142,17 @@ class CapableFamilyBackend implements FamilyBackend {
       return this.script.worker(spec, ctx);
     }
     if (spec.kind === "cmr") {
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      const cmr = await this.runIntegratedCmr({
+        familyBase: ctx.familyBase!,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: cmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       const request = { familyBase: ctx.familyBase! };
@@ -198,8 +232,12 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
       familyBackend: backend,
     });
     // ok:false → the spine aborts before the next wave (decision 3④).
-    expect(result.ok).toBe(false);
-    expect(result.ran).toBe(true);
+    // #922: stage-named failedStatus (not a bare {ok,ran} mash).
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
     // The red verify writes an `aborted` event carrying the error package +
     // family base (decision 3④/5; the schema is #298's, #296 only calls it).
     expect(backend.aborted).toHaveLength(1);
@@ -228,7 +266,11 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
       familyHeadAfter: "head-before-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
         status: "aborted",
@@ -237,7 +279,7 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
         reason: "Error: Cannot find module 'tsx'",
         familyHeadAfter: "head-before-final-verify",
         stopSummary: expect.objectContaining({
-          reason: "infra_failure",
+          reason: "verify_failed",
           repairHint: expect.stringContaining("install or restore"),
         }),
       }),
@@ -251,7 +293,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["agy"],
         skippedLegs: [
           { slug: "opus", reason: "auth unavailable" },
@@ -311,7 +352,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.prCalls).toEqual([]);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
@@ -336,7 +381,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["gpt-5.6-sol", "agy", "opus"],
       }),
     });
@@ -368,7 +412,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["gpt-5.6-sol", "agy"],
         skippedLegs: [{ slug: "opus", reason: "provider unavailable" }],
       }),
@@ -398,7 +441,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus");
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
     });
 
     const result = await runVerifyCmr({
@@ -430,7 +473,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("GREEN full verify + CONVERGED cmr → open the family PR, ok:true ran:true (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -494,7 +537,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("accepts family ship completed without re-judging its PR on the host", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
       pr: () => ({ url: "pr://fake-locator", prHead: "head-1" }),
     });
 
@@ -514,7 +557,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("does not require a family host-verification capability before dispatch", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
 
     const result = await runVerifyCmr({
@@ -531,7 +574,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("#875: converged CMR ships even when runner-protected priors are not claimed fixed (coverage court demolished)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
 
     const result = await runVerifyCmr({
@@ -561,7 +604,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume skips a CMR pass that already passed for the current family HEAD", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push({
       status: "cmr_passed",
@@ -588,7 +631,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume skips both CMR passes that already passed for the current family HEAD and ships", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push(
       {
@@ -624,7 +667,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume resolves a ref-like familyHeadAfter before checking existing CMR pass markers", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.currentFamilyHead = "head-1";
     backend.ledger.push(
@@ -667,7 +710,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }
     const backend = new ReadHeadFailureBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push(
       {
@@ -705,7 +748,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("persists host family HEAD when the worker reports a stale PR head", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
       pr: (req) => ({ url: `pr://${req.familyBase}`, prHead: "stale-pr-head" }),
     });
     backend.currentFamilyHead = "current-family-head";
@@ -738,7 +781,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume reruns a CMR pass when the family HEAD advanced after the pass marker", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push({
       status: "cmr_passed",
@@ -770,7 +813,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("#881: resume skips a prior pass when HEAD advanced only via barrier-internal fix commits", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.currentFamilyHead = "head-after-correctness-fix";
     backend.ledger.push(
@@ -816,7 +859,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("#881: resume re-verifies a prior pass when HEAD advanced outside the barrier (no fix chain)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.currentFamilyHead = "head-from-external-advance";
     backend.ledger.push({
@@ -846,7 +889,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume reruns both passes when routeFingerprint changes even if the family HEAD matches", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["gpt-5.6-sol", "agy"] }),
     });
     const normalFingerprint = currentRouteFingerprint();
     backend.ledger.push(
@@ -887,7 +930,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("resume reruns both passes when old completeness and correctness markers are for a stale HEAD", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push(
       {
@@ -925,7 +968,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("GREEN full verify + CONVERGED cmr records CMR passes with the family HEAD they reviewed", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -962,7 +1005,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   it("records the unchanged CMR-reviewed family HEAD and uses it for the next pass resume guard", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.currentFamilyHead = "head-before-cmr";
     backend.ledger.push({
@@ -1026,14 +1069,12 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         if (req.cmrPass === "completeness") {
           return {
             converged: true,
-            findingsCount: 0,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           };
         }
         if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
           return {
             converged: true,
-            findingsCount: 0,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [correctnessKey],
             priorFindingDispositions: [
@@ -1065,26 +1106,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           });
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-              converged: cmr.converged,
-              ...(cmr.findingsCount !== undefined
-                ? { findingsCount: cmr.findingsCount }
-                : {}),
-              ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-              ...(cmr.successfulLegs !== undefined
-                ? { successfulLegs: cmr.successfulLegs }
-                : {}),
-              ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-                ? { claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys }
-                : {}),
-              ...(cmr.priorFindingDispositions !== undefined
-                ? { priorFindingDispositions: cmr.priorFindingDispositions }
-                : {}),
-              ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-              ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
-            },
+            output: cmrScriptToWorkerOutput(cmr),
           };
         }
         if (spec.kind === "coder") {
@@ -1243,6 +1265,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
+    // Decision park: omit failedStatus so the spine escalates (not stage death).
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
@@ -1291,11 +1314,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "cmr worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "cmr_failed" }),
     }));
   });
 
@@ -1305,11 +1332,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         if (spec.kind === "cmr") {
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
-              findings: [{
+            output: liveCmrJudgeContinue(
+              [{
                 severity: "high",
                 category: "correctness",
                 claim_quote: "startup marker must retain runner provenance",
@@ -1317,9 +1341,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 suggested_fix: "stamp the synthesized failure",
                 action: "fix_now",
               }],
-              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-              ...CMR_EVIDENCE,
-            },
+              {
+                successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+                ...CMR_EVIDENCE,
+              },
+            ),
           };
         }
         if (spec.kind === "coder") {
@@ -1342,11 +1368,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "coder-fix worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "cmr_failed" }),
     }));
   });
 
@@ -1357,9 +1387,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
-              findingsCount: 0,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
@@ -1385,11 +1414,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "ship worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "ship_failed" }),
     }));
   });
 
@@ -1411,8 +1444,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
@@ -1441,6 +1474,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
+    // Decision park: omit failedStatus so the spine escalates (not stage death).
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
@@ -1488,13 +1522,18 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     // Verify ran (ran:true), but with no cmr capability the hook reports a red
     // final barrier (ok:false) — NOT a false success.
     expect(backend.verifyCalls).toHaveLength(1);
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
   });
 
-  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
-    // verify green + cmr converged, but the PR capability is missing → the terminal
-    // action (decision 4, 止于 PR) cannot run. {ok:true} would report "success" for a
-    // run whose PR never opened; fail-safe to {ok:false, ran:true} instead.
+  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — residual boolean green is not a court pass", async () => {
+    // No dispatchWorker → legacy residual IntegratedCmrResult only.
+    // #919 M2: residual never silent-cleans from converged:true alone; official
+    // green is kind:judge from the live seat. Fail-safe is cmr_failed (not a
+    // false ship success). Production RealFamilyBackend always has dispatchWorker.
     class VerifyAndCmrBackend extends BareFamilyBackend {
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
@@ -1509,7 +1548,11 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
   });
 });
 
@@ -1521,9 +1564,9 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
    * verifyCmr did NOT wrap its cmr / ship dispatch. The token preflight (cmr S336 r8)
    * removes the missing-auth throw, but the worker ALSO `git checkout`s the family
    * base + writes the focus file + spins docker — any of which can still throw out of
-   * `dispatchWorker` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
+   * `dispatchWorker` and reject the WHOLE family run, bypassing the stage-named
    * fail-safe. So verifyCmr must catch a thrown startup error, record it (observable),
-   * and fail-safe to {ok:false, ran:true}.
+   * and fail-safe to {ok:false, ran:true} with the matching stage status.
    */
   class ThrowingDispatchBackend extends BareFamilyBackend {
     readonly aborted: FamilyAbortedEvent[] = [];
@@ -1551,9 +1594,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+              kind: "judge",
+              status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -1561,14 +1603,18 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }
   }
 
-  it("a cmr worker that throws on startup ⇒ INCOMPLETE_GATE (ok:false, ran:true), abort recorded — never an escaped throw", async () => {
+  it("a cmr worker that throws on startup ⇒ cmr_failed gate (ok:false, ran:true), abort recorded — never an escaped throw", async () => {
     const backend = new ThrowingDispatchBackend("cmr");
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
@@ -1609,9 +1655,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1625,7 +1670,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: shipBackend,
     });
-    expect(shipResult).toEqual({ ok: false, ran: true });
+    expect(shipResult).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
 
@@ -1635,7 +1684,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: cmrBackend,
     });
-    expect(cmrResult).toEqual({ ok: false, ran: true });
+    expect(cmrResult).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(cmrBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
@@ -1683,9 +1736,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1703,7 +1755,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     ).rejects.toBeInstanceOf(QuotaWaitForResetError);
     // Not mechanical-retried either (withMechanicalRetry already rethrows).
     expect(backend.dispatches).toBe(1);
-    // Must NOT look like generic startup failed / INCOMPLETE_GATE abort.
+    // Must NOT look like generic startup failed / stage fail-safe abort.
     expect(backend.aborted).toHaveLength(0);
   });
 
@@ -1747,9 +1799,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1769,7 +1820,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(0);
   });
 
-  it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
+  it("a cmr worker failed result for missing dependencies is recorded as cmr_failed", async () => {
     class FailedCmrBackend extends ThrowingDispatchBackend {
       constructor() {
         super("ship");
@@ -1794,7 +1845,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -1803,25 +1858,29 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
       familyHeadAfter: "head-before-worker",
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "cmr_failed",
         repairHint: expect.stringContaining("install or restore"),
       }),
     }));
   });
 
-  it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
+  it("a ship worker that throws on startup (after a converged cmr) ⇒ ship_failed gate, abort recorded — never an escaped throw", async () => {
     const backend = new ThrowingDispatchBackend("ship");
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
   });
 
-  it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {
+  it("a ship worker failed result for push/auth infra is recorded as ship_failed", async () => {
     class FailedShipBackend extends ThrowingDispatchBackend {
       constructor() {
         super("cmr");
@@ -1831,9 +1890,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
-              findingsCount: 0,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
@@ -1851,14 +1909,18 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       reason: expect.stringContaining("git push authentication failed"),
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "ship_failed",
         repairHint: expect.stringContaining("ship worker infrastructure"),
       }),
     }));

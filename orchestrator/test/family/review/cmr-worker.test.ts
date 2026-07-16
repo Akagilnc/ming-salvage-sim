@@ -13,8 +13,8 @@
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / sparse cargo;
- *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
- *     remain compatibility telemetry, not a verdict gate;
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion is
+ *     clean exit + legal sidecar / typed envelope (no password gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
@@ -62,6 +62,10 @@ import {
   RECEIPT_MAX_RETRIES,
   workerReceiptSchema,
 } from "../../../src/receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+} from "../../../src/stationReceiptContracts.js";
 import {
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
@@ -120,20 +124,18 @@ const DERIVED_EMPTY_FINDINGS_COUNT = { findingsCount: 0 } as const;
 /** A Sandcastle result fixture with the public result shape, not a partial cast. */
 function sandboxRunResult({
   branch = "fb",
-  completionSignal,
   stdout = "",
   commits = [],
   sessionId,
 }: {
   readonly branch?: string;
-  readonly completionSignal?: string;
   readonly stdout?: string;
   readonly commits?: ReadonlyArray<{ readonly sha: string }>;
   readonly sessionId?: string;
 } = {}): RunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
   return {
     branch,
-    completionSignal,
     stdout,
     commits: [...commits],
     iterations: sessionId === undefined ? [] : [{ sessionId }],
@@ -637,16 +639,21 @@ describe("integrated CMR pass prompt closure contract", () => {
   ]) {
     it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+      // #930: family court examples use <judge> continue envelopes (not <cmr>).
+      const examples = [
+        ...prompt.matchAll(/<judge>(\{[^\n]*"status"\s*:\s*"continue"[^\n]*\})<\/judge>/g),
+      ];
 
       expect(examples.length).toBeGreaterThan(0);
       for (const [, rawJson] of examples) {
         const output = JSON.parse(rawJson) as {
+          readonly status?: string;
           readonly findings?: readonly {
             readonly action: string;
             readonly disposition?: { readonly kind?: string };
           }[];
         };
+        expect(output.status).toBe("continue");
         for (const finding of output.findings ?? []) {
           if (finding.disposition?.kind === "same_module") {
             expect(finding.action).toBe("fix_now");
@@ -672,11 +679,8 @@ describe("integrated CMR pass prompt closure contract", () => {
 // ═══════════════════════ 2. cmrOutcomeFromResult (structured outcome) ═══════════════════════
 
 describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
-  const SIGNAL = cmrWorkerSpec().completionSignal;
-
-  it("a signaled converged run ⇒ a verdict outcome", () => {
+  it("a clean-exit typed/stdout verdict parses without any STEP_COMPLETE password", () => {
     const o = cmrOutcomeFromResult({
-      completionSignal: SIGNAL,
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
@@ -687,26 +691,14 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     if (o.kind === "verdict") expect(o.converged).toBe(true);
   });
 
-  it("an UNSIGNALED run still parses the structured verdict (signal is telemetry)", () => {
+  it("typed Output.object is the fate channel when present (#928 no signal gate)", () => {
     const o = cmrOutcomeFromResult({
-      completionSignal: undefined,
-      stdout: `<cmr>${JSON.stringify({
+      output: {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\nfindings = 0\n`,
-    });
-    expect(o.kind).toBe("verdict");
-  });
-
-  it("a wrong signal does not override the structured verdict", () => {
-    const o = cmrOutcomeFromResult({
-      completionSignal: "SOME_OTHER_SIGNAL",
-      stdout: `<cmr>${JSON.stringify({
-        converged: true,
-        successfulLegs: DEFAULT_CMR_LEGS,
-        ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\nfindings = 0\n`,
+      },
+      stdout: "noise without password",
     });
     expect(o.kind).toBe("verdict");
   });
@@ -714,7 +706,6 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const result = {
-      completionSignal: SIGNAL,
       cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
       // #899: findingsCount lives on the typed Output.object receipt only.
       output: {
@@ -747,9 +738,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
     runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
+    // #919 M1/M2 / #930: default Fixtured happy path is live T2 judge green.
+    // Residual kind:verdict without open-count is unusable (never silent clean).
     outcome: CmrWorkerOutcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -808,9 +801,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // The pass worker is a clean reviewer boundary; blocking findings return to the
     // runner, which dispatches a separate coder-fix worker.
     expect(spec.contextRetention).toBe("clean");
-    expect(spec.role).toBe("reviewer");
+    // #919 S2: family CMR pass seat identity is verify (kind stays cmr).
+    expect(spec.role).toBe("verify");
     expect(spec.maxIter).toBe(1);
-    expect(spec.soul).toBe("cmr");
+    expect(spec.soul).toBe("verify");
   });
 
   it("lets Sandcastle validate the CMR receipt with its native retry budget", async () => {
@@ -832,7 +826,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           ...VALID_CMR_VERDICT_FIELDS,
         };
         return typedSandboxRunResult(verdict, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify(verdict)}</cmr>`,
         });
       }
@@ -840,7 +833,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
     await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
     expect(runs[0]).toMatchObject({
-      output: expect.objectContaining({ tag: "cmr", maxRetries: 2 }),
+      output: expect.objectContaining({ tag: "judge", maxRetries: 2 }),
     });
   });
 
@@ -854,7 +847,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [{ body: JSON.stringify(good) }],
       maxRetries: RECEIPT_MAX_RETRIES,
@@ -887,7 +880,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // #899: real sc.run rejects maxRetries>0 on providers without sessionStorage.
     await expect(
       runScriptedStructuredOutput({
-        tag: "cmr",
+        tag: "judge",
         schema: workerReceiptSchema(),
         emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
         maxRetries: RECEIPT_MAX_RETRIES,
@@ -937,7 +930,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const agentOut: { agent?: ScriptedAgent } = {};
     try {
       await runScriptedStructuredOutput({
-        tag: "cmr",
+        tag: "judge",
         schema: workerReceiptSchema(),
         emissions: [
           { body: JSON.stringify({ findingsCount: -1 }) },
@@ -953,7 +946,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(sc.StructuredOutputError);
       const soe = err as sc.StructuredOutputError;
-      expect(soe.tag).toBe("cmr");
+      expect(soe.tag).toBe("judge");
       expect(soe.sessionId).toBe("sess-cmr-exhausted");
       expect(isReceiptRecoveryFailure(err)).toBe(true);
       // initial attempt + RECEIPT_MAX_RETRIES same-session resumes
@@ -973,7 +966,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
     const exhausted = new sc.StructuredOutputError("bad output", {
-      tag: "cmr",
+      tag: "judge",
       rawMatched: JSON.stringify({
         converged: false,
         reason: "review finding survives malformed receipt",
@@ -999,7 +992,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         throw exhausted;
@@ -1024,7 +1017,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [
         { body: JSON.stringify({ findingsCount: undefined }) },
@@ -1074,7 +1067,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [{ body: JSON.stringify(payload) }],
       maxRetries: RECEIPT_MAX_RETRIES,
@@ -1142,11 +1135,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         sandcastleCalls += 1;
         // Production seat must bind open-count SO + maxRetries.
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: "cmr",
+          tag: "judge",
           schema: workerReceiptSchema(),
           emissions: [
             { body: JSON.stringify({ findingsCount: -1 }) },
@@ -1200,12 +1193,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         return (
           await runScriptedStructuredOutput({
-            tag: "cmr",
+            tag: "judge",
             schema: workerReceiptSchema(),
             emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
             maxRetries: RECEIPT_MAX_RETRIES,
@@ -1267,11 +1260,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: "cmr",
+          tag: "judge",
           schema: workerReceiptSchema(),
           emissions: [{ body: JSON.stringify(good) }],
           maxRetries: RECEIPT_MAX_RETRIES,
@@ -1322,12 +1315,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         try {
           await runScriptedStructuredOutput({
-            tag: "cmr",
+            tag: "judge",
             schema: workerReceiptSchema(),
             emissions: [
               { body: JSON.stringify({ findingsCount: -1 }) },
@@ -1376,10 +1369,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
   });
 
-  it("#598 same-position redispatch on decision-gate SOE exhaust; zero next-gate", async () => {
-    // #899 four-case matrix (production): decision-gate SO on the family
-    // coder-fix seat exhausts via real sc.run → Action throw → #598 mechanical
-    // redispatch at the same fixed position. No human-loop park; no next-gate.
+  it("#598 same-position redispatch on T2 coder SOE exhaust; zero next-gate", async () => {
+    // #899 / #919 M1: T2 coder station receipt SO on the family coder-fix seat
+    // exhausts via real sc.run → Action throw → #598 mechanical redispatch at the
+    // same fixed position. No human-loop park; no next-gate.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1389,7 +1382,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let nextGateCalls = 0;
     let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
-      /** Expose the production coder-fix seat that binds decisionGateOutput(). */
+      /** Expose the production coder-fix seat that binds T2 coder receipt SO. */
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -1401,23 +1394,44 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         try {
           await runScriptedStructuredOutput({
-            tag: DECISION_GATE_TAG,
-            schema: decisionGateSignalSchema,
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
             emissions: [
-              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-              { body: JSON.stringify({ escalate: { reason: "r", diagnosis: "" } }) },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "x",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "r",
+                  diagnosis: "",
+                }),
+              },
             ],
             maxRetries: RECEIPT_MAX_RETRIES,
-            sessionId: `sess-decision-soe-598-${sandcastleCalls}`,
+            sessionId: `sess-coder-soe-598-${sandcastleCalls}`,
             cleanups,
           });
-          throw new Error("expected StructuredOutputError after decision-gate exhaust");
+          throw new Error("expected StructuredOutputError after T2 coder SO exhaust");
         } catch (err) {
           lastExhaustError = err;
           throw err;
@@ -1425,11 +1439,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
       protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
         nextGateCalls += 1;
-        throw new Error("next CMR gate must not run after decision-gate SOE");
+        throw new Error("next CMR gate must not run after coder T2 SOE");
       }
       protected override async runShipWorker(): Promise<ReturnType<typeof shipOutcomeFromResult>> {
         nextGateCalls += 1;
-        throw new Error("ship gate must not run after decision-gate SOE");
+        throw new Error("ship gate must not run after coder T2 SOE");
       }
     }
     const be = new Backend({
@@ -1455,9 +1469,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
   });
 
-  it("accepts initial-good decision-gate at the family coder-fix production seam", async () => {
-    // #899 four-case matrix (production): first-good decision gate through
-    // production seat + real sc.run — one agent emission, no repair.
+  it("accepts initial-good T2 coder receipt at the family coder-fix production seam", async () => {
+    // #899 / #919 M1: first-good T2 coder station receipt through production
+    // seat + real sc.run — one agent emission, no repair.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1467,7 +1481,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let nextGateCalls = 0;
     const agentOut: { agent?: ScriptedAgent } = {};
     const good = {
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
@@ -1481,15 +1498,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [{ body: JSON.stringify(good) }],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "prod-decision-initial-good-session",
+          sessionId: "prod-coder-initial-good-session",
           cleanups,
           agentOut,
         });
@@ -1497,11 +1514,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
       protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
         nextGateCalls += 1;
-        throw new Error("next CMR gate must not run on initial-good decision gate");
+        throw new Error("next CMR gate must not run on initial-good T2 coder receipt");
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-initial-good-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-initial-good-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -1518,8 +1535,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(nextGateCalls).toBe(0);
   });
 
-  it("recovers decision-gate via production coder-fix + real sc.run (bad→good)", async () => {
-    // #899: decision-gate four-case matrix through production seat + real sc.run.
+  it("recovers T2 coder receipt via production coder-fix + real sc.run (bad→good)", async () => {
+    // #899 / #919 M1: T2 coder receipt re-ask through production seat + real sc.run.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1528,7 +1545,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let sandcastleCalls = 0;
     const agentOut: { agent?: ScriptedAgent } = {};
     const good = {
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
@@ -1542,18 +1562,25 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+            {
+              body: JSON.stringify({
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "",
+                diagnosis: "",
+              }),
+            },
             { body: JSON.stringify(good) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "prod-decision-recover-session",
+          sessionId: "prod-coder-recover-session",
           cleanups,
           agentOut,
         });
@@ -1561,7 +1588,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-recover-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-recover-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -1577,11 +1604,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(agentOut.agent?.callCount).toBe(2);
     expect(agentOut.agent?.resumedSessions).toEqual([
       undefined,
-      "prod-decision-recover-session",
+      "prod-coder-recover-session",
     ]);
   });
 
-  it("fails decision-gate non-resumable provider via production coder-fix + real sc.run", async () => {
+  it("fails T2 coder receipt non-resumable provider via production coder-fix + real sc.run", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1601,16 +1628,19 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         return (
           await runScriptedStructuredOutput({
-            tag: DECISION_GATE_TAG,
-            schema: decisionGateSignalSchema,
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
             emissions: [{
               body: JSON.stringify({
-                escalate: { reason: "r", diagnosis: "d" },
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "r",
+                diagnosis: "d",
               }),
             }],
             maxRetries: RECEIPT_MAX_RETRIES,
@@ -1626,7 +1656,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-nonresumable-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-nonresumable-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -1883,64 +1913,65 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     },
   );
 
-  it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
+  it("a converged verdict ⇒ WorkerResult.completed with T2 judge converged (#930)", async () => {
     const be = fixtured();
+    // Live seat green is kind:judge status:converged (not residual boolean paper).
     be.outcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(true);
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("converged");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("a red verdict ⇒ WorkerResult.completed (NOT failed), carrying the reason", async () => {
+  it("a live red judge verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
+    // Live seat continue is typed kind:judge — residual open-count is not a closer.
     const be = fixtured();
     be.outcome = {
-      kind: "verdict",
-      converged: false,
-      reason: "seam mismatch",
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [{ identityKey: "__open_1", action: "live" as const }],
+      findings: [],
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(false);
-      expect(res.output.reason).toBe("seam mismatch");
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("continue");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("preserves evidencePaths on the runner-facing cmr output", async () => {
+  it("residual kind:verdict never mints continue — shared unusable paper only (#919 CR S1)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
       converged: false,
       reason: "blocking findings remain",
+      findingsCount: 1,
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
 
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
 
+    // One shared fail-loud paper (kind:reviewer+findingsCount:0) — never
+    // kind:cmr+findingsCount dual and never count-minted judge continue.
     expect(res).toEqual({
       kind: "completed",
       output: {
-        kind: "cmr",
-        converged: false,
-        reason: "blocking findings remain",
-        successfulLegs: STRONG_LEGS,
-        ...CMR_EVIDENCE,
+        kind: "reviewer",
+        findingsCount: 0,
+        findings: [],
       },
     });
   });
@@ -1975,9 +2006,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
     // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
     const be = fixtured();
+    // Outcome unused for ship routing — keep live-green default (no residual paper).
     be.outcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -2138,7 +2170,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const cfg = cfgBackend().config(auth);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("verify");
     // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
     // (codex #384).
@@ -2189,7 +2221,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     // claude token absent ⇒ no env var (the Claude Agent leg degrades).
     const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("verify");
 
     // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
     // no credential mounts, only the soul env — still no throw (the skill runs and
@@ -2198,7 +2230,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
-    expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("verify");
   });
 
   it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {
@@ -3010,7 +3042,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
+        expect(options.output).toEqual(expect.objectContaining({ tag: "judge", maxRetries: 2 }));
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,
@@ -3023,7 +3055,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           successfulLegs: DEFAULT_CMR_LEGS,
           ...VALID_CMR_VERDICT_FIELDS,
         }, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: "compatibility tag intentionally absent",
         });
       }
@@ -3052,9 +3083,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("attaches signal-only decision Output.object for family coder without cargo-shape re-ask", async () => {
-    // #899: decision-gate Output.object is attached; malformed committed cargo is
-    // still opaque and does not force a second cargo-shape invocation.
+  it("attaches T2 coder station receipt SO for family coder; cargo stays opaque", async () => {
+    // #899 / #919 M1: T2 coderStationReceiptSchema is attached; malformed
+    // committed cargo siblings stay opaque and do not invent refuse traffic.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -3081,12 +3112,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
         return {
           branch: "fb",
-          completionSignal: "CODER_STEP_COMPLETE",
           stdout: "family coder finished with opaque sidecar cargo",
           commits: [],
           iterations: [{ sessionId: "family-coder-malformed" }],
-          // Typed validated "no escalate" with opaque cargo fields.
-          output: { committed: "not-a-boolean" },
+          // Valid T2 completed traffic; committed cargo remains opaque/tolerant.
+          output: { station: "familyCoderFix", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -3109,7 +3139,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     });
     expect(be.calls).toHaveLength(1);
     expect(be.calls[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(be.calls[0]!.resumeSession).toBeUndefined();
@@ -3129,8 +3159,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        // Typed no-gate signal present; cargo sidecar may still be empty.
-        return typedSandboxRunResult({});
+        // Legal T2 completed traffic; cargo sidecar may still be empty.
+        return typedSandboxRunResult({
+          station: "familyCoderFix",
+          status: "completed",
+        });
       }
     }
     const be = new NoSessionBackend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("family-coder-no-session-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
@@ -3213,7 +3246,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         );
         // Sidecar cargo present but typed SO missing → fail for #598.
         return sandboxRunResult({
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
@@ -3276,7 +3308,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           ...VALID_CMR_VERDICT_FIELDS,
         };
         return typedSandboxRunResult(verdict, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify(verdict)}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
         });
       }

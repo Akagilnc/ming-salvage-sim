@@ -646,8 +646,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
- *   family base HEAD + the honest run status (success / verify_failed / incomplete
- *   / escalated).
+ *   family base HEAD + the honest run status (success / stage failures /
+ *   incomplete / escalated — #922 real names, not the old verify_failed mash).
  */
 export async function runFamilyDriver(
   options: FamilyDriverOptions,
@@ -786,6 +786,19 @@ export const DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
 export function resolveImageTag(envTag: string | undefined): string {
   return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
 }
+
+// #929 — re-export the pure exit-code map so launchers that only import
+// familyDriver can shell process.exit(map(result.status)) without a second import.
+export {
+  TERMINAL_EXIT_CODES,
+  TERMINAL_EXIT_STATUSES,
+  exitCodeForTerminal,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isTerminalExitStatus,
+  runResultExitCode,
+} from "./terminalExitCode.js";
+export type { TerminalExitStatus } from "./terminalExitCode.js";
 
 /**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the

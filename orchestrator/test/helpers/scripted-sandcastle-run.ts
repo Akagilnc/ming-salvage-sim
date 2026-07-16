@@ -198,6 +198,8 @@ export async function runScriptedStructuredOutput(opts: {
     // Absolute path: Sandcastle resolves promptFile against process.cwd().
     promptFile,
     maxIterations: 1,
+    // #928: omit falls back to sandcastle's default password; [] disables.
+    completionSignal: [],
     output: sc.Output.object({
       tag: opts.tag,
       schema: opts.schema,

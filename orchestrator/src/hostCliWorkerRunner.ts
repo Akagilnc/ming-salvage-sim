@@ -104,8 +104,7 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
-  // Append completion signal to stdout (merged into monitor log by parent spawn).
-  process.stdout.write(`${job.spec.completionSignal}\n`);
+  // #928: completion = clean exit + legal sidecar. No *_STEP_COMPLETE password.
   process.exit(result.kind === "completed" ? 0 : 1);
 }
 

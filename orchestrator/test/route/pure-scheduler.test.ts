@@ -93,7 +93,7 @@ class SeamOnlyBackend implements Backend {
     if (spec.kind === "coder") {
       return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewCount += 1;
       // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
       // derive findingsCount from findings.length as if that were production law.
@@ -111,22 +111,18 @@ class SeamOnlyBackend implements Backend {
               },
             ]
           : [];
+      if (findingsCount === 0) {
+        return {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings,
           findingsCount,
-          ...(this.reviewCount > 1
-            ? {
-                priorFindingDispositions: [
-                  {
-                    identityKey: "correctness|f.ts:1|x",
-                    status: "verified-closed",
-                  },
-                ],
-              }
-            : {}),
         },
       };
     }
@@ -151,9 +147,9 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     // seam, and the review/fix loop is visible at runner boundaries.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/code-review",
+      "S3:verify:/verify",
       "S5:coder:/tdd",
-      "S6:reviewer:/code-review",
+      "S6:verify:/verify",
     ]);
   });
 });

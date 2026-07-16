@@ -21,7 +21,8 @@ const CLAUDE_HEADLESS_OPTIONS = {
  * so the two paths cannot drift.
  *
  * Returns `"xhigh"` when the slug is {@link VERIFY_CODEX_SLUG} and the context
- * is a verify role, a CMR soul, or a route-smoke key prefixed `verify`/`cmr`.
+ * is a verify role/soul (family CMR courts use soul:"verify" after #930), or a
+ * route-smoke key prefixed `verify`/`cmr`.
  */
 export function effortForLiveOfficer(
   slug: string,
@@ -29,7 +30,10 @@ export function effortForLiveOfficer(
 ): "xhigh" | undefined {
   if (
     slug === VERIFY_CODEX_SLUG &&
-    (context.role === "verify" || context.soul === "cmr" || /^(verify|cmr)/.test(context.smokeKey ?? ""))
+    (context.role === "verify" ||
+      context.soul === "verify" ||
+      context.soul === "cmr" ||
+      /^(verify|cmr)/.test(context.smokeKey ?? ""))
   ) {
     return "xhigh";
   }

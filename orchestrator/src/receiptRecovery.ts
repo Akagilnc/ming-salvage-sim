@@ -11,10 +11,9 @@ import type {
 export const RECEIPT_MAX_RETRIES = 2;
 
 /**
- * Always-emitted typed decision-gate tag for optional gate seats (#899).
- * Bound to {@link decisionGateOutput} so ordinary cargo tags (`coder` / `ship` /
- * `merger` / review-loop roles) stay outside Output.object — missing or
- * malformed cargo never forces structured-output re-ask.
+ * Legacy decision-gate tag retained for unit fixtures that pin Sandcastle's
+ * four-case matrix on the raw `decision` tag (#899). Production seats attach
+ * T2 station receipts (coder / judge / ship / merger / onlineReview) instead.
  */
 export const DECISION_GATE_TAG = "decision";
 
@@ -130,11 +129,50 @@ export function workerReceiptOutput(
 }
 
 /**
- * Optional decision-gate Output.object on the dedicated {@link DECISION_GATE_TAG}.
- * Cargo tags stay untyped (ADR 0131 / #899).
+ * #924 — single-slice coder station receipt Output.object.
+ * Schema lives in {@link coderStationReceiptSchema} (T2 / stationReceiptContracts);
+ * this is only the Sandcastle attach helper (tag + maxRetries).
  */
-export function decisionGateOutput(): sc.OutputDefinition {
-  return workerReceiptOutput(DECISION_GATE_TAG, decisionGateSignalSchema);
+export function coderReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "coder",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 D — family ship station receipt Output.object.
+ * Schema lives in {@link shipStationReceiptSchema} (T2 / stationReceiptContracts);
+ * this is only the Sandcastle attach helper (tag + maxRetries).
+ */
+export function shipReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "ship",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 CR T2 — family merger station receipt Output.object.
+ * Schema lives in {@link mergerStationReceiptSchema} (T2 / stationReceiptContracts).
+ */
+export function mergerReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "merger",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 CR T2 — family online-review-loop gate station receipt Output.object.
+ * Schema lives in {@link onlineReviewStationReceiptSchema}
+ * (T2 / stationReceiptContracts). Shared by verify/fixer/cleanup/docRelease.
+ */
+export function onlineReviewReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "onlineReview",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
 }
 
 /**
@@ -187,11 +225,12 @@ export function classifyDecisionGate(
 }
 
 /**
- * Decode an untyped open-count receipt into a typed {@link ReviewerOutput}.
+ * Decode residual untyped open-count paper into a typed {@link ReviewerOutput}.
  *
+ * Not the S3/S6 main path (that is judge tri-state / ADR 0131 channel (b)).
  * Production Sandcastle / sidecar payloads enter here as `unknown`. Findings
  * rows are opaque cargo: non-array shapes become empty cargo, never rewrite
- * the declared findingsCount (ADR 0131 / #899). Missing or unusable count is
+ * the declared findingsCount (#899 cargo rule). Missing or unusable count is
  * not a zero open-count — callers map that to the unusable-receipt path.
  *
  * Returns `undefined` when the receipt cannot supply a non-negative integer
@@ -235,23 +274,35 @@ const RECEIPT_RECOVERY_MESSAGE =
   /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i;
 
 /**
- * Walk Effect/Fiber `cause` / nested `error` wrappers that Sandcastle may put
- * around a native {@link sc.StructuredOutputError} (observed under concurrent
- * vitest load as FiberFailure → ExecError). Production #598 disposition must
+ * Walk Effect/Fiber wrappers that Sandcastle may put around a native
+ * {@link sc.StructuredOutputError} (observed under concurrent vitest load as
+ * FiberFailure → ExecError / Die.defect). Production #598 disposition must
  * still see the receipt-recovery class through the wrap.
+ *
+ * Follows `cause` → `error` → `defect` (Effect Die) in that order per hop.
  */
 function* walkErrorChain(error: unknown): Generator<unknown> {
   let current: unknown = error;
   for (let depth = 0; depth < 8 && current != null; depth += 1) {
     yield current;
     if (typeof current !== "object") break;
-    const bag = current as { cause?: unknown; error?: unknown };
+    const bag = current as {
+      cause?: unknown;
+      error?: unknown;
+      defect?: unknown;
+    };
     if (bag.cause !== undefined && bag.cause !== current) {
       current = bag.cause;
       continue;
     }
     if (bag.error !== undefined && bag.error !== current) {
       current = bag.error;
+      continue;
+    }
+    // Effect Cause.Die nests the thrown value under `defect` (not error/cause).
+    // CI flakes under load were false-negatives when SOE only lived here.
+    if (bag.defect !== undefined && bag.defect !== current) {
+      current = bag.defect;
       continue;
     }
     break;
