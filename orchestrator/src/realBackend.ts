@@ -2868,11 +2868,8 @@ export class RealBackend implements Backend {
       claudeToken,
       grokAuthDir,
       agyDir,
-      providerAuth: {
-        claude: claudeToken !== undefined,
-        grok: grokAuthDir !== undefined,
-        agy: agyDir !== undefined,
-      },
+      // Same projection as family mount*Auth — single derivation, no hand-map.
+      providerAuth: providerAuthFromCore({ claudeToken, grokAuthDir, agyDir }),
     };
   }
 
