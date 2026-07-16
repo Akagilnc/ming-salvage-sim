@@ -6,7 +6,7 @@ Read the role soul first (live-mounted):
 /home/agent/.orchestrator/souls/cmr_completeness.md
 ```
 
-Then follow that soul (审卷官 character; symlink → `verify.md`) and the
+Then follow that soul (判官 soul; symlink → `verify.md`) and the
 worktree's `CLAUDE.md`. This is the runner-dispatched step5 completeness gate.
 The runner only schedules you and writes `.cmr-focus.md` plus `.cmr-route.json`.
 
