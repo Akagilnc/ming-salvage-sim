@@ -332,6 +332,25 @@ export function modelIdForSlug(slug: string): string {
   return resolveModelSlug(slug).model;
 }
 
+/**
+ * Sandcastle `Output.object` with maxRetries > 0 requires an agent provider
+ * that supports session resumption (claudeCode / codex / pi). Capability
+ * knowledge lives with the registry row's provider — owner B ruling
+ * 2026-07-16 (#934 W1 first flight): incapable providers attach maxRetries 0.
+ */
+const RESUME_CAPABLE_PROVIDERS: ReadonlySet<string> = new Set([
+  "claudeCode",
+  "codex",
+  "pi",
+]);
+
+export function resumeCapableForSlug(
+  slug: string,
+  pool?: BillingPoolDispatchId,
+): boolean {
+  return RESUME_CAPABLE_PROVIDERS.has(resolveModelSlugForPool(slug, pool).provider);
+}
+
 export function agentForSlug(
   slug: string,
   pool?: BillingPoolDispatchId,
