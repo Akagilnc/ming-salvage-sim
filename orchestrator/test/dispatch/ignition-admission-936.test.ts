@@ -507,7 +507,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         [
           JSON.stringify({
             status: "merged",
-            event: "merged",
+            event: "reconciled",
             childIssue: 936,
             familyHeadAfter: "abc123",
           }),
@@ -605,7 +605,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(planFamilyTerminalReplay([], "family/934-base")).toBeUndefined();
       expect(
         planFamilyTerminalReplay(
-          [{ status: "merged", event: "merged", childIssue: 1 }],
+          [{ status: "merged", event: "reconciled", childIssue: 1 }],
           "family/934-base",
         ),
       ).toBeUndefined();
