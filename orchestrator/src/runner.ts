@@ -136,6 +136,7 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { resumeCapableForSlug } from "./modelRegistry.js";
 import {
   isStepId,
 } from "./types.js";
@@ -2963,25 +2964,39 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           | { readonly stepId: string; readonly modelSlug: string }
           | undefined;
         try {
+          // Dispatch-bound (slug, pool) — same binding stepSpecToWorkerSpec uses.
+          // #955: resume admission must ask provider capability, not only slug match.
+          // Pool = relay baton when this step owns it; else undefined (registry provider).
+          const billingPool = relayBillingPoolForDispatch(step);
+          const seatModel = stepSpecs[step].model;
+          const seatResumeCapable = resumeCapableForSlug(seatModel, billingPool);
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
-            resumeSessionId = resumeFor.sessionId;
+            // Crash/escalate resumeFor: same capability gate as persistent seats.
+            // Incapable → drop session id and open fresh (avoids sandcastle RUD).
+            if (seatResumeCapable) {
+              resumeSessionId = resumeFor.sessionId;
+            }
             resumeFor = undefined;
           } else if (
             // #924: normal S2→S5 continuity (and multi-round S5) resumes the
-            // retained coder session when the seat model still matches.
+            // retained coder session when the seat model still matches AND the
+            // dispatch-bound provider can resume (owner B: sessionStorage).
             (step === "S2" || step === "S5") &&
             typeof coderSessionId === "string" &&
             coderSessionModel !== undefined &&
-            stepSpecs[step].model === coderSessionModel
+            seatModel === coderSessionModel &&
+            seatResumeCapable
           ) {
             resumeSessionId = coderSessionId;
           } else if (
-            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge session.
+            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge
+            // session only when the bound provider is resume-capable.
             isJudgeSeat({ step }) &&
             typeof judgeSessionId === "string" &&
             judgeSessionModel !== undefined &&
-            stepSpecs[step].model === judgeSessionModel
+            seatModel === judgeSessionModel &&
+            seatResumeCapable
           ) {
             resumeSessionId = judgeSessionId;
           }
@@ -3000,7 +3015,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
             {
-              const billingPool = relayBillingPoolForDispatch(step);
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
