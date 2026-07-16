@@ -30,7 +30,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -356,5 +356,160 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     ]);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
+  });
+});
+
+/**
+ * #939 / #934 ID-011 — public ignition/driver seam proves operational package
+ * manifest errors fail closed, while a successful empty verifiable-command set
+ * is a legal skip. Production runVerifyCommands/packageScripts run for real;
+ * only cmr/ship stay controlled (no container).
+ */
+class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
+  readonly shipCalls: string[] = [];
+  protected override async installDeps(): Promise<void> {
+    // Legal empty skips before install; operational errors fail before install.
+    // Green script paths are not exercised by the #939 driver cases below.
+    throw new Error("installDeps must not run in #939 driver empty/error cases");
+  }
+  protected override async runCmrWorker(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<CmrWorkerOutcome> {
+    return {
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      evidencePaths: ["cmr/review-summary.json"],
+    };
+  }
+  protected override async runShipWorker(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
+    this.shipCalls.push(ctx.familyBase!);
+    return {
+      kind: "shipped",
+      branch: ctx.familyBase!,
+      status: "pr_opened",
+      pr: "pr://family/939-base",
+    };
+  }
+  protected override async runFamilyReviewLoopWorker(
+    spec: WorkerSpec,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
+    return { kind: "failed", reason: `unexpected online review worker ${spec.kind}` };
+  }
+  override async runPostMergeCleanup() {
+    return {
+      kind: "cleanup" as const,
+      terminal: true,
+      ok: true,
+      branchOutcome: "already_gone" as const,
+    };
+  }
+  override async reapFamilyHost(_familyBase: string): Promise<void> {}
+}
+
+describe("#939 family verify operational error vs legal empty (public driver)", () => {
+  it("malformed package.json at verifyCwd → status verify_failed (not empty-command success)", async () => {
+    const source = track(makeSourceRepo());
+    const home = track(mkdtempSync(join(tmpdir(), "e2e-939-err-home-")));
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "e2e-939-err-ledger-")));
+    const verifyCwd = track(mkdtempSync(join(tmpdir(), "e2e-939-err-proj-")));
+    writeFileSync(join(verifyCwd, "package.json"), "{not-valid-json");
+    const familyBase = "family/939-err-base";
+    const sh = makeSh();
+
+    const result = await runFamilyDriver({
+      epicIssue: 939,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase,
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "img",
+      home,
+      sh,
+      verifyCwd,
+      singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
+      familyBackendFactory: (clone, startHead) =>
+        new ProductionVerifyE2EFamilyBackend({
+          workingRepo: clone,
+          familyBase,
+          ledgerDir,
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: familyPromptsDir,
+          soulsDir: familySoulsDir,
+          imageName: "img",
+          familyBaseStartHead: startHead,
+          verifyCwd,
+        }),
+    });
+
+    expect(result.status).toBe("verify_failed");
+  });
+
+  it("successful empty verifiable scripts → legal skip; driver can complete", async () => {
+    const source = track(makeSourceRepo());
+    const home = track(mkdtempSync(join(tmpdir(), "e2e-939-empty-home-")));
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "e2e-939-empty-ledger-")));
+    const verifyCwd = track(mkdtempSync(join(tmpdir(), "e2e-939-empty-proj-")));
+    writeFileSync(
+      join(verifyCwd, "package.json"),
+      JSON.stringify({
+        name: "legal-empty",
+        version: "0.0.0",
+        scripts: { dev: "echo hi" },
+      }),
+    );
+    const familyBase = "family/939-empty-base";
+    const sh = makeSh();
+    let backend: ProductionVerifyE2EFamilyBackend | undefined;
+
+    const result = await runFamilyDriver({
+      epicIssue: 939,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase,
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "img",
+      home,
+      sh,
+      verifyCwd,
+      singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
+      familyBackendFactory: (clone, startHead) => {
+        backend = new ProductionVerifyE2EFamilyBackend({
+          workingRepo: clone,
+          familyBase,
+          ledgerDir,
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: familyPromptsDir,
+          soulsDir: familySoulsDir,
+          imageName: "img",
+          familyBaseStartHead: startHead,
+          verifyCwd,
+        });
+        return backend;
+      },
+    });
+
+    // Legal empty command set after successful read: verify does not fail, and
+    // the rest of the production final barrier can complete (#934 ID-011).
+    expect(result.status).toBe("success");
+    expect(backend?.shipCalls).toEqual([familyBase]);
   });
 });

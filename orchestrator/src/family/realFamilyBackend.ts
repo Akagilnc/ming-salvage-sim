@@ -1193,29 +1193,18 @@ export class RealFamilyBackend implements FamilyBackend {
       // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
-    // #3 (dogfood death) + #372 P2: ALWAYS install deps before running the
-    // project's verify scripts. Freshness by construction (npm ci is idempotent
-    // and lockfile-exact). Do NOT condition on node_modules presence or any
-    // manifest/mtime detection — #372 ratified "freshness by construction, never
-    // by detection". A later wave inside the family clone can mutate
-    // package.json/package-lock.json; the launcher unconditional rebuild only
-    // covers the *orchestrator* dist/image, not the family clone's project deps.
-    // Therefore verify path must unconditionally ensure the cwd's deps.
-    await this.installDeps(cwd);
-    // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
-    // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
-    // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
-    // test throws `document is not defined` and verify fails a perfectly good
-    // project. (The orchestrator's own scripts HAPPENED to match `npx tsc`/`vitest`,
-    // which is why this only surfaced on a foreign project — web/.) Run the declared
-    // `typecheck` (when present) + `test` scripts so each project's real flags/config
-    // (jsdom, tsc -b, …) are honoured.
+    // #934 ID-011: scripts first (op-error throws); empty verifiable set skips.
     const scripts = this.packageScripts(cwd);
-    // Type-check via the project's OWN command. R1 T3 (codex): web/ has NO `typecheck`
-    // script — its TS check lives in `build` (`tsc -b && vite build`, exactly what the
-    // game CI runs). Skipping it let a web change with TS/build errors pass verify as
-    // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
-    // real type-checking build) > nothing. So types are NEVER silently skipped.
+    if (
+      !scripts.includes("typecheck") &&
+      !scripts.includes("build") &&
+      !scripts.includes("test")
+    ) {
+      return;
+    }
+    // #3/#372: always install before scripts (freshness by construction).
+    await this.installDeps(cwd);
+    // #5: project's own scripts (not hardcoded npx). typecheck > build > none.
     if (scripts.includes("typecheck")) {
       this.runObservedVerification(
         _request,
@@ -1293,14 +1282,6 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The script names declared in `cwd`'s package.json (`scripts` keys), so
-   * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
-   * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
-   * branches without a real FS. Returns [] on any read/parse failure (a non-Node
-   * dir verifies nothing — installDeps would have failed earlier for a Node project
-   * lacking a lockfile or package context).
-   */
-  /**
    * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
    * for non-Node diffs. `protected` so a unit test drives the skip branch without a
    * real FS.
@@ -1309,14 +1290,32 @@ export class RealFamilyBackend implements FamilyBackend {
     return existsSync(join(cwd, "package.json"));
   }
 
+  /**
+   * Script names from `cwd`'s package.json. Operational read/parse errors throw
+   * (never degrade to `[]` — #934 ID-011 / #939). A successful empty list is the
+   * legal empty command set for skip.
+   */
   protected packageScripts(cwd: string): readonly string[] {
+    const path = join(cwd, "package.json");
+    let raw: string;
     try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
+      raw = readFileSync(path, "utf8");
+    } catch (err) {
+      throw new Error(
+        `family verify: failed to read package.json at "${path}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    try {
+      const pkg = JSON.parse(raw) as { scripts?: Record<string, unknown> };
       return Object.keys(pkg.scripts ?? {});
-    } catch {
-      return [];
+    } catch (err) {
+      throw new Error(
+        `family verify: failed to parse package.json at "${path}": ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 
