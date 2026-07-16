@@ -51,7 +51,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -154,9 +153,6 @@ class RealGitChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     const branch = `feat/child-${issueNumber}`;
     const wtPath = join(this.clone, "..", `e2e-wt-${issueNumber}-${Date.now()}`);
@@ -166,7 +162,6 @@ class RealGitChildBackend implements Backend {
     track(wtPath);
     return { branch, base, path: wtPath };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput> {
     if (spec.role === "coder") {
       // Use the run's OWN worktree handle (B7-concurrency-safe: two children run

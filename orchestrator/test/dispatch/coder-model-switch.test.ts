@@ -1,13 +1,10 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { coderModel } from "../../src/runner.js";
 
-// The S2 coder worker's model is switchable via ORCHESTRATOR_CODER_MODEL so the
-// coder backend can be swapped (claude sonnet ↔ codex gpt-5.6-sol ↔ …) by env alone —
-// no code change, no image rebuild. `coderModel()` is the resolver; S2 worker specs
-// reads it. The auth mount is best-effort for both legs (realBackend mountAuth),
-// so switching the model needs no auth-wiring change.
+// #936: per-slot ORCHESTRATOR_CODER_MODEL override deleted. Coder model comes
+// from ORCHESTRATOR_ROUTE presets (+ issue Coder-Rec at admission).
 
-describe("coderModel() — switchable coder backend (ORCHESTRATOR_CODER_MODEL)", () => {
+describe("coderModel() — route-preset coder backend (#936)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -16,9 +13,14 @@ describe("coderModel() — switchable coder backend (ORCHESTRATOR_CODER_MODEL)",
     expect(coderModel()).toBe("gpt-5.6-terra");
   });
 
-  it("returns the env slug when set (e.g. switch to a Codex coder)", () => {
+  it("negative: leftover CODER_MODEL env does not restaff (override deleted)", () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "gpt-5.6-sol");
-    expect(coderModel()).toBe("gpt-5.6-sol");
+    expect(coderModel()).toBe("gpt-5.6-terra");
+  });
+
+  it("route preset switches the coder (claude-tight → grok)", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    expect(coderModel()).toBe("grok-4.5");
   });
 
   it("trims and falls back to the default on a blank/whitespace env value", () => {

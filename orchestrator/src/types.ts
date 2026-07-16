@@ -973,12 +973,6 @@ export interface DispatchContext {
     readonly sessionId?: string;
   }>;
   /**
-   * Host-written issue snapshot for audit/resume compatibility. Current workers
-   * live-fetch issue truth via gh using runner-injected issue/repo env; this is
-   * not the execution source of truth.
-   */
-  readonly issueSnapshot?: IssueSnapshot;
-  /**
    * S5 / family coder-fix worker only: the stable identity keys of the blocking
    * findings selected from the current full-diff review. This THIN identity list —
    * plus {@link blockingFindingCount} — is all the runner threads through its
@@ -1330,46 +1324,6 @@ export interface IssueMeta {
   readonly body?: string;
 }
 
-/**
- * The native metadata #244 S1 names as part of the full snapshot ("body +
- * comments + 最新 Agent Brief 正文 + native metadata"). S0 reads these via `gh`;
- * S1 writes them into the clean-room snapshot so the audit/resume artifact carries
- * the issue's title/state/labels + the native sub-issue + blocked_by summaries —
- * not just the body. Execution truth is still the live issue the worker reads via
- * in-container `gh`.
- */
-export interface IssueSnapshotMeta {
-  readonly title: string;
-  /** "open" | "closed" (whatever `gh` reports; kept as a free string). */
-  readonly state: string;
-  readonly labels: ReadonlyArray<string>;
-  /** Native sub-issue count (`gh issue view --json subIssues` → totalCount). */
-  readonly subIssueCount: number;
-  /** Native blocked_by dependency summary (number + state per dependency). */
-  readonly blockedBy: ReadonlyArray<{ readonly number: number; readonly state: string }>;
-}
-
-/**
- * Full issue snapshot written by S1 (body + comments + Agent Brief + native
- * metadata). `nativeMeta` carries the #244-named native metadata; the REAL
- * Backend always populates it (`buildIssueSnapshot`), so the host audit/resume
- * artifact is contract-complete. Current workers execute from live issue reads,
- * not this snapshot.
- */
-export interface IssueSnapshot {
-  readonly number: number;
-  readonly body: string;
-  /** Login of the issue-body author, when the host snapshot carried it. */
-  readonly bodyAuthorLogin?: string;
-  readonly comments: ReadonlyArray<string>;
-  /** Author login aligned by index with `comments`, when available. */
-  readonly commentAuthorLogins?: ReadonlyArray<string>;
-  /** Repo owner login used to authenticate executable issue instructions. */
-  readonly trustedOwnerLogin?: string;
-  readonly agentBrief: string;
-  readonly nativeMeta?: IssueSnapshotMeta;
-}
-
 /** Handle to the resident slice worktree (ADR 0017). */
 export interface WorktreeHandle {
   readonly branch: string;
@@ -1529,8 +1483,8 @@ export type MonitoredWorkerIdleDisposition =
  *                     unavailable (fake path / runner-action step) the runner
  *                     falls back to hashing the promptFile NAME (or step id).
  *   - `branchHEAD`  — Real (#256): the git commit SHA (`git rev-parse HEAD`) at
- *                     the worktree HEAD, read via the Backend. Fallback (no
- *                     Backend SHA available): the branch NAME, as in v0.1.
+ *                     the worktree HEAD, read via the Backend. Omitted when the
+ *                     optional Git read is unavailable.
  *   - `ts`          — ISO-8601 timestamp when this entry was written (real).
  *
  * The runner hands this to {@link Backend.writeLedger}, which persists it to the
@@ -1564,10 +1518,10 @@ export interface PersistentLedgerEntry extends LedgerEntry {
    *
    * #256 (DONE): the real Backend exposes the worktree HEAD SHA
    * (`git rev-parse HEAD`); the runner records that real commit SHA here. When
-   * no Backend SHA is available (the zero-container fake path) the runner falls
-   * back to the branch NAME (e.g. "feat/244-s249-ledger"), as in v0.1.
+   * no Backend SHA is available, the optional audit value is omitted.
    */
-  readonly branchHEAD: string;
+  /** Optional audit truth: absent when the best-effort Git read fails. */
+  readonly branchHEAD?: string;
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
   /**
@@ -1681,15 +1635,8 @@ export interface Backend {
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
-  /** S1: full host-side snapshot (body + comments + Agent Brief) for audit/resume. */
-  fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot>;
   /** S1: resident slice worktree from `base` (native createWorktree). */
   prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle>;
-  /** S1: write the issue snapshot into the worktree (clean-room). */
-  writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void>;
   /**
    * S2/S3/S5/S6: one `sandbox.run()` per runner-visible agent worker.
    *
@@ -1792,11 +1739,8 @@ export interface Backend {
   /**
    * #256 (optional, ledger true-value): the worktree HEAD commit SHA
    * (`git rev-parse HEAD`) so the ledger's `branchHEAD` records the real SHA
-   * instead of the branch name. Returns `undefined` when unavailable (the runner
-   * then falls back to the branch name).
-   *
-   * OPTIONAL so the zero-container fake Backends need no change: when absent the
-   * runner keeps the v0.1 branch-name value.
+   * instead of a branch-name surrogate. Returns `undefined` when unavailable;
+   * the runner warns and omits this optional audit value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**

@@ -20,7 +20,6 @@ import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -50,13 +49,9 @@ class UnusedChildBackend implements Backend {
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     throw new Error("prepareWorktree must not be called on the early-return path");
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(_spec: StepSpec, _worktree?: WorktreeHandle): Promise<StepOutput> {
     throw new Error("runStep must not be called on the early-return path");
   }

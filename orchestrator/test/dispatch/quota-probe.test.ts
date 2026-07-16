@@ -44,7 +44,6 @@ import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -785,13 +784,9 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
         openBlockedBy: [],
       };
     }
-    async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-      return { number: n, body: "body", comments: [], agentBrief: "" };
-    }
     async prepareWorktree(): Promise<WorktreeHandle> {
       return WORKTREE;
     }
-    async writeSnapshot(): Promise<void> {}
     async runStep(): Promise<StepOutput> {
       // Prefer dispatchWorker path below.
       return { kind: "coder", committed: true, commitsAdded: 1 };

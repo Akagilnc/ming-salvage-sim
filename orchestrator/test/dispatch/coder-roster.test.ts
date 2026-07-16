@@ -36,7 +36,6 @@ import type {
   Backend,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   SliceStepId,
@@ -183,7 +182,6 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
     const applied = applyCoderRecToRoute(
       base,
       "## Scope\nNo marking here.\n",
-      {},
     );
     expect(applied.skippedForMissingMarking).toBe(true);
     expect(applied.route.slots.coder).toBe(base.slots.coder);
@@ -258,7 +256,7 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
   it("admits Sol as Coder-Rec even when sol occupies review and CMR seats", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
       const base = resolveRouteModels(routeName, {});
-      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", {});
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med");
       expect(applied.entry?.id).toBe("sol@med");
       expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
       // #899 run8 / AC: cmrReview leg may keep the same slug as coder.
@@ -280,7 +278,6 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
     const applied = applyCoderRecToRoute(
       resolveRouteModels("normal", {}),
       "Coder-Rec: sol@med",
-      {},
     );
     expect(applied.entry?.id).toBe("sol@med");
     expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
@@ -293,7 +290,6 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      {},
     );
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
@@ -354,7 +350,6 @@ describe("#789 Coder-Rec — Claude backup tokens + fallback chain", () => {
     const first = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
-      {},
     );
     expect(first.entry?.id).toBe("grok-4.5");
     expect(first.route.slots.coder).toBe("grok-4.5");
@@ -372,9 +367,7 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      {},
     );
-    expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
     expect(applied.route.slots.coderFix).toBe("grok-4.5");
@@ -384,61 +377,51 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
 
   it("leaves the route coder untouched when the issue has no Coder-Rec line", () => {
     const base = resolveRouteModels("normal", {});
-    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n", {});
+    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n");
     expect(applied.skippedForMissingMarking).toBe(true);
     expect(applied.route.slots.coder).toBe(base.slots.coder);
   });
 
-  it("lets ORCHESTRATOR_CODER_MODEL win over the design-time marking", () => {
+  it("negative: leftover CODER_MODEL env does not skip Coder-Rec (#936)", () => {
     const base = resolveRouteModels("normal", { coder: "sonnet" });
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(true);
-    expect(applied.route.slots.coder).toBe("sonnet");
+    // Coder-Rec wins; env override is deleted.
+    expect(applied.route.slots.coder).toBe("grok-4.5");
   });
 
-  it("#906 S1: env override still validates a present Coder-Rec mark (no silent skip)", () => {
+  it("#906 S1: broken Coder-Rec mark fails closed even with leftover env", () => {
     const base = resolveRouteModels("normal", { coder: "sonnet" });
-    // Dirty mark must throw even when env owns the coder slot — otherwise
-    // mid-run relay bare-calls resolveCoderRecOrder and dies uncaught.
     expect(() =>
       applyCoderRecToRoute(
         base,
         "Coder-Rec: totally-bogus → also-fake",
-        { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
     expect(() =>
       applyCoderRecToRoute(
         base,
         "Please set Coder-Rec carefully.\n",
-        { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
-    // Valid mark + env: slot stays env/route; no throw.
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(true);
-    expect(applied.route.slots.coder).toBe("sonnet");
+    expect(applied.route.slots.coder).toBe("grok-4.5");
   });
 
-  it("preserves an explicit coderFix env override while applying Coder-Rec to coder", () => {
+  it("Coder-Rec rewrites both coder and coderFix (no env preserve path) (#936)", () => {
     const base = resolveRouteModels("normal", { coderFix: "opus" });
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_FIX_MODEL: "opus" },
     );
 
-    expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.route.slots.coder).toBe("grok-4.5");
-    expect(applied.route.slots.coderFix).toBe("opus");
+    expect(applied.route.slots.coderFix).toBe("grok-4.5");
   });
 
   it("recomputes tight-family violations after Coder-Rec substitutes a tight-family coder", () => {
@@ -448,7 +431,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: terra@med",
-      {},
     );
 
     expect(applied.route.tightFamilyViolations).toEqual([
@@ -524,18 +506,9 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         body: this.coderRecBody,
       };
     }
-    async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-      return {
-        number: issueNumber,
-        body: this.coderRecBody,
-        comments: [],
-        agentBrief: "",
-      };
-    }
     async prepareWorktree(): Promise<WorktreeHandle> {
       return this.worktree;
     }
-    async writeSnapshot(): Promise<void> {}
     async runStep(spec: StepSpec): Promise<StepOutput> {
       if (spec.role === "coder") {
         this.coderModels.push(spec.model);
@@ -801,28 +774,18 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(backend.coderModels[0]).toBe("grok-4.5");
   });
 
-  it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
+  it("resume: fetchIssueMeta throw degrades to route preset (no snapshot dual court) (#936)", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
-    class MetaThrowSnapshotOkBackend extends CoderRecResumeAfterS5Backend {
+    class MetaThrowBackend extends CoderRecResumeAfterS5Backend {
       override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
         throw new Error("meta unavailable");
       }
-      override async fetchIssueSnapshot(
-        issueNumber: number,
-      ): Promise<IssueSnapshot> {
-        return {
-          number: issueNumber,
-          body: CODER_REC_BODY,
-          comments: [],
-          agentBrief: "",
-        };
-      }
     }
-    const backend = new MetaThrowSnapshotOkBackend();
+    const backend = new MetaThrowBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // Snapshot body supplies Coder-Rec; first entry stays (no round advance).
-    expect(backend.coderModels[0]).toBe("grok-4.5");
+    // #936: no snapshot fallback — continue with route preset coder.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
   });
 
   it("resume: both re-fetch throws degrade to route preset without error termination", async () => {
@@ -831,11 +794,6 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     class BothRefetchThrowBackend extends CoderRecResumeAfterS5Backend {
       override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
         throw new Error("meta unavailable");
-      }
-      override async fetchIssueSnapshot(
-        _issueNumber: number,
-      ): Promise<IssueSnapshot> {
-        throw new Error("snapshot unavailable");
       }
     }
     try {

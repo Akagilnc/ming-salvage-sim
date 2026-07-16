@@ -43,7 +43,6 @@ import type {
   Backend,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
@@ -203,16 +202,6 @@ export class ResumeBackend implements Backend {
     };
   }
 
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    this.calls.push(`fetchIssueSnapshot(${issueNumber})`);
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement the thing",
-    };
-  }
-
   async prepareWorktree(
     issueNumber: number,
     base: string,
@@ -220,13 +209,6 @@ export class ResumeBackend implements Backend {
     this.calls.push(`prepareWorktree(${issueNumber}, ${base})`);
     this.prepareWorktreeCount += 1;
     return WORKTREE;
-  }
-
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
   async runStep(

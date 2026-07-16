@@ -27,16 +27,18 @@ import { runOrchestrator } from "../runner.js";
 import { mintRunId } from "../runId.js";
 import {
   applyRelayBatonToRoute,
-  applyRuntimeTightRoutePolicy,
   familyRelaySlotsForWall,
   knownLiveBillingPoolsFromRoute,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
-  resolveActiveModelRoute,
   routeSmokeFailure,
   type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import {
+  admitRouteFromEnv,
+  admissionRouteFailureDiagnosis,
+} from "../admissionPreflight.js";
 import {
   CoderRecError,
   lookupCoderRosterEntry,
@@ -131,49 +133,32 @@ function filled(value: string | undefined): string | undefined {
 }
 
 /**
- * Resolve epic Coder-Rec body for family quota walls. Prefer live issue meta,
- * then snapshot. Missing body → undefined (default roster is legal). Present
- * body is returned as-is so {@link resolveCoderRecOrder} can fail-closed on
- * broken marks (#906) — never swallow CoderRecError into silent default.
+ * Resolve epic Coder-Rec body for family quota walls from live issue meta only
+ * (#936 / #934 ID-002: snapshot dual court deleted). Missing body → undefined
+ * (default roster is legal). Present body is returned as-is so
+ * {@link resolveCoderRecOrder} can fail-closed on broken marks (#906) — never
+ * swallow CoderRecError into silent default.
  *
- * F2 #906: total read failure (meta AND snapshot both throw) must NOT collapse
- * to undefined → silent default roster. Fail-closed by rethrowing.
+ * Meta read failure must NOT collapse to undefined → silent default roster.
+ * Fail-closed by rethrowing.
  */
 async function resolveFamilyCoderRecBody(
   backend: Backend,
   epicIssue: number,
 ): Promise<string | undefined> {
-  let metaError: unknown;
-  let snapshotError: unknown;
   try {
     const meta = await backend.fetchIssueMeta(epicIssue);
     if (typeof meta.body === "string" && meta.body.trim().length > 0) {
       return meta.body;
     }
+    // Read succeeded but body empty/missing → legal default roster.
+    return undefined;
   } catch (err) {
-    metaError = err;
-  }
-  try {
-    const snapshot = await backend.fetchIssueSnapshot(epicIssue);
-    if (typeof snapshot.body === "string" && snapshot.body.trim().length > 0) {
-      return snapshot.body;
-    }
-  } catch (err) {
-    snapshotError = err;
-  }
-  if (metaError !== undefined && snapshotError !== undefined) {
-    const metaMsg =
-      metaError instanceof Error ? metaError.message : String(metaError);
-    const snapMsg =
-      snapshotError instanceof Error
-        ? snapshotError.message
-        : String(snapshotError);
+    const metaMsg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Coder-Rec body unreadable for epic #${epicIssue} (meta+snapshot failed): meta=${metaMsg}; snapshot=${snapMsg}`,
+      `Coder-Rec body unreadable for epic #${epicIssue} (meta failed): ${metaMsg}`,
     );
   }
-  // One or both reads succeeded but body empty/missing → legal default roster.
-  return undefined;
 }
 
 /** Optional test seam / production override for pure baton apply. */
@@ -1307,57 +1292,38 @@ export async function runFamily(
   // A durable family sidecar is shared across restarts, so it needs an
   // invocation-scoped identity just like the single-slice runner.
   const runId = mintRunId();
-  let modelRoute: ResolvedModelRoute;
-  try {
-    modelRoute = resolveActiveModelRoute();
-  } catch (err) {
-    const reason =
-      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
+  // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
+  // No env slot overrides, no interactive continue.
+  const admitted = input.admittedRoute === undefined
+    ? admitRouteFromEnv()
+    : { kind: "ready" as const, route: input.admittedRoute.route };
+  if (admitted.kind === "stop") {
     const children = input.epic.children.map((child) => ({
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
     return {
       status: "escalated",
       familyBase: input.familyBase,
       escalation: {
-        reason: "startup route failure",
-        diagnosis: reason,
+        reason: admitted.escalation.reason,
+        diagnosis,
       },
       stopSummary: infraFailureStopSummary({
-        summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
-        repairHint: "repair the family runner route environment before rerun",
+        summary: `${admitted.escalation.reason}: ${diagnosis}`,
+        repairHint:
+          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
       }),
       children,
       ...(input.epic.admissionSkipped !== undefined &&
       input.epic.admissionSkipped.length > 0
         ? { admissionSkipped: input.epic.admissionSkipped }
-      : {}),
+        : {}),
     };
   }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator:family] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
-    return {
-      status: "escalated",
-      familyBase: input.familyBase,
-      escalation: routePolicy.escalation,
-      stopSummary: familyStopSummary({
-        status: "escalated",
-        familyBase: input.familyBase,
-        children,
-        escalationReason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
-      }),
-      children,
-    };
-  }
-  if (typeof singleSliceBackend.smokeModelRoute !== "function") {
+  let modelRoute: ResolvedModelRoute = admitted.route;
+  if (input.admittedRoute === undefined && typeof singleSliceBackend.smokeModelRoute !== "function") {
     const reason =
       "route smoke executor is required before family dispatch; backend did not provide smokeModelRoute";
     const children = input.epic.children.map((child) => ({
@@ -1375,13 +1341,19 @@ export async function runFamily(
       children,
     };
   }
-  let currentCliVersions: Readonly<Record<string, string | undefined>>;
+  let currentCliVersions: Readonly<Record<string, string | undefined>> = {};
   try {
+    if (input.admittedRoute !== undefined) {
+      currentCliVersions = singleSliceBackend.currentCliVersions
+        ? await singleSliceBackend.currentCliVersions(modelRoute)
+        : {};
+    } else {
     logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
     currentCliVersions = singleSliceBackend.currentCliVersions
       ? await singleSliceBackend.currentCliVersions(modelRoute)
       : {};
     modelRoute = await singleSliceBackend.smokeModelRoute(modelRoute, currentCliVersions);
+    }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const children = input.epic.children.map((child) => ({
@@ -1399,7 +1371,7 @@ export async function runFamily(
       children,
     };
   }
-  const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
+  const degradation = input.admittedRoute ?? degradeOptionalRouteSmokeFailures(modelRoute);
   modelRoute = degradation.route;
   const smokeFailure = routeSmokeFailure(modelRoute, Date.now(), undefined, currentCliVersions);
   if (smokeFailure !== undefined) {

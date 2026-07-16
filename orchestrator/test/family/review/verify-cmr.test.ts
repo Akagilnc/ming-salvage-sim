@@ -437,11 +437,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
+    // #936: slot/CMR env overrides deleted — fingerprint the preset route only.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus");
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["gpt-5.6-sol"] }),
     });
 
     const result = await runVerifyCmr({

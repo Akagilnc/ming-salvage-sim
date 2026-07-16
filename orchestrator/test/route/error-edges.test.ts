@@ -11,7 +11,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -29,7 +28,7 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-const SNAPSHOT: IssueSnapshot = {
+const SNAPSHOT = {
   number: 252,
   body: "issue body",
   comments: [],
@@ -58,13 +57,9 @@ class ErrorEdgeBackend implements Backend {
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }
-  async fetchIssueSnapshot(_n: number): Promise<IssueSnapshot> {
-    return SNAPSHOT;
-  }
   async prepareWorktree(_n: number, _b: string): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(_w: WorktreeHandle, _s: IssueSnapshot): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -151,19 +146,6 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
     expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(result.errorPackage?.reason).toContain("sandbox.run crashed");
-  });
-
-  it("fetchIssueSnapshot (S1) throws → S8(status=error)", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.fetchIssueSnapshot = async () => {
-      throw new Error("gh: rate limit exceeded");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S1");
-    expect(result.errorPackage?.reason).toContain("gh: rate limit exceeded");
   });
 
   it("prepareWorktree (S1) throws → S8(status=error)", async () => {

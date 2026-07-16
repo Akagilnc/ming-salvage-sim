@@ -45,7 +45,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -121,13 +120,9 @@ class JudgeBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(
@@ -680,18 +675,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
           openBlockedBy: [],
         };
       },
-      async fetchIssueSnapshot(issueNumber) {
-        return {
-          number: issueNumber,
-          body: "b",
-          comments: [],
-          agentBrief: "",
-        };
-      },
       async prepareWorktree() {
         return worktree;
       },
-      async writeSnapshot() {},
       async writeLedger() {},
       async resumeSession(spec, _wt, sessionId, options) {
         if (spec.id === "S6") {
@@ -806,13 +792,9 @@ describe("#925 F1: priorJudgeVerdicts land in fix-findings file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep() {
         observedLanding = JSON.parse(
           readFileSync(join(stateDir, "fix-findings.json"), "utf8"),

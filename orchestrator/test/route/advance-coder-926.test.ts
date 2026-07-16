@@ -22,7 +22,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   WorkerResult,
@@ -94,18 +93,9 @@ class AdvanceCoderBackend implements Backend {
       body: CODER_REC_BODY,
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return {
-      number: issueNumber,
-      body: CODER_REC_BODY,
-      comments: [],
-      agentBrief: "",
-    };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
     this.ledgerWrites.push(entry);
   }
@@ -219,6 +209,7 @@ describe("#926 pure: resolveAdvanceCoderSuggestion", () => {
 describe("#926 behavior: runner executes advance_coder", () => {
   it("switches S5 to the suggested roster coder with a fresh session", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "gpt-5.6-terra");
     const backend = new AdvanceCoderBackend([
       {
         kind: "continue",
@@ -230,7 +221,8 @@ describe("#926 behavior: runner executes advance_coder", () => {
     const result = await runOrchestrator({ issueNumber: 9261, backend });
     expect(result.status).toBe("success");
 
-    // S2 first seat (Coder-Rec) → S5 advanced seat.
+    // S2 first seat (Coder-Rec) → S5 advanced seat. The deleted coderFix env
+    // must not freeze/restaff S5.
     expect(backend.coderModels[0]).toBe("grok-4.5");
     expect(backend.coderModels[1]).toBe("gpt-5.6-sol");
 

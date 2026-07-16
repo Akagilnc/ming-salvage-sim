@@ -490,14 +490,21 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
     });
   });
 
-  it("still fails closed when an existing family's children are all skipped", () => {
-    const sh: Sh = (_file, args) =>
-      String(args[1]).includes("/sub_issues")
-        ? JSON.stringify([{ number: 405, state: "CLOSED" }])
-        : "[]";
-    expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(
-      /all native children were skipped/,
-    );
+  it("returns an empty family with visible inventory when all children are skipped", () => {
+    const sh: Sh = (_file, args) => {
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 405, state: "CLOSED" }]);
+      }
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: 404, body: "", author: { login: "Akagilnc" } });
+      }
+      return "[]";
+    };
+    expect(readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toMatchObject({
+      issue: 404,
+      children: [],
+      admissionSkipped: [{ issue: 405, reason: "closed" }],
+    });
   });
 });
 
