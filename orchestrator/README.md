@@ -21,12 +21,12 @@ reads worker prose or completion evidence**:
 
 1. **exit code** — process life or death; only a real process failure enters
    the mechanical retry lane.
-2. **reviewer self-declared blocking open-count** — `0` closes the current review gate;
-   `>0` follows the fixed topology defined only in #869. This README does not
-   restate the intermediate repair/verification/finalization route, and the
-   runner never derives or reconciles the number. Each review Action marks
-   blocking and non-blocking terminal under its versioned review authority;
-   only the former belongs in this count.
+2. **judge self-declared tri-state** — `converged | continue | escalate`
+   (ADR 0131 channel (b) / ADR 0132 / #925 / #930 / #934 ID-006). The runner
+   follows the fixed topology in #869 only; it never derives status from
+   findings text, severity, or array length. Historical residual open-count
+   paper may still appear on legacy seats and projects once at the typed
+   boundary into the same judge machine — it is **not** a second live channel.
 3. **worker-raised decision gate** — relayed to the human unchanged; the runner
    never presses or interprets the gate itself.
 
@@ -322,8 +322,9 @@ the SuperGrok CLI (`provider: "grok"`).
 Exact gate order and repair re-entry live only in #869. This README records the
 role boundaries:
 
-- Per-slice coder, reviewer and fixer are independent workers. The reviewer
-  reports its own blocking unresolved open-count; the runner never reads the findings or
+- Per-slice coder, reviewer and fixer are independent workers. Review closure is
+  the judge tri-state (`converged | continue | escalate`); residual open-count
+  paper is historical transport only. The runner never reads findings text or
   checks the repair.
 - Integrated completeness and correctness remain distinct professional review
   actions over the assembled delivery base (a single slice branch or family

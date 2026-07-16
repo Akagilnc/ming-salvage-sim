@@ -17,6 +17,48 @@ import { classifyExternalCallFailure } from "./externalCall.js";
 
 export const MAX_METADATA_ATTEMPTS = 6;
 
+/**
+ * GitHub authentication / login required (#934 ID-003). Zero retry (durable
+ * class via {@link classifyExternalCallFailure}); caller emits typed decision
+ * gate — never invents a new auth/retry cause token.
+ */
+export function isGithubAuthFailure(err: unknown): boolean {
+  if (err !== null && typeof err === "object") {
+    const e = err as {
+      readonly status?: unknown;
+      readonly statusCode?: unknown;
+      readonly message?: unknown;
+      readonly stderr?: unknown;
+    };
+    const status =
+      Number.isInteger(e.status)
+        ? (e.status as number)
+        : Number.isInteger(e.statusCode)
+          ? (e.statusCode as number)
+          : undefined;
+    if (status === 401) return true;
+    const text = [e.message, e.stderr]
+      .filter((part): part is string => typeof part === "string")
+      .join("\n");
+    if (
+      /\bHTTP\s*401\b/i.test(text) ||
+      /\b401\s+Unauthorized\b/i.test(text) ||
+      /bad credentials/i.test(text) ||
+      /requires authentication/i.test(text) ||
+      /authentication required/i.test(text) ||
+      /not logged into any GitHub hosts/i.test(text) ||
+      /gh auth login/i.test(text) ||
+      /to re-authenticate/i.test(text) ||
+      /GH_TOKEN/i.test(text) && /auth/i.test(text)
+    ) {
+      return true;
+    }
+  } else if (typeof err === "string") {
+    if (/\bHTTP\s*401\b/i.test(err) || /gh auth login/i.test(err)) return true;
+  }
+  return false;
+}
+
 /** The sole GitHub metadata retry seam: transient only; deterministic/auth errors do not retry. */
 export function readMetadataWithRetry<T>(read: () => T): T {
   let last: unknown;
@@ -159,7 +201,20 @@ export async function admitPlannedRouteSmoke(
   const results = await Promise.all(
     uniqueRoutes.map((route) => admitRouteSmoke(backend, route)),
   );
-  const failed = results.find((result) => result.kind === "stop");
-  if (failed?.kind === "stop") return failed;
+  // #934 ID-003: wait for all unique smokes, then aggregate every required
+  // failure — never first-failure-only inventory drop.
+  const failures = results.filter(
+    (result): result is Extract<RouteSmokeAdmission, { readonly kind: "stop" }> =>
+      result.kind === "stop",
+  );
+  if (failures.length > 0) {
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "startup route smoke failure",
+        diagnosis: failures.map((f) => f.escalation.diagnosis).join("; "),
+      },
+    };
+  }
   return results[0]!;
 }

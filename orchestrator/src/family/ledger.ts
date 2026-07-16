@@ -763,6 +763,20 @@ function latestValidFamilyAnswerAfter(
   return undefined;
 }
 
+/**
+ * Complete durable family escalation shape for terminal replay / ledger-without-worksite
+ * (#934 ID-005). Incomplete `status:"escalated"` rows (missing `event:"escalated"` or
+ * decision/failure kind) still surface via {@link familyEscalationState} so mid-run
+ * pause stays fail-closed, but they are NOT terminal durable truth.
+ */
+export function isCompleteFamilyEscalation(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "escalated" &&
+    entry.event === "escalated" &&
+    (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+  );
+}
+
 /** Latest family escalation and the later valid answer row that reopens it (#439). */
 export function familyEscalationState(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -777,6 +791,8 @@ export function familyEscalationState(
     if (isValidFamilyShipped(entry)) return undefined;
     if (isValidReviewLoopConverged(entry)) return undefined;
     if (entry.status !== "escalated") continue;
+    // Incomplete escalated rows still pause mid-run (do not disappear) but are
+    // not terminal-replayable — see isCompleteFamilyEscalation / scene recovery.
     if (entry.event !== "escalated") return { escalation: entry };
     const answer =
       entry.escalationKind === "decision"

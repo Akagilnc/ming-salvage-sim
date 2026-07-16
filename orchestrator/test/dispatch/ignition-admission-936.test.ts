@@ -16,13 +16,15 @@ import { join } from "node:path";
 
 import {
   admitCoderRec,
+  admitPlannedRouteSmoke,
   admitRouteFromEnv,
   admitTightRoute,
+  isGithubAuthFailure,
   readMetadataWithRetry,
 } from "../../src/admissionPreflight.js";
 import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
-import { resolveRouteModels } from "../../src/modelRoutes.js";
+import { resolveRouteModels, type ResolvedModelRoute } from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
 import {
   cutFamilyBase,
@@ -31,6 +33,7 @@ import {
   runFamilyDriver,
 } from "../../src/familyDriver.js";
 import { FAMILY_LEDGER_FILENAME } from "../../src/family/realFamilyBackend.js";
+import { isCompleteFamilyEscalation } from "../../src/family/ledger.js";
 import { entry, s8 } from "../helpers/resume-fixtures.js";
 import type {
   Backend,
@@ -719,6 +722,110 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: incomplete escalated row is corrupted (not terminal replay)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-malformed-esc-"));
+    try {
+      // status:escalated without event:escalated — mid-run pause shape, not terminal.
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        `${JSON.stringify({
+          status: "escalated",
+          escalationKind: "decision",
+          reason: "partial park row",
+        })}\n`,
+        "utf8",
+      );
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("corrupted");
+      if (scene.kind === "corrupted") {
+        expect(scene.reason).toMatch(/incomplete status:escalated|damaged park/i);
+      }
+      expect(
+        planFamilyTerminalReplay(
+          [{ status: "escalated", escalationKind: "decision", reason: "partial" } as never],
+          "family/934-base",
+        ),
+      ).toBeUndefined();
+      expect(
+        isCompleteFamilyEscalation({
+          status: "escalated",
+          event: "escalated",
+          escalationKind: "decision",
+        }),
+      ).toBe(true);
+      expect(
+        isCompleteFamilyEscalation({
+          status: "escalated",
+          escalationKind: "decision",
+        } as never),
+      ).toBe(false);
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: complete escalated decision without worksite is resident+replayable", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-complete-esc-"));
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        `${JSON.stringify({
+          status: "escalated",
+          event: "escalated",
+          phase: "final",
+          escalationKind: "decision",
+          reason: "need human",
+          familyHeadAfter: "abc",
+        })}\n`,
+        "utf8",
+      );
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("resident");
+      if (scene.kind === "resident") {
+        const replay = planFamilyTerminalReplay(scene.ledger, "family/934-base");
+        expect(replay?.status).toBe("escalated");
+        expect(replay?.stopSummary?.reason).toBe("decision_gate_park");
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("isGithubAuthFailure: 401 / login prompts are auth; plain metadata errors are not", () => {
+    expect(isGithubAuthFailure(Object.assign(new Error("HTTP 401"), { status: 401 }))).toBe(
+      true,
+    );
+    expect(
+      isGithubAuthFailure(new Error("To re-authenticate, please run: gh auth login")),
+    ).toBe(true);
+    expect(isGithubAuthFailure(new Error("unexpected gh issue payload"))).toBe(false);
+    expect(isGithubAuthFailure(new SyntaxError("bad JSON contract"))).toBe(false);
+  });
+
+  it("admitPlannedRouteSmoke aggregates every required failure after Promise.all", async () => {
+    const routeA = {
+      slots: { coder: "codex/gpt-5.4" },
+      smoke: {},
+    } as unknown as ResolvedModelRoute;
+    const routeB = {
+      slots: { coder: "claude/opus" },
+      smoke: {},
+    } as unknown as ResolvedModelRoute;
+    const backend = {
+      async smokeModelRoute(route: ResolvedModelRoute) {
+        const coder = route.slots.coder;
+        throw new Error(`nonce smoke failed for ${coder}`);
+      },
+    } as unknown as Backend;
+    const result = await admitPlannedRouteSmoke(backend, [routeA, routeB]);
+    expect(result.kind).toBe("stop");
+    if (result.kind === "stop") {
+      expect(result.escalation.diagnosis).toMatch(/codex\/gpt-5\.4/);
+      expect(result.escalation.diagnosis).toMatch(/claude\/opus/);
+      expect(result.escalation.diagnosis).toMatch(/;/);
     }
   });
 
