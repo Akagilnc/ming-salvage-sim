@@ -54,7 +54,7 @@ describe("#905 modelRegistry route rename", () => {
     expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe("grok");
     expect(resolveModelSlugForPool("grok-4.5", "zai").provider).toBe("grok");
     expect(agentForSlug("grok-4.5").name).toBe("grok");
-    expect(agentForSlug("grok-4.5", undefined, "cursor").name).toBe("grok");
+    expect(agentForSlug("grok-4.5", "cursor").name).toBe("grok");
   });
 
   it("has zero registry entries with provider opencode (incl. glm-5.2 / opencode-grok slugs)", () => {

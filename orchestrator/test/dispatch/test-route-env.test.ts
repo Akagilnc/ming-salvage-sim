@@ -29,6 +29,7 @@ describe("#441 test route isolation", () => {
 
     expect(activeModelRoute().legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
+      "grok-4.5",
       "agy",
     ]);
   });
