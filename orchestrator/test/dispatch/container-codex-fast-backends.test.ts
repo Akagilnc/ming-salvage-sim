@@ -129,11 +129,10 @@ describe("#760 real backend Codex fast write-site consumption", () => {
   });
 
   it("keeps single-slice mountAuth write sites consuming codexFast", () => {
-    // Family-path structural greps (0× writeContainerCodexConfig / 3×
-    // provisionFamilyWorkerAuth + codexFast threading) live in
-    // family-worker-auth-913.test.ts — do not re-list them here (#913 F3).
-    // This file owns single-slice RealBackend.mountAuth write-site rails plus
-    // the behavioral family service_tier cases above.
+    // Family-path pin (0× writeContainerCodexConfig) lives in
+    // family-worker-auth-913.test.ts (#913 F3/F7). This file owns single-slice
+    // RealBackend.mountAuth write-site rails plus the behavioral family
+    // service_tier cases above.
     const realSrc = readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8");
 
     const realWriteCalls: string[] = [];
