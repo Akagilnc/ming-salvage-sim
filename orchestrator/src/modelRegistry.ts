@@ -162,6 +162,15 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
+  // #916: low-effort sol row for ship/merger/fixer/cleanup/docRelease seats on
+  // claude-tight (same model string as sol, options.effort:"low").
+  "gpt-5.6-sol-low": {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    options: { effort: "low" },
+    family: "codex",
+    strongLeg: true,
+  },
   // #905: grok-4.5 always runs the real SuperGrok CLI (provider `grok`).
   // Never cursor / opencode transit — pool rewrite cannot re-route it.
   "grok-4.5": {
