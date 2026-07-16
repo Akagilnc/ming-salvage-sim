@@ -641,6 +641,77 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     ).rejects.toThrow(/not a Node project/i);
   });
 
+  it("#939 ID-011: package.json parse operational error fails closed — never empty-command success", async () => {
+    // Production packageScripts used to catch read/parse errors and return [] →
+    // zero-command pseudo-success. Malformed manifest must fail verify.
+    const proj = trackTempDir("verify-op-err-");
+    writeFileSync(join(proj, "package.json"), "{not-valid-json");
+    const npmCalls: string[] = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[]): string {
+        if (file === "npm") npmCalls.push(args.join(" "));
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after package.json operational error");
+      }
+    }
+    const result = await new SpyBackend(
+      opts("/clone/root", { verifyCwd: proj }),
+    ).runFamilyVerify({ phase: "final", familyBase: "family/293-base" });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/parse package\.json|failed to parse/i);
+    expect(npmCalls).toEqual([]);
+  });
+
+  it("#939 ID-011: successful empty scripts is legal skip (no install, no npm, ok:true)", async () => {
+    // Only a successful read that confirms no typecheck/build/test scripts may skip.
+    const proj = trackTempDir("verify-empty-scripts-");
+    writeFileSync(
+      join(proj, "package.json"),
+      JSON.stringify({ name: "empty-scripts", version: "0.0.0", scripts: { dev: "echo hi" } }),
+    );
+    const npmCalls: string[] = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[]): string {
+        if (file === "npm") npmCalls.push(args.join(" "));
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run on legal empty command set");
+      }
+    }
+    await expect(
+      new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runFamilyVerify({
+        phase: "final",
+        familyBase: "family/293-base",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(npmCalls).toEqual([]);
+  });
+
+  it("#939 ID-011 negative: unreadable package.json (missing after Node check) fails closed", async () => {
+    // isNodeProject can be true while a subsequent read fails (race / override).
+    // That is operational error, not legal empty.
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override isNodeProject(): boolean {
+        return true;
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after package.json read failure");
+      }
+    }
+    const missing = join(trackTempDir("verify-missing-pkg-"), "no-such-dir");
+    const result = await new SpyBackend(
+      opts("/clone/root", { verifyCwd: missing }),
+    ).runFamilyVerify({ phase: "wave", familyBase: "family/293-base" });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/failed to read package\.json/i);
+  });
+
   it("familyBaseStartHead returns the recorded start head", async () => {
     const repo = trackRepo();
     git(repo, "checkout", "-q", "-b", "family/293-base");
