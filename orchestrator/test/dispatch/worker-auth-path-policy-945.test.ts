@@ -15,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -80,9 +81,16 @@ describe("#945 provisionWorkerAuth path-policy boundaries", () => {
     expect(auth.codexAuthDir).toBeUndefined();
     expect(auth.grokAuthDir).toBeTruthy();
     expect(auth.claudeToken).toBe("claude-oauth-secret");
+    // S4: half-built mkdtemp after failed codex copy must be reclaimed
+    const scRoot = join(home, ".sc-orchestrator");
+    const leftovers =
+      existsSync(scRoot)
+        ? readdirSync(scRoot).filter((name) => name.includes("-codex-auth-"))
+        : [];
+    expect(leftovers).toEqual([]);
   });
 
-  it("slice policy: missing host codex ⇒ still always-mounts stable issue codex dir with config", () => {
+  it("slice policy: missing host codex ⇒ still always-mounts stable issue codex dir with config + AGENTS", () => {
     const home = mkTemp("auth-945-slice-no-codex-");
     writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
     const homeEnvFile = writeHomeEnv(home);
@@ -101,6 +109,13 @@ describe("#945 provisionWorkerAuth path-policy boundaries", () => {
     expect(readFileSync(join(auth.codexAuthDir!, "config.toml"), "utf8")).toContain(
       CONTAINER_CODEX_CONFIG_TOML.trim().slice(0, 20),
     );
+    // S2: always-mount is config + AGENTS, not config-only
+    expect(existsSync(join(auth.codexAuthDir!, CODEX_HOME_AGENTS_FILENAME))).toBe(
+      true,
+    );
+    expect(
+      readFileSync(join(auth.codexAuthDir!, CODEX_HOME_AGENTS_FILENAME), "utf8"),
+    ).toBe(readFileSync(homeEnvFile, "utf8"));
     expect(existsSync(join(auth.codexAuthDir!, "auth.json"))).toBe(false);
     expect(auth.claudeToken).toBe("claude-oauth-secret");
   });

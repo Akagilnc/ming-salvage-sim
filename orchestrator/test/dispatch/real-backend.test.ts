@@ -660,14 +660,12 @@ describe("realBackend candidateBranches (ordered candidate branch names)", () =>
 // ─── auth-mount path construction (spike contract) ───────────────────────────
 
 describe("realBackend auth mount paths", () => {
-  it("builds per-issue codex auth + claude token paths under $HOME", () => {
+  // #945: AuthPaths is codex-stable-path only; grok/agy/claude materialize
+  // inside provisionWorkerAuth, not via buildAuthPaths dead fields.
+  it("builds per-issue codex auth paths under $HOME", () => {
     const p = buildAuthPaths(256, "/home/dev");
     expect(p.hostCodexAuthDir).toBe("/home/dev/.sc-orchestrator/auth-256");
     expect(p.srcCodexAuth).toBe("/home/dev/.codex/auth.json");
-    expect(p.srcCodexConfig).toBe("/home/dev/.codex/config.toml");
-    expect(p.hostGrokAuthDir).toBe("/home/dev/.sc-orchestrator/grok-auth-256");
-    expect(p.srcGrokAuth).toBe("/home/dev/.grok/auth.json");
-    expect(p.claudeTokenFile).toBe("/home/dev/.sc-claude-token");
   });
 
   it("the sandbox mount targets match the spike contract", () => {
@@ -678,12 +676,9 @@ describe("realBackend auth mount paths", () => {
     expect(SANDBOX_SKILLS_DIR).toBe("/home/agent/.claude/skills");
   });
 
-  it("per-issue dirs are distinct so concurrent issues never collide", () => {
+  it("per-issue codex dirs are distinct so concurrent issues never collide", () => {
     expect(buildAuthPaths(256, "/h").hostCodexAuthDir).not.toBe(
       buildAuthPaths(257, "/h").hostCodexAuthDir,
-    );
-    expect(buildAuthPaths(256, "/h").hostGrokAuthDir).not.toBe(
-      buildAuthPaths(257, "/h").hostGrokAuthDir,
     );
   });
 

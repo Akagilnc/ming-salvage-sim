@@ -1145,30 +1145,20 @@ export function provisionFamilyWorkerAuth(input: {
 }
 
 /**
- * Host paths for the per-issue codex auth copy + the claude token (spike
- * contract). codex auth MUST live under $HOME (colima shares $HOME into the
- * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
- * "Permission denied"). The claude leg uses a durable OAuth token env var, not
- * a mount.
+ * Host paths for the per-issue **stable** codex auth dir (#945 slice path-policy).
  *
- * Pure: builds the paths only — no file I/O. `mountAuth()` does the copy.
+ * codex auth MUST live under $HOME (colima shares $HOME into the Docker VM;
+ * $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty → "Permission denied").
+ *
+ * Pure: builds the paths only — no file I/O. Materialization (copy + container
+ * config + AGENTS always-mount) lives in {@link provisionWorkerAuth}. Grok /
+ * agy / claude legs use other path builders inside that seam — not this type.
  */
 export interface AuthPaths {
   /** Per-issue host dir holding the codex auth.json copy (under $HOME). */
   readonly hostCodexAuthDir: string;
   /** Source codex auth.json on the host. */
   readonly srcCodexAuth: string;
-  /** Source codex config.toml on the host (best-effort copy). */
-  readonly srcCodexConfig: string;
-  /**
-   * Per-issue host dir holding the grok auth.json copy (#807; under $HOME so
-   * colima can share it into the Docker VM — same constraint as codex).
-   */
-  readonly hostGrokAuthDir: string;
-  /** Source grok auth.json on the host (`~/.grok/auth.json`). */
-  readonly srcGrokAuth: string;
-  /** Host file holding the durable claude OAuth token. */
-  readonly claudeTokenFile: string;
 }
 
 export function buildAuthPaths(
@@ -1178,10 +1168,6 @@ export function buildAuthPaths(
   return {
     hostCodexAuthDir: join(home, ".sc-orchestrator", `auth-${issueNumber}`),
     srcCodexAuth: join(home, ".codex", "auth.json"),
-    srcCodexConfig: join(home, ".codex", "config.toml"),
-    hostGrokAuthDir: join(home, ".sc-orchestrator", `grok-auth-${issueNumber}`),
-    srcGrokAuth: join(home, ".grok", "auth.json"),
-    claudeTokenFile: join(home, ".sc-claude-token"),
   };
 }
 
