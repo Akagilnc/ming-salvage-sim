@@ -158,9 +158,11 @@ describe("RealFamilyBackend live officer effort", () => {
     const command = backend
       .agentForLiveSpec(
         liveSpec({
+          // Production family ship specs use role:"coder" + soul:"ship" (StepRole
+          // has no "ship"; see familyShipWorkerSpec / ship-worker tests).
           id: "S8",
           kind: "ship",
-          role: "ship",
+          role: "coder",
           soul: "ship",
           model: "gpt-5.6-sol-low",
         }),
