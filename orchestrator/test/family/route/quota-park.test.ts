@@ -35,7 +35,6 @@ import {
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -106,22 +105,12 @@ class ChildBackend implements Backend {
       body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    if (this.failSnapshot) throw new Error("snapshot read failed (test)");
-    return {
-      number: issueNumber,
-      body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
-      comments: [],
-      agentBrief: "## Agent Brief",
-    };
-  }
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -256,6 +245,37 @@ function allDeadRelayPools(resetAt: Date) {
   );
 }
 
+
+/** #936: staff cmrCompleteness/Correctness with grok via custom preset (no slot env). */
+function stubGrokCmrPreset(): void {
+  const dir = mkdtempSync(join(tmpdir(), "quota-park-preset-"));
+  const path = join(dir, "route-presets.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      "grok-cmr": {
+        slots: {
+          coder: "gpt-5.6-terra",
+          coderFix: "gpt-5.6-terra",
+          ship: "sonnet",
+          merger: "sonnet",
+          cmrCompleteness: "grok-4.5",
+          cmrCorrectness: "grok-4.5",
+          verify: "gpt-5.6-sol",
+          fixer: "sonnet",
+          cleanup: "sonnet",
+          docRelease: "sonnet",
+        },
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    }),
+  );
+  vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+  vi.stubEnv("ORCHESTRATOR_ROUTE", "grok-cmr");
+}
+
 describe("#909 family runner consumes QuotaWait park/relay at verify boundary", () => {
   it("wave verify 429 within T → park (escalated + provider_degraded), not uncaught crash", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
@@ -330,8 +350,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     // Wall model must sit on the limited pool (grok), otherwise selectNextRelayBaton
     // picks same-model 换马甲 (sol→codex) and the consumed slug never changes —
     // hollow relative to "baton model on REAL slot".
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -466,8 +485,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("POSITIVE production path: route smoke yields live baton without relayPools injection", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     // Beyond T on grok-build; route smoke marks codex models live → baton terra.
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
@@ -511,8 +529,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("LOAD-BEARING: identity applyRelayBaton → positive consumed-slot nail fails", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -560,8 +577,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("F2: after cmr wall relay, ship slot keeps natural pool (no sticky codex-5h on sonnet)", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();

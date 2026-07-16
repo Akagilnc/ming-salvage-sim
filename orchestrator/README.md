@@ -143,9 +143,8 @@ console.log(JSON.stringify(result, null, 2));
 
 Full option contract: `FamilyDriverOptions` JSDoc in `src/familyDriver.ts`.
 Existing driver to crib from: `~/.sc-orchestrator/run-485/driver-485.mjs`.
-Include the 485 guard (refuse to start if `ORCHESTRATOR_CODER_MODEL` is set)
-whenever per-issue Coder-Rec should pick the coder — omit it only when you
-deliberately pin one coder for the whole run.
+Per-issue Coder-Rec and the selected route preset are the staffing inputs;
+deleted per-slot environment variables are ignored.
 
 **Resuming a PRIOR lineage vs starting fresh (check before writing the
 driver):** `ledgerDir` + `familyBase` ARE the run lineage. If this epic was
@@ -178,15 +177,8 @@ don't trust the preset name.
 
 ```bash
 cd ~/.sc-orchestrator/run-<EPIC>
-ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS="gpt-5.6-sol,opus" \
-  node driver-<EPIC>.mjs >> run.log 2>&1
+node driver-<EPIC>.mjs >> run.log 2>&1
 ```
-
-`ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` here is an OVERRIDE example, not
-mandatory: the `normal` preset's own legs are codex sol + claude opus + agy;
-the override above drops the agy leg (use it when agy quota is dead). Omit
-the variable to take the preset's legs. Add further route/slot env overrides
-from the table below as needed.
 
 Rules of engagement:
 
@@ -253,16 +245,14 @@ durable row. Children already merged re-admit as `already_done`; retry budgets
 carry over (no fresh windfall); completed mutating steps (ship) short-circuit
 on their durable completion records instead of re-dispatching.
 
-## Routes and per-role model selection
+## Routes and model selection
 
-Every role slot is independently overridable. Precedence (#916):
+Staffing is resolved before worksite creation:
 
 ```
-per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
-  → config file preset (sole table: config/route-presets.json, or
-    ORCHESTRATOR_ROUTE_PRESETS_PATH; missing custom path falls back to the
-    shipped factory JSON only — no in-code twin table)
-  → leg-collection env override (ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS)
+config file preset (sole table: config/route-presets.json, selected by
+ORCHESTRATOR_ROUTE; ORCHESTRATOR_ROUTE_PRESETS_PATH may select another table)
+  → owner-authored issue Coder-Rec for coder/coderFix
   → startup route smoke validates the FINAL lineup, slot by slot
 ```
 
@@ -282,24 +272,8 @@ Presets (factory content of `config/route-presets.json`):
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
-reality, then fine-tune single slots:
-
-| slot | env var |
-| --- | --- |
-| coder | `ORCHESTRATOR_CODER_MODEL` |
-| coderFix | `ORCHESTRATOR_CODER_FIX_MODEL` |
-| ship | `ORCHESTRATOR_SHIP_MODEL` |
-| merger | `ORCHESTRATOR_MERGER_MODEL` |
-| cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
-| cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
-| verify (judge: S3/S6 + verify station) | `ORCHESTRATOR_VERIFY_MODEL` |
-| delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
-| cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
-| docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
-| cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
-
-`ORCHESTRATOR_REVIEWER_MODEL` is **retired** (#923). Setting it fails closed with a
-migration hint to `ORCHESTRATOR_VERIFY_MODEL` (never silently ignored).
+reality. Change the preset table for deliberate non-coder lineup changes; use
+Coder-Rec for a planned issue's coder order.
 
 Role vocabulary worth keeping straight:
 

@@ -69,7 +69,6 @@ import {
 } from "./quotaParkRelay.js";
 import {
   applyCoderRecToRoute,
-  applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
@@ -80,6 +79,12 @@ import {
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import {
+  admitCoderRec,
+  admitRouteFromEnv,
+  admissionRouteFailureDiagnosis,
+} from "./admissionPreflight.js";
+import { discoverResidentScene } from "./sceneAction.js";
 import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
 import {
   resolveCoderRecOrder,
@@ -151,7 +156,6 @@ import type {
   FindingRepairScope,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -260,8 +264,8 @@ async function hashPrompt(
  * #256 (DONE): the caller (`emitLedger`) now supplies the TRUE values it
  * receives from the seam extension / optional Backend helpers — `sessionId` is
  * the real per-step sandbox session id for agent steps (run-level UUID fallback
- * otherwise), `branchHEAD` the real `git rev-parse HEAD` SHA (branch-name
- * fallback otherwise), `prompt_hash` the content hash (name-hash fallback). This
+ * otherwise), `branchHEAD` is the optional real `git rev-parse HEAD` SHA, and
+ * `prompt_hash` uses the documented content/name fallback. This
  * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
@@ -270,7 +274,7 @@ function buildPersistentEntry(opts: {
   runId: string;
   sessionId: string;
   prompt_hash: string;
-  branchHEAD: string;
+  branchHEAD?: string;
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
@@ -288,8 +292,8 @@ function buildPersistentEntry(opts: {
     runId: opts.runId,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
-    branchHEAD: opts.branchHEAD,
     ts: opts.ts,
+    ...(opts.branchHEAD !== undefined ? { branchHEAD: opts.branchHEAD } : {}),
   };
   // Only add output if defined — keeps the runner-action shape clean.
   if (opts.output !== undefined) {
@@ -1132,14 +1136,13 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
  * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
- * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
- * with single-slot overrides (see {@link coderModel}); no image rebuild, no
+ * Swapping models = select ORCHESTRATOR_ROUTE or use owner-authored Coder-Rec;
+ * no image rebuild or
  * structural StepSpec change (PRD #244 Implementation Decisions + ADR 0031).
  */
 
 /**
- * The S2 coder worker's model slug, selected by the active route and optionally
- * overridden via `ORCHESTRATOR_CODER_MODEL`. The slug is resolved to the baked CLI
+ * The S2 coder worker's model slug, selected by the active route. The slug is resolved to the baked CLI
  * by agentForSlug; invalid route names / slugs fail closed before dispatch.
  */
 export function coderModel(env: ModelRouteEnv = process.env): string {
@@ -1158,8 +1161,7 @@ export function stepSpecsForRoute(
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
       // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
-      // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
-      // alone — no image rebuild, no StepSpec shape change.
+      // agentForSlug (realBackend); no image rebuild or StepSpec shape change.
       model: route.slots.coder,
       // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
       // clean exit + legal sidecar / typed envelope is completion.
@@ -1312,14 +1314,6 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   });
 }
 
-function untrustedExecutableInstructionSummary(
-  _snapshot: IssueSnapshot,
-): StopSummary | undefined {
-  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
-  // structured IssueSnapshot.agentBrief field is executable runner input.
-  return undefined;
-}
-
 /**
  * Decision-kind escalate park stop summary.
  * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
@@ -1333,13 +1327,13 @@ function stopSummaryForEscalation(escalation: Escalation): StopSummary {
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
-  const reason =
-    `${escalation.reason}: ${escalation.diagnosis}; ` +
-    `route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ` +
-    `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`;
+  const reason = admissionRouteFailureDiagnosis(
+    `${escalation.reason}: ${escalation.diagnosis}`,
+  );
   return infraFailureStopSummary({
     summary: reason,
-    repairHint: "fix the active model route or route env overrides before dispatching workers",
+    repairHint:
+      "fix ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before dispatching workers",
   });
 }
 
@@ -1357,15 +1351,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
     input.now !== undefined ? input.now() : new Date();
-  let modelRoute: ResolvedModelRoute;
-  try {
-    modelRoute = resolveActiveModelRoute();
-  } catch (err) {
-    const reason =
-      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = stopSummaryForStartupRouteFailure({
-      reason: "startup route failure",
-      diagnosis: `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+
+  // #936 / #934 ID-005: Scene Recovery first — resident discovery before
+  // admission network work when a durable scene may already exist.
+  const scene = await discoverResidentScene(backend, issueNumber);
+  if (scene.kind === "corrupted") {
+    const reason = scene.reason;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
     return {
       status: "error",
@@ -1374,33 +1368,80 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     };
   }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
+
+  // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
+  // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
+  // finished success/error/unanswered-escalate terminal (zero meta/smoke).
+  // Skip early short-circuit when a repairIntent is present — that path must
+  // still durable-write the intent (and surface write failures) before planResume.
+  if (scene.kind === "resident" && input.repairIntent === undefined) {
+    const earlyPlan = planResume(scene.state.ledger);
+    if (earlyPlan.terminalStatus !== undefined) {
+      const worktree = scene.state.worktree;
+      const ledger = earlyPlan.priorLedger;
+      if (earlyPlan.terminalStatus === "error") {
+        const reason =
+          "prior run terminated with an error handoff (re-fed after completion)";
+        const errorPackage: ErrorPackage = {
+          failedStep: lastAgentStep(ledger) ?? "S8",
+          reason,
+          branchHead: worktree.branch,
+        };
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          stopSummary,
+        };
+      }
+      const stopSummary: StopSummary =
+        earlyPlan.terminalStatus === "success"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a success handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
+      return {
+        status: earlyPlan.terminalStatus,
+        branch: earlyPlan.terminalStatus === "success" ? worktree.branch : undefined,
+        stepLedger: ledger,
+        stopSummary,
+      };
+    }
+  }
+
+  // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
+  // No env slot overrides, no interactive continue. Non-terminal resume still
+  // needs a lineup for dispatch.
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
+    const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
+    const isTight = admitted.escalation.reason === "tight route violation";
     return {
-      status: "escalate",
+      status: isTight ? "escalate" : "error",
       errorPackage: {
         failedStep: "S0",
-        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+        reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
     };
   }
   console.info(
-    `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
+    `[orchestrator] model route lineup\n${printableRouteLineup(admitted.route)}`,
   );
   // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
   // coder (+ coderFix) slot at S0 (first seat stay-put; #926 owns advanceCoder).
-  modelRoute = routePolicy.route;
+  let modelRoute: ResolvedModelRoute = admitted.route;
   let stepSpecs = stepSpecsForRoute(modelRoute);
-  /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
+  /** Issue body used for Coder-Rec parse (S0 meta.body). */
   let coderRecIssueBody: string | undefined;
-  /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
-  let coderRecEnvSkipped = false;
   let routeSmokeChecked = false;
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
@@ -1441,12 +1482,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
    * when the runnable model actually changed.
    */
-  const holdCoderSticky = (
-    slug: string,
-    opts?: { readonly preserveCoderFix?: boolean },
-  ): void => {
+  const holdCoderSticky = (slug: string): void => {
     if (modelRoute.slots.coder === slug) return;
-    modelRoute = withCoderSlot(modelRoute, slug, opts);
+    modelRoute = withCoderSlot(modelRoute, slug);
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     if (
@@ -1492,11 +1530,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
   const applyCoderRecSelection = async (): Promise<
-    ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined
+    | { kind: "stop"; escalation: Escalation }
+    | undefined
   > => {
-    if (coderRecEnvSkipped) return undefined;
     // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
-    // round-threshold quality advance. Do NOT set coderRecEnvSkipped.
+    // round-threshold quality advance.
     if (stickyRelayCoderSlug !== undefined) {
       holdCoderSticky(stickyRelayCoderSlug);
       return undefined;
@@ -1525,27 +1563,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       holdCoderSticky(stickyJudgeAdvanceCoderSlug);
       return undefined;
     }
-    let applied: ReturnType<typeof applyCoderRecToRoute>;
-    try {
-      applied = applyCoderRecToRoute(modelRoute, coderRecIssueBody);
-    } catch (err) {
-      // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
-      // (same family as route smoke failure): escalate, zero dispatch.
-      const diagnosis = err instanceof Error ? err.message : String(err);
-      return {
-        kind: "stop",
-        escalation: {
-          reason: "Coder-Rec admission failure",
-          diagnosis,
-        },
-      };
+    // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
+    const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
+    if (admittedRec.kind === "stop") {
+      return { kind: "stop", escalation: admittedRec.escalation };
     }
-    if (applied.skippedForEnvOverride) {
-      coderRecEnvSkipped = true;
-      return undefined;
-    }
-    if (applied.route === modelRoute) return undefined;
-    modelRoute = applied.route;
+    if (admittedRec.route === modelRoute) return undefined;
+    modelRoute = admittedRec.route;
     // #686 P1: a coder-slot change must not inherit the prior resource-relay
     // pool — reselect from the new model's dispatch binding.
     currentBillingPool = billingPoolFromQuotaPool(
@@ -1565,15 +1589,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
     // before its first dispatch (top-of-loop OR the S2/S5 re-apply path).
     routeSmokeChecked = false;
-    if (applied.entry !== undefined) {
-      console.info(
-        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})`,
-      );
-    }
-    return applyRuntimeTightRoutePolicy(modelRoute, {
-      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-      warn: (message) => console.warn(`[orchestrator] ${message}`),
-    });
+    console.info(
+      `[orchestrator] Coder-Rec applied → coder=${modelRoute.slots.coder}`,
+    );
+    return undefined;
   };
 
   const stopForCoderRecTightRoutePolicy = async (escalation: {
@@ -1673,16 +1692,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     forStep: "S3" | "S6",
   ): Promise<void> => {
     const currentSlug = modelRoute.slots.coder;
-    const preserveCoderFix =
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
-
     const effect = await executeAdvanceCoderSuggestion({
       suggestion,
       currentSlug,
       route: modelRoute,
-      applySlug: (route, slug) =>
-        withCoderSlot(route, slug, { preserveCoderFix }),
+      applySlug: (route, slug) => withCoderSlot(route, slug),
       probe: probeRouteSmoke,
     });
 
@@ -1972,27 +1986,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const runId = mintRunId();
 
   /**
-   * Resolve the ledger's `branchHEAD` value (#256).
+   * Resolve the ledger's `branchHEAD` value (#256 / #934 ID-015).
    *
    * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
-   * optional `backend.worktreeHead`. Fallback (no worktree yet / no
-   * `worktreeHead` on the Backend / it returns undefined / it throws): the
-   * branch NAME, as in v0.1 — a ledger I/O helper must never abort the run on a
-   * git read fault.
+   * optional `backend.worktreeHead`. When that optional read fails or returns
+   * empty → warning + omit, never silent branch-name fallback.
    */
-  async function resolveBranchHEAD(): Promise<string> {
-    if (worktree === undefined) return "";
-    if (backend.worktreeHead !== undefined) {
-      try {
-        const sha = await backend.worktreeHead(worktree);
-        if (sha !== undefined && sha.length > 0) {
-          return sha;
-        }
-      } catch {
-        // fall through to the branch-name fallback
+  async function resolveBranchHEAD(): Promise<string | undefined> {
+    if (worktree === undefined || backend.worktreeHead === undefined) return undefined;
+    try {
+      const sha = await backend.worktreeHead(worktree);
+      if (sha !== undefined && sha.length > 0) {
+        return sha;
       }
+      console.warn(
+        "[orchestrator] optional branchHEAD read returned empty (omit)",
+      );
+      return undefined;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] optional branchHEAD read failed (omit): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
     }
-    return worktree.branch;
   }
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
@@ -2173,13 +2191,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * persistence is inherently impossible (the resume contract needs a worktree
    * sibling dir). This covers BOTH:
    *   - S0 fetchIssueMeta throw, AND
-   *   - S1 PRE-worktree throws: fetchIssueSnapshot / prepareWorktree (which run
+   *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
-   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (writeSnapshot,
-   * which runs after stateDir is fixed) and later steps persist their error
-   * termination. So this contract does NOT promise "every S1 throw is persisted"
-   * — only post-worktree ones.
+   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (after
+   * stateDir is fixed) and later steps persist their error termination.
+   * So this contract does NOT promise "every S1 throw is persisted" — only
+   * post-worktree ones.
    */
   async function errorTermination(
     failedStep: SliceStepId,
@@ -2333,27 +2351,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── #255: idempotent resume ───────────────────────────────────────────────
-  // Before anything else, check whether this issue has resume residue (an
-  // existing resident worktree + persisted ledger from a crash or an escalate).
+  // ── #255 / #936: idempotent resume from Scene Action discovery ───────────
+  // discoverResidentScene already ran at ignition (ID-005 Recovery first).
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
-  // (resume truth), reuse the worktree, clean uncommitted residue, and continue
-  // from the recorded breakpoint — no re-cut from S0, no re-running done steps.
-  //
-  // findResumeState is consulted FIRST: a resumed run already passed the S0
-  // gate on its first pass, so it must not re-gate. A backend transport failure
-  // here becomes an error handoff (consistent with #252), via errorTermination
-  // (base integ-cmr): no worktree exists yet, so — like the S0 fetch path —
-  // nothing is persistable, but the in-memory S8 + S8(error) result are still
-  // recorded so the caller gets a clean error package rather than a raw reject.
-  let resumeState: ResumeState | undefined;
-  try {
-    // #884: reconcile = resume-residue / ledger discovery before productive work.
-    logDriverStage("reconcile", `issue #${issueNumber}`);
-    resumeState = await backend.findResumeState(issueNumber);
-  } catch (err) {
-    return await errorTermination("S0", err);
-  }
+  // (resume truth), reuse the worktree, and continue from the recorded
+  // breakpoint — no re-cut from S0, no re-running done steps.
+  logDriverStage("reconcile", `issue #${issueNumber}`);
+  let resumeState: ResumeState | undefined =
+    scene.kind === "resident" ? scene.state : undefined;
   const recordedRouteDegradations = new Set(
     (resumeState?.ledger ?? [])
       .filter((entry) => entry.event === "route_degraded")
@@ -2663,27 +2668,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (first seat only — ADR 0132 deleted S6-count rotation) before the first
     // dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute sees
     // undefined body → skippedForMissingMarking → silent preset revert.
-    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
-    // then snapshot) — never errorTerminate / poison the resume terminal state.
+    // #936: Coder-Rec body comes from live meta only — snapshot dual court deleted.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely — never
+    // errorTerminate / poison the resume terminal state.
     try {
       const meta = await backend.fetchIssueMeta(issueNumber);
       if (typeof meta.body === "string" && meta.body.length > 0) {
         coderRecIssueBody = meta.body;
       }
     } catch {
-      // fall through to snapshot
-    }
-    if (
-      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
-    ) {
-      try {
-        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        if (snapshot.body.length > 0) {
-          coderRecIssueBody = snapshot.body;
-        }
-      } catch {
-        // fall through — continue with route preset
-      }
+      // fall through — continue with route preset
     }
     if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
       console.info(
@@ -2859,21 +2853,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S1": {
-        // S1 load_context — runner action: full snapshot → resident worktree
-        // (base=`sliceBase`: family base in production) → write snapshot in.
+        // S1 load_context — prepare resident worktree (base=`sliceBase`).
+        // #936 / #934 ID-002: snapshot dual court deleted — workers live-fetch
+        // issue truth; ledger is the only durable court after worksite exists.
         //
-        // integ-cmr base r2 (C): the first two S1 sub-steps run BEFORE the
-        // worktree exists, so there is no sibling stateDir yet — their error
-        // terminations are UNPERSISTABLE (same special case as S0 fetch). Only
-        // writeSnapshot below (after deriveStateDir) persists. This contract
-        // does NOT claim "every S1 throw is persisted".
-        let snapshot: IssueSnapshot;
-        try {
-          snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
-          return await errorTermination("S1", err);
-        }
+        // integ-cmr base r2 (C): prepareWorktree runs BEFORE the worktree
+        // exists, so there is no sibling stateDir yet — its error termination
+        // is UNPERSISTABLE (same special case as S0 fetch).
         try {
           worktree = await backend.prepareWorktree(issueNumber, sliceBase);
         } catch (err) {
@@ -2881,35 +2867,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination("S1", err);
         }
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
-        // soon as the worktree exists — BEFORE writeSnapshot — so that even a
-        // writeSnapshot failure can persist its error termination to the ledger
-        // (#3: error paths must persist, not vanish on resume).
+        // soon as the worktree exists so later error terminations persist.
         stateDir = deriveStateDir(worktree.path, issueNumber);
-        const sourceAuthFailure = untrustedExecutableInstructionSummary(snapshot);
-        if (sourceAuthFailure !== undefined) {
-          return await errorTermination(
-            "S1",
-            new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
-            { stopSummary: sourceAuthFailure },
-          );
-        }
-        try {
-          await backend.writeSnapshot(worktree, snapshot);
-        } catch (err) {
-          return await errorTermination("S1", err);
-        }
-        // #767: if S0 lacked a body (lightweight fake / older meta), take it
-        // from the S1 snapshot and apply Coder-Rec before S2.
-        if (
-          (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) &&
-          snapshot.body.length > 0
-        ) {
-          coderRecIssueBody = snapshot.body;
-          const coderRecPolicy = await applyCoderRecSelection();
-          if (coderRecPolicy?.kind === "stop") {
-            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
-          }
-        }
         break;
       }
 

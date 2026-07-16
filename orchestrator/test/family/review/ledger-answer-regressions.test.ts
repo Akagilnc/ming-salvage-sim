@@ -30,7 +30,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -78,13 +77,9 @@ class EscalatingChildBackend implements Backend {
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec, worktree?: WorktreeHandle): Promise<StepOutput> {
     const issue = worktree !== undefined ? this.issueOfWorktree(worktree) : -1;
     this.runStepCalls.push({ issue, step: spec.id });

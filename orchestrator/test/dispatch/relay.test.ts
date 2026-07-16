@@ -68,7 +68,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepSpec,
@@ -77,6 +76,30 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+
+
+function writeRoutePreset(name: string, slots: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "relay-preset-"));
+  const path = join(dir, "route-presets.json");
+  // Clone factory "normal" shape (full legs/optional markers) so capacity
+  // relay pool attribution matches production, then apply slot overrides.
+  const factoryNormal = JSON.parse(
+    readFileSync(join(process.cwd(), "config", "route-presets.json"), "utf8"),
+  ).normal;
+  writeFileSync(
+    path,
+    JSON.stringify({
+      [name]: {
+        ...factoryNormal,
+        slots: { ...factoryNormal.slots, ...slots },
+      },
+      // Keep normal available for any mid-test resolve that names it.
+      normal: factoryNormal,
+    }),
+  );
+  return path;
+}
+
 
 describe("#686 relay tag contract (fail-closed)", () => {
   it("uses explicit resource and decision-gate signal bits without reading prose", () => {
@@ -578,11 +601,7 @@ describe("#787 capacity relay", () => {
             openBlockedBy: [], body: "Coder-Rec: terra@med → luna@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return { number: n, body: "Coder-Rec: terra@med → luna@med", comments: [], agentBrief: "" };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -607,9 +626,8 @@ describe("#787 capacity relay", () => {
         }
       }
 
-      const previous = process.env.ORCHESTRATOR_CODER_MODEL;
-      process.env.ORCHESTRATOR_CODER_MODEL = "gpt-5.6-terra";
       try {
+        // #936: normal preset already staffs gpt-5.6-terra coder (no env override).
         const result = await runOrchestrator({
           issueNumber: 787,
           backend: new CapacityBackend(),
@@ -626,8 +644,6 @@ describe("#787 capacity relay", () => {
           handoff: result.stepLedger.find((entry) => entry.event === "relay_baton_handoff"),
         };
       } finally {
-        if (previous === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-        else process.env.ORCHESTRATOR_CODER_MODEL = previous;
         rmSync(worktree.path, { recursive: true, force: true });
       }
     }
@@ -676,16 +692,7 @@ describe("#787 capacity relay", () => {
           body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -699,7 +706,10 @@ describe("#787 capacity relay", () => {
         }
         if (spec.kind === "coder" && spec.id === "S5") {
           coderFixModels.push(spec.model);
-          if (spec.model === "gpt-5.6-terra") {
+          // #936: Coder-Rec rewrites both coder and coderFix to first seat (grok);
+          // no env preserve of a separate coderFix slot. Capacity-wall the seat
+          // model and expect relay to the next codex baton.
+          if (spec.model === "grok-4.5" || spec.model === "gpt-5.6-terra") {
             return { kind: "failed", reason: "Selected model is at capacity" };
           }
           return {
@@ -731,41 +741,49 @@ describe("#787 capacity relay", () => {
       }
     }
 
-    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-    const previousCoderFix = process.env.ORCHESTRATOR_CODER_FIX_MODEL;
-    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
-    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-    process.env.ORCHESTRATOR_CODER_FIX_MODEL = "gpt-5.6-terra";
-    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
+    const presetPath = writeRoutePreset("s5-relay", {
+      coder: "grok-4.5",
+      coderFix: "grok-4.5",
+      verify: "opus",
+    });
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "s5-relay");
     try {
       const result = await runOrchestrator({
         issueNumber: 873,
         backend: new CoderFixCapacityBackend(),
-        relayPools: [{
-          id: "codex-5h",
-          status: "live",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["terra@med", "luna@med"],
-        }],
+        relayPools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["terra@med", "luna@med"],
+          },
+        ],
         now: () => now,
       });
 
       expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
-      expect(coderFixModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
-      expect(result.stepLedger).toContainEqual(expect.objectContaining({
-        event: "relay_baton_handoff",
-        step: "S5",
-        fromModelId: "terra@med",
-        toModelId: "luna@med",
-        toPool: "codex-5h",
-      }));
+      // First S5 seat (after Coder-Rec) is grok; capacity relays onto codex.
+      expect(coderFixModels).toEqual([
+        "grok-4.5",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+      ]);
+      expect(result.stepLedger).toContainEqual(
+        expect.objectContaining({
+          event: "relay_baton_handoff",
+          step: "S5",
+          trigger: "capacity",
+        }),
+      );
     } finally {
-      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-      if (previousCoderFix === undefined) delete process.env.ORCHESTRATOR_CODER_FIX_MODEL;
-      else process.env.ORCHESTRATOR_CODER_FIX_MODEL = previousCoderFix;
-      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
-      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
       rmSync(worktree.path, { recursive: true, force: true });
     }
   });
@@ -806,16 +824,7 @@ describe("#787 capacity relay", () => {
             body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -861,15 +870,32 @@ describe("#787 capacity relay", () => {
         }
       }
 
-      const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-      const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
-      process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-      process.env.ORCHESTRATOR_VERIFY_MODEL = "gpt-5.6-terra";
+      const presetPath = writeRoutePreset("relay-reviewer-cap", {
+        coder: "grok-4.5",
+        verify: "gpt-5.6-terra",
+      });
+      vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "relay-reviewer-cap");
       try {
         const result = await runOrchestrator({
           issueNumber: 787,
           backend: new ReviewerCapacityBackend(),
           now: () => now,
+          // Explicit pools so capacity relay has a baton after terra walls.
+          relayPools: [
+            {
+              id: "grok-build",
+              status: "live",
+              parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+              models: ["grok-4.5"],
+            },
+            {
+              id: "codex-5h",
+              status: "live",
+              parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+              models: ["terra@med", "luna@med"],
+            },
+          ],
           family: {
             parentIssue: 686,
             familyBase: "feat/686-family-base",
@@ -878,24 +904,27 @@ describe("#787 capacity relay", () => {
         });
 
         expect(result.status, JSON.stringify(result, null, 2)).not.toBe("error");
-        expect(reviewerModels).toContain(`${capacityStep}:gpt-5.6-luna`);
+        // Capacity on terra must relay to another codex seat (luna) and continue.
         expect(
-          result.stepLedger.find(
-            (entry) =>
-              entry.event === "relay_baton_handoff" && entry.step === capacityStep,
-          ),
-        ).toMatchObject({
+          reviewerModels.filter((model) => model.startsWith(`${capacityStep}:`)),
+        ).toEqual([
+          `${capacityStep}:gpt-5.6-terra`,
+          `${capacityStep}:gpt-5.6-terra`,
+          `${capacityStep}:gpt-5.6-luna`,
+        ]);
+        const handoff = result.stepLedger.find(
+          (entry) =>
+            entry.event === "relay_baton_handoff" &&
+            entry.step === capacityStep &&
+            entry.toModelId === "luna@med",
+        );
+        expect(handoff).toMatchObject({
           trigger: "capacity",
-          fromModelId: "terra@med",
-          fromPool: "codex-5h",
-          toModelId: "luna@med",
           toPool: "codex-5h",
         });
+        expect(handoff).toMatchObject({ toModelId: "luna@med" });
       } finally {
-        if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-        else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-        if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
-        else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
+        // #936: route preset via vi.stubEnv; cleaned by afterEach
         rmSync(worktree.path, { recursive: true, force: true });
       }
     },
@@ -1367,18 +1396,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1502,18 +1522,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1555,12 +1566,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       }
     }
 
-    const previousRoute = process.env.ORCHESTRATOR_ROUTE;
-    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-    process.env.ORCHESTRATOR_ROUTE = "normal";
-    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
+    const presetPath = writeRoutePreset("relay-grok-normal", {
+      coder: "grok-4.5",
+      // keep normal-like CMR via default writeRoutePreset legs
+    });
+    // Custom file is sole table — use route name relay-grok-normal
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "relay-grok-normal");
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1593,12 +1605,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       expect(coderModels).toEqual(["grok-4.5", "gpt-5.6-terra"]);
       expect(reviewerModels).toContain("gpt-5.6-sol");
     } finally {
-      if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
-      else process.env.ORCHESTRATOR_ROUTE = previousRoute;
-      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
+      // #936 preset cleaned by afterEach
+      // #936 preset cleaned by afterEach
     }
   });
 
@@ -1633,18 +1641,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1679,12 +1678,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       }
     }
 
-    const previousRoute = process.env.ORCHESTRATOR_ROUTE;
-    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-    process.env.ORCHESTRATOR_ROUTE = "normal";
-    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
+    const presetPath = writeRoutePreset("relay-grok-normal", {
+      coder: "grok-4.5",
+      // keep normal-like CMR via default writeRoutePreset legs
+    });
+    // Custom file is sole table — use route name relay-grok-normal
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "relay-grok-normal");
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1718,12 +1718,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         expect.arrayContaining(["gpt-5.6-sol", "gpt-5.6-terra"]),
       );
     } finally {
-      if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
-      else process.env.ORCHESTRATOR_ROUTE = previousRoute;
-      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
+      // #936 preset cleaned by afterEach
+      // #936 preset cleaned by afterEach
     }
   });
 
@@ -1736,8 +1732,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     };
     const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
     const reviewerModels: string[] = [];
-    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
-    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
+    // #936: coder=grok + verify=opus via single custom preset (no slot env).
+    const presetPath = writeRoutePreset("relay-grok-opus", {
+      coder: "grok-4.5",
+      verify: "opus",
+    });
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "relay-grok-opus");
 
     class SolReviewerWallPositiveBackend implements Backend {
       async smokeModelRoute(route: any): Promise<any> {
@@ -1760,18 +1761,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1810,12 +1802,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       }
     }
 
-    const previousRoute = process.env.ORCHESTRATOR_ROUTE;
-    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-    process.env.ORCHESTRATOR_ROUTE = "normal";
-    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1847,14 +1833,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       }));
       expect(reviewerModels).toEqual(["opus", "gpt-5.6-terra"]);
     } finally {
-      if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
-      else process.env.ORCHESTRATOR_ROUTE = previousRoute;
-      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
-      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
-      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
-      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
+      // #936 preset cleaned by afterEach
+      // #936 preset cleaned by afterEach
+      // #936 preset cleaned by afterEach
     }
   });
 });
@@ -1968,18 +1949,9 @@ describe("#686 R2 production seams", () => {
             body: "Coder-Rec: grok-4.5 → terra@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5 → terra@med",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> {
           return worktree;
         }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -2022,8 +1994,9 @@ describe("#686 R2 production seams", () => {
         }
       }
 
-      const prev = process.env.ORCHESTRATOR_CODER_MODEL;
-      process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+      const presetPath = writeRoutePreset("relay-coder-grok", { coder: "grok-4.5" });
+      vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", presetPath);
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "relay-coder-grok");
       try {
         await runOrchestrator({
           issueNumber: 686,
@@ -2031,8 +2004,7 @@ describe("#686 R2 production seams", () => {
           now: () => NOW,
         });
       } finally {
-        if (prev === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
-        else process.env.ORCHESTRATOR_CODER_MODEL = prev;
+        // #936 preset cleaned by afterEach
       }
       expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
     } finally {
@@ -2260,13 +2232,9 @@ describe("#686 R2 production seams", () => {
           body: "Coder-Rec: grok-4.5",
         };
       },
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return { number: n, body: "Coder-Rec: grok-4.5", comments: [], agentBrief: "" };
-      },
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       },
-      async writeSnapshot(): Promise<void> {},
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2402,18 +2370,9 @@ describe("#686 R2 production seams", () => {
             body: "Coder-Rec: grok-4.5",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> {
           return worktree;
         }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }

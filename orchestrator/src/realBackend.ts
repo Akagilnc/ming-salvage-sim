@@ -20,7 +20,7 @@
  * The container / real-LLM paths (createSandbox/run/resumeSession) are #256's
  * MANUAL smoke (a real container + a real model + a real `gh` is required), NOT
  * the zero-container automated suite. So this file is split:
- *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
+ *   - PURE host-side logic — gh metadata parsing, the auth-mount path
  *     construction, the prompt-content hash, the failedStep attribution, the
  *     resume error fallback decision — is
  *     factored into exported, dependency-light functions
@@ -32,12 +32,6 @@
  * importable and testable without ever starting Docker.
  *
  * ── Manual-smoke checklist additions (integ-cmr 256 r2) ─────────────────────
- *   - F3 clean-room snapshot leak: after S1 `writeSnapshot`, assert the snapshot
- *     is git-ignored in the resident worktree — run, inside the worktree:
- *       `git check-ignore .orchestrator-snapshot.json`  → must print the path
- *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
- *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
- *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  *   - r3 worktree_base_stale: with the local `main` deliberately behind
  *     `origin/main` (e.g. `git reset --hard origin/main~1` on the working clone's
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
@@ -131,6 +125,7 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { readMetadataWithRetry } from "./admissionPreflight.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -283,8 +278,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
   ReviewFixRefuseRecord,
@@ -307,11 +300,7 @@ import {
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
-
-/** The heading that marks an (optional) `## Agent Brief` section — the
- *  most-authoritative part of the spec when present, but not required. */
-const AGENT_BRIEF_HEADING = "## Agent Brief";
+// ── gh issue → IssueMeta parsing ────────────────────────────────────────────
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
 
@@ -387,53 +376,8 @@ export function buildIssueMeta(
   };
 }
 
-function actorLogin(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-): string {
-  return carrier?.author?.login ?? carrier?.user?.login ?? "";
-}
-
 function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
-}
-
-/**
- * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
- * repo-owner-authored carriers count; among those, later comments supersede
- * earlier comments and the body. Returns "" when no trusted brief is present —
- * that is a valid slice, not an S0 gate.
- */
-export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
-  // Priority order, LOWEST first: the issue body is the fallback, then comments
-  // in order (newest last). A later carrier overwrites an earlier one, so the
-  // LAST brief-bearing COMMENT wins over both earlier comments and the body
-  // (a re-issued brief supersedes the original) — the body only stands when no
-  // comment carries a brief.
-  const carriers = [
-    { text: json.body ?? "", author: json, sourceKind: "issue body" },
-    ...(json.comments ?? []).map((c) => ({
-      text: c.body ?? "",
-      author: c,
-      sourceKind: "issue comment",
-    })),
-  ];
-  let brief = "";
-  for (const carrier of carriers) {
-    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
-    const sourceCheck = checkExecutableInstructionSource({
-      sourceKind: carrier.sourceKind,
-      instructionKind: "Agent Brief",
-      trustedAuthor: ownerLogin,
-      candidateAuthor: actorLogin(carrier.author),
-    });
-    if (sourceCheck.accepted) {
-      brief = carrier.text;
-    }
-  }
-  return brief;
 }
 
 export interface ExecutableInstructionSourceCheck {
@@ -530,105 +474,13 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
 }
 
 /**
- * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
- * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
- * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the host-written snapshot keeps the audit/resume artifact contract-complete.
- * The worker's execution context is still the live issue it fetches in-container
- * via gh using the runner-injected issue/repo env.
- */
-export function buildIssueSnapshotMeta(
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-): IssueSnapshotMeta {
-  return {
-    title: json.title ?? "",
-    state: json.state ?? "",
-    labels: (json.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
-    subIssueCount,
-    blockedBy: blockedBy.map((d) => ({ number: d.number, state: d.state })),
-  };
-}
-
-/**
- * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
- * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the host-side snapshot is
- * contract-complete (#244 S1 names native metadata as a snapshot element).
- */
-export function buildIssueSnapshot(
-  issueNumber: number,
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-  ownerLogin: string,
-): IssueSnapshot {
-  return {
-    number: json.number ?? issueNumber,
-    body: json.body ?? "",
-    bodyAuthorLogin: actorLogin(json),
-    comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
-    trustedOwnerLogin: ownerLogin,
-    agentBrief: extractAgentBrief(json, ownerLogin),
-    nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
-  };
-}
-
-// ── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-/**
- * The host-fetched clean-room snapshot file, written into the resident worktree
- * as read-only context for the agent. It must NEVER be committed: with
- * `branchStrategy:{type:'head'}` a coder's `git add -A` would otherwise stage it
- * into the reviewed/pushed branch (polluting the shipped artifact). The Backend
- * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
- */
-export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
-
-/**
- * Idempotently ensure `pattern` is present as its own line in a git
- * `info/exclude` file's content. Returns the new content (existing + the pattern
- * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
- * is already an exact line (so repeated S1 resume writes never duplicate it).
+ * Git ref to cut a fresh worktree from (integ-cmr 256 r3 + #936 / #934 ID-009).
  *
- * Pure (string assembly) so the leak-guard decision is unit-tested without git.
- */
-export function ensureExcluded(existing: string, pattern: string): string {
-  const lines = existing.split("\n").map((l) => l.trim());
-  if (lines.includes(pattern)) return existing;
-  // Append on its own line; preserve a trailing newline so the file stays
-  // newline-terminated regardless of the prior content's shape.
-  const base = existing.length === 0 || existing.endsWith("\n")
-    ? existing
-    : existing + "\n";
-  return `${base}${pattern}\n`;
-}
-
-/**
- * The git ref to cut a fresh slice worktree FROM (integ-cmr 256 r3,
- * worktree_base_stale).
- *
- * `ensureBaseRef` runs `git fetch origin <base>`, which updates
- * `refs/remotes/origin/<base>` (and FETCH_HEAD) but does NOT move the local
- * `refs/heads/<base>`. So deriving with the bare local `<base>` could cut from a
- * stale local branch behind upstream — violating #244's "从 main 派生 =
- * up-to-date" invariant and diverging from the spike's explicit
- * `git worktree add … origin/main`. When the fetch succeeded, cut from
- * `origin/<base>` (the just-refreshed remote-tracking ref); only when the fetch
- * failed (offline / a local-only base with no remote) fall back to the local
- * `<base>` so the cut is never blocked.
- *
- * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
- * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
- * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
- * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
- * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
- * a `fetch` that happened to resolve it) can never shadow the local family base
- * carrying this run's accumulated waves (agy R1). A standalone single-slice run
- * leaves `localOnly` false, so its `main` cut is byte-identical to before
- * (`origin/main` when fetched, local fallback otherwise).
+ * - `localOnly` (family base): always the bare local ref.
+ * - fetch succeeded: `origin/<base>` (just-refreshed remote-tracking).
+ * - fetch failed with a configured remote: throw — never fall back to a
+ *   stale local base.
+ * - fetch failed with no remote (local-only source): bare local ref.
  *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
@@ -636,9 +488,17 @@ export function cutRefFor(
   base: string,
   fetchedOk: boolean,
   localOnly = false,
+  opts: { readonly hasRemote?: boolean } = {},
 ): string {
   if (localOnly) return base;
-  return fetchedOk ? `origin/${base}` : base;
+  if (fetchedOk) return `origin/${base}`;
+  if (opts.hasRemote === true) {
+    throw new Error(
+      `git fetch origin ${base} failed; refusing stale local base fallback ` +
+        `(#936 / #934 ID-009). Repair network/remote and retry.`,
+    );
+  }
+  return base;
 }
 
 /**
@@ -2110,14 +1970,16 @@ export class RealBackend implements Backend {
    * disk, and guarded to be an independent `.git` before construction succeeds.
    */
   private readonly workingRepo: string;
+  private workingRepoReady = false;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.validateSoulsDir();
-    this.workingRepo = this.buildOrReuseClone();
-    this.assertIndependentClone();
+    const home = this.opts.home ?? homedir();
+    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
+    this.workingRepo = clonePathFor(home, slug, this.opts.runKey);
   }
 
   /**
@@ -2140,7 +2002,15 @@ export class RealBackend implements Backend {
    * every git op anchors on it instead of the driver-supplied source.
    */
   workingRepoPath(): string {
+    this.ensureWorkingRepo();
     return this.workingRepo;
+  }
+
+  private ensureWorkingRepo(): void {
+    if (this.workingRepoReady) return;
+    this.buildOrReuseClone();
+    this.assertIndependentClone();
+    this.workingRepoReady = true;
   }
 
   /**
@@ -2386,9 +2256,7 @@ export class RealBackend implements Backend {
    * separately, AFTER the clone exists.
    */
   protected buildOrReuseClone(): string {
-    const home = this.opts.home ?? homedir();
-    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
-    const clonePath = clonePathFor(home, slug, this.opts.runKey);
+    const clonePath = this.workingRepo;
     if (!this.cloneDirExists(clonePath)) {
       // Multi-phase S1-adjacent: a clone failure must abort construction loudly
       // (不启动), not silently leave a half-built or missing working repo.
@@ -2488,8 +2356,8 @@ export class RealBackend implements Backend {
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
-   * #884: every subprocess wait carries a clock (default 120s).
-   * Host one-shot with clock only (no auto-retry — #884 clocks / #879 owns leg retry).
+   * #884: every subprocess wait carries a clock (default 120s). Admission wraps
+   * GitHub metadata reads in the shared transient-only retry seam.
    */
   protected sh(file: string, args: string[], cwd?: string): string {
     return shWithClock(file, args, {
@@ -2518,13 +2386,18 @@ export class RealBackend implements Backend {
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
-    const json = this.phase("S0", "fetchIssueView", () => {
+    let json: GhIssueJson | undefined;
+    let subIssueCount: number | undefined;
+    let blockedBy: GhBlockedBy[] | undefined;
+    const errors: string[] = [];
+    try {
+      json = this.phase("S0", "fetchIssueView", () => {
       // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
       // comments — that would trigger gh's paginated preloadIssueComments for
       // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
       // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
       // before the first worker dispatch.
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2532,12 +2405,27 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "number,labels,state,body",
-      ]);
+      ]));
       return JSON.parse(raw) as GhIssueJson;
-    });
-    // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber);
-    const blockedBy = this.fetchBlockedBy(issueNumber);
+      });
+    } catch (err) {
+      errors.push(`issue view: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      subIssueCount = this.fetchSubIssueCount(issueNumber);
+    } catch (err) {
+      errors.push(`sub-issues: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      blockedBy = this.fetchBlockedBy(issueNumber);
+    } catch (err) {
+      errors.push(`blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (errors.length > 0 || json === undefined || subIssueCount === undefined || blockedBy === undefined) {
+      throw new Error(
+        `S0 issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`,
+      );
+    }
     return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
   }
 
@@ -2578,7 +2466,7 @@ export class RealBackend implements Backend {
    */
   private fetchSubIssueCount(issueNumber: number, step: StepId = "S0"): number {
     return this.phase(step, "fetchSubIssueCount", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2586,7 +2474,7 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "subIssues",
-      ]);
+      ]));
       const parsed = JSON.parse(raw) as { subIssues?: unknown };
       // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
       // not an array — read the count off that shape (integ-cmr 256 r1, F1).
@@ -2604,53 +2492,21 @@ export class RealBackend implements Backend {
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
     return this.phase(step, "fetchBlockedBy", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]);
+      ]));
       return parseBlockedBy(JSON.parse(raw));
     });
   }
 
-  // ── S1: full snapshot (host gh) ────────────────────────────────────────────
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body. This
-    // preserves the host-side audit/resume artifact; the worker still live-fetches
-    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
-    // 正文 + native metadata").
-    const json = this.phase("S1", "fetchIssueView", () => {
-      const raw = this.sh("gh", [
-        "issue",
-        "view",
-        String(issueNumber),
-        "--repo",
-        this.opts.repo,
-        "--json",
-        "number,title,state,author,body,labels,comments",
-      ]);
-      return JSON.parse(raw) as GhIssueJson;
-    });
-    // The native sub-issue + blocked_by summaries (the same ones S0 reads via the
-    // GraphQL/REST API) complete the snapshot's native metadata. A thrown
-    // gh/transport/parse error propagates → the runner's S1 error termination,
-    // attributed to S1 (not S0) for the US#30 error package.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
-    const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(
-      issueNumber,
-      json,
-      blockedBy,
-      subIssueCount,
-      this.ownerLogin,
-    );
-  }
-
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
+  // #936 / #934 ID-002: snapshot dual court deleted; workers live-fetch truth.
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
+    this.ensureWorkingRepo();
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
     // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
@@ -2695,15 +2551,16 @@ export class RealBackend implements Backend {
     // slice from whatever the clone happened to be checked out on — the #244
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
-    // first (best-effort: a fetch failure must not block a local-only base).
+    // first. A configured origin must refresh successfully; only a source with
+    // no origin may use a local-only base.
     //
     // integ-cmr 256 r3 (worktree_base_stale): `git fetch origin <base>` updates
     // refs/remotes/origin/<base>, NOT the local refs/heads/<base>. Deriving with
     // the bare local `<base>` after a fetch could still cut from a stale local
     // branch behind upstream. So when the fetch refreshed the remote ref, cut
     // from `origin/<base>` (matching the spike's `git worktree add … origin/main`
-    // and the up-to-date invariant); fall back to the local `<base>` only when
-    // the fetch failed (offline / local-only base). The WorktreeHandle.base field
+    // and the up-to-date invariant); use local `<base>` only when no origin is
+    // configured. The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
@@ -2713,8 +2570,11 @@ export class RealBackend implements Backend {
     // harness path (base="main", no `familyBase` option) keeps the fetch +
     // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
+    const hasRemote =
+      typeof this.opts.remote === "string" && this.opts.remote.trim() !== "";
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk, localOnly);
+    // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
+    const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
@@ -2776,89 +2636,37 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Refresh the base ref so the slice is cut from an up-to-date `base`, and
-   * REPORT whether the fetch succeeded so {@link cutRefFor} can choose the
-   * origin/<base> remote-tracking ref vs the local fallback (integ-cmr 256 r3,
-   * worktree_base_stale). Sandcastle notes the caller is responsible for the
-   * ref's currency (d.ts:211); a `git fetch` failure (offline / local-only base)
-   * must NOT block worktree creation, so this is best-effort and returns false
-   * on any fault (the caller then derives from the local `<base>`).
+   * Refresh the base ref so the slice is cut from an up-to-date `base`.
+   * Returns whether the fetch succeeded so {@link cutRefFor} can choose
+   * `origin/<base>` vs local-only / fail-closed (integ-cmr 256 r3 + #936 ID-009).
    */
   private ensureBaseRef(base: string): boolean {
     try {
       this.sh("git", ["fetch", "origin", base], this.workingRepo);
       return true;
     } catch {
-      // offline or a local-only base ⇒ proceed with the local ref.
       return false;
     }
   }
 
-  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
-    try {
-      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
-    } catch {
-      // no worktrees / git error ⇒ none existing.
-      return undefined;
-    }
-  }
-
-  // ── S1: write the snapshot into the worktree (clean-room) ──────────────────
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    // F3 — git-ignore the snapshot BEFORE writing it, so a coder's `git add -A`
-    // can never stage the host-fetched clean-room snapshot into the reviewed /
-    // pushed branch (branchStrategy:{type:'head'} commits in place). The
-    // per-worktree info/exclude is the right scope: it is local to this resident
-    // worktree, needs no checked-in change to the target repo, and survives the
-    // agent run. Best-effort: an exclude failure must not block the (still
-    // useful) snapshot write — but it is attempted first so the common path is
-    // always covered.
-    this.excludeFromGit(worktree, SNAPSHOT_FILENAME);
-    const target = join(worktree.path, SNAPSHOT_FILENAME);
-    writeFileSync(target, JSON.stringify(snapshot, null, 2), "utf8");
-  }
-
   /**
-   * Add `pattern` to the repo's git `info/exclude` (idempotent via
-   * {@link ensureExcluded}), so a `git add -A`/`git add .` in the resident
-   * worktree never stages it (F3). `git rev-parse --git-path info/exclude` run
-   * inside a linked worktree resolves to the SHARED common-dir exclude
-   * (git keeps `info/exclude` in the common git dir, not per-worktree) — that is
-   * fine and intended here: every slice excludes the SAME snapshot filename, and
-   * {@link ensureExcluded} is idempotent, so concurrent slices appending the same
-   * pattern never duplicate or conflict. Best-effort: a git/fs fault here must
-   * not block the snapshot write itself (the checked-in root `.gitignore` belt
-   * still covers the common case).
+   * Resident worktree discovery (#936 / #934 ID-009).
+   * Discovery failure must NOT create a second worktree — propagate loud.
+   * Empty porcelain (no worktrees) is success → undefined (typed fresh).
    */
-  private excludeFromGit(worktree: WorktreeHandle, pattern: string): void {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
+    let out: string;
     try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktree.path,
+      out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
+    } catch (err) {
+      throw new Error(
+        `worktree discovery failed for issue #${issueNumber}; refusing to create ` +
+          `a second worksite (#936 / #934 ID-009): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
       );
-      const abs = excludePath.startsWith("/")
-        ? excludePath
-        : join(worktree.path, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // No exclude file yet (or info/ missing) — start from empty + mkdir.
-      }
-      const next = ensureExcluded(existing, pattern);
-      if (next !== existing) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, next, "utf8");
-      }
-    } catch {
-      // Best-effort: a divergent git layout must not block the snapshot write.
-      // The root .gitignore (checked-in belt) still covers the common case.
     }
+    return resolveExistingWorktreeFromPorcelain(out, issueNumber);
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
@@ -3700,13 +3508,40 @@ export class RealBackend implements Backend {
     return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
-  // ── #255: detect resume residue ────────────────────────────────────────────
+  // ── #255 / #936: detect resume residue ─────────────────────────────────────
+  // ID-005: typed fresh only when BOTH worksite and ledger are absent. A
+  // resident worksite without a readable ledger is corrupted residue — throw so
+  // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
+  // misclassify partial residue as fresh.
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
+    if (!this.cloneDirExists(this.workingRepo)) return undefined;
+    this.ensureWorkingRepo();
     const existing = this.findExistingWorktree(issueNumber);
-    if (existing === undefined) return undefined;
+    if (existing === undefined) {
+      const orphanStateDir = join(
+        this.workingRepo,
+        ".sandcastle",
+        "worktrees",
+        `.ledger-${issueNumber}`,
+      );
+      if (existsSync(orphanStateDir)) {
+        throw new Error(
+          `resident ledger exists without a worksite for #${issueNumber} ` +
+            `(ledger=${orphanStateDir}); refusing to treat partial residue as fresh ` +
+            `(#936 / #934 ID-005)`,
+        );
+      }
+      return undefined;
+    }
     const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
-    if (ledger === undefined) return undefined;
+    if (ledger === undefined) {
+      throw new Error(
+        `resident worksite exists without readable ledger for #${issueNumber} ` +
+          `(worktree=${existing.path}, expected ledger=${stateDir}); ` +
+          `refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+      );
+    }
     const worktree = { branch: existing.branch, base: "main", path: existing.path };
     return { worktree, stateDir, ledger };
   }

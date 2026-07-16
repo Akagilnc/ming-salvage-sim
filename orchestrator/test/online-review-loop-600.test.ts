@@ -21,7 +21,6 @@ import type {
   DispatchContext,
   FixerResult,
   IssueMeta,
-  IssueSnapshot,
   OnlineReviewLandingSnapshot,
   PersistentLedgerEntry,
   StepOutput,

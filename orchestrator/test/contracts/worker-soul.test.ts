@@ -53,7 +53,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -410,13 +409,9 @@ class ReviewWorkerBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(): Promise<StepOutput> {
     throw new Error("runStep should not be called directly (#334)");
   }

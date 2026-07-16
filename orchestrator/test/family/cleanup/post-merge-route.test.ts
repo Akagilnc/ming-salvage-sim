@@ -9,7 +9,6 @@ import * as verifyCmr from "../../../src/family/verifyCmr.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -41,13 +40,9 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(_spec: StepSpec): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }

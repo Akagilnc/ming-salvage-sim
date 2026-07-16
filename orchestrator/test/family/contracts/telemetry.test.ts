@@ -28,7 +28,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   WorkerResult,
   WorkerSpec,
@@ -223,10 +222,6 @@ class SmokeOnlySingleSliceBackend implements Backend {
     };
   }
 
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "", comments: [], agentBrief: "" };
-  }
-
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return {
       branch: `feat/issue-${issueNumber}`,
@@ -234,8 +229,6 @@ class SmokeOnlySingleSliceBackend implements Backend {
       path: `/wt/${issueNumber}`,
     };
   }
-
-  async writeSnapshot(): Promise<void> {}
 
   async runStep(): Promise<StepOutput> {
     throw new Error("smoke-only single-slice backend: runStep unused");

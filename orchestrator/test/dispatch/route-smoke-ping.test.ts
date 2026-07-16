@@ -29,7 +29,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   ResumeState,
   StepOutput,
   StepSpec,
@@ -418,21 +417,12 @@ describe("#884 driver stage line logs", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return {
-          number: issueNumber,
-          body: "",
-          comments: [],
-          agentBrief: "implement #884",
-        };
-      }
       async prepareWorktree(
         issueNumber: number,
         base: string,
       ): Promise<WorktreeHandle> {
         return { branch: `feat/${issueNumber}`, base, path: `/tmp/${issueNumber}` };
       }
-      async writeSnapshot() {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if (spec.role === "coder") {
           return { kind: "coder", committed: true, commitsAdded: 1 };

@@ -27,7 +27,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -103,18 +102,9 @@ class DispatchBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement the thing",
-    };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
 
   async runStep(): Promise<StepOutput> {
     this.legacyRunStepCount += 1;
@@ -1164,13 +1154,6 @@ describe("#796 Coder-Rec host dispatch", () => {
     override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
       return {
         ...(await super.fetchIssueMeta(issueNumber)),
-        body: this.coderRecBody,
-      };
-    }
-
-    override async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-      return {
-        ...(await super.fetchIssueSnapshot(issueNumber)),
         body: this.coderRecBody,
       };
     }

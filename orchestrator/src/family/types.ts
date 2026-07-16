@@ -898,6 +898,11 @@ export interface FamilyRunInput {
    * family clone). In tests it is a zero-container fake.
    */
   readonly singleSliceBackend: Backend;
+  /** Final Coder-Rec route already smoked by the public driver before worksite creation. */
+  readonly admittedRoute?: {
+    readonly route: ResolvedModelRoute;
+    readonly dropped: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
+  };
   /**
    * The local family base branch the merger accumulates onto and each child cuts
    * from (ADR 0022 decision 7). Children are cut from THIS, not `origin/<base>`.

@@ -30,7 +30,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   WorkerResult,
   WorkerSpec,
@@ -78,13 +77,9 @@ class SeamOnlyBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
