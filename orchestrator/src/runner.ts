@@ -83,6 +83,7 @@ import {
   admitCoderRec,
   admitRouteFromEnv,
   admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
 } from "./admissionPreflight.js";
 import { discoverResidentScene } from "./sceneAction.js";
 import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
@@ -2774,6 +2775,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           logDriverStage("admission", `issue #${issueNumber}`);
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
+          // #934 ID-003: GitHub auth needs external human login → typed decision
+          // gate (same class as family admission), not infra errorTermination.
+          if (isGithubAuthFailure(err)) {
+            const diagnosis = err instanceof Error ? err.message : String(err);
+            return await escalateTermination(
+              "S0",
+              {
+                reason: "GitHub authentication required",
+                diagnosis,
+              },
+              undefined,
+              "decision",
+              undefined,
+              decisionGateParkStopSummary({
+                summary: `GitHub authentication required: ${diagnosis}`,
+                repairHint:
+                  "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+              }),
+            );
+          }
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
           // the resume contract needs a worktree's sibling dir). errorTermination
           // records the in-memory S8 and persists only if stateDir is resolved.

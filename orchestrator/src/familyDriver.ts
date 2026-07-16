@@ -33,7 +33,7 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -43,6 +43,7 @@ import {
   admitRouteFromEnv,
   admitRouteSmoke,
   admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
   readMetadataWithRetry,
 } from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
@@ -61,6 +62,7 @@ import {
 } from "./family/realFamilyBackend.js";
 import {
   familyEscalationState,
+  isCompleteFamilyEscalation,
   isValidPostMergeCleanup,
   mergedSet,
 } from "./family/ledger.js";
@@ -486,10 +488,19 @@ export function readFamilyEpic(
   sh: Sh,
   issueBodies: Map<number, string> = new Map(),
 ): FamilyEpic {
-  const admission = readSubIssueAdmission(epicIssue, repo, sh);
+  // #934 ID-002/003: live metadata errors aggregate — sub-issues throw must not
+  // abort before independently readable root blocked_by (and reachable child deps).
+  const errors: string[] = [];
+  let admission: SubIssueAdmission = { admitted: [], skipped: [] };
+  try {
+    admission = readSubIssueAdmission(epicIssue, repo, sh);
+  } catch (err) {
+    errors.push(
+      `sub_issues #${epicIssue}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
-  const errors: string[] = [];
 
   // #934 ID-002: read + adjudicate the ROOT epic blocked_by before worksite.
   // OPEN root blockers park the whole family (ID-001 wait-for-external).
@@ -824,7 +835,8 @@ export interface FamilySceneDiscoveryOptions {
 /**
  * Whether a parseable family ledger can terminal-replay without worksite
  * residue (completed cleanup, or unresolved park/fail escalation). Nonterminal
- * mid-run / answered-decision ledgers need worksite to resume productively.
+ * mid-run / answered-decision / incomplete-escalation ledgers need worksite
+ * (or are corrupted) and must not soft-resume as terminal without worksite.
  */
 function isFamilyLedgerTerminalWithoutWorksite(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
@@ -832,11 +844,31 @@ function isFamilyLedgerTerminalWithoutWorksite(
   if (shouldReclaimFamilyHost(ledger)) return true;
   const prior = familyEscalationState(ledger);
   if (prior === undefined) return false;
+  // Incomplete escalated rows are durable damage, not terminal park/fail truth.
+  if (!isCompleteFamilyEscalation(prior.escalation)) return false;
   // Answered decision reopens productive work — not terminal without worksite.
   if (prior.escalation.escalationKind === "decision" && prior.answer !== undefined) {
     return false;
   }
   return true;
+}
+
+/**
+ * Fail-closed path probe (#934 ID-005 / ID-011 pattern): precise ENOENT = absent;
+ * any other FS operational error is damage, never soft-absence.
+ */
+function probePathPresent(
+  path: string,
+): { readonly present: true } | { readonly present: false } | { readonly error: string } {
+  try {
+    statSync(path);
+    return { present: true };
+  } catch (err) {
+    if (isProbeFileNotFound(err)) return { present: false };
+    return {
+      error: `${path}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**
@@ -852,10 +884,33 @@ export function discoverFamilyResidentScene(
 ): FamilySceneDiscovery {
   const ledgerPath = join(ledgerDir, FAMILY_LEDGER_FILENAME);
   const startHeadPath = join(ledgerDir, FAMILY_BASE_START_HEAD_FILENAME);
-  const hasLedger = existsSync(ledgerPath);
-  const hasStartHead = existsSync(startHeadPath);
-  const hasClone =
-    opts.clonePath !== undefined && existsSync(join(opts.clonePath, ".git"));
+  const ledgerProbe = probePathPresent(ledgerPath);
+  if ("error" in ledgerProbe) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger path probe failed (operational FS error, not absence): ${ledgerProbe.error}`,
+    };
+  }
+  const startHeadProbe = probePathPresent(startHeadPath);
+  if ("error" in startHeadProbe) {
+    return {
+      kind: "corrupted",
+      reason: `resident family start-head path probe failed (operational FS error, not absence): ${startHeadProbe.error}`,
+    };
+  }
+  let hasClone = false;
+  if (opts.clonePath !== undefined) {
+    const cloneGitProbe = probePathPresent(join(opts.clonePath, ".git"));
+    if ("error" in cloneGitProbe) {
+      return {
+        kind: "corrupted",
+        reason: `resident family clone path probe failed (operational FS error, not absence): ${cloneGitProbe.error}`,
+      };
+    }
+    hasClone = cloneGitProbe.present;
+  }
+  const hasLedger = ledgerProbe.present;
+  const hasStartHead = startHeadProbe.present;
   const hasWorksiteResidue = hasStartHead || hasClone;
 
   if (!hasLedger && !hasWorksiteResidue) return { kind: "fresh" };
@@ -893,6 +948,21 @@ export function discoverFamilyResidentScene(
       reason: `resident family ledger corrupt at ${ledgerPath}: ${
         err instanceof Error ? err.message : String(err)
       }`,
+    };
+  }
+
+  // Incomplete escalated rows are never terminal durable truth (#934 ID-005).
+  const priorEscalation = familyEscalationState(ledger);
+  if (
+    priorEscalation !== undefined &&
+    !isCompleteFamilyEscalation(priorEscalation.escalation)
+  ) {
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family ledger has incomplete status:escalated row ` +
+        `(missing event:escalated and/or decision|failure kind) at ${ledgerDir}; ` +
+        `refusing terminal replay of damaged park state (#934 ID-005)`,
     };
   }
 
@@ -959,6 +1029,8 @@ export function planFamilyTerminalReplay(
   const prior = familyEscalationState(ledger);
   if (prior === undefined) return undefined;
   const { escalation, answer } = prior;
+  // Incomplete escalated rows are durable damage — never terminal-replay as park.
+  if (!isCompleteFamilyEscalation(escalation)) return undefined;
   if (escalation.escalationKind === "decision" && answer !== undefined) {
     // Answered decision → spine must resume productive work (not terminal).
     return undefined;
@@ -970,9 +1042,7 @@ export function planFamilyTerminalReplay(
   const diagnosis =
     escalation.escalationKind === "failure"
       ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-      : escalation.escalationKind !== "decision"
-        ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
-        : "Prior family decision escalation has no later valid escalation_answered ledger event.";
+      : "Prior family decision escalation has no later valid escalation_answered ledger event.";
   const familyHead =
     typeof escalation.familyHeadAfter === "string" &&
     escalation.familyHeadAfter.trim().length > 0
@@ -1132,6 +1202,25 @@ export async function runFamilyDriver(
       };
     }
     const diagnosis = err instanceof Error ? err.message : String(err);
+    // #934 ID-003: GitHub auth/login needs external human login — zero retry
+    // already (durable class) + typed decision gate; not infra_failure /
+    // issue_metadata_unavailable (deterministic bad data / exhausted durable).
+    if (isGithubAuthFailure(err)) {
+      return {
+        status: "escalated",
+        familyBase: options.familyBase,
+        escalation: {
+          reason: "GitHub authentication required",
+          diagnosis,
+        },
+        stopSummary: decisionGateParkStopSummary({
+          summary: `GitHub authentication required: ${diagnosis}`,
+          repairHint:
+            "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+        }),
+        children: [],
+      };
+    }
     return {
       status: "escalated",
       familyBase: options.familyBase,

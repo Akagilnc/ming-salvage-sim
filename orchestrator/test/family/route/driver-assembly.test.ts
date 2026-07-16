@@ -551,6 +551,29 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       admissionSkipped: [{ issue: 405, reason: "closed" }],
     });
   });
+
+  it("aggregates sub_issues failure with root blocked_by (does not abort before root)", () => {
+    const calls: string[] = [];
+    const sh: Sh = (_file, args) => {
+      const key = String(args[1] ?? args[0]);
+      calls.push(key);
+      if (String(args[1]).includes("/sub_issues")) {
+        throw new Error("sub_issues boom");
+      }
+      if (String(args[1]).includes("/dependencies/blocked_by")) {
+        throw new Error("root blocked_by boom");
+      }
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: 291, body: "", author: { login: "Akagilnc" } });
+      }
+      return "[]";
+    };
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /issue metadata unavailable \(2 errors\).*sub_issues.*blocked_by/s,
+    );
+    expect(calls.some((c) => c.includes("/sub_issues"))).toBe(true);
+    expect(calls.some((c) => c.includes("/dependencies/blocked_by"))).toBe(true);
+  });
 });
 
 describe("#291 cutFamilyBase (real local clone)", () => {
