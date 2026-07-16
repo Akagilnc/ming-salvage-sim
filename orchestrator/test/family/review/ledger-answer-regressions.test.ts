@@ -115,6 +115,10 @@ class EscalatingChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   private head = "family-base-0";
@@ -157,6 +161,7 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,

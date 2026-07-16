@@ -35,6 +35,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sc from "@ai-hero/sandcastle";
+// Production discovery used by public ignition resolveVerifyCwd (#939).
+import { discoverSubprojects } from "../../../src/familyDriver.js";
 import {
   MERGER_SOUL,
   cmrOutcomeFromResult,
@@ -710,6 +712,28 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     ).runFamilyVerify({ phase: "wave", familyBase: "family/293-base" });
     expect(result.ok).toBe(false);
     expect(result.errorPackage?.reason).toMatch(/failed to read package\.json/i);
+  });
+
+  it("#939 ID-011: invalid scripts shape fails closed (not Object.keys empty skip)", async () => {
+    const proj = trackTempDir("verify-scripts-shape-");
+    writeFileSync(
+      join(proj, "package.json"),
+      JSON.stringify({ name: "bad", version: "0.0.0", scripts: ["test"] }),
+    );
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after scripts shape error");
+      }
+    }
+    const result = await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runFamilyVerify({
+      phase: "final",
+      familyBase: "family/293-base",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/scripts.*must be an object/i);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -3426,5 +3450,17 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     );
     expect(familyCatchBody).toMatch(/withIdleQuotaProbeDisposition/);
     expect(familyCatchBody).not.toMatch(/isAgentIdleTimeoutError/);
+  });
+});
+
+describe("#939 discoverSubprojects directory op-errors", () => {
+  it("readdir operational failure throws (never degrades to [])", () => {
+    const missing = join(trackTempDir("disc-missing-"), "no-such");
+    expect(() => discoverSubprojects(missing)).toThrow(/failed to read project directory/i);
+  });
+
+  it("successful empty top-level (no child package.json) returns []", () => {
+    const empty = trackTempDir("disc-empty-");
+    expect(discoverSubprojects(empty)).toEqual([]);
   });
 });

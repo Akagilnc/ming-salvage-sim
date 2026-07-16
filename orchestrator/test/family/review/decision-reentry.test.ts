@@ -64,6 +64,10 @@ class UnusedChildBackend implements Backend {
 }
 
 class SeededFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   private head = "family-base-0";
@@ -107,6 +111,7 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     ]);
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: new UnusedChildBackend(),
@@ -133,6 +138,7 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     ]);
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: new UnusedChildBackend(),

@@ -194,6 +194,10 @@ function currentRouteFingerprint(): string {
  * still has no verify/cmr/ship dispatch capability.
  */
 class BareFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
@@ -1490,14 +1494,16 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 });
 
-describe("#296 verify-cmr hook body — graceful no-op when the backend lacks the capability", () => {
-  it("a #293-era backend WITHOUT runFamilyVerify yields the no-op {ok:true, ran:false} (spine default path untouched)", async () => {
+describe("#296 verify-cmr hook body — required verify capability (#939)", () => {
+  it("BareFamilyBackend with explicit green verify yields ok:true, ran:true (no success no-op)", async () => {
+    // #939 deleted the optional missing-capability success NOOP. Fakes must
+    // implement runFamilyVerify; a green verify is real work (ran:true).
     const result = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/291-base",
       familyBackend: new BareFamilyBackend(),
     });
-    expect(result).toEqual({ ok: true, ran: false });
+    expect(result).toEqual({ ok: true, ran: true });
   });
 
   it("a backend with verify but WITHOUT cmr (final phase) FAILS-SAFE to ok:false — it does NOT report a pass the 承重闸 never ran", async () => {

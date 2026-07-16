@@ -126,6 +126,10 @@ function issueOfStateDir(stateDir: string): number {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   private head = "family-base-0";
@@ -158,6 +162,7 @@ describe("#604 r5 E2 — child decision-park forwards the surfaced sessionId", (
     };
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,

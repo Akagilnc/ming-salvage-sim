@@ -33,7 +33,14 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { shWithClock } from "./externalCall.js";
@@ -301,26 +308,30 @@ export function inferVerifyCwd(
   return best === undefined ? undefined : join(workingRepo, best);
 }
 
-/**
- * Discover the clone's top-level subprojects (#4): every immediate child dir that
- * holds a `package.json` (a verifiable Node project) — e.g. `["orchestrator",
- * "web"]`. The root's own package.json (if any) is intentionally NOT included as a
- * subproject token here: a changed file is attributed to `<subproject>/…`, and a
- * root project would match everything; the verify default already covers the root.
- * Best-effort: an unreadable clone dir yields [] (the resolver then returns
- * undefined and verify falls back to the clone root).
- */
-function discoverSubprojects(workingRepo: string): string[] {
+/** Top-level child dirs with package.json. Op-errors throw (#934 ID-011). */
+export function discoverSubprojects(workingRepo: string): string[] {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(workingRepo, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (err) {
+    const d = err instanceof Error ? err.message : String(err);
+    throw new Error(`family verify: failed to read project directory at "${workingRepo}": ${d}`);
   }
-  return entries
-    .filter((e) => e.isDirectory() && existsSync(join(workingRepo, e.name, "package.json")))
-    .map((e) => e.name)
-    .sort();
+  const found: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const pkg = join(workingRepo, e.name, "package.json");
+    try {
+      if (statSync(pkg).isFile()) found.push(e.name);
+    } catch (err) {
+      if (err !== null && typeof err === "object" && (err as { code?: unknown }).code === "ENOENT") {
+        continue;
+      }
+      const d = err instanceof Error ? err.message : String(err);
+      throw new Error(`family verify: failed to probe package.json at "${pkg}": ${d}`);
+    }
+  }
+  return found.sort();
 }
 
 /**
