@@ -1690,6 +1690,15 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         let result: Awaited<ReturnType<typeof sc.run>>;
         try {
+          // #966: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (single-slice already does via resumeSession / runAgentSandbox).
+          // Capability gate matches runner #955: incapable provider → fresh open
+          // with priorJudgeVerdicts still landed above (AC4 session-loss shape).
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const resumeSessionId =
+            typeof ctx.resumeSessionId === "string" && resumeCapable
+              ? ctx.resumeSessionId
+              : undefined;
           result = await this.runAgentSandbox({
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1714,6 +1723,9 @@ export class RealFamilyBackend implements FamilyBackend {
             // current full family diff. Persistent repairs are made only by the
             // separate family coder-fix worker.
             branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             // #930: same live judge seat as single-slice S3/S6 — T2 station
             // receipt on JUDGE_RECEIPT_TAG (not open-count `cmr` workerReceipt).
@@ -1721,7 +1733,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
-              this.resumeCapableForSpec(spec, ctx),
+              resumeCapable,
             ),
           });
         } catch (err) {
