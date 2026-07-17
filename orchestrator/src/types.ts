@@ -364,6 +364,12 @@ export interface ReviewerOutput {
   /** Residual declared open count; validated at the typed worker boundary. */
   readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
+  /**
+   * Optional authored coder-fix packet body already on residual paper.
+   * ADR 0138: residual projection may pass this through **verbatim** only;
+   * runner never invents a placeholder body from open-count / findings.
+   */
+  readonly fixPacketBody?: string;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }

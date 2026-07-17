@@ -123,7 +123,7 @@ describe("#877 residual read-word fate forks — survival", () => {
   it("R1: S6 empty findings without priorFindingDispositions ships (disposition court demolished)", async () => {
     // Findings count=0 is the only channel; disposition prose is not required.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
       { kind: "judge", status: "converged" },
     ]);
 
@@ -141,7 +141,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     // empty rounds escalated as "review/fix loop made no progress". Post-#877:
     // findings=[] closes via findings-count channel.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
       { kind: "judge", status: "converged" },
     ]);
 

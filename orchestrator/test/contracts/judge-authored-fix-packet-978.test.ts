@@ -23,8 +23,10 @@ import {
   legacyDispatchWorker,
 } from "../../src/dispatchWorker.js";
 import {
+  judgeContinueFromOpenCount,
   judgeResultFromVerdict,
   materializeLandingFixPacketBody,
+  projectResidualReviewerToJudge,
   requireFixPacketBody,
 } from "../../src/judgeStation.js";
 import {
@@ -195,6 +197,39 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
         blockingFindingCount: 0,
       }),
     ).toBeUndefined();
+  });
+
+  it("residual open-count never invents fixPacketBody; missing body fails at require (R4-C1)", () => {
+    const projected = projectResidualReviewerToJudge({
+      findingsCount: 2,
+      findings: [],
+    });
+    expect(projected?.status).toBe("continue");
+    expect(projected?.fixPacketBody).toBeUndefined();
+    expect(JSON.stringify(projected)).not.toMatch(
+      /\[residual\] open-count continue/,
+    );
+    expect(() =>
+      requireFixPacketBody({
+        status: "continue",
+        fixPacketBody: projected?.fixPacketBody,
+      }),
+    ).toThrow(/fixPacketBody/i);
+
+    // Open set + missing residual body also fails at landing materialize.
+    expect(() =>
+      materializeLandingFixPacketBody({
+        fixPacketBody: projected?.fixPacketBody,
+        blockingFindingCount: 2,
+        blockingFindingIdentityKeys: ["__open_1", "__open_2"],
+      }),
+    ).toThrow(/fixPacketBody|open set|ADR 0138/i);
+
+    // Authored residual body is verbatim pass-through only.
+    const authored = "  residual-authored  \nline2";
+    expect(
+      judgeContinueFromOpenCount(1, [], authored)?.fixPacketBody,
+    ).toBe(authored);
   });
 
   it("S5 landing packet body is byte-identical to judge fixPacketBody (contract)", async () => {
@@ -451,6 +486,10 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
       join(ROOT, "image/souls/fixer.md"),
       "utf8",
     );
+    const judgeStationSrc = readRepoFileSync(
+      join(ROOT, "src/judgeStation.ts"),
+      "utf8",
+    );
 
     // Strengthened dual-path ban (nit): any landing assignment of bare findings
     // rows as packet content, or soft invent of empty body at projection.
@@ -484,6 +523,11 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
     expect(dogfoodSrc).toMatch(
       /requires explicit non-empty fixPacketBody/,
     );
+
+    // Family CMR R4-C1 / ADR 0138: residual open-count never synthesises a
+    // placeholder fixPacketBody — second packing path is deleted.
+    expect(judgeStationSrc).not.toMatch(/residualFixPacketBodyFromFindings/);
+    expect(judgeStationSrc).not.toMatch(/\[residual\] open-count continue/);
 
     // S1: fixer soul teaches sole content = landing fixPacketBody verbatim.
     expect(fixerSoul).toMatch(/fixPacketBody/);

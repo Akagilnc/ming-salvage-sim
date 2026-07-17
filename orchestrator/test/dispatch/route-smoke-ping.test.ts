@@ -443,6 +443,7 @@ describe("#884 driver stage line logs", () => {
                   action: "fix_now",
                 },
               ], findingsCount: 1,
+              fixPacketBody: "fixture residual authored body",
             };
           }
           return { kind: "judge", status: "converged" };

@@ -259,6 +259,7 @@ export function decodeReviewerOpenCountReceipt(
     findingsCount?: unknown;
     findings?: unknown;
     priorFindingDispositions?: unknown;
+    fixPacketBody?: unknown;
   };
   const findingsCount =
     typeof receipt.findingsCount === "number" &&
@@ -273,6 +274,12 @@ export function decodeReviewerOpenCountReceipt(
   const priorFindingDispositions = Array.isArray(receipt.priorFindingDispositions)
     ? (receipt.priorFindingDispositions as ReadonlyArray<PriorFindingDisposition>)
     : undefined;
+  // ADR 0138: residual paper may already carry an authored body — transport
+  // only; never invent when absent (projection pass-through is separate).
+  const fixPacketBody =
+    typeof receipt.fixPacketBody === "string"
+      ? receipt.fixPacketBody
+      : undefined;
   return {
     kind: "reviewer",
     findings,
@@ -280,6 +287,7 @@ export function decodeReviewerOpenCountReceipt(
     ...(priorFindingDispositions !== undefined
       ? { priorFindingDispositions }
       : {}),
+    ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
   };
 }
 

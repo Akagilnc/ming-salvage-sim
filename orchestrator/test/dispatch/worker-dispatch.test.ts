@@ -379,11 +379,14 @@ describe("ADR 0131 reviewer count envelope", () => {
       findingsCount: 1,
       // Illegal cargo shape at the untyped boundary — decoder empties rows.
       findings: "not-an-array",
+      // ADR 0138: residual must author body for coder-fix; never invent.
+      fixPacketBody: "fixture residual authored body",
     });
     expect(decodedNonArrayCargo).toEqual({
       kind: "reviewer",
       findings: [],
       findingsCount: 1,
+      fixPacketBody: "fixture residual authored body",
     });
 
     class NonArrayFindingsBackend extends DispatchBackend {
@@ -428,10 +431,13 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      // ADR 0138: residual synthetic packet body; no bare findings pack.
-      fixPacketBody: expect.any(String),
+      // ADR 0138: residual authored body pass-through; no bare findings pack.
+      fixPacketBody: "fixture residual authored body",
       rawReviewerArtifacts: { reviewerSessionId: "reviewer-session-non-array" },
     });
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
   });
@@ -464,6 +470,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 2,
                 ...(findings !== undefined ? { findings: [...findings] } : { findings: [] }),
+                fixPacketBody: "fixture residual authored body",
               },
               sessionId: "reviewer-session-positive-missing-cargo",
             };
@@ -488,15 +495,60 @@ describe("ADR 0131 reviewer count envelope", () => {
       expect(s5Index).toBeGreaterThan(-1);
       expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
       expect(backend.landings[s5Index]).toMatchObject({
-        fixPacketBody: expect.any(String),
+        fixPacketBody: "fixture residual authored body",
         rawReviewerArtifacts: {
           reviewerSessionId: "reviewer-session-positive-missing-cargo",
           statement: "the previous reviewer raw artifacts are here",
         },
       });
+      expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+        "[residual] open-count continue",
+      );
       expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     },
   );
+
+  it("residual open-count without authored body fails loud at coder-fix edge (ADR 0138 R4-C1)", async () => {
+    class ResidualNoBodyBackend extends DispatchBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            // Positive residual open-count with no authored body — runner must
+            // not invent "[residual] open-count continue …"; fail loud instead.
+            output: {
+              kind: "reviewer",
+              findingsCount: 1,
+              findings: [],
+            },
+            sessionId: "reviewer-session-residual-no-body",
+          };
+        }
+        if (spec.id === "S5") {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new ResidualNoBodyBackend();
+    const result = await runOrchestrator({ issueNumber: 978, backend });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorPackage?.reason ?? "").toMatch(/fixPacketBody/i);
+    expect(backend.specs.some((spec) => spec.id === "S5")).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("[residual] open-count continue");
+  });
 
   it("positive findingsCount with structured cargo still preserves raw reviewer artifacts", async () => {
     const finding = {
@@ -527,6 +579,7 @@ describe("ADR 0131 reviewer count envelope", () => {
               kind: "reviewer",
               findingsCount: 1,
               findings: [finding],
+              fixPacketBody: "fixture residual authored body",
             },
             sessionId: "reviewer-session-positive-with-cargo",
           };
@@ -551,12 +604,15 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
+      fixPacketBody: "fixture residual authored body",
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-positive-with-cargo",
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
@@ -655,6 +711,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 1,
                 findings: [finding],
+                fixPacketBody: "fixture residual authored body",
               },
               monitorHandle,
             },
@@ -712,7 +769,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
+      fixPacketBody: "fixture residual authored body",
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-s4-resume",
         stdoutPath: "/host/ledger/S3.stdout",
@@ -720,6 +777,9 @@ describe("ADR 0131 reviewer count envelope", () => {
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
@@ -806,6 +866,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 1,
                 findings: [findingR1],
+                fixPacketBody: "fixture residual authored body",
               },
               monitorHandle: monitorR1,
             },
@@ -834,6 +895,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 1,
                 findings: [findingR2],
+                fixPacketBody: "fixture residual authored body",
               },
               monitorHandle: monitorR2,
             },
@@ -884,7 +946,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
+      fixPacketBody: "fixture residual authored body",
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-r2",
         stdoutPath: "/host/ledger/S6.stdout",
@@ -892,6 +954,9 @@ describe("ADR 0131 reviewer count envelope", () => {
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // Must not still point at r1.
     expect(backend.landings[s5Index]?.rawReviewerArtifacts?.reviewerSessionId).not.toBe(
@@ -963,6 +1028,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 2,
                 findings: [findingA, findingB],
+                fixPacketBody: "fixture residual authored body",
               },
             },
             {
@@ -990,6 +1056,7 @@ describe("ADR 0131 reviewer count envelope", () => {
                 kind: "reviewer",
                 findingsCount: 2,
                 findings: [findingA, findingB],
+                fixPacketBody: "fixture residual authored body",
               },
             },
             {
@@ -1058,9 +1125,12 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
-    // ADR 0138: residual synthetic packet body; scope is opaque transport only.
-    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
-      expect.stringContaining("[residual] open-count continue"),
+    // ADR 0138: residual authored body pass-through; scope is opaque transport only.
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
     );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);

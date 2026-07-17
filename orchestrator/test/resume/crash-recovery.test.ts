@@ -121,7 +121,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -222,7 +222,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -442,7 +442,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
 
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 },
+      output: { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
     })).toEqual({ kind: "next", step: "S5" });
 
     const backend = new ResumeBackend({
@@ -452,7 +452,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
       ],
     });
@@ -471,7 +471,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", { kind: "judge", status: "converged" }),

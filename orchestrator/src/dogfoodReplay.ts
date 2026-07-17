@@ -115,6 +115,26 @@ function dogfoodFixPacketBody(finding: Finding): string {
   );
 }
 
+/** Residual open-count paper with explicit authored body (pass-through only). */
+function residualOpenReviewer(
+  findings: ReadonlyArray<Finding>,
+  findingsCount: number,
+  extra: Record<string, unknown> = {},
+): WorkerOutput {
+  const head = findings[0];
+  const fixPacketBody = head
+    ? dogfoodFixPacketBody(head)
+    : "dogfood residual open-count authored body (ADR 0138 pass-through)";
+  return {
+    kind: "reviewer",
+    findings: [...findings],
+    findingsCount,
+    fixPacketBody,
+    ...extra,
+  } as WorkerOutput;
+}
+
+
 export type DogfoodReplayClassification =
   | "blocking"
   | "accepted_suppressed"
@@ -702,38 +722,25 @@ function noProgressDecisionLedger(
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S3", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
-      },
+      output: residualOpenReviewer(findings, findingsCount),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
+      output: residualOpenReviewer(findings, findingsCount, {
         priorFindingDispositions: dispositions,
-      },
+      }),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
+      output: residualOpenReviewer(findings, findingsCount, {
         priorFindingDispositions: dispositions,
-      },
+      }),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S8", {
@@ -815,14 +822,12 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(
     undefined,
     [
-      { kind: "reviewer", findings: [originalFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [changedFinding], findingsCount: 1,
+      residualOpenReviewer([originalFinding], 1),
+      residualOpenReviewer([changedFinding], 1, {
         priorFindingDispositions: [
           { identityKey: originalKey, status: "verified-closed" },
         ],
-      },
+      }),
       { kind: "judge", status: "converged" },
     ],
     [
@@ -884,14 +889,12 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
       }),
     ],
   }, [
-    {
-      kind: "reviewer",
-      findings: [siblingFinding], findingsCount: 1,
-        priorFindingDispositions: [
+    residualOpenReviewer([siblingFinding], 1, {
+      priorFindingDispositions: [
         { identityKey: targetKey, status: "verified-closed" },
         { identityKey: siblingKey, status: "still-active" },
       ],
-    },
+    }),
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
   // #877: no-progress court demolished; continue_fixing + findings-count ships
@@ -1733,7 +1736,7 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   });
   const key = findingIdentityKey(closureFinding);
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
+    residualOpenReviewer([closureFinding], 1),
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
@@ -1917,7 +1920,7 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
     location: "orchestrator/src/runner.ts:376",
   });
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
+    residualOpenReviewer([closureFinding], 1),
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
@@ -2338,28 +2341,28 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "reviewer_text_only_no_progress",
     finding: textOnlyNoProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [textOnlyNoProgressFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [textOnlyNoProgressNarrowedFinding], findingsCount: 1,
+      residualOpenReviewer([textOnlyNoProgressFinding], 1),
+      residualOpenReviewer([textOnlyNoProgressNarrowedFinding], 1, {
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
         ],
-      },
-      {
-        kind: "reviewer",
-        findings: [
+      }),
+      residualOpenReviewer(
+        [
           {
             ...textOnlyNoProgressFinding,
             claim_quote: "changes cannot prove implementation progress",
             suggested_fix: "same finding with another wording-only review change",
           },
-        ], findingsCount: 1,
-        priorFindingDispositions: [
-          { identityKey: textOnlyNoProgressKey, status: "still-active" },
-          { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
         ],
-      },
+        1,
+        {
+          priorFindingDispositions: [
+            { identityKey: textOnlyNoProgressKey, status: "still-active" },
+            { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
+          ],
+        },
+      ),
     ],
   });
   const noObservableProgressFinding = runnerFinding({
@@ -2371,21 +2374,17 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "claimed_attempt_without_observable_progress",
     finding: noObservableProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [noObservableProgressFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [noObservableProgressFinding], findingsCount: 1,
+      residualOpenReviewer([noObservableProgressFinding], 1),
+      residualOpenReviewer([noObservableProgressFinding], 1, {
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
-      },
-      {
-        kind: "reviewer",
-        findings: [noObservableProgressFinding], findingsCount: 1,
+      }),
+      residualOpenReviewer([noObservableProgressFinding], 1, {
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
-      },
+      }),
     ],
   });
   const moduleDeclarationSource = await moduleDeclarationReplay();

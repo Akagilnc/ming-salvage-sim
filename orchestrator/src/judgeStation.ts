@@ -498,12 +498,19 @@ export function liveDispositionsForOpenCount(
  *     historical single-slice paper). Positive count → continue is resume
  *     compatibility only — not a second live court.
  *
+ * ADR 0138 / #978: never invent a residual placeholder `fixPacketBody`.
+ * When historical paper already carries an authored non-empty body, pass it
+ * through **verbatim** (transport only). When absent, omit the field — live
+ * coder-fix edges fail loud via {@link requireFixPacketBody} /
+ * {@link materializeLandingFixPacketBody}; do not synthesise runner cargo.
+ *
  * Returns undefined when count is not a positive open-count (caller maps
  * zero / escalate / unusable separately).
  */
 export function judgeContinueFromOpenCount(
   findingsCount: number,
   findings: ReadonlyArray<Finding> = [],
+  fixPacketBody?: unknown,
 ): JudgeResult | undefined {
   if (
     typeof findingsCount !== "number" ||
@@ -513,26 +520,20 @@ export function judgeContinueFromOpenCount(
     return undefined;
   }
   const cargo = [...findings];
-  // Residual historical paper only — still must carry ADR 0138 packet body so
-  // resume cannot fall back to bare-findings packing on the coder-fix edge.
+  // Pass-through only — never invent residual placeholder bodies (ADR 0138).
+  const authored =
+    typeof fixPacketBody === "string" &&
+    fixPacketBody.length > 0 &&
+    fixPacketBody.trim().length > 0
+      ? fixPacketBody
+      : undefined;
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
     findings: cargo,
-    fixPacketBody: residualFixPacketBodyFromFindings(cargo, findingsCount),
+    ...(authored !== undefined ? { fixPacketBody: authored } : {}),
   };
-}
-
-/**
- * Residual-only synthetic packet body when historical paper lacks authored text.
- * ADR 0131: do not read severity/action/prose from findings cargo — count only.
- */
-function residualFixPacketBodyFromFindings(
-  _findings: ReadonlyArray<Finding>,
-  findingsCount: number,
-): string {
-  return `[residual] open-count continue with ${findingsCount} live finding(s)`;
 }
 
 /**
@@ -547,13 +548,16 @@ function residualFixPacketBodyFromFindings(
  * emit T2 `kind:"judge"` tri-state directly.
  *
  * - escalate present → T2 kind:"judge" status:"escalate" (wins over count)
- * - positive open-count → continue (via {@link judgeContinueFromOpenCount})
+ * - positive open-count → continue (via {@link judgeContinueFromOpenCount});
+ *   body only when residual paper already authored one (verbatim pass-through)
  * - zero / missing / non-integer → undefined (caller maps unusable; never silent clean)
  */
 export function projectResidualReviewerToJudge(residual: {
   readonly findingsCount: number;
   readonly findings?: ReadonlyArray<Finding>;
   readonly escalate?: Escalation;
+  /** Optional authored packet body already on residual paper — transport only. */
+  readonly fixPacketBody?: unknown;
 }): JudgeResult | undefined {
   if (residual.escalate !== undefined) {
     return mintJudgeEscalate(residual.escalate);
@@ -561,6 +565,7 @@ export function projectResidualReviewerToJudge(residual: {
   return judgeContinueFromOpenCount(
     residual.findingsCount,
     residual.findings ?? [],
+    residual.fixPacketBody,
   );
 }
 
