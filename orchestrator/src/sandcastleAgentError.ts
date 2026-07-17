@@ -7,42 +7,15 @@
  * (voided #964 signature tripwire; grokAgent stream contract ignores non-JSON).
  */
 
-/** Walk `cause` → `error` → `defect` (Effect Die) like receiptRecovery. */
-function* walkErrorChain(error: unknown): Generator<unknown> {
-  let current: unknown = error;
-  for (let depth = 0; depth < 8 && current != null; depth += 1) {
-    yield current;
-    if (typeof current !== "object") break;
-    const bag = current as {
-      cause?: unknown;
-      error?: unknown;
-      defect?: unknown;
-    };
-    if (bag.cause !== undefined && bag.cause !== current) {
-      current = bag.cause;
-      continue;
-    }
-    if (bag.error !== undefined && bag.error !== current) {
-      current = bag.error;
-      continue;
-    }
-    if (bag.defect !== undefined && bag.defect !== current) {
-      current = bag.defect;
-      continue;
-    }
-    break;
-  }
-}
+import { walkErrorChain } from "./receiptRecovery.js";
 
 function nodeLooksLikeAgentError(node: unknown): boolean {
   if (node === null || typeof node !== "object") return false;
   const e = node as { readonly _tag?: unknown; readonly name?: unknown };
   if (e._tag === "AgentError") return true;
-  if (typeof e.name === "string") {
-    // Bare "AgentError" or Effect FiberFailure display name.
-    if (e.name === "AgentError") return true;
-    if (/\bAgentError\b/.test(e.name)) return true;
-  }
+  // Bare "AgentError" or Effect FiberFailure display name, e.g. "(FiberFailure) AgentError".
+  // Word-boundary regex covers exact equality; no separate exact-eq branch.
+  if (typeof e.name === "string" && /\bAgentError\b/.test(e.name)) return true;
   return false;
 }
 

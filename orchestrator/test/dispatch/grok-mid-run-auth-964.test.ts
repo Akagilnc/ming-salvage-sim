@@ -4,8 +4,10 @@
  * Seams under test (real entry, not internals):
  *   1. grokAgent buildPrintCommand — headless-only CLI shape (never interactive login form)
  *   2. Containerfile grok pin — fail-fast non-interactive auth CLI (0.2.102+)
- *   3. runMergerAgent / resolveMergeConflict — Sandcastle AgentError becomes Action-typed
- *      failure (structured non-resolve → conflicted), never uncaught FiberFailure
+ *      (canonical pin assert; Containerfile string-match only — live CLI probe not required)
+ *   3. runMergerAgent / resolveMergeConflict / mergeChild — Sandcastle AgentError becomes
+ *      Action-typed failure (structured non-resolve → conflicted + reason), never uncaught
+ *      FiberFailure
  *   4. public ABI — no new cause token like auth_expired
  *   5. route-smoke bare-ping shape — startup auth probe not rewritten
  *
@@ -22,11 +24,16 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+import { mergeChild } from "../../src/family/merger.js";
 import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../src/family/realFamilyBackend.js";
-import type { ConflictResolveRequest } from "../../src/family/types.js";
+import type {
+  ConflictResolveRequest,
+  MergeRequest,
+  MergeResult,
+} from "../../src/family/types.js";
 import { grokAgent } from "../../src/grokAgent.js";
 import { PUBLIC_FAILED_CAUSES } from "../../src/publicResult.js";
 import { barePingArgv } from "../../src/realBackend.js";
@@ -142,6 +149,20 @@ class AgentErrorSandboxBackend extends RealFamilyBackend {
   }
 }
 
+/** Deterministic merge already conflicted → mergeChild routes to resolveMergeConflict. */
+class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
+  override async mergeChildIntoFamilyBase(
+    _child: MergeRequest,
+  ): Promise<MergeResult> {
+    return {
+      familyHead: "family-head",
+      familyHeadBefore: "family-head",
+      childHead: "child-head",
+      conflicted: true,
+    };
+  }
+}
+
 describe("#964 grok headless auth — native fail-fast surface", () => {
   it("grokAgent print command stays headless (prompt-file + streaming-json; no login subcommand)", () => {
     const cmd = grokAgent("grok-4.5").buildPrintCommand({
@@ -158,8 +179,9 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
   });
 
   it("pins container grok to a fail-fast non-interactive release (0.2.102+)", () => {
+    // Canonical pin assert (#964 CR R1 N2/N4): string-match Containerfile only.
     // 0.2.93 headless empty-auth entered device-code wait (flight3); 0.2.102
-    // fails with "Not signed in" immediately. Pin is the worker-entry block.
+    // fails with "Not signed in" immediately. Live CLI probe not required for AC.
     const containerfile = readFileSync(
       join(orchestratorRoot, "image", "Containerfile"),
       "utf8",
@@ -210,7 +232,7 @@ describe("#964 AgentError → Action typed failure (merger worker entry)", () =>
     expect(outcome.reason).toMatch(/Not signed in|AgentError|invocation failed/i);
   });
 
-  it("resolveMergeConflict turns AgentError into conflicted typed result (no uncaught throw)", async () => {
+  it("resolveMergeConflict turns AgentError into conflicted typed result with reason (no uncaught throw)", async () => {
     const be = new AgentErrorSandboxBackend(baseOpts(makeRepo()));
     const result = await be.resolveMergeConflict({
       childIssue: 964,
@@ -220,5 +242,20 @@ describe("#964 AgentError → Action typed failure (merger worker entry)", () =>
     expect(result.escalation).toBeUndefined();
     expect(result.familyHeadBefore).toBe("family-head");
     expect(result.childHead).toBe("child-head");
+    // #964 S3: non-empty agent reason survives MergeResult for re-login ops.
+    expect(result.reason).toMatch(/Not signed in|invocation failed/i);
+  });
+
+  it("mergeChild wires AgentError → Action-owned conflicted (no process throw)", async () => {
+    // #964 S4: thinnest real entry above resolveMergeConflict (Action path).
+    const be = new MergeChildAgentErrorBackend(baseOpts(makeRepo()));
+    const result = await mergeChild(be, {
+      childIssue: 964,
+      childBranch: "feat/964",
+    });
+    expect(result.conflicted).toBe(true);
+    expect(result.escalation).toBeUndefined();
+    expect(result.conflictResolvedByLlm).toBeUndefined();
+    expect(result.reason).toMatch(/Not signed in|invocation failed/i);
   });
 });
