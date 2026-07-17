@@ -178,7 +178,7 @@ export interface FamilyLedgerEntry {
    *     Written after the shipped PR has passed the online review/PR-check loop.
    *     The spine's resume guard reads it so only a fully-converged HEAD skips
    *     re-verify / re-cmr / re-ship / re-loop. NOT counted as merged.
-   *   - `"pr_merged"` — the TERMINAL family auto-merge marker (#602). Written
+   *   - `"pr_merged"` — the TERMINAL family landing-merge marker (#602 / #941). Written
    *     after live GitHub confirms the PR merged at the converged head. NOT
    *     counted as merged (no `childIssue`).
    *   - `"post_merge_cleanup"` — the TERMINAL post-merge cleanup marker (#603).
