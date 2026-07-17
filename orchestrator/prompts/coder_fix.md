@@ -3,7 +3,7 @@
 Read the role soul first (live-mounted):
 
 ```text
-/home/agent/.orchestrator/souls/coder.md
+/home/agent/.orchestrator/souls/fixer.md
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
@@ -31,10 +31,10 @@ and do not repeat the same escalation unless a concrete blocker remains.
 
 Before reporting completion, run the mandatory self-check 二连 (unconditional —
 not only when `.fix-focus.md` is present):
-1. **Same-pattern** — does the same defect class appear elsewhere in the current
-   diff / finding family? Fix those sites too (修类不修点).
-2. **Fix-introduced** — did this fix break a neighbor? Re-run focused tests /
-   typecheck that cover touched seams before commit.
+1. **Same-pattern** — does the same defect class appear elsewhere? Sweep and
+   fix those sites too (修类不修点).
+2. **Fix-introduced** — did this fix break a neighbor? Run the repository
+   canonical test entry (`npm test`) before commit; a red run is not submittable.
 
 Legal refuse (coder-fix): never flip/delete base assertions or contradict written
 AC to close a finding. Fix the rest, commit, and emit a `status:"refused"`
