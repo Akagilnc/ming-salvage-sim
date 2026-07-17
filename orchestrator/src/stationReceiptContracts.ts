@@ -198,9 +198,40 @@ export interface JudgeLiveDisposition {
   readonly action: "live";
 }
 
+/**
+ * Judge suppress row (#952): park a finding as internal terminal `suppressed`
+ * in the findings state store (not a public result / cause).
+ *
+ * Shape only: non-empty `evidence` + exactly one ground —
+ * `groundTicket` (numeric issue number) XOR `ownerRecordPointer` (owner batch
+ * pointer). Ground authenticity is the judge's authority, not this schema.
+ *
+ * Vocabulary boundary (#952 4b): this `action: "suppress"` + store status
+ * `suppressed` is the **judge / findings-store seam**. It is **not** the CMR
+ * reviewer governance carrier `accepted_suppressed` ({@link FindingDispositionKind}
+ * in types.ts / priorFindingDispositions prompts). Do not alias the three
+ * tokens; cross-comments live at both type definitions.
+ */
+export type JudgeSuppressDisposition =
+  | {
+      readonly identityKey: string;
+      readonly action: "suppress";
+      readonly evidence: string;
+      readonly groundTicket: number;
+      readonly ownerRecordPointer?: never;
+    }
+  | {
+      readonly identityKey: string;
+      readonly action: "suppress";
+      readonly evidence: string;
+      readonly ownerRecordPointer: string;
+      readonly groundTicket?: never;
+    };
+
 export type JudgeFindingDisposition =
   | JudgeKillDisposition
-  | JudgeLiveDisposition;
+  | JudgeLiveDisposition
+  | JudgeSuppressDisposition;
 
 const killDispositionSchema = z
   .object({
@@ -218,11 +249,31 @@ const liveDispositionSchema = z
   })
   .strict();
 
+const suppressWithTicketSchema = z
+  .object({
+    identityKey: nonEmptyString,
+    action: z.literal("suppress"),
+    evidence: nonEmptyString,
+    groundTicket: z.number().int().positive(),
+  })
+  .strict();
+
+const suppressWithOwnerPointerSchema = z
+  .object({
+    identityKey: nonEmptyString,
+    action: z.literal("suppress"),
+    evidence: nonEmptyString,
+    ownerRecordPointer: nonEmptyString,
+  })
+  .strict();
+
 /**
  * Parse one finding disposition row.
  *
  * Kill rows validate the four-reason enum + non-empty evidence.
  * Live rows reject smuggled `reason` / `evidence` keys (strict).
+ * Suppress rows (#952) require non-empty evidence + exactly one ground
+ * (`groundTicket` XOR `ownerRecordPointer`); invent `reason` fields fail strict.
  *
  * Sole validation path for disposition rows — used both by the public parser
  * and by {@link decodeJudgeVerdict} so nested continue tables never surface
@@ -268,11 +319,44 @@ export function parseFindingDisposition(
     return ok(parsed.data);
   }
 
+  if (action === "suppress") {
+    if (typeof rec.identityKey !== "string" || rec.identityKey.trim().length === 0) {
+      return fail("finding disposition identityKey must be a non-empty string");
+    }
+    if (typeof rec.evidence !== "string" || rec.evidence.trim().length === 0) {
+      return fail("finding disposition evidence must be a non-empty string");
+    }
+    if (rec.reason !== undefined) {
+      return fail(
+        "suppress disposition must not invent a reason field (use evidence + groundTicket|ownerRecordPointer only)",
+      );
+    }
+    const hasTicket = rec.groundTicket !== undefined;
+    const hasPointer = rec.ownerRecordPointer !== undefined;
+    if (!hasTicket && !hasPointer) {
+      return fail(
+        "suppress disposition requires exactly one ground: groundTicket or ownerRecordPointer",
+      );
+    }
+    if (hasTicket && hasPointer) {
+      return fail(
+        "suppress disposition requires exactly one ground; dual groundTicket+ownerRecordPointer is forbidden",
+      );
+    }
+    if (hasTicket) {
+      const parsed = suppressWithTicketSchema.safeParse(rec);
+      if (!parsed.success) return zodFail("finding disposition", parsed.error);
+      return ok(parsed.data as JudgeSuppressDisposition);
+    }
+    const parsed = suppressWithOwnerPointerSchema.safeParse(rec);
+    if (!parsed.success) return zodFail("finding disposition", parsed.error);
+    return ok(parsed.data as JudgeSuppressDisposition);
+  }
+
   return fail(
-    `finding disposition action must be refute|live, got ${String(action)}`,
+    `finding disposition action must be refute|live|suppress, got ${String(action)}`,
   );
 }
-
 /**
  * Zod adapter around {@link parseFindingDisposition}: keeps continue-verdict
  * arrays on one validation path with readable issue messages (no bare union).

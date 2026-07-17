@@ -21,8 +21,11 @@ import type {
   JudgeFindingDisposition,
   JudgeVerdictStatus,
 } from "./stationReceiptContracts.js";
+// Single source for findings-store status tokens (#952 / ADR 0129).
+import type { FindingStoreStatus } from "./findingsStateStore.js";
 
 export type { JudgeFindingDisposition, JudgeVerdictStatus };
+export type { FindingStoreStatus };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -232,6 +235,12 @@ export interface Finding {
  * the runner no longer reads a route field to decide a finding's fate.
  * `accepted_suppressed` remains as the governance carrier for accepted
  * suppression (source/scope/bounded reopen).
+ *
+ * Vocabulary boundary (#952 4b): this is the **CMR reviewer governance seam**
+ * (`FindingDispositionKind` / priorFindingDispositions). It is **not** the
+ * judge disposition `action: "suppress"` nor the findings-store terminal
+ * `suppressed` (see `stationReceiptContracts.ts` + `findingsStateStore.ts`).
+ * Two seams, two vocabularies — do not alias or invent a third silent token.
  */
 export type FindingDispositionKind = "accepted_suppressed";
 
@@ -249,25 +258,27 @@ export interface FindingDispositionEvidence {
   readonly boundedReopen?: string;
 }
 
+/**
+ * Ledger findings-store row. Status tokens are single-sourced in
+ * {@link FindingStoreStatus} (`findingsStateStore.ts`) — do not redeclare.
+ */
 export interface FindingDisposition {
   readonly identityKey: string;
   /**
-   * Terminal / open ledger statuses. `#925` judge kill rows flip to `refuted`
-   * (legal terminal flip alongside fresh-review final flips — ADR 0129).
+   * Terminal / open ledger statuses (ADR 0129). Single source:
+   * `FINDING_STORE_STATUSES` in findingsStateStore.ts.
+   * - `#925` judge kill → `refuted`
+   * - `#952` judge suppress → `suppressed` (internal terminal; not public ABI)
+   * - CMR governance carrier status `accepted_suppressed` remains a different
+   *   seam from judge `suppress` / store `suppressed` (#952 4b).
    */
-  readonly status:
-    | "unrepaired"
-    | "wont_fix"
-    | "rejected"
-    | "accepted_suppressed"
-    | "refuted";
+  readonly status: FindingStoreStatus;
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
 }
-
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
