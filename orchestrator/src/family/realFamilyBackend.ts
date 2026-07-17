@@ -542,6 +542,36 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
+  /**
+   * #966 / #979 — resolve a Sandcastle resumeSession id for family workers.
+   * Capability gate + existsOnHost presence check; dead / incapable → undefined
+   * (fresh open). Shared by family CMR judge and family coder-fix — one bus.
+   */
+  protected async resolveSandcastleResumeSessionId(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    agent: sc.AgentProvider,
+  ): Promise<string | undefined> {
+    const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+    let resumeSessionId: string | undefined =
+      typeof ctx.resumeSessionId === "string" && resumeCapable
+        ? ctx.resumeSessionId
+        : undefined;
+    if (
+      resumeSessionId !== undefined &&
+      agent.sessionStorage?.existsOnHost !== undefined
+    ) {
+      const present = await agent.sessionStorage.existsOnHost(
+        this.opts.workingRepo,
+        resumeSessionId,
+      );
+      if (!present) {
+        resumeSessionId = undefined;
+      }
+    }
+    return resumeSessionId;
+  }
+
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
@@ -1698,22 +1728,11 @@ export class RealFamilyBackend implements FamilyBackend {
           // omit resumeSession (fresh open) — still keep priorJudgeVerdicts.
           const resumeCapable = this.resumeCapableForSpec(spec, ctx);
           const agent = this.agentForSpec(spec, ctx);
-          let resumeSessionId: string | undefined =
-            typeof ctx.resumeSessionId === "string" && resumeCapable
-              ? ctx.resumeSessionId
-              : undefined;
-          if (
-            resumeSessionId !== undefined &&
-            agent.sessionStorage?.existsOnHost !== undefined
-          ) {
-            const present = await agent.sessionStorage.existsOnHost(
-              this.opts.workingRepo,
-              resumeSessionId,
-            );
-            if (!present) {
-              resumeSessionId = undefined;
-            }
-          }
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
           result = await this.runAgentSandbox({
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1864,6 +1883,15 @@ export class RealFamilyBackend implements FamilyBackend {
         try {
           // #919 R3: T2 coder station receipt (CODER_RECEIPT_TAG + schema) —
           // same as single-slice; ordinary committed cargo stays outside SO.
+          // #979: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (same bus as family CMR #966 / single-slice #924).
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const agent = this.agentForSpec(spec, ctx);
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1875,16 +1903,19 @@ export class RealFamilyBackend implements FamilyBackend {
               outcomeLanding,
               fixFocusLanding,
             ),
-            agent: this.agentForSpec(spec, ctx),
+            agent,
             maxIterations: spec.maxIter,
             branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             // #919 post-R8 M1 / R3: T2 coderStationReceiptSchema — refuse
             // traffic survives the family decode path (not decision-gate dual).
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
-              this.resumeCapableForSpec(spec, ctx),
+              resumeCapable,
             ),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
