@@ -987,3 +987,186 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
     )
     assert secret_q not in other_text
     assert extracted not in other_text
+
+
+def _assert_oral_decree_withheld_not_shared(db, state, *, mid_sec, secret_q, speakers, content):
+    """Shared assertions: oral pin withheld; never enters shared knowledge sources."""
+    sec_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+    ).fetchone()["knowledge_status"]
+    assert sec_status == "withheld"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_sec}",),
+    ).fetchone()[0] == 0
+    assert all(secret_q not in body for body in _shared_bodies(db))
+    assert all(secret_q not in body for body in _event_bodies(db))
+    other = next(
+        m for m in _active_ministers(db, content)
+        if m.name not in speakers
+    )
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert secret_q not in other_text
+
+
+def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
+    """非新建 pending「更新」：stage 钉 pin 后 commit 必须消费，口谕 withheld 不进共享。
+
+    已有密令 → 皇帝对甲口述改旨 → stage 更新 → 确认语 → commit。
+    跨人承办：assignee=乙，origin speaker=甲。
+    """
+    import json as _json
+
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+    assert speaker.name != assignee.name
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "初旨：暗访田宅。", [],
+    )
+    assert oid > 0
+
+    secret_q = (
+        "前令范围太窄，着尔扩至国丈典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    new_content = "扩查国丈典当及内库往来，事密勿使司礼监知。"
+    confirm_q = "准。就按此改。"
+
+    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新",
+        minister_name=speaker.name, target_id=oid,
+        payload={
+            "new_title": "密查国丈（扩）",
+            "new_content": new_content,
+            "deadline_months": 0,
+        },
+    )
+    staged = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+    ).fetchone()
+    staged_payload = _json.loads(staged["payload_json"] or "{}")
+    assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
+
+    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    assert mid_confirm > mid_sec
+
+    applied = db.commit_pending_actions(
+        state, minister_name=speaker.name, action_ids={pid}, content=content,
+    )
+    assert applied and applied[0]["kind"] == "secret_order"
+
+    order = db.get_secret_order(oid)
+    assert order is not None
+    assert new_content in (order.get("content") or "")
+
+    _assert_oral_decree_withheld_not_shared(
+        db, state, mid_sec=mid_sec, secret_q=secret_q,
+        speakers={speaker.name, assignee.name}, content=content,
+    )
+    conf_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+    ).fetchone()["knowledge_status"]
+    # Confirm must not steal pin (may release/private/held; must not be the sole withheld).
+    assert conf_status != "withheld" or mid_confirm == mid_sec
+
+
+def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
+    """非新建 pending「催办」：stage 钉 pin 后 commit 必须消费，口谕 withheld 不进共享。"""
+    import json as _json
+
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访田宅。", [], deadline_months=6,
+    )
+    assert oid > 0
+
+    secret_q = (
+        "前令限得太宽，着尔一个月内办结回奏，事密勿使司礼监转呈，亦不得走漏半句。"
+    )
+    confirm_q = "准。加紧催办。"
+
+    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="催办",
+        minister_name=speaker.name, target_id=oid,
+        payload={"deadline_months": 1, "reason": "御限收紧"},
+    )
+    staged = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+    ).fetchone()
+    staged_payload = _json.loads(staged["payload_json"] or "{}")
+    assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
+
+    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    assert mid_confirm > mid_sec
+
+    applied = db.commit_pending_actions(
+        state, minister_name=speaker.name, action_ids={pid}, content=content,
+    )
+    assert applied and applied[0]["kind"] == "secret_order"
+
+    _assert_oral_decree_withheld_not_shared(
+        db, state, mid_sec=mid_sec, secret_q=secret_q,
+        speakers={speaker.name, assignee.name}, content=content,
+    )
+    conf_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+    ).fetchone()["knowledge_status"]
+    assert conf_status != "withheld" or mid_confirm == mid_sec
+
+
+def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game):
+    """非新建「记进展」「提交核议」：stage pin 消费后口谕 withheld（修类 sweep）。"""
+    import json as _json
+
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+
+    for action, payload_extra, setup in (
+        (
+            "记进展",
+            {"note": "已密访东城典当三处。"},
+            lambda: db.create_secret_order(
+                state, assignee.name, "密查甲", "暗访田宅甲。", [],
+            ),
+        ),
+        (
+            "提交核议",
+            {"claim": "国丈田宅已暗记在册，请核。"},
+            lambda: db.create_secret_order(
+                state, assignee.name, "密查乙", "暗访田宅乙。", [],
+            ),
+        ),
+    ):
+        oid = setup()
+        secret_q = (
+            f"关于{action}：着尔按朕口谕办理，凡内库往来皆须暗中簿记，"
+            "不得走漏半句，亦不可经司礼监转呈。"
+        )
+        mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+        pid = db.stage_pending_action(
+            state.turn, kind="secret_order", action=action,
+            minister_name=speaker.name, target_id=oid,
+            payload=payload_extra,
+        )
+        staged = db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+        ).fetchone()
+        staged_payload = _json.loads(staged["payload_json"] or "{}")
+        assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec, action
+
+        db.append_chat_message(speaker.name, state.turn, "user", f"准。{action}。")
+        applied = db.commit_pending_actions(
+            state, minister_name=speaker.name, action_ids={pid}, content=content,
+        )
+        assert applied and applied[0]["kind"] == "secret_order", action
+        _assert_oral_decree_withheld_not_shared(
+            db, state, mid_sec=mid_sec, secret_q=secret_q,
+            speakers={speaker.name, assignee.name}, content=content,
+        )
