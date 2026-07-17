@@ -3815,24 +3815,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stepSessionId,
                   );
                 } else if (projected.blockingIdentityKeys.length === 0) {
-                  // #919 M6 / family M1 isomorphic: empty continue is court
-                  // contract drift — never empty-spin S5. Unusable (non-judge)
-                  // still routes to S5 above; route() continue→S5 stays for
-                  // non-empty live sets only.
-                  const reason =
-                    `judge ${step} continue with 0 live findings ` +
-                    `(court contract drift; empty continue must not spin coder-fix)`;
-                  return await errorTermination(step, new Error(reason), {
-                    output,
-                    findingDispositions,
-                    stopSummary: contractDriftStopSummary({
-                      summary: reason,
-                      repairHint:
-                        "judge status:continue requires non-empty live identity keys; " +
-                        "re-open the same judge seat or repair the seat envelope — " +
-                        "do not empty-spin S5 coder-fix",
-                    }),
-                  });
+                  // #952: 0 live + non-empty terminal flips (suppress/refute) =
+                  // terminal court closure — apply flips (above), do not S5,
+                  // route like converged via judgeStatusFromOutput. True empty
+                  // (0 live AND 0 terminals) remains M6 contract drift.
+                  if (projected.terminalDispositions.length === 0) {
+                    // #919 M6 / family M1 isomorphic: true empty continue is
+                    // court contract drift — never empty-spin S5. Unusable
+                    // (non-judge) still routes to S5 above; route() continue→S5
+                    // stays for non-empty live sets only.
+                    const reason =
+                      `judge ${step} continue with 0 live findings ` +
+                      `(court contract drift; empty continue must not spin coder-fix)`;
+                    return await errorTermination(step, new Error(reason), {
+                      output,
+                      findingDispositions,
+                      stopSummary: contractDriftStopSummary({
+                        summary: reason,
+                        repairHint:
+                          "judge status:continue requires non-empty live identity keys " +
+                          "or terminal-only dispositions (suppress/refute); " +
+                          "re-open the same judge seat or repair the seat envelope — " +
+                          "do not empty-spin S5 coder-fix",
+                      }),
+                    });
+                  }
+                  // Terminal-only: pending open set already 0; fall through so
+                  // ledger records flips + continue envelope, then route → S7.
                 }
               }
             } else {

@@ -180,7 +180,14 @@ class JudgeBackend implements Backend {
 
 type JudgeResultScript =
   | { kind: "converged" }
-  | { kind: "continue"; findings?: Finding[]; advanceCoder?: string; killKey?: string }
+  | {
+      kind: "continue";
+      findings?: Finding[];
+      advanceCoder?: string;
+      killKey?: string;
+      /** #952 terminal suppress (parked; not sent to fixer). */
+      suppressKey?: string;
+    }
   | { kind: "escalate"; reason?: string; diagnosis?: string };
 
 function scriptToOutput(script: JudgeResultScript) {
@@ -189,20 +196,33 @@ function scriptToOutput(script: JudgeResultScript) {
     return judgeEscalate(script.reason, script.diagnosis);
   }
   const findings = script.findings ?? [sampleFinding()];
-  if (script.killKey !== undefined) {
-    return judgeContinue(findings, {
-      kill: [
-        {
-          identityKey: script.killKey,
-          action: "refute",
-          reason: "unconstitutional",
-          evidence: "violates ADR 0132",
-        },
-      ],
-      advanceCoder: script.advanceCoder,
-    });
-  }
-  return judgeContinue(findings, { advanceCoder: script.advanceCoder });
+  return judgeContinue(findings, {
+    ...(script.killKey !== undefined
+      ? {
+          kill: [
+            {
+              identityKey: script.killKey,
+              action: "refute" as const,
+              reason: "unconstitutional" as const,
+              evidence: "violates ADR 0132",
+            },
+          ],
+        }
+      : {}),
+    ...(script.suppressKey !== undefined
+      ? {
+          suppress: [
+            {
+              identityKey: script.suppressKey,
+              action: "suppress" as const,
+              evidence: "owner parked via ticket",
+              groundTicket: 952,
+            },
+          ],
+        }
+      : {}),
+    advanceCoder: script.advanceCoder,
+  });
 }
 
 describe("#925 pure: leg prompt + session mode", () => {
@@ -322,6 +342,31 @@ describe("#952 pure: suppress disposition → suppressed store + fixer exclusion
         { action: "refute" },
       ]),
     ).toBe(false);
+  });
+
+  it("#952: suppress-only continue projects terminal flips and 0 live open set", () => {
+    const parked = sampleFinding("park-only", "park.ts:1");
+    const parkedKey = findingIdentityKey(parked);
+    const projected = projectJudgeContinueBlocking(
+      judgeContinue([parked], {
+        suppress: [
+          {
+            identityKey: parkedKey,
+            action: "suppress",
+            evidence: "owner parked via ticket",
+            groundTicket: 952,
+          },
+        ],
+      }),
+    );
+    expect(projected?.blockingFindingCount).toBe(0);
+    expect(projected?.blockingIdentityKeys).toEqual([]);
+    expect(projected?.blocking).toEqual([]);
+    expect(
+      projected?.terminalDispositions.some(
+        (d) => d.status === "suppressed" && d.identityKey === parkedKey,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -540,6 +585,8 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     // #919 M6 / family M1 isomorphic: status:continue with empty live open set
     // is court contract drift. openFindingsForFixer may yield [] for cargo filter;
     // that does NOT authorize single-slice S5 with zero identity keys.
+    // True empty = 0 live AND 0 terminal flips (suppress/refute). Terminal-only
+    // continue is court closure (#952), not this drift case.
     const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
 
@@ -555,7 +602,36 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(backend.specs.filter((s) => s.id === "S3")).toHaveLength(1);
   });
 
-  it("M6: all-refute continue fails loud after kill flips — never empty S5", async () => {
+  it("#952: suppress-only continue closes like converged — no S5, suppressed persists", async () => {
+    // AC: legal suppress writes store `suppressed`, never enters fixer, court
+    // closes (continue + 0 live + non-empty terminals ≠ empty contract drift).
+    const parked = sampleFinding("park-only", "park.ts:1");
+    const parkedKey = findingIdentityKey(parked);
+    const backend = new JudgeBackend([
+      {
+        kind: "continue",
+        findings: [parked],
+        suppressKey: parkedKey,
+      },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 9521, backend });
+
+    expect(result.status).toBe("completed");
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
+    // S7 is local handoff (not a dispatchWorker seat); ledger proves the edge.
+    expect(result.stepLedger.some((e) => e.step === "S7")).toBe(true);
+    const s3Row = result.stepLedger.find((e) => e.step === "S3");
+    expect(
+      s3Row?.findingDispositions?.some(
+        (d) => d.status === "suppressed" && d.identityKey === parkedKey,
+      ),
+    ).toBe(true);
+  });
+
+  it("M6: all-refute continue closes after kill flips — never empty S5", async () => {
+    // Terminal-only continue (all refute, 0 live) is court closure, not drift.
+    // Flips still land; topology routes like converged (no coder-fix spin).
     const dead = sampleFinding("all-dead", "dead.ts:9");
     const deadKey = findingIdentityKey(dead);
     const backend = new JudgeBackend([
@@ -563,10 +639,10 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     ]);
     const result = await runOrchestrator({ issueNumber: 91961, backend });
 
-    expect(result.status).toBe("failed");
-    expect(result.stopSummary?.reason).toBe("contract_drift");
+    expect(result.status).toBe("completed");
     expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
-    // Kills still land on the S3 ledger row before the empty-live gate.
+    expect(result.stepLedger.some((e) => e.step === "S7")).toBe(true);
+    // Kills land on the S3 ledger row before terminal-only closure routes S7.
     const s3Row = result.stepLedger.find((e) => e.step === "S3");
     expect(s3Row?.findingDispositions?.some((d) => d.status === "refuted")).toBe(
       true,
