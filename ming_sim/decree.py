@@ -124,9 +124,9 @@ def _record_settlement_narrative_sources(
     # Audience chat is not an input to the month-end simulator.  Its presence
     # in the same turn therefore cannot taint an independently produced public
     # settlement narrative.  Other restricted shared sources still block it.
-    # #883: active secret-order briefs are private structure — their presence
-    # alone must NOT swallow pure public narrative (F3).  Secret wording in
-    # the aggregate is stripped; public LLM inputs never preload secrets.
+    # #883/#976: active secret-order briefs are private structure — their
+    # presence alone must NOT swallow pure public narrative (F3).  Public LLM
+    # inputs never preload secrets (structure); no text-filter strip.
     restricted_kinds = set()
     for source_id in restricted_ids:
         row = db.conn.execute(
@@ -140,8 +140,8 @@ def _record_settlement_narrative_sources(
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return
-    narrative_text = db._strip_secret_order_text(str(narrative or ""))
-    if not narrative_text.strip():
+    narrative_text = str(narrative or "").strip()
+    if not narrative_text:
         return
     db.record_public_knowledge_event(
         state, "本回合邸报", narrative_text, source_id=source_id, commit=commit,
@@ -386,6 +386,8 @@ def resolve_directives(
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
             apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # #976: same hold-release as normal settle path.
+            db.release_held_audience_knowledge(commit=False)
             # Inertia/ongoing effects may create participant-scoped sources.
             # Materialize the complete source set only after those writes and
             # before either aggregate archive is saved, matching the normal
@@ -1322,6 +1324,9 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # #976: release held pure-public audience chat (non-withheld) before
+    # archive materialization so 参与即知 lands without secret-origin rows.
+    db.release_held_audience_knowledge(commit=False)
     # The simulator narrative is the real settlement input for the public
     # gazette.  Keep it as its own source before archiving, so a mixed
     # aggregate cannot become the only durable representation of this turn.
