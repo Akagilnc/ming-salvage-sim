@@ -112,17 +112,18 @@ import {
   syncStopSummaryToStageFailure,
   type FamilyStageFailureStatus,
 } from "./familyTerminal.js";
-import type {
-  ChildSlice,
-  FamilyBackend,
-  FamilyChildDiagnostic,
-  FamilyChildEscalation,
-  FamilyChildResult,
-  FamilyLedgerEntry,
-  FamilyRunInput,
-  FamilyRunResult,
-  FamilyRunStatus,
-  IntegratedCmrPass,
+import {
+  failedFamilyResult,
+  type ChildSlice,
+  type FamilyBackend,
+  type FamilyChildDiagnostic,
+  type FamilyChildEscalation,
+  type FamilyChildResult,
+  type FamilyLedgerEntry,
+  type FamilyRunInput,
+  type FamilyRunResult,
+  type FamilyRunStatus,
+  type IntegratedCmrPass,
 } from "./types.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
 
@@ -1666,54 +1667,58 @@ export async function runFamily(
       const decisionPark =
         escalation.escalationKind === "decision" && answer === undefined;
       const publicStatus = decisionPark ? "parked" : "failed";
-      return {
-        status: publicStatus,
-        ...(publicStatus === "failed"
-          ? { cause: "runner_internal_error" as const }
-          : {}),
-        familyBase,
-        ...(typeof escalation.familyHeadAfter === "string" &&
+      const familyHead =
+        typeof escalation.familyHeadAfter === "string" &&
         escalation.familyHeadAfter.trim().length > 0
-          ? { familyHead: escalation.familyHeadAfter }
-          : {}),
-        escalation: {
-          reason:
-            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-              ? escalation.reason
-              : "family escalation is not answered",
-          diagnosis:
-            escalation.escalationKind === "failure"
-              ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-              : escalation.escalationKind !== "decision"
-                ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
+          ? escalation.familyHeadAfter
+          : undefined;
+      const escalationPayload = {
+        reason:
+          typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+            ? escalation.reason
+            : "family escalation is not answered",
+        diagnosis:
+          escalation.escalationKind === "failure"
+            ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+            : escalation.escalationKind !== "decision"
+              ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
-        },
-        stopSummary: familyStopSummary({
-          status: publicStatus,
+      };
+      const children = input.epic.children.map((child) => ({
+        issue: child.issue,
+        status: (ledgerMerged.has(child.issue) ? "already_done" : "skipped") as
+          | "already_done"
+          | "skipped",
+      }));
+      const stopSummary = familyStopSummary({
+        status: publicStatus,
+        familyBase,
+        familyHead,
+        children,
+        escalationReason: escalationPayload.reason,
+        // #604 F2 / ADR 0062 A/B分家 (PR#643 R2): an UNANSWERED family-level
+        // DECISION escalation is an answerable park, not an A-class repair
+        // failure — carry `decision_gate_park`, mirroring the child-park path
+        // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
+        decisionGatePark: decisionPark,
+      });
+      if (publicStatus === "failed") {
+        return failedFamilyResult({
+          cause: "runner_internal_error",
           familyBase,
-          familyHead:
-            typeof escalation.familyHeadAfter === "string" &&
-            escalation.familyHeadAfter.trim().length > 0
-              ? escalation.familyHeadAfter
-              : undefined,
-          children: input.epic.children.map((child) => ({
-            issue: child.issue,
-            status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
-          })),
-          escalationReason:
-            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-              ? escalation.reason
-              : "family escalation is not answered",
-          // #604 F2 / ADR 0062 A/B分家 (PR#643 R2): an UNANSWERED family-level
-          // DECISION escalation is an answerable park, not an A-class repair
-          // failure — carry `decision_gate_park`, mirroring the child-park path
-          // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
-          decisionGatePark: decisionPark,
-        }),
-        children: input.epic.children.map((child) => ({
-          issue: child.issue,
-          status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
-        })),
+          ...(familyHead !== undefined ? { familyHead } : {}),
+          escalation: escalationPayload,
+          stopSummary,
+          children,
+        });
+      }
+      return {
+        status: "parked",
+        familyBase,
+        ...(familyHead !== undefined ? { familyHead } : {}),
+        escalation: escalationPayload,
+        stopSummary,
+        children,
       };
     }
   }
@@ -1886,8 +1891,8 @@ export async function runFamily(
   //     `"success"` iff EVERY child is merged, else `"incomplete"`.
   //
   // Happy path (all independent children merge, every barrier green) is always
-  // `"success"`; incomplete / stage-failure / ledger-merged branches guard
-  // honesty for the failure + #294/#298 / #922 paths.
+  // `"completed"`; child-failure / stage-failure / ledger-merged branches guard
+  // honesty for the failure + #294/#298 / #922 paths (public failed + cause).
   const finalize = async (
     opts?: {
       readonly failedStatus?: FamilyStageFailureStatus;
@@ -1990,7 +1995,7 @@ export async function runFamily(
           ) ??
           latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex))
         : undefined;
-    const resultStopSummary =
+    const resultStopSummary: StopSummary =
       materialSuccessStopSummary !== undefined
         ? {
             ...materialSuccessStopSummary,
@@ -2000,31 +2005,49 @@ export async function runFamily(
             },
           }
         : computedStopSummary;
-    return attachDiagnostics({
-      status,
-      ...(publicCause !== undefined ? { cause: publicCause } : {}),
+    const stopSummary: StopSummary = allChildrenAlreadyDone
+      ? {
+          ...resultStopSummary,
+          reason: "already_done",
+          summary: "family resume found every child already merged and skipped rerun",
+        }
+      : resultStopSummary;
+    const shared = {
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
-      stopSummary: allChildrenAlreadyDone
-        ? {
-            ...resultStopSummary,
-            reason: "already_done",
-            summary: "family resume found every child already merged and skipped rerun",
-          }
-        : resultStopSummary,
+      stopSummary,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
+    };
+    // #942 CR R2 S3: status:"failed" always carries a mandatory ID-001 cause.
+    if (status === "failed") {
+      return attachDiagnostics(
+        failedFamilyResult({
+          cause: publicCause ?? "child_execution_failed",
+          ...shared,
+        }),
+      );
+    }
+    if (status === "parked") {
+      return attachDiagnostics({
+        status: "parked",
+        ...shared,
+      });
+    }
+    return attachDiagnostics({
+      status: "completed",
+      ...shared,
     });
   };
 
   // #604 slice 5: build the family result when a CHILD decision escalation parked
   // the run. Every epic child gets a record (the parked child carries its
   // `escalation`; already-merged children in `recorded` keep their status; the rest
-  // are `"skipped"`). The family status is `"escalated"` (the answerable pause), NOT
-  // verify_failed / incomplete.
+  // are `"skipped"`). Public family status is `"parked"` (answerable pause), NOT
+  // a stage-failure or child-execution failed terminal.
   const finalizeDecisionPark = async (
     parked: FamilyChildResult & { escalation: FamilyChildEscalation },
     recordedResults: ReadonlyArray<FamilyChildResult>,
@@ -2092,7 +2115,7 @@ export async function runFamily(
     if (plan.escalate) {
       // Fail-closed (decision 5 branch ③): do not proceed to the wave loop. The
       // family base + ledger are left for human triage (decision 3⑤ 不静默吞);
-      // the run is observably `escalated`, NOT a fabricated success.
+      // public status is `failed` (+ cause), NOT a fabricated completed.
       const children: FamilyChildResult[] = epic.children.map((c) =>
         plan.merged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
@@ -2104,8 +2127,8 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
-      return {
-        status: "failed", cause: "runner_internal_error",
+      return failedFamilyResult({
+        cause: "runner_internal_error",
         familyBase,
         familyHead,
         stopSummary: familyStopSummary({
@@ -2117,7 +2140,7 @@ export async function runFamily(
             "family reconcile found the live family-base HEAD inconsistent with the ledger",
         }),
         children,
-      };
+      });
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
@@ -2204,19 +2227,20 @@ export async function runFamily(
             escalationKind: "failure",
             phase: "wave",
           });
-          return attachDiagnostics({
-            status: "failed",
-            cause: "dependency_cycle",
-            familyBase,
-            familyHead,
-            escalation: { reason: escalationReason, diagnosis: err.message },
-            stopSummary,
-            children,
-            ...(epic.admissionSkipped !== undefined &&
-            epic.admissionSkipped.length > 0
-              ? { admissionSkipped: epic.admissionSkipped }
-              : {}),
-          });
+          return attachDiagnostics(
+            failedFamilyResult({
+              cause: "dependency_cycle",
+              familyBase,
+              familyHead,
+              escalation: { reason: escalationReason, diagnosis: err.message },
+              stopSummary,
+              children,
+              ...(epic.admissionSkipped !== undefined &&
+              epic.admissionSkipped.length > 0
+                ? { admissionSkipped: epic.admissionSkipped }
+                : {}),
+            }),
+          );
         }
       }
       break;
@@ -2735,15 +2759,23 @@ export async function runFamily(
           stopSummary: terminal.stopSummary,
         });
       }
-      return {
-        status: terminal.status,
-        ...(terminal.cause !== undefined ? { cause: terminal.cause } : {}),
+      if (terminal.status === "parked") {
+        return {
+          status: "parked",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+          children,
+        };
+      }
+      return failedFamilyResult({
+        cause: terminal.cause,
         familyBase,
         familyHead: preFinalFamilyHead,
-        ...(terminal.status === "failed" ? { failedPhase: "final" as const } : {}),
+        failedPhase: "final",
         stopSummary: terminal.stopSummary,
         children,
-      };
+      });
     }
 
     const convergedHead =
@@ -2911,19 +2943,31 @@ export async function runFamily(
               stopSummary: terminal.stopSummary,
             });
           }
-          openShippedTerminal = {
-            status: terminal.status,
-            ...(terminal.cause !== undefined ? { cause: terminal.cause } : {}),
-            familyBase,
-            familyHead: barrierHead,
-            ...(terminal.status === "failed" ? { failedPhase: "final" as const } : {}),
-            stopSummary: terminal.stopSummary,
-            children: openChildren,
-            ...(epic.admissionSkipped !== undefined &&
-            epic.admissionSkipped.length > 0
-              ? { admissionSkipped: epic.admissionSkipped }
-              : {}),
-          };
+          openShippedTerminal =
+            terminal.status === "parked"
+              ? {
+                  status: "parked",
+                  familyBase,
+                  familyHead: barrierHead,
+                  stopSummary: terminal.stopSummary,
+                  children: openChildren,
+                  ...(epic.admissionSkipped !== undefined &&
+                  epic.admissionSkipped.length > 0
+                    ? { admissionSkipped: epic.admissionSkipped }
+                    : {}),
+                }
+              : failedFamilyResult({
+                  cause: terminal.cause,
+                  familyBase,
+                  familyHead: barrierHead,
+                  failedPhase: "final",
+                  stopSummary: terminal.stopSummary,
+                  children: openChildren,
+                  ...(epic.admissionSkipped !== undefined &&
+                  epic.admissionSkipped.length > 0
+                    ? { admissionSkipped: epic.admissionSkipped }
+                    : {}),
+                });
           return { ok: false, ran: true };
         }
         // Mirror shipped-resume / verifyCmr post-ship tail.

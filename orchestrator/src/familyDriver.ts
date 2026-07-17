@@ -92,6 +92,7 @@ import type {
   FamilyRunResult,
   ReconcileGit,
 } from "./family/types.js";
+import { failedFamilyResult } from "./family/types.js";
 
 // ════════════════════════════════════════════════════════════════════════════
 // PURE epic-assembly logic (unit-tested without live GitHub)
@@ -1142,29 +1143,34 @@ export function planFamilyTerminalReplay(
           sources: { actualFamilyHead: "family escalated ledger row" },
         }
       : undefined;
-  return {
-    status: decisionGatePark ? "parked" : "failed",
-    ...(decisionGatePark
-      ? {}
-      : { cause: "runner_internal_error" as const }),
+  const common = {
     familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
     escalation: { reason, diagnosis },
-    stopSummary: decisionGatePark
-      ? decisionGateParkStopSummary({
-          summary: reason,
-          repairHint:
-            "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
-          ...(heads !== undefined ? { heads } : {}),
-        })
-      : infraFailureStopSummary({
-          summary: reason,
-          repairHint:
-            "inspect the family ledger escalation entry and repair before rerun",
-          ...(heads !== undefined ? { heads } : {}),
-        }),
     children,
-  };
+  } as const;
+  if (decisionGatePark) {
+    return {
+      status: "parked" as const,
+      ...common,
+      stopSummary: decisionGateParkStopSummary({
+        summary: reason,
+        repairHint:
+          "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
+        ...(heads !== undefined ? { heads } : {}),
+      }),
+    };
+  }
+  return failedFamilyResult({
+    cause: "runner_internal_error",
+    ...common,
+    stopSummary: infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "inspect the family ledger escalation entry and repair before rerun",
+      ...(heads !== undefined ? { heads } : {}),
+    }),
+  });
 }
 
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
@@ -1306,8 +1312,10 @@ export async function runFamilyDriver(
         children: [],
       };
     }
-    return {
-      status: "failed", cause: "coder_rec_invalid",
+    // #942 / #934 ID-001: metadata read failure is issue_metadata_unavailable,
+    // not coder_rec_invalid (staffing/route mark class).
+    return failedFamilyResult({
+      cause: "issue_metadata_unavailable",
       familyBase: options.familyBase,
       escalation: { reason: "issue metadata unavailable", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1315,7 +1323,7 @@ export async function runFamilyDriver(
         repairHint: "repair GitHub metadata access and rerun",
       }),
       children: [],
-    };
+    });
   }
   // #934 ID-002 / ID-003: all-filtered is unconditional completed/0 with full
   // skip inventory. Parent is not a planned runnable slice on this path — do
@@ -1377,8 +1385,8 @@ export async function runFamilyDriver(
   }
   if (coderRecErrors.length > 0) {
     const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
-    return {
-      status: "failed", cause: "coder_rec_invalid",
+    return failedFamilyResult({
+      cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1389,15 +1397,15 @@ export async function runFamilyDriver(
       ...(epic.admissionSkipped !== undefined
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-    };
+    });
   }
   // All planned issues admitted — parent is ready (errors would have returned).
   if (parentCoderRec.kind !== "ready") {
     // Unreachable: empty errors + parent stop is contradictory, but keep the
     // exhaustiveness net for the type checker.
     const diagnosis = parentCoderRec.escalation.diagnosis;
-    return {
-      status: "failed", cause: "coder_rec_invalid",
+    return failedFamilyResult({
+      cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1405,7 +1413,7 @@ export async function runFamilyDriver(
         repairHint: "repair the owner-authored Coder-Rec before rerun",
       }),
       children: [],
-    };
+    });
   }
   const coderRec = parentCoderRec;
 
@@ -1534,8 +1542,8 @@ function routeSmokeFailureResult(
   options: Pick<FamilyDriverOptions, "familyBase">,
   escalation: { readonly reason: string; readonly diagnosis: string },
 ): FamilyRunResult {
-  return {
-    status: "failed", cause: "worktree_prepare_failed",
+  return failedFamilyResult({
+    cause: "worktree_prepare_failed",
     familyBase: options.familyBase,
     escalation,
     stopSummary: infraFailureStopSummary({
@@ -1543,7 +1551,7 @@ function routeSmokeFailureResult(
       repairHint: "repair the selected model×pipe smoke before rerun",
     }),
     children: [],
-  };
+  });
 }
 
 /**

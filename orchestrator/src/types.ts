@@ -1916,16 +1916,25 @@ export interface ErrorPackage {
   readonly branchHead?: string;
 }
 
-/** Final handoff (S8); public completed|parked|failed. */
-export interface RunResult {
-  readonly status: HandoffStatus;
-  /** ID-001 failed cause when status is failed. */
-  readonly cause?: PublicFailedCause;
+/** Shared fields on every public single-slice handoff. */
+interface RunResultBase {
   readonly branch?: string;
-  /** Error package when status is failed. */
+  /** Diagnostic package (failed terminals; optional on park for transport). */
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
 }
+
+/**
+ * Final handoff (S8); public completed|parked|failed.
+ * Discriminated: `status:"failed"` requires ID-001 `cause` (#942 CR R2 S3).
+ */
+export type RunResult =
+  | (RunResultBase & { readonly status: "completed" })
+  | (RunResultBase & { readonly status: "parked" })
+  | (RunResultBase & {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+    });

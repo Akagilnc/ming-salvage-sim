@@ -102,15 +102,17 @@ export function resolveFamilyStageTerminal(input: {
   };
 }
 
-/** stopSummary + stage → public parked|failed (+ cause). */
+/** stopSummary + stage → public parked|failed (+ required cause on failed). */
 export function familyTerminalFromStopSummary(input: {
   readonly stage: FamilyStageFailureStatus;
   readonly stopSummary: StopSummary;
-}): {
-  readonly status: Extract<PublicRunResult, "parked" | "failed">;
-  readonly cause?: PublicFailedCause;
-  readonly stopSummary: StopSummary;
-} {
+}):
+  | { readonly status: "parked"; readonly stopSummary: StopSummary }
+  | {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+      readonly stopSummary: StopSummary;
+    } {
   if (input.stopSummary.reason === "decision_gate_park") {
     return { status: "parked", stopSummary: input.stopSummary };
   }

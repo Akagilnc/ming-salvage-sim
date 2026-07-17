@@ -1087,12 +1087,8 @@ export interface FamilyChildResult {
 /** Public family-run outcome: completed | parked | failed (#942 / ID-001). */
 export type FamilyRunStatus = PublicRunResult;
 
-/** The family run result. */
-export interface FamilyRunResult {
-  /** Public outcome: completed | parked | failed. */
-  readonly status: FamilyRunStatus;
-  /** ID-001 failed cause when status is failed. */
-  readonly cause?: PublicFailedCause;
+/** Shared fields on every public family handoff. */
+interface FamilyRunResultBase {
   /** Barrier phase diagnostic (wave|final); not public status. */
   readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
@@ -1109,4 +1105,23 @@ export interface FamilyRunResult {
   readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
+}
+
+/**
+ * The family run result.
+ * Discriminated: `status:"failed"` requires ID-001 `cause` (#942 CR R2 S3).
+ */
+export type FamilyRunResult =
+  | (FamilyRunResultBase & { readonly status: "completed" })
+  | (FamilyRunResultBase & { readonly status: "parked" })
+  | (FamilyRunResultBase & {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+    });
+
+/** Public family failed result with mandatory ID-001 cause. */
+export function failedFamilyResult(
+  input: Omit<Extract<FamilyRunResult, { status: "failed" }>, "status">,
+): Extract<FamilyRunResult, { status: "failed" }> {
+  return { status: "failed", ...input };
 }

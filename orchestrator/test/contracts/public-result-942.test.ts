@@ -41,8 +41,15 @@ import {
   publicResultExitCode,
   runResultExitCode,
 } from "../../src/publicResult.js";
-import { planFamilyTerminalReplay } from "../../src/familyDriver.js";
+import {
+  planFamilyTerminalReplay,
+  runFamilyDriver,
+} from "../../src/familyDriver.js";
+import { failedFamilyResult } from "../../src/family/types.js";
 import { runOrchestrator } from "../../src/runner.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Backend,
   CoderOutput,
@@ -56,6 +63,20 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+import type { RunResult } from "../../src/types.js";
+
+/** Narrow public failed terminals so ID-001 cause is type-visible (S3). */
+function expectFailedWithCause(
+  result: RunResult | FamilyRunResult,
+  cause: (typeof PUBLIC_FAILED_CAUSES)[number],
+): void {
+  expect(result.status).toBe("failed");
+  if (result.status !== "failed") {
+    throw new Error(`expected failed, got ${result.status}`);
+  }
+  expect(result.cause).toBe(cause);
+  expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+}
 
 // ── pure public map (ID-001 / ID-016) ──────────────────────────────────────
 
@@ -234,6 +255,71 @@ async function familyStageFail(
 // ── public family driver / runFamily (ID-001) ──────────────────────────────
 
 describe("#942 public family results (ID-001)", () => {
+  it("failedFamilyResult requires ID-001 cause (S3 compile-time gate helper)", () => {
+    const result = failedFamilyResult({
+      cause: "issue_metadata_unavailable",
+      familyBase: "family/942-base",
+      stopSummary: {
+        reason: "infra_failure",
+        summary: "issue metadata unavailable",
+      },
+      children: [],
+    });
+    expect(result.status).toBe("failed");
+    expectFailedWithCause(result, "issue_metadata_unavailable");
+    expect(familyDriverExitCode(result)).toBe(1);
+  });
+
+  it("family driver metadata throw → failed + issue_metadata_unavailable (S1)", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const ledgerDir = mkdtempSync(join(tmpdir(), "942-meta-"));
+    try {
+      let cloneCalls = 0;
+      const sh = (_file: string, args: string[]): string => {
+        const joined = args.join(" ");
+        if (joined.includes("sub_issues")) {
+          throw new Error("sub_issues boom");
+        }
+        if (joined.includes("dependencies/blocked_by")) {
+          throw new Error("root blocked_by boom");
+        }
+        if (joined.includes("issue view")) {
+          return JSON.stringify({
+            number: Number(args[2] ?? 942),
+            body: "Coder-Rec: terra@med",
+            author: { login: "Akagilnc" },
+          });
+        }
+        return "[]";
+      };
+      const result = await runFamilyDriver({
+        epicIssue: 942,
+        sourceRepo: "/tmp/source",
+        repo: "Akagilnc/ming-salvage-sim",
+        familyBase: "family/942-base",
+        base: "main",
+        promptsDir: "/tmp/prompts",
+        familyPromptsDir: "/tmp/prompts",
+        soulsDir: "/tmp/souls",
+        ledgerDir,
+        imageName: "img",
+        sh,
+        realBackendFactory: () => {
+          cloneCalls += 1;
+          throw new Error("metadata failure must precede clone");
+        },
+      });
+      expectFailedWithCause(result, "issue_metadata_unavailable");
+      expect(familyDriverExitCode(result)).toBe(1);
+      expect(result.escalation?.reason).toMatch(/issue metadata unavailable/i);
+      expect(result.escalation?.diagnosis).toMatch(/issue metadata unavailable/i);
+      expect(cloneCalls).toBe(0);
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("completed happy path → status completed + OS 0", async () => {
     const result = await runFamily({
       epic: epicWith(10),
@@ -266,8 +352,7 @@ describe("#942 public family results (ID-001)", () => {
       familyBase: "family/942-base",
       verifyCmr: async () => ({ ok: true, ran: true }),
     });
-    expect(result.status).toBe("failed");
-    expect(result.cause).toBe("child_execution_failed");
+    expectFailedWithCause(result, "child_execution_failed");
     expect(familyDriverExitCode(result)).toBe(1);
   });
 
@@ -275,9 +360,7 @@ describe("#942 public family results (ID-001)", () => {
     FAMILY_STAGE_FAILURE_STATUSES.map((s) => [s] as const),
   )("stage failure %s → public failed + ID-001 cause + OS 1 (ID-014 audit map)", async (status) => {
     const result = await familyStageFail(status);
-    expect(result.status).toBe("failed");
-    expect(result.cause).toBe(causeFromStageFailure(status));
-    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+    expectFailedWithCause(result, causeFromStageFailure(status));
     expect(familyDriverExitCode(result)).toBe(1);
     // ID-014: stage diagnostic stays on stopSummary.reason; public status is failed only.
     expect(result.status).not.toBe(status);
@@ -453,9 +536,7 @@ describe("#942 public single-slice results (ID-001)", () => {
     }
 
     const result = await runOrchestrator({ issueNumber: 942, backend: new SpyBackend() });
-    expect(result.status).toBe("failed");
-    expect(result.cause).toBe("route_config_invalid");
-    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+    expectFailedWithCause(result, "route_config_invalid");
     expect(runResultExitCode(result)).toBe(1);
     expect(errorSpy).toHaveBeenCalled();
   });
@@ -500,9 +581,7 @@ describe("#942 public single-slice results (ID-001)", () => {
 
     const backend = new SpyBackend();
     const result = await runOrchestrator({ issueNumber: 942, backend });
-    expect(result.status).toBe("failed");
-    expect(result.cause).toBe("runner_internal_error");
-    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+    expectFailedWithCause(result, "runner_internal_error");
     expect(runResultExitCode(result)).toBe(1);
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
     expect(s8.length).toBeGreaterThanOrEqual(1);
@@ -548,7 +627,6 @@ describe("#942 public single-slice results (ID-001)", () => {
       backend: new HappyBackend(),
     });
     expect(result.status).toBe("completed");
-    expect(result.cause).toBeUndefined();
     expect(runResultExitCode(result)).toBe(0);
     expect(publicResultExitCode(result)).toBe(0);
   });
@@ -603,8 +681,43 @@ describe("#942 public single-slice results (ID-001)", () => {
       backend: new ParkBackend(),
     });
     expect(result.status).toBe("parked");
-    expect(result.cause).toBeUndefined();
     expect(runResultExitCode(result)).toBe(2);
+  });
+
+  it("S0 fetchIssueMeta throw → failed + issue_metadata_unavailable (S2)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    class MetaFailBackend implements Backend {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(): Promise<IssueMeta> {
+        throw new Error("S0 issue metadata unavailable (1 errors): issue view: gh api down");
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        throw new Error("must not prepare worktree after meta failure");
+      }
+      async runStep(_spec: StepSpec): Promise<StepOutput> {
+        throw new Error("must not dispatch after meta failure");
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 942,
+      backend: new MetaFailBackend(),
+    });
+    expectFailedWithCause(result, "issue_metadata_unavailable");
+    expect(runResultExitCode(result)).toBe(1);
+    if (result.status !== "failed") throw new Error("expected failed");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(errorSpy).toHaveBeenCalled();
   });
 
   it("corrupted resident scene → failed + resume_state_invalid (M1)", async () => {
@@ -635,8 +748,7 @@ describe("#942 public single-slice results (ID-001)", () => {
       issueNumber: 942,
       backend: new CorruptedBackend(),
     });
-    expect(result.status).toBe("failed");
-    expect(result.cause).toBe("resume_state_invalid");
+    expectFailedWithCause(result, "resume_state_invalid");
     expect(runResultExitCode(result)).toBe(1);
   });
 });
@@ -727,9 +839,7 @@ describe("#942 ID-005 #929 durable handoff tokens fail closed at runOrchestrator
     async (token) => {
       const backend = new LegacyResumeBackend(resumeWithHandoff(token));
       const result = await runOrchestrator({ issueNumber: 942, backend });
-      expect(result.status).toBe("failed");
-      expect(result.cause).toBe("resume_state_invalid");
-      expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+      expectFailedWithCause(result, "resume_state_invalid");
       expect(runResultExitCode(result)).toBe(1);
       // No dual-read to completed/parked.
       expect(result.status).not.toBe("completed");
@@ -743,9 +853,9 @@ describe("#942 ID-005 #929 durable handoff tokens fail closed at runOrchestrator
     const backend = new LegacyResumeBackend(resumeWithHandoff("failed"));
     const result = await runOrchestrator({ issueNumber: 942, backend });
     expect(result.status).toBe("failed");
+    if (result.status !== "failed") throw new Error("expected failed");
     expect(result.cause).toBeDefined();
     expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
-    expect(result.cause).not.toBeUndefined();
     expect(runResultExitCode(result)).toBe(1);
     expect(backend.runStepIds).toEqual([]);
   });
@@ -754,7 +864,6 @@ describe("#942 ID-005 #929 durable handoff tokens fail closed at runOrchestrator
     const backend = new LegacyResumeBackend(resumeWithHandoff("completed"));
     const result = await runOrchestrator({ issueNumber: 942, backend });
     expect(result.status).toBe("completed");
-    expect(result.cause).toBeUndefined();
     expect(runResultExitCode(result)).toBe(0);
     expect(backend.runStepIds).toEqual([]);
   });
@@ -826,7 +935,6 @@ describe("#942 ID-014 / ID-015 public-entry proofs", () => {
       }
     }
     // Legal degrade path should not flip public result.
-    expect(result.cause).toBeUndefined();
     expect(warnSpy.mock.calls.length + errorSpy.mock.calls.length).toBeGreaterThan(0);
   });
 
@@ -862,7 +970,6 @@ describe("#942 ID-014 / ID-015 public-entry proofs", () => {
     );
     expect(degradedRows.length).toBeGreaterThanOrEqual(1);
     expect(degradedRows.some((r) => r.droppedLeg === "agy")).toBe(true);
-    expect(result.cause).toBeUndefined();
     expect(errorSpy).toHaveBeenCalled();
   });
 });
