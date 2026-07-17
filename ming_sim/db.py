@@ -10101,12 +10101,14 @@ class GameDB:
         )
 
     @staticmethod
-    def _secret_text_needles(*texts: str) -> List[str]:
-        """Substantial secret strings used for audience-channel origin hygiene (#883).
+    def _secret_text_needles(*texts: str, include_ngrams: bool = True) -> List[str]:
+        """Secret strings used for audience-channel origin hygiene (#883).
 
-        Full strings (len>=6) plus clause fragments and 4-char windows so
-        LLM-rewritten title/body still lineage-match 召对原话 without wiping
-        unrelated public audience rows (which share no secret tokens).
+        Full strings (len>=6) plus clause fragments; optional sliding 4-grams for
+        refuse-on-write / in-place archive strip of paraphrases.  Row *deletion*
+        scrub must pass ``include_ngrams=False`` so thematically related pure
+        public 召对 (shared 4-char windows only) is not wiped — zero-overlap
+        origin clearance is structural (assignee user-chat bloodline), not n-gram.
         Short titles (e.g. two-character 密查) alone are ignored.
         """
         needles: List[str] = []
@@ -10127,11 +10129,12 @@ class GameDB:
                 _add(value)
             for part in re.split(r"[，。；、,.!？?\s]+", value):
                 _add(part)
-            # Sliding 4-grams over CJK/alnum runs catch paraphrase lineage.
-            compact = re.sub(r"\s+", "", value)
-            if len(compact) >= 4:
-                for idx in range(0, len(compact) - 3):
-                    _add(compact[idx : idx + 4])
+            # Sliding 4-grams: refuse/strip only — not whole-row deletion.
+            if include_ngrams:
+                compact = re.sub(r"\s+", "", value)
+                if len(compact) >= 4:
+                    for idx in range(0, len(compact) - 3):
+                        _add(compact[idx : idx + 4])
         return needles
 
     @staticmethod
@@ -10230,11 +10233,11 @@ class GameDB:
         registers knowledge before the secret is materialised; scrubbing at the
         secret write mouth keeps isolation structural rather than read-path
         filtering.  Scope is the audience/chat channel only — other restricted
-        kinds keep their own exclusion machinery.  Needles include clause and
-        4-gram lineage so paraphrased 召对原话 is caught without wiping public
-        co-chat that shares no secret tokens (any turn).
+        kinds keep their own exclusion machinery.  Row deletion uses substantial
+        needles only (full/clause, no 4-gram) so same-theme pure public 召对 is
+        not wiped; zero-overlap origin is handled by assignee user-chat bloodline.
         """
-        needles = self._secret_text_needles(*texts)
+        needles = self._secret_text_needles(*texts, include_ngrams=False)
         if not needles:
             return
         source_ids: List[str] = []
@@ -10261,36 +10264,43 @@ class GameDB:
         *brief_texts: str,
         commit: bool = True,
     ) -> None:
-        """Scrub assignee audience/chat rows that lineage-match secret brief wording.
+        """Scrub assignee audience/chat residual at secret-brief origin (#883).
 
-        Unlike a blunt same-turn wipe (which swallowed public co-chat — F1),
-        this only deletes audience/chat rows whose body matches brief needles
-        (full string / clause / 4-gram).  Scope is all turns so T chat + T+1
-        create still clears origin (F4).  Non-matching public audience stays.
+        Structural rule (not 4-gram text matching):
+        - Emperor ``user`` chat with this assignee (any turn) is secret-origin
+          bloodline → drop shared sources *and* participation events.  Zero-
+          overlap LLM 润稿 of title/body still clears prior 召对原话.
+        - Other roles / non-chat audience rows: delete only on substantial
+          needle match (full string / clause, no 4-gram) so thematically
+          related pure public 参与即知 is not wiped (S3).
         """
         name = str(minister_name or "").strip()
-        needles = self._secret_text_needles(*brief_texts)
-        if not name or not needles:
+        if not name:
             return
+        # Substantial needles only for non-bloodline row deletion.
+        needles = self._secret_text_needles(*brief_texts, include_ngrams=False)
         source_ids: List[str] = []
 
-        # chat_message bloodline: any-turn messages for this assignee.
+        # chat_message bloodline: user-role = structural origin; else substantial.
         try:
             chat_rows = self.conn.execute(
-                "SELECT id, content FROM chat_messages WHERE minister_name=?",
+                "SELECT id, role, content FROM chat_messages WHERE minister_name=?",
                 (name,),
             ).fetchall()
         except sqlite3.OperationalError:
             chat_rows = []
         for row in chat_rows:
             content = str(row["content"] or "")
-            if any(needle in content for needle in needles):
+            role = str(row["role"] or "")
+            is_user_origin = role == "user"
+            is_substantial = bool(needles) and any(n in content for n in needles)
+            if is_user_origin or is_substantial:
                 sid = f"chat_message:{int(row['id'])}"
                 if sid not in source_ids:
                     source_ids.append(sid)
 
         # Shared sources: audience channel whose roster includes assignee and
-        # whose body lineage-matches the brief (any turn).
+        # whose body substantially matches the brief (any turn).
         try:
             source_rows = self.conn.execute(
                 "SELECT source_id, kind, title, body, participant_roster "
@@ -10300,6 +10310,8 @@ class GameDB:
             source_rows = []
         for row in source_rows:
             sid = str(row["source_id"] or "")
+            if not sid or sid in source_ids:
+                continue
             if not self._is_audience_chat_shared_channel(row["kind"], sid):
                 continue
             try:
@@ -10314,10 +10326,11 @@ class GameDB:
             if name not in names:
                 continue
             blob = f"{row['title'] or ''}\n{row['body'] or ''}"
-            if any(needle in blob for needle in needles) and sid and sid not in source_ids:
+            if needles and any(needle in blob for needle in needles):
                 source_ids.append(sid)
 
-        # Participation events for this assignee on the audience channel.
+        # Participation events: bloodline source_ids already marked, plus
+        # substantial match on remaining audience/chat events.
         try:
             event_rows = self.conn.execute(
                 "SELECT source_id, kind, title, body FROM character_knowledge_events "
@@ -10328,10 +10341,12 @@ class GameDB:
             event_rows = []
         for row in event_rows:
             sid = str(row["source_id"] or "")
+            if not sid or sid in source_ids:
+                continue
             if not self._is_audience_chat_shared_channel(row["kind"], sid):
                 continue
             blob = f"{row['title'] or ''}\n{row['body'] or ''}"
-            if any(needle in blob for needle in needles) and sid and sid not in source_ids:
+            if needles and any(needle in blob for needle in needles):
                 source_ids.append(sid)
 
         self._delete_shared_knowledge_source_ids(source_ids, commit=commit)
@@ -10422,9 +10437,9 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
-        # Origin hygiene (audience/chat only): lineage-match scrub across all
-        # turns so public co-chat survives (F1) and late create still clears
-        # prior-turn origin (F4).  Full-string + n-gram needles.
+        # Origin hygiene (audience/chat only): assignee user-chat bloodline
+        # clears zero-overlap 润稿 origin (any turn); substantial needles only
+        # for non-user residual so same-theme pure public 参与即知 survives.
         self._scrub_assignee_secret_lineage_audience(
             minister_name, title, body, commit=False,
         )

@@ -371,6 +371,104 @@ def test_883_cross_turn_chat_origin_scrubbed_on_late_secret_create(game):
     assert chat_origin not in other_text
 
 
+def test_883_zero_overlap_semantic_rewrite_clears_prior_audience_origin(game):
+    """跨回合零重叠润稿：接令者 user 召对原话与 extracted title/body 无共同 4-gram 时，
+    仍须按接令者 chat 血缘清掉共享源与事件（结构隔离，不得靠字面 needle）。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    chat_origin = "着人暗访勋贵藏银田契，切莫声张"
+    extracted_title = "秘密核验"
+    extracted_body = "秘密核验国丈私财庄宅，避开耳目"
+    needles = db._secret_text_needles(extracted_title, extracted_body)
+    assert not any(n in chat_origin for n in needles), "fixture must be zero 4-gram overlap"
+
+    db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    oid = db.create_secret_order(
+        state, assignee.name, extracted_title, extracted_body, [],
+    )
+    assert oid > 0
+
+    shared_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    event_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_events").fetchall()
+    ]
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
+    brief = db.conn.execute(
+        "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+
+    assert brief is not None and extracted_body in (brief["body"] or "")
+    assert all(chat_origin not in body for body in shared_bodies)
+    assert all(chat_origin not in body for body in event_bodies)
+    assert chat_origin not in other_text
+    assert extracted_body in assignee_text
+
+
+def test_883_thematic_public_audience_survives_secret_create_without_4gram_wipe(game):
+    """同主题纯公开召对不得被 4-gram lineage scrub 整行抹掉（S3 参与即知）。
+
+    公开句与密令 title/body 共享四字窗（如「京营操练」）时，仍应保留公开源与私有事件。
+    """
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    public_line = "京营操练如常，兵士按期点卯"
+    sec_title = "密查京营操练"
+    sec_body = "密查京营兵士点卯虚实，勿使外廷知"
+    needles = db._secret_text_needles(sec_title, sec_body)
+    assert any(n in public_line for n in needles), "fixture needs 4-gram thematic overlap"
+
+    db.append_chat_message(assignee.name, state.turn, "minister", public_line)
+    before_sources = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE body LIKE ?",
+        (f"%{public_line}%",),
+    ).fetchone()["n"]
+    before_events = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
+        (f"%{public_line}%",),
+    ).fetchone()["n"]
+    assert before_sources >= 1 and before_events >= 1
+
+    oid = db.create_secret_order(state, assignee.name, sec_title, sec_body, [])
+    assert oid > 0
+
+    after_sources = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE body LIKE ?",
+        (f"%{public_line}%",),
+    ).fetchone()["n"]
+    after_events = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
+        (f"%{public_line}%",),
+    ).fetchone()["n"]
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(
+        item.get("body", "")
+        for item in assignee_view["events"] + assignee_view.get("public_events", [])
+    )
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+
+    assert after_sources >= 1
+    assert after_events >= 1
+    assert public_line in assignee_text
+    # 密令润稿本身仍不得进他臣共享面
+    assert sec_body not in other_text
+
+
 def test_883_shared_archive_bypass_positive_and_negative(game):
     """复审员旁路：共享汇总正负断言——有密令时 raw 报告不得原样入档；无密令时公开文可入。"""
     db, state, content = game
