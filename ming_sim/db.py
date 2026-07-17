@@ -1106,6 +1106,8 @@ class GameDB:
                 turn INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                -- #976: held|released|withheld|private (audience knowledge dual-track)
+                knowledge_status TEXT NOT NULL DEFAULT 'held',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
@@ -1518,6 +1520,10 @@ class GameDB:
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
+        # #976: audience chat hold-and-release — held until classification release.
+        # held | released | withheld | private
+        self.ensure_column(
+            "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -6793,20 +6799,53 @@ class GameDB:
         self.conn.commit()
 
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
-        """召对聊天单条消息落库（chat_messages）。"""
+        """召对聊天单条消息落库（chat_messages）。
+
+        #976 写入接缝结构分流：含密令语境的召对在分类落定前不得进入共享
+        ``character_knowledge_sources``。落库策略：
+        - 皇帝 ``user`` 行：一律 hold（待 create_secret_order 分类 / 月末 release）
+        - 大臣回话：无 active 密令简报时立即放行共享轨；有简报时只进接令者私有事件轨
+        识别靠 provenance（role + 接令者身份 + 分类事件），不靠内容匹配。
+        """
         cur = self.conn.execute(
-            "INSERT INTO chat_messages (minister_name, turn, role, content) VALUES (?, ?, ?, ?)",
+            "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+            "VALUES (?, ?, ?, ?, 'held')",
             (minister_name, turn, role, content),
         )
+        message_id = int(cur.lastrowid)
         self.conn.commit()
-        if minister_name and role in {"user", "assistant", "minister"}:
-            state = self.load_state()
-            self.record_participation_record(
-                state,
-                {"participants": [minister_name], "title": "召对", "body": content},
-                kind="audience", source_id=f"chat_message:{cur.lastrowid}",
+        if not minister_name or role not in {"user", "assistant", "minister"}:
+            return message_id
+        state = self.load_state()
+        source_id = f"chat_message:{message_id}"
+        # Emperor speech is potential secret origin — hold until classification.
+        if role == "user":
+            return message_id
+        # Minister speech after an active brief: private participation only
+        # (参与即知 for the assignee; never shared-ledger material).
+        if self._is_active_secret_order_assignee(minister_name):
+            self.record_character_participation(
+                state, [minister_name], "audience", "召对", content,
+                source_id=source_id, commit=True,
             )
-        return int(cur.lastrowid)
+            self.conn.execute(
+                "UPDATE chat_messages SET knowledge_status='private' WHERE id=?",
+                (message_id,),
+            )
+            self.conn.commit()
+            return message_id
+        # Pre-classification minister speech: pure public → shared track now.
+        self.record_participation_record(
+            state,
+            {"participants": [minister_name], "title": "召对", "body": content},
+            kind="audience", source_id=source_id,
+        )
+        self.conn.execute(
+            "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
+            (message_id,),
+        )
+        self.conn.commit()
+        return message_id
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
@@ -7728,9 +7767,10 @@ class GameDB:
         self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
         items = [item for item in self.knowledge_items_for_turn(state.turn)
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        # #883: private secret briefs never enter shared sources.  Shared
+        # #883/#976: private secret briefs never enter shared sources.  Shared
         # exclusions force source-scoped aggregation; active briefs alone do
-        # not blank pure public prose (F3) — secret wording is stripped.
+        # not blank pure public prose (F3). Secret text is kept out by structure
+        # (never in knowledge_items / public LLM inputs), not by needle strip.
         has_restricted_source = self._has_restricted_source_gate(
             any(item.get("excluded_names") for item in items)
         )
@@ -7750,8 +7790,8 @@ class GameDB:
             )
         else:
             public_report = str(public_body or "")
-        # Strip active-brief wording from raw aggregates (exact/n-gram needles).
-        public_report = self._strip_secret_order_text(public_report)
+        # #976: no text-filter strip. Public archives trust the producer path
+        # (public LLMs never preload secrets; private briefs are not knowledge_items).
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report)
@@ -7817,9 +7857,9 @@ class GameDB:
         )
         items = [item for item in self.knowledge_items_for_turn(state.turn)
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        # #883: same write-seam rule as turn reports — shared exclusions force
-        # source-scoped aggregation; active briefs alone do not blank pure
-        # public prose (F3). Secret wording is stripped at write time.
+        # #883/#976: same write-seam rule as turn reports — shared exclusions
+        # force source-scoped aggregation; active briefs alone do not blank
+        # pure public prose (F3). No text-filter strip.
         has_restricted_source = self._has_restricted_source_gate(
             any(item.get("excluded_names") for item in items)
         )
@@ -7832,7 +7872,7 @@ class GameDB:
             )
         else:
             public_chapter = str(public_body or "")
-        public_chapter = self._strip_secret_order_text(public_chapter)
+        # #976: no text-filter strip — same structural rule as turn reports.
         memory_id = self.upsert_event_memory(
             state,
             subject_type="court",
@@ -10101,45 +10141,8 @@ class GameDB:
         )
 
     @staticmethod
-    def _secret_text_needles(*texts: str, include_ngrams: bool = True) -> List[str]:
-        """Secret strings used for audience-channel origin hygiene (#883).
-
-        Full strings (len>=6) plus clause fragments; optional sliding 4-grams for
-        refuse-on-write / in-place archive strip of paraphrases.  Row *deletion*
-        scrub must pass ``include_ngrams=False`` so thematically related pure
-        public 召对 (shared 4-char windows only) is not wiped — zero-overlap
-        origin clearance is structural (assignee user-chat bloodline), not n-gram.
-        Short titles (e.g. two-character 密查) alone are ignored.
-        """
-        needles: List[str] = []
-        seen: set[str] = set()
-
-        def _add(value: str) -> None:
-            text = str(value or "").strip()
-            if len(text) < 4 or text in seen:
-                return
-            seen.add(text)
-            needles.append(text)
-
-        for text in texts:
-            value = str(text or "").strip()
-            if not value:
-                continue
-            if len(value) >= 6:
-                _add(value)
-            for part in re.split(r"[，。；、,.!？?\s]+", value):
-                _add(part)
-            # Sliding 4-grams: refuse/strip only — not whole-row deletion.
-            if include_ngrams:
-                compact = re.sub(r"\s+", "", value)
-                if len(compact) >= 4:
-                    for idx in range(0, len(compact) - 3):
-                        _add(compact[idx : idx + 4])
-        return needles
-
-    @staticmethod
     def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
-        """召对 chat → shared-ledger channel that #883 must not carry secret wording."""
+        """召对 chat → shared-ledger channel (#883/#976)."""
         return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
 
     def _is_active_secret_order_assignee(self, minister_name: str) -> bool:
@@ -10158,55 +10161,6 @@ class GameDB:
             return False
         return row is not None
 
-    def _body_carries_secret_order_text(self, body: str = "", title: str = "") -> bool:
-        """True when payload carries active secret brief wording (incl. n-gram lineage)."""
-        blob = f"{title or ''}\n{body or ''}"
-        if not blob.strip():
-            return False
-        try:
-            rows = self.conn.execute(
-                "SELECT title, body FROM secret_order_briefs"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return False
-        for row in rows:
-            for needle in self._secret_text_needles(row["title"], row["body"]):
-                if needle in blob:
-                    return True
-        return False
-
-    def _strip_secret_order_text(self, text: str = "") -> str:
-        """Remove active secret-brief wording from a public aggregate string (#883).
-
-        Used by gazette/chapter writers so pure public prose still lands while
-        exact brief restatements never enter shared archives.  Does not raise.
-        """
-        value = str(text or "")
-        if not value.strip():
-            return value
-        try:
-            rows = self.conn.execute(
-                "SELECT title, body FROM secret_order_briefs"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return value
-        # Longest-first so full bodies strip before their 4-gram fragments.
-        needles: List[str] = []
-        for row in rows:
-            needles.extend(self._secret_text_needles(row["title"], row["body"]))
-        needles = sorted(set(needles), key=len, reverse=True)
-        for needle in needles:
-            if needle and needle in value:
-                value = value.replace(needle, "")
-        # Collapse leftover punctuation/space runs from stripped fragments.
-        # Preserve terminal sentence punctuation on pure public prose.
-        value = re.sub(r"[；;]{2,}", "；", value)
-        value = re.sub(r"[，,]{2,}", "，", value)
-        value = re.sub(r"\s{2,}", " ", value)
-        value = re.sub(r"^[，,；;\s]+", "", value)
-        value = re.sub(r"[，,；;\s]+$", "", value)
-        return value.strip()
-
     def _delete_shared_knowledge_source_ids(
         self, source_ids: Iterable[str], *, commit: bool = True,
     ) -> None:
@@ -10224,132 +10178,102 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def _scrub_secret_text_from_shared_knowledge(
-        self, *texts: str, commit: bool = True,
+    def _withhold_assignee_user_audience_origin(
+        self, minister_name: str, *, commit: bool = True,
     ) -> None:
-        """Remove audience/chat shared-ledger rows that carry secret wording (#883).
+        """Classify secret-origin audience bloodline for one assignee (#976).
 
-        Called at secret-order origin writes (create/update).  Audience chat
-        registers knowledge before the secret is materialised; scrubbing at the
-        secret write mouth keeps isolation structural rather than read-path
-        filtering.  Scope is the audience/chat channel only — other restricted
-        kinds keep their own exclusion machinery.  Row deletion uses substantial
-        needles only (full/clause, no 4-gram) so same-theme pure public 召对 is
-        not wiped; zero-overlap origin is handled by assignee user-chat bloodline.
-        """
-        needles = self._secret_text_needles(*texts, include_ngrams=False)
-        if not needles:
-            return
-        source_ids: List[str] = []
-        for table in ("character_knowledge_sources", "character_knowledge_events"):
-            try:
-                rows = self.conn.execute(
-                    f"SELECT source_id, kind, title, body FROM {table}"
-                ).fetchall()
-            except sqlite3.OperationalError:
-                continue
-            for row in rows:
-                sid = str(row["source_id"] or "")
-                if not self._is_audience_chat_shared_channel(row["kind"], sid):
-                    continue
-                blob = f"{row['title'] or ''}\n{row['body'] or ''}"
-                if any(needle in blob for needle in needles):
-                    if sid and sid not in source_ids:
-                        source_ids.append(sid)
-        self._delete_shared_knowledge_source_ids(source_ids, commit=commit)
-
-    def _scrub_assignee_secret_lineage_audience(
-        self,
-        minister_name: str,
-        *brief_texts: str,
-        commit: bool = True,
-    ) -> None:
-        """Scrub assignee audience/chat residual at secret-brief origin (#883).
-
-        Structural rule (not 4-gram text matching):
-        - Emperor ``user`` chat with this assignee (any turn) is secret-origin
-          bloodline → drop shared sources *and* participation events.  Zero-
-          overlap LLM 润稿 of title/body still clears prior 召对原话.
-        - Other roles / non-chat audience rows: delete only on substantial
-          needle match (full string / clause, no 4-gram) so thematically
-          related pure public 参与即知 is not wiped (S3).
+        Structural rule (provenance, not content matching): emperor ``user``
+        chat with this assignee is secret-origin bloodline — never released to
+        shared ``character_knowledge_sources``.  Zero-overlap LLM 润稿 is
+        covered because identity is message role + assignee, not text needles.
         """
         name = str(minister_name or "").strip()
         if not name:
             return
-        # Substantial needles only for non-bloodline row deletion.
-        needles = self._secret_text_needles(*brief_texts, include_ngrams=False)
+        try:
+            rows = self.conn.execute(
+                "SELECT id FROM chat_messages WHERE minister_name=? AND role='user'",
+                (name,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
         source_ids: List[str] = []
+        for row in rows:
+            mid = int(row["id"])
+            source_ids.append(f"chat_message:{mid}")
+            self.conn.execute(
+                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
+                (mid,),
+            )
+        # Provenance cleanup if anything leaked before classification (should
+        # be empty under hold-first; id-based, never content match).
+        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
+        if commit:
+            self.conn.commit()
 
-        # chat_message bloodline: user-role = structural origin; else substantial.
+    def release_held_audience_knowledge(
+        self,
+        *,
+        minister_name: Optional[str] = None,
+        commit: bool = True,
+    ) -> int:
+        """Release held (non-withheld) audience chat into the shared track (#976).
+
+        Called at month-end settlement and after secret-order classification so
+        pure public emperor speech that never became a secret still delivers
+        参与即知.  Withheld secret-origin rows are never released.
+        """
+        name_filter = str(minister_name or "").strip()
         try:
-            chat_rows = self.conn.execute(
-                "SELECT id, role, content FROM chat_messages WHERE minister_name=?",
-                (name,),
-            ).fetchall()
+            if name_filter:
+                rows = self.conn.execute(
+                    "SELECT id, minister_name, turn, role, content FROM chat_messages "
+                    "WHERE knowledge_status='held' AND minister_name=? ORDER BY id",
+                    (name_filter,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT id, minister_name, turn, role, content FROM chat_messages "
+                    "WHERE knowledge_status='held' ORDER BY id",
+                ).fetchall()
         except sqlite3.OperationalError:
-            chat_rows = []
-        for row in chat_rows:
+            return 0
+        if not rows:
+            return 0
+        state = self.load_state()
+        released = 0
+        for row in rows:
+            mid = int(row["id"])
+            minister = str(row["minister_name"] or "").strip()
             content = str(row["content"] or "")
-            role = str(row["role"] or "")
-            is_user_origin = role == "user"
-            is_substantial = bool(needles) and any(n in content for n in needles)
-            if is_user_origin or is_substantial:
-                sid = f"chat_message:{int(row['id'])}"
-                if sid not in source_ids:
-                    source_ids.append(sid)
-
-        # Shared sources: audience channel whose roster includes assignee and
-        # whose body substantially matches the brief (any turn).
-        try:
-            source_rows = self.conn.execute(
-                "SELECT source_id, kind, title, body, participant_roster "
-                "FROM character_knowledge_sources"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            source_rows = []
-        for row in source_rows:
-            sid = str(row["source_id"] or "")
-            if not sid or sid in source_ids:
+            if not minister:
                 continue
-            if not self._is_audience_chat_shared_channel(row["kind"], sid):
-                continue
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            names = {
-                str(item.get("character_id") or item.get("name") or "").strip()
-                for item in roster
-                if isinstance(item, dict)
-            }
-            if name not in names:
-                continue
-            blob = f"{row['title'] or ''}\n{row['body'] or ''}"
-            if needles and any(needle in blob for needle in needles):
-                source_ids.append(sid)
-
-        # Participation events: bloodline source_ids already marked, plus
-        # substantial match on remaining audience/chat events.
-        try:
-            event_rows = self.conn.execute(
-                "SELECT source_id, kind, title, body FROM character_knowledge_events "
-                "WHERE character_name=?",
-                (name,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            event_rows = []
-        for row in event_rows:
-            sid = str(row["source_id"] or "")
-            if not sid or sid in source_ids:
-                continue
-            if not self._is_audience_chat_shared_channel(row["kind"], sid):
-                continue
-            blob = f"{row['title'] or ''}\n{row['body'] or ''}"
-            if needles and any(needle in blob for needle in needles):
-                source_ids.append(sid)
-
-        self._delete_shared_knowledge_source_ids(source_ids, commit=commit)
+            source_id = f"chat_message:{mid}"
+            # Active-assignee post-brief: private events only, not shared sources.
+            if self._is_active_secret_order_assignee(minister):
+                self.record_character_participation(
+                    state, [minister], "audience", "召对", content,
+                    source_id=source_id, commit=False,
+                )
+                self.conn.execute(
+                    "UPDATE chat_messages SET knowledge_status='private' WHERE id=?",
+                    (mid,),
+                )
+            else:
+                self.record_participation_record(
+                    state,
+                    {"participants": [minister], "title": "召对", "body": content},
+                    kind="audience", source_id=source_id, commit=False,
+                )
+                self.conn.execute(
+                    "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
+                    (mid,),
+                )
+            released += 1
+        if commit:
+            self.conn.commit()
+        return released
 
     def register_character_knowledge_source(
         self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
@@ -10372,17 +10296,14 @@ class GameDB:
             dict(item) for item in participant_roster
             if item.get("character_id") or item.get("name")
         ]
-        roster_names = [
-            str(item.get("character_id") or item.get("name") or "").strip()
-            for item in roster
-        ]
-        # Audience/chat channel: refuse secret restatement and, structurally,
-        # any shared-ledger write for an active secret-order assignee (F2 —
-        # paraphrase without exact needles must not enter shared sources;
-        # assignee still reads secrets via secret_order_briefs).
+        # #976: audience/chat for an active secret-order assignee never enters
+        # the shared ledger (structure).  Private participation events and
+        # secret_order_briefs cover 参与即知 / 接令面.  No content matching.
         if self._is_audience_chat_shared_channel(kind_text, source_id):
-            if self._body_carries_secret_order_text(body, title):
-                return
+            roster_names = [
+                str(item.get("character_id") or item.get("name") or "").strip()
+                for item in roster
+            ]
             if any(self._is_active_secret_order_assignee(n) for n in roster_names if n):
                 return
         if not source_id:
@@ -10404,9 +10325,9 @@ class GameDB:
     def _has_active_secret_order_brief(self) -> bool:
         """True when any active/pending secret still has a private assignee brief.
 
-        Private structure flag for callers that need brief existence.  Public
-        archive writers must NOT treat this alone as "refuse all aggregates"
-        (F3); they strip secret wording via ``_strip_secret_order_text`` instead.
+        Private structure flag.  Public archive writers must NOT treat this
+        alone as "refuse all aggregates" (F3); secret content is kept out by
+        structure (#976 hold-and-release + #883 briefs), not text filtering.
         """
         row = self.conn.execute(
             "SELECT 1 FROM secret_order_briefs b "
@@ -10421,7 +10342,7 @@ class GameDB:
         Callers pass their local shared-exclusion predicate (item exclusions or
         non-audience restricted kinds).  Active secret-order briefs are private
         structure (#883) and do **not** by themselves poison pure public
-        aggregates (F3); secret wording is stripped at write time instead.
+        aggregates (F3).
         """
         return bool(has_shared_exclusions)
 
@@ -10429,7 +10350,12 @@ class GameDB:
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
         *, commit: bool = True,
     ) -> None:
-        """Write the assignee-only secret-order brief (#883 isolation seam)."""
+        """Write the assignee-only secret-order brief (#883 isolation seam).
+
+        #976 classification event: withhold assignee user-chat bloodline from
+        the shared track (structure), then release other held public audience.
+        No content-matching scrub machinery.
+        """
         self.conn.execute(
             "INSERT INTO secret_order_briefs (order_id,turn,year,period,minister_name,title,body) "
             "VALUES (?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET "
@@ -10437,13 +10363,9 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
-        # Origin hygiene (audience/chat only): assignee user-chat bloodline
-        # clears zero-overlap 润稿 origin (any turn); substantial needles only
-        # for non-user residual so same-theme pure public 参与即知 survives.
-        self._scrub_assignee_secret_lineage_audience(
-            minister_name, title, body, commit=False,
-        )
-        self._scrub_secret_text_from_shared_knowledge(title, body, commit=False)
+        self._withhold_assignee_user_audience_origin(minister_name, commit=False)
+        # Release pure-public held rows (other ministers; non-withheld).
+        self.release_held_audience_knowledge(commit=False)
         if commit:
             self.conn.commit()
 
@@ -10452,15 +10374,6 @@ class GameDB:
         source_text = str(source_id or "")
         # #883: secret_order shape never becomes a participation event.
         if kind_text == "secret_order" or source_text.startswith("secret_order:"):
-            return
-        # Audience/chat channel: refuse restating active secret brief wording.
-        # Active-assignee structural refuse applies to the *shared* source table
-        # only (see register_character_knowledge_source); participation events
-        # remain character-private for non-secret public chat memory.
-        if (
-            self._is_audience_chat_shared_channel(kind_text, source_text)
-            and self._body_carries_secret_order_text(body, title)
-        ):
             return
         source_id = source_id or f"{kind}:{state.turn}:{title}"
         excluded_json = json.dumps(

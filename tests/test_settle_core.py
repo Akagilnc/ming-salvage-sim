@@ -198,7 +198,11 @@ def test_private_audience_does_not_erase_independent_public_settlement(game):
 
 
 def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
-    """真实结算的混合邸报只把公开片段投影给未参与者。"""
+    """真实结算：密令只在 brief；独立公开源投影给未参与者；不靠文本擦洗拆混合串。
+
+    #976 结构：公共 LLM 永不预读密令，故结算 narrative 只承载公开句；
+    密令正文不会出现在 narrative 注入路径上。
+    """
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -206,12 +210,14 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
         and db.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
+    secret_marker = "混合结算密令标记"
     order = db.create_secret_order(
-        state, knower.name, "混合密查", "混合结算密令标记", [],
+        state, knower.name, "混合密查", secret_marker, [],
         excluded_names=[excluded.name],
     )
     before_turn = state.turn
-    narrative = "公开结算标记；混合结算密令标记；公开结算尾声"
+    # Producer path: pure public narrative + independent public source (no secret inject).
+    narrative = "公开结算标记；公开结算尾声"
     db.record_public_knowledge_event(
         state, "公开结算", "公开结算标记；公开结算尾声",
         source_id="test:mixed-settlement-public",
@@ -228,12 +234,17 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
     )
     assert "公开结算标记" in excluded_text
     assert "公开结算尾声" in excluded_text
-    assert "混合结算密令标记" not in excluded_text
+    assert secret_marker not in excluded_text
     assert order > 0
+    # Brief still holds the secret for the assignee only.
+    brief = db.conn.execute(
+        "SELECT body FROM secret_order_briefs WHERE order_id=?", (order,)
+    ).fetchone()
+    assert brief is not None and secret_marker in (brief["body"] or "")
 
 
 def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
-    """#883：公共产出不预读密令；夹带简报原文的聚合不得公开，纯公开改写仍可入档（F3）。"""
+    """#883/#976：公共产出不预读密令；纯公开结算叙事在 brief 存活期仍可入档（F3）。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -247,10 +258,10 @@ def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
         excluded_names=[excluded.name],
     )
 
-    # 负向：叙事夹带密令简报原文 → 公共面不得见密令正文。
+    # Structural producer path: narrative is pure public (no secret preload).
     settle_with_delta(
         state, db, {}, before_turn=state.turn, content=content,
-        narrative=f"邸报旁述：{secret_body}；另报山东漕运如常。",
+        narrative="邸报旁述：另报山东漕运如常。",
     )
 
     excluded_text = " ".join(
@@ -258,9 +269,13 @@ def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
         for item in db.get_character_knowledge(state, excluded.name)["public_events"]
     )
     assert secret_body not in excluded_text
-    # 正向：同叙事中的纯公开句在 brief 存活期仍可入档（F3，不整闸吞公开层）。
+    # 正向：纯公开句在 brief 存活期仍可入档（F3，不整闸吞公开层）。
     assert "山东漕运如常" in excluded_text
     assert order > 0
+    brief = db.conn.execute(
+        "SELECT body FROM secret_order_briefs WHERE order_id=?", (order,)
+    ).fetchone()
+    assert brief is not None and secret_body in (brief["body"] or "")
 
 
 def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
