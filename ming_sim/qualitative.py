@@ -105,12 +105,14 @@ _ABSTRACT_BAND_WORD = "|".join(
 # Approximate / comparator connectors used in natural LLM historical prose.
 # Longer alternatives first so ``大约`` / ``约等于`` / ``约略`` / ``大概`` win
 # over bare ``约`` (``能力约略70`` must not fall through as ``约`` + ``略70``).
+# Bare ``到`` is a free peer of bare ``至`` (digit-bound) so unlisted stems
+# such as ``增加到`` / ``涨到`` / ``恢复到`` redline without a stem treadmill.
 _ABSTRACT_SCORE_CONNECTOR = (
-    r"由|为|达|高达|至|是|从|"
+    r"由|为|达|高达|至|到了|到|是|从|"
     r"不足|不到|低于|少于|不满|超过|高于|大于|"
     r"接近|近于|近乎|将近|不及|逼近|几乎|"
     r"约等于?|大约|大概|大致|约莫|约摸|约略|约计|约|差不多|"
-    r"跌破|突破|冲破|到了"
+    r"跌破|突破|冲破"
 )
 # After a connector, natural prose may add a directional complement or copula:
 # ``跌破到30`` / ``接近到40`` / ``差不多是70`` / ``大约是70``.
@@ -122,10 +124,15 @@ _ABSTRACT_AT_PREFIX = (
     r"大约|大概|大致|约莫|约摸|约略|约计|差不多|约|"
     r"维持|保持|稳定|停留)?"
 )
-# Shared numeric tail: optional percent / 分, never a countable unit, optional 左右.
+# Shared numeric tail: Arabic or Chinese exact scores, optional percent / 分,
+# never a countable unit, optional 左右. Chinese numerals are the same abstract
+# token class as digits (``能力约七十`` / ``忠诚只有三十``).
+_CHINESE_SCORE_CHARS = r"零〇一二两三四五六七八九十百"
+_ABSTRACT_NUMBER_START = rf"[-+]?\d|[{_CHINESE_SCORE_CHARS}]"
 _ABSTRACT_SCORE_NUMBER = (
-    rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
-    rf"(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))"
+    rf"(?:[-+]?\d+(?:\.\d+)?|[{_CHINESE_SCORE_CHARS}]+)"
+    rf"(?:\s*/\s*100|\s*%|\s*分)?"
+    rf"(?!\d|[{_CHINESE_SCORE_CHARS}]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
     rf"(?:\s*(?:左右|上下))?"
 )
 _ABSTRACT_VALUE_RE = re.compile(
@@ -137,7 +144,8 @@ _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*{_ABSTRACT_SCORE_NUMBER}"
     rf"|"
     # ``忠诚接近40`` / ``能力约70`` / ``跌破到30`` / ``差不多是70`` / bare ``忠诚88``
-    rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|[（(]\s*|(?=[-+]?\d))"
+    # / Chinese ``能力约七十``
+    rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|[（(]\s*|(?={_ABSTRACT_NUMBER_START}))"
     rf"{_ABSTRACT_SCORE_NUMBER}\s*[）)]?"
     rf")",
     re.IGNORECASE,
@@ -158,6 +166,8 @@ _ABSTRACT_STATE_MODIFIER = (
 )
 # Directional change verbs allow optional 高/低 then optional 至/到 so
 # ``升高到`` / ``降低到`` match as one verb (not ``升高`` + leftover ``到``).
+# Bare ``到`` peers bare ``至`` so unlisted stems (``增加/涨/恢复/减少`` + 到)
+# match via the connective bridge without growing the stem list.
 _ABSTRACT_STATE_VERB = (
     r"(?:升(?:高)?(?:至|到)?|降(?:低)?(?:至|到)?|"
     r"提高(?:至|到)?|提升(?:至|到)?|"
@@ -166,11 +176,11 @@ _ABSTRACT_STATE_VERB = (
     r"达到?|变为?|到了|"
     r"接近(?:至|到)?|近于|不及|逼近|几乎|"
     r"约等于?|大约|大概|大致|约莫|约摸|约略|约计|约|差不多|"
-    r"只有|仅有|仅|为|至|有|余|剩)"
+    r"只有|仅有|仅|为|至|到|有|余|剩)"
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
-    rf"(?:{_ABSTRACT_STATE_CONNECTIVE}{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?=[-+]?\d))"
+    rf"(?:{_ABSTRACT_STATE_CONNECTIVE}{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?={_ABSTRACT_NUMBER_START}))"
     rf"{_ABSTRACT_SCORE_NUMBER}",
     re.IGNORECASE,
 )
@@ -180,11 +190,16 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
     """Translate labeled abstract axes before applying the shared P4 rejector."""
     rendered = str(text or "")
     names = "|".join(re.escape(name) for name in _AUDIENCE_ABSTRACT_BANDS)
-    # A compound can contain two raw values ("势力从30升到70").  Translating
+    # A compound can contain two raw values ("势力从30增加到70").  Translating
     # only its first half would leave the second value exposed, so reject the
-    # original sentence before any local substitution.
+    # original sentence before any local substitution.  Any second score after
+    # 从/由 within a short span counts — do not hard-code 升到/降到 only.
     compound_axis = re.compile(
-        rf"(?:{names})(?:度)?\s*(?:从\s*[-+]?\d+(?:\.\d+)?\s*(?:升到|降到|到)|高达\s*[-+]?\d+)",
+        rf"(?:{names})(?:度)?\s*"
+        rf"(?:"
+        rf"(?:从|由)\s*{_ABSTRACT_SCORE_NUMBER}\s*.{{0,24}}?{_ABSTRACT_SCORE_NUMBER}"
+        rf"|高达\s*{_ABSTRACT_SCORE_NUMBER}"
+        rf")",
         re.IGNORECASE,
     )
     if compound_axis.search(rendered):
@@ -194,13 +209,25 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
         rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
         rf"(?:[:：=]\s*|"
         rf"(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|"
-        rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*|(?=[-+]?\d))"
-        r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%|\s*分)?(?:\s*(?:左右|上下))?",
+        rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*|(?={_ABSTRACT_NUMBER_START}))"
+        rf"({_ABSTRACT_SCORE_NUMBER})",
         re.IGNORECASE,
     )
     def replace(match: re.Match[str]) -> str:
         name, value = match.groups()
-        return f"{name}{qualitative_band(value, _AUDIENCE_ABSTRACT_BANDS[name])}"
+        # Band substitution needs a machine int; Chinese numeral scores fall
+        # through to the shared rejector instead of inventing a parser.
+        raw = str(value).strip()
+        for suffix in ("左右", "上下", "分", "%"):
+            if raw.endswith(suffix):
+                raw = raw[: -len(suffix)].strip()
+        if "/" in raw:
+            raw = raw.split("/", 1)[0].strip()
+        try:
+            score: object = int(float(raw))
+        except (TypeError, ValueError):
+            return match.group(0)
+        return f"{name}{qualitative_band(score, _AUDIENCE_ABSTRACT_BANDS[name])}"
     return safe_historical_text(pattern.sub(replace, rendered), kind)
 
 
