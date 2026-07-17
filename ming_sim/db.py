@@ -8609,9 +8609,12 @@ class GameDB:
                 excluded = [str(t).strip() for t in excluded if str(t).strip()] if isinstance(excluded, list) else []
                 excluded_offices = payload.get("excluded_offices") or []
                 excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
+                # pa["minister_name"] = audience speaker who captured the oral
+                # decree; may differ from final assignee (跨人承办).
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
-                    excluded_names=excluded, excluded_offices=excluded_offices)
+                    excluded_names=excluded, excluded_offices=excluded_offices,
+                    origin_minister_name=str(pa.get("minister_name") or "") or None)
                 if registry is not None:
                     try:
                         registry.refresh(assignee)
@@ -10151,15 +10154,19 @@ class GameDB:
     def _withhold_assignee_user_audience_origin(
         self, state: GameState, minister_name: str, *, commit: bool = True,
     ) -> None:
-        """Classify secret-origin audience bloodline for one assignee (#976).
+        """Classify secret-origin audience user bloodline for one minister (#976).
 
         Structural rule (provenance, not content matching): emperor ``user``
-        chat in the secret-origin window is never released (shared or private
-        events).  Zero-overlap LLM 润稿 is covered by role+assignee identity.
+        chat that is the secret-origin line is never released (shared or
+        private events).  Zero-overlap LLM 润稿 is covered by role+identity.
 
-        Scope (S1, not all-history):
-        - All still-``held`` user rows for this assignee (any turn) — covers
-          T-hold → T+N create without settle, and same-turn origin.
+        Scope (narrowed after completeness review — 修类不修点):
+        - Cross-turn still-``held`` user rows (any earlier turn) — F4 /
+          T-hold → T+N create without settle.
+        - Same-turn still-``held`` user: **only the latest** (max id) is
+          treated as the oral-decree origin.  Earlier same-window pure-public
+          user lines survive classification and project via release (private
+          when the minister is an active assignee, else shared) — S3 参与即知.
         - Already projected (``released``/``private``) user rows only inside
           the open settle window ``turn >= state.turn - 1`` — retains the
           accepted cost of pulling back just-publicized origin across one
@@ -10168,26 +10175,56 @@ class GameDB:
 
         Minister/assistant held rows are not withheld here: after the brief
         exists, ``release_held_audience_knowledge`` sends them private-only.
+
+        Call for **both** final assignee and origin audience speaker when
+        they differ (跨人承办 — oral decree lives on speaker chat rows).
         """
         name = str(minister_name or "").strip()
         if not name:
             return
         # Previous + current turn: post-settle advance leaves origin at turn-1.
         bound_turn = max(0, int(state.turn) - 1)
+        current_turn = int(state.turn)
+        withhold_ids: List[int] = []
         try:
-            rows = self.conn.execute(
+            held_rows = self.conn.execute(
+                "SELECT id, turn FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held'",
+                (name,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            held_rows = []
+        same_turn_held: List[int] = []
+        for row in held_rows:
+            mid = int(row["id"])
+            msg_turn = int(row["turn"] or 0)
+            if msg_turn < current_turn:
+                # Cross-turn held origin (F4 / zero-overlap rewrite).
+                withhold_ids.append(mid)
+            else:
+                same_turn_held.append(mid)
+        # Same-turn: only the latest held user is secret-origin bloodline;
+        # earlier pure-public user in the same window is left for release.
+        if same_turn_held:
+            withhold_ids.append(max(same_turn_held))
+        try:
+            open_rows = self.conn.execute(
                 "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND ("
-                "  knowledge_status='held'"
-                "  OR (knowledge_status IN ('released', 'private') AND turn >= ?)"
-                ")",
+                "WHERE minister_name=? AND role='user' "
+                "AND knowledge_status IN ('released', 'private') AND turn >= ?",
                 (name, bound_turn),
             ).fetchall()
         except sqlite3.OperationalError:
-            rows = []
+            open_rows = []
+        for row in open_rows:
+            withhold_ids.append(int(row["id"]))
+        # Stable unique order.
+        seen: set = set()
         source_ids: List[str] = []
-        for row in rows:
-            mid = int(row["id"])
+        for mid in withhold_ids:
+            if mid in seen:
+                continue
+            seen.add(mid)
             source_ids.append(f"chat_message:{mid}")
             self.conn.execute(
                 "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
@@ -10352,13 +10389,14 @@ class GameDB:
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
-        *, commit: bool = True,
+        *, origin_minister_name: Optional[str] = None, commit: bool = True,
     ) -> None:
         """Write the assignee-only secret-order brief (#883 isolation seam).
 
-        #976 classification event: withhold assignee user-chat bloodline from
-        the shared track (structure), then release other held public audience.
-        No content-matching scrub machinery.
+        #976 classification event: withhold secret-origin user-chat bloodline
+        for the assignee **and** the origin audience speaker (when they differ
+        — 跨人承办 oral decree lives on speaker rows), then release other held
+        public audience.  No content-matching scrub machinery.
         """
         self.conn.execute(
             "INSERT INTO secret_order_briefs (order_id,turn,year,period,minister_name,title,body) "
@@ -10367,8 +10405,14 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
-        self._withhold_assignee_user_audience_origin(state, minister_name, commit=False)
-        # Release pure-public held rows (other ministers; non-withheld).
+        assignee = str(minister_name or "").strip()
+        self._withhold_assignee_user_audience_origin(state, assignee, commit=False)
+        # 跨人承办: oral decree was spoken in the speaker's audience, not the
+        # final assignee's chat log — withhold speaker origin user bloodline too.
+        origin = str(origin_minister_name or "").strip()
+        if origin and origin != assignee:
+            self._withhold_assignee_user_audience_origin(state, origin, commit=False)
+        # Release pure-public held rows (other ministers; non-withheld same-window user).
         self.release_held_audience_knowledge(commit=False)
         if commit:
             self.conn.commit()
@@ -10452,6 +10496,7 @@ class GameDB:
         deadline_months: int = 0,
         excluded_names: Optional[Iterable[str]] = None,
         excluded_offices: Optional[Iterable[str]] = None,
+        origin_minister_name: Optional[str] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -10510,7 +10555,10 @@ class GameDB:
              json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
         self.conn.commit()
-        self.upsert_secret_order_brief(state, int(cur.lastrowid), minister_name, title, content)
+        self.upsert_secret_order_brief(
+            state, int(cur.lastrowid), minister_name, title, content,
+            origin_minister_name=origin_minister_name,
+        )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 

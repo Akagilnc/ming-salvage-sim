@@ -1811,8 +1811,12 @@ class GameSession:
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
         excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
         excluded_offices = data.get("excluded_offices") if isinstance(data.get("excluded_offices"), list) else []
-        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline,
-                                           excluded_names=excluded, excluded_offices=excluded_offices)
+        return self.db.create_secret_order(
+            self.state, assignee, title, content, tags, deadline_months=deadline,
+            excluded_names=excluded, excluded_offices=excluded_offices,
+            # minister_name = audience speaker (may differ from assignee).
+            origin_minister_name=minister_name,
+        )
 
     def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
         """Convert a legacy already-registered same-turn secret order into a pending candidate.
