@@ -8,7 +8,7 @@
  * #925 / ADR 0132: per-slice review/fix convergence is judge-verdict driven:
  *
  *   S0→S1→S2(implement)→S3(judge establish)
- *     converged → S7(local handoff) → S8(success)
+ *     converged → S7(local handoff) → S8(completed)
  *     continue  → S5(fix)→S6(judge resume)→(verdict again)
  *     escalate  → decision-kind park (global stop edge)
  *

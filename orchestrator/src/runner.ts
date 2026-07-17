@@ -20,8 +20,8 @@
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
- *   - any backend call throws → S8(error) + error package  [runner catch]
- *   - the S2 worker carries escalate → S8(escalate) [route() detects]
+ *   - any backend call throws → S8(failed) + error package  [runner catch]
+ *   - the S2 worker carries escalate → S8(parked) [route() detects]
  * Slice #253: StepSpec contract — model/maxIter/soul/toolchain (#928: no signal).
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
@@ -336,7 +336,7 @@ function buildPersistentEntry(opts: {
     entry = { ...entry, output: opts.output };
   }
   // Tag the terminal S8 entry with its handoff status so a resuming run can
-  // tell success / escalate / error apart (#255).
+  // tell completed / parked / failed apart (#255 / #942).
   if (opts.handoffStatus !== undefined) {
     entry = { ...entry, handoffStatus: opts.handoffStatus };
   }
@@ -466,7 +466,7 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
 
 /**
  * #683 — latest durable marker is a quota wait park. Resume re-enters the
- * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ * parked step (not S8(failed)). Same family as `online_review_ci_pending` parks.
  * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
  * next baton can continue from the preserved worktree.
  */
@@ -922,14 +922,14 @@ function planResume(
   const agentEntry = lastAgentEntry(executableLedger);
 
   // #709 exemption: keep strict !== undefined (not != null) — escalationKind presence
-  // on S8(escalate) distinguishes legacy untagged (absent → fallthrough to Case 2
+  // on S8(parked) distinguishes legacy untagged (absent → fallthrough to Case 2
   // agentEscalate + answer reopen logic) from tagged kind (present → use "decision"
   // vs "failure" to decide reopen vs always-terminal). Traced: planResume Case1 vs
   // Case2/3a; familyEscalationState uses ==/=== directly; "unknown tagged" test forces
   // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
   // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
   // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
-  // #942 / #934 ID-005: #929 / unknown handoff tokens fail closed as failed.
+  // #942 / #934 ID-005: legacy #929 / unknown handoff tokens fail closed as failed.
   // No dual-read to completed/parked; scene preserved; cause = resume_state_invalid.
   if (
     lastEntry.step === "S8" &&
@@ -1056,20 +1056,20 @@ function planResume(
   // Case 2: legacy/untagged agent decision-escalate residue — the last agent
   // output carries an escalation object (the bell; its fields are cargo). Only a
   // later escalation_answered row re-opens THAT step in its original agent
-  // session; otherwise the prior S8(escalate) remains a pause.
+  // session; otherwise the prior S8(parked) remains a pause.
   //
   // Persisted legacy ledgers may predate the receipt bell normalizer. Keep the
   // compatibility presence guard here; current receipt cargo quality never
   // changes whether the worker pressed the decision bell.
   //
-  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
+  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(failed) ALSO supersedes
   // escalate-resume, even when the decision bell is present. An escalate handoff
-  // whose S8 write faulted returns status:error in-run and best-effort persists
-  // a tagged 'error' S8 — the disk then holds a decision-bell agent entry AND a
-  // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
+  // whose S8 write faulted returns status:failed in-run and best-effort persists
+  // a tagged 'failed' S8 — the disk then holds a decision-bell agent entry AND a
+  // trailing S8(failed). The run failed; re-feeding must report that failed (Case
   // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
-  // the last entry is a tagged terminal-error S8. (A legitimate human-answered
-  // escalate has S8(escalate) plus a later answer row — NOT error — so it still
+  // the last entry is a tagged terminal-failed S8. (A legitimate human-answered
+  // escalate has S8(parked) plus a later answer row — NOT failed — so it still
   // resumes here.)
   const lastIsTaggedError =
     lastEntry.step === "S8" && lastEntry.handoffStatus === "failed";
@@ -1160,7 +1160,7 @@ function planResume(
     output: routeOutput,
   });
   const priorForResume = ledger as ReadonlyArray<LedgerEntry>;
-  // #683: quota wait park → re-enter the parked step (not S8(error)).
+  // #683: quota wait park → re-enter the parked step (not S8(failed)).
   const quotaWaitStep = sliceQuotaWaitPending(ledger);
   if (quotaWaitStep !== undefined) {
     return {
@@ -2257,11 +2257,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * nor raw-reject. The in-memory ledger still records the step regardless.
    *
    * integ-cmr m2 r1 (Finding 1): `handoffStatus` is threaded through so the
-   * error-path terminal S8 is persisted TAGGED (handoffStatus:'error'). Without
+   * error-path terminal S8 is persisted TAGGED (handoffStatus:'failed'). Without
    * the tag, planResume Case 3a (which only reports a terminal status when
    * lastEntry.handoffStatus !== undefined) falls through to Case 3b/4 and routes
    * from the prior NON-S8 step — re-entering the fix loop on a no-progress bail,
-   * or reporting SUCCESS for a push-fail. The terminal status must be recorded
+   * or reporting completed for a push-fail. The terminal status must be recorded
    * on disk, not inferred. Non-terminal best-effort persists (the failing step)
    * pass handoffStatus=undefined, matching emitLedger's "undefined for non-S8".
    */
@@ -2358,7 +2358,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
     const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
-    // #929 — non-success terminals must speak externally (not only return
+    // #942 — non-completed terminals must speak externally (not only return
     // errorPackage). stopForCoderRec already console.errors; keep the same
     // invariant on the shared errorTermination helper so mid-run crashes are
     // visible without parsing the RunResult.
@@ -2438,7 +2438,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
     const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
-    // #929 — same non-success loudness invariant as errorTermination /
+    // #942 — same non-completed loudness invariant as errorTermination /
     // stopForCoderRec: operators must see the park without parsing RunResult.
     console.error(
       `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
@@ -2955,7 +2955,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         //   (a) ready-for-agent label
         //   (b) no sub-issues (leaf slice, not a parent/epic)
         //   (c) all blocked_by dependencies are closed
-        // A gate violation terminates as structured S8(error): the runner still
+        // A gate violation terminates as structured S8(failed): the runner still
         // stops before preparing a worktree or dispatching an agent step, but AFK
         // callers get the unified terminal result / stop summary instead of a raw
         // process error.
@@ -3076,7 +3076,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         try {
           worktree = await backend.prepareWorktree(issueNumber, sliceBase);
         } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
+          // PRE-worktree throw → unpersistable; S8(failed) in-memory only.
           return await errorTermination("S1", err);
         }
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
@@ -3338,7 +3338,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // #661 / #937: process-level retry CONTINUES on the current scene —
               // no Git reset/checkout/clean. Uncommitted work is the payload.
               //
-              // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
+              // Reviewer: rethrow on throw-exhaust so S8(failed) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
               // Coder keeps default failed→durable abort (existing escalate path).
               // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
@@ -3941,8 +3941,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
-    // converge to S8(error) with an error package, NOT raw-reject out of
-    // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
+    // converge to S8(failed) with an error package, NOT raw-reject out of
+    // runOrchestrator (PRD route table: any backend call throwing → S8(failed)).
     // The step is already recorded in-memory above, so don't double-record it.
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
@@ -4029,9 +4029,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
-      // S8(error), not a raw rejection.
+      // S8(failed), not a raw rejection.
       // #255: tag the entry with the terminal status (decision.status) so a
-      // resuming run can tell a prior success / escalate / error apart (the S8
+      // resuming run can tell a prior completed / parked / failed apart (the S8
       // entry is otherwise identical for all three).
       try {
         await emitLedger(

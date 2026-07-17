@@ -1006,7 +1006,7 @@ export interface FamilyRunInput {
 /**
  * The status of one child within a family run.
  *
- * - `"ran"` — the child's single-slice run reached S8(success) and produced a
+ * - `"ran"` — the child's single-slice run reached S8(completed) and produced a
  *   reviewed branch, but it has NOT yet been merged into the family base. This is
  *   the transient state runChild returns; the spine flips it to `"merged"` only
  *   AFTER the merge commit lands (ADR 0022 decision 5), so a premature `"merged"`
