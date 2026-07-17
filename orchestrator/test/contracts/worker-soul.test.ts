@@ -228,7 +228,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
   it("fix/review prompts stay entrypoints; #911 vacuum puts mechanical method in prompts", () => {
     const fix = read("coder_fix.md");
-    expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
+    expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/fixer\.md/);
     expect(fix).toMatch(/fix-findings path|fix-findings\.json/i);
     expect(fix).toMatch(/escalationAnswer/i);
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
