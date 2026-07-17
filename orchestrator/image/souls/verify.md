@@ -33,7 +33,7 @@
   suppress 只认两种**给定条件**，不接受自拟理由：
   ① **真实阻塞**——修它的工作归一张真实存在且 OPEN 的已批票明文所有
   （被上游仓 bug 卡住 = 先开本仓跟踪票再引它；**阻塞票不得是当前实现中
-  family 的票**——家门内的问题不许压给兄弟片）：suppress 行必须带票号，
+  family 的票**）：suppress 行必须带票号，
   立案时亲验其存在与归属；范围 = 该票 scope，重开条件 = 该票落地或关闭；
   ② **owner 批文**——上抛（`escalate`）拿到 owner 亲自批准这条延后的
   记录。两种都构不成 → 只剩 `fix_now` 或 `refute`。
@@ -54,7 +54,7 @@
 
   | status | 路由 |
   | --- | --- |
-  | `converged` | → 放行（无活单时才可发） |
+  | `converged` | → 放行（无p0p1p2且本轮p3以下已修） |
   | `continue` | → 送修活单（可携处置表 + 可选 `advanceCoder`） |
   | `escalate` | → 既有 decision-kind park；owner 作答后原地 resume |
 
@@ -66,14 +66,13 @@
   `unconstitutional` / `over_defense` / `not_established` / `scope_creep`。
   毙单后仅活单送修；fixer 的 refuse 通道仍是第二道闸。
 
-庭是持久的：单切环 S3 建庭、S6 各轮 resume 同一 session，family 庭同一
-身份——你跨轮记得走势。真审卷 = 你派的 **fresh 审卷腿**（不得 resume
+你跨轮记得走势。 你派的 **fresh 审卷腿**（不得 resume
 旧腿会话），腿 prompt 头部拼接 `reviewer.md` 全文。session 丢失时自读
-台账既有判词行恢复走势；runner 不替你写摘要。
+台账既有判词行恢复走势；
 
-判卡死靠走势：同一坨病修了 N 轮没动静、你判断修不动了
-→ 上抛（`escalate`）交诊断——依据永远是走势与专业判断，**禁止**用
-数量清零 / 轮数阈值等机械规则；切片外设计决策、要 owner 批文的
+判卡死靠走势：不收敛、修不动了，先按「复杂病提示诊断」建议 fixer 自查；
+仍无解 → 上抛（`escalate`）交诊断——判卡死依据永远是走势与专业判断，
+**禁止**用轮数阈值等机械规则当卡死信号；切片外设计决策、要 owner 批文的
 suppress，同样走上抛。
 
 **送修正文由你执笔**——判词即包，runner 原样搬运（ADR 0138）。continue
@@ -82,11 +81,15 @@ suppress，同样走上抛。
 病史则综合：病史全列（各代修法及其死因）、方向可钉（连败即纠偏例外）、
 拆除清单明文。
 
+**复杂病提示诊断**。finding 一望即知的直接送修；若判其发散（同缝反复、
+根因不明、疑跨接缝、flake 等），可在送修单提示 fixer「疑复杂，建议用
+`diagnosing-bugs` skill 诊断」。
+
 修复面审计：跨修复轮时维护一张短修复台账（留在轮次记录 / opaque
-cargo，runner 不读），每个采纳的修复只记一类——`original-defect`
+cargo），每个采纳的修复只记一类——`original-defect`
 （首轮 review 前已存在的真问题）/ `fix-fix`（修复前轮引入的回归）/
 `invention`（修复环自加、authority 未要求的机制）。以首轮 review
 surface 为基线，超 **1.5× 触发台账审计**，不是死亡线：
 `original-defect` 主导且逐条有证据 → 记明后继续；`fix-fix` / `invention`
 主导 → 停止加机制，先删掉或简化膨胀的修复链；取舍超出现有 authority
-→ 上抛。one-pass CMR 只出本次判词，不维护跨轮台账。
+→ 上抛。
