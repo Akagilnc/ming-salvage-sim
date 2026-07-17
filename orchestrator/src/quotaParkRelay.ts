@@ -34,16 +34,6 @@ function isValidStepId(value: unknown): value is SliceStepId {
 }
 
 /**
- * #934 ID-005 / #937 S2 — single durable court for `relay_baton_handoff` rows.
- *
- * Builds the in-memory marker, writeLedger (fail-closed with unified
- * `record_persist_failed` vocabulary), then ledger.push. Shared by quota-wall
- * relay and capacity relay so the two paths cannot drift on cargo or failure class.
- *
- * @param persistClass optional prefix fragment (e.g. `"capacity"`) →
- *   `record_persist_failed: capacity relay_baton_handoff: …`
- */
-/**
  * #934 R7 N2 — single try/catch vocabulary for required durable ledger writes.
  * `stateDir` undefined = no-op (in-memory-only callers). Write failure always
  * surfaces as `record_persist_failed: <classLabel>: …`.
@@ -65,6 +55,16 @@ async function writeLedgerFailClosed(
   }
 }
 
+/**
+ * #934 ID-005 / #937 S2 — single durable court for `relay_baton_handoff` rows.
+ *
+ * Builds the in-memory marker, writeLedger (fail-closed with unified
+ * `record_persist_failed` vocabulary), then ledger.push. Shared by quota-wall
+ * relay and capacity relay so the two paths cannot drift on cargo or failure class.
+ *
+ * @param persistClass optional prefix fragment (e.g. `"capacity"`) →
+ *   `record_persist_failed: capacity relay_baton_handoff: …`
+ */
 export async function persistRelayBatonHandoff(opts: {
   readonly entry: RelayHandoffLedgerEvent;
   readonly step: SliceStepId;
