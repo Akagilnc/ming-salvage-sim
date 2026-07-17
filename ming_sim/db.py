@@ -6806,6 +6806,9 @@ class GameDB:
         - 皇帝 ``user`` 行：一律 hold（待 create_secret_order 分类 / 月末 release）
         - 大臣回话：无 active 密令简报时立即放行共享轨；有简报时只进接令者私有事件轨
         识别靠 provenance（role + 接令者身份 + 分类事件），不靠内容匹配。
+
+        Single commit at the end so background stream workers do not interleave
+        partial knowledge writes with chat_turn message-id updates.
         """
         cur = self.conn.execute(
             "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
@@ -6813,37 +6816,37 @@ class GameDB:
             (minister_name, turn, role, content),
         )
         message_id = int(cur.lastrowid)
-        self.conn.commit()
         if not minister_name or role not in {"user", "assistant", "minister"}:
+            self.conn.commit()
+            return message_id
+        # Emperor speech is potential secret origin — hold until classification.
+        if role == "user":
+            self.conn.commit()
             return message_id
         state = self.load_state()
         source_id = f"chat_message:{message_id}"
-        # Emperor speech is potential secret origin — hold until classification.
-        if role == "user":
-            return message_id
         # Minister speech after an active brief: private participation only
         # (参与即知 for the assignee; never shared-ledger material).
         if self._is_active_secret_order_assignee(minister_name):
             self.record_character_participation(
                 state, [minister_name], "audience", "召对", content,
-                source_id=source_id, commit=True,
+                source_id=source_id, commit=False,
             )
             self.conn.execute(
                 "UPDATE chat_messages SET knowledge_status='private' WHERE id=?",
                 (message_id,),
             )
-            self.conn.commit()
-            return message_id
-        # Pre-classification minister speech: pure public → shared track now.
-        self.record_participation_record(
-            state,
-            {"participants": [minister_name], "title": "召对", "body": content},
-            kind="audience", source_id=source_id,
-        )
-        self.conn.execute(
-            "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
-            (message_id,),
-        )
+        else:
+            # Pre-classification minister speech: pure public → shared track now.
+            self.record_participation_record(
+                state,
+                {"participants": [minister_name], "title": "召对", "body": content},
+                kind="audience", source_id=source_id, commit=False,
+            )
+            self.conn.execute(
+                "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
+                (message_id,),
+            )
         self.conn.commit()
         return message_id
 
