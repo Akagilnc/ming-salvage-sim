@@ -1144,7 +1144,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           spec.kind === "verify" ||
           spec.kind === "fixer" ||
           spec.kind === "cleanup" ||
-          spec.kind === "docRelease"
+          spec.kind === "landing"
         ) {
           return {
             kind: "completed",
@@ -1159,7 +1159,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                   }
                   : spec.kind === "cleanup"
                     ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                    : { kind: "docRelease", released: true },
+                    : { kind: "landing", released: true },
           };
         }
         return { kind: "failed", reason: `unexpected worker ${spec.kind}` };

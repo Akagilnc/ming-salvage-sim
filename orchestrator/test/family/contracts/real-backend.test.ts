@@ -850,7 +850,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "merger_resolve_conflict.md",
         "verify.md",
         "fixer.md",
-        "docRelease.md",
+        "landing.md",
       ]),
     );
   });
@@ -1394,7 +1394,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ["verify", "parseVerifyOutcome"],
     ["fixer", "parseFixerOutcome"],
     ["cleanup", "parseCleanupOutcome"],
-    ["docRelease", "parseDocReleaseOutcome"],
+    ["landing", "parseLandingOutcome"],
   ] as const)(
     "%s cargo with nested escalate is opaque cargo (no decision-gate dual)",
     async (tag, parser) => {
@@ -1460,8 +1460,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
     ).toEqual({ kind: "cleanup", terminal: true, ok: true });
     expect(
-      mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
-    ).toEqual({ kind: "docRelease", released: true });
+      mod.parseLandingOutcome('<landing>{"released": true}</landing>', outcomePath),
+    ).toEqual({ kind: "landing", released: true });
   });
 
   it("prefers readable sidecar cargo over a stdout decision bell (no bell-shop)", async () => {
@@ -1478,7 +1478,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     )).toEqual({ kind: "verify", converged: true });
   });
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "fails family %s when typed decision Output.object is absent",
     async (role) => {
       // #899: SO seat without result.output must not become cargo/no-gate success.
@@ -1766,7 +1766,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toThrow(/illegal coder station receipt|refusedFindingIdentityKeys/i);
   });
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "does not let sidecar bells override a schema-validated typed %s decision signal",
     async (role) => {
       // #899 finding: when typed Output.object exists it is the sole fate channel;
@@ -1851,7 +1851,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     },
   );
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "family %s T2 onlineReview escalate still parks decision",
     async (role) => {
       const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
@@ -1962,10 +1962,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("RAW extra keys on docRelease remain cargo", async () => {
+  it("RAW extra keys on landing remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
-    expect(out.kind).toBe("docRelease");
+    const out = mod.parseLandingOutcome(`<landing>{"released": true, "x": 9}</landing>`);
+    expect(out.kind).toBe("landing");
   });
 
   // === pinning the canonical family last-complete-block semantics ===

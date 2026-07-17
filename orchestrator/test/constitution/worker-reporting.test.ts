@@ -238,8 +238,8 @@ describe("#825 Group A family roles", () => {
         if (spec.kind === "fixer") {
           return { kind: "completed", output: { kind: "fixer", committed: false } };
         }
-        if (spec.kind === "docRelease") {
-          return { kind: "completed", output: { kind: "docRelease", released: true } };
+        if (spec.kind === "landing") {
+          return { kind: "completed", output: { kind: "landing", released: true } };
         }
         return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
       }
@@ -272,7 +272,7 @@ describe("#825 Group A family roles", () => {
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        dispatchDocRelease: async () => true,
+        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );
@@ -299,7 +299,7 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        dispatchDocRelease: async () => true,
+        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );

@@ -159,7 +159,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
           "verify=gpt-5.6-sol",
           "fixer=sonnet",
           "cleanup=sonnet",
-          "docRelease=sonnet",
+          "landing=sonnet",
           "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
         ].join("\n"),
     );

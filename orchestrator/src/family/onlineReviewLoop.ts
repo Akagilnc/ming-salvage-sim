@@ -792,7 +792,11 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  readonly dispatchDocRelease: (
+  /**
+   * @deprecated #941 — landing Action owns docs/merge/close/cleanup after this
+   * loop returns mergeable. Optional residual hook ignored by the loop.
+   */
+  readonly dispatchLanding?: (
     landing: WorkerLandingPayload,
   ) => Promise<boolean | undefined>;
   /**
@@ -820,7 +824,7 @@ export interface OnlineReviewLoopStageResult {
 
 /**
  * Family online review-loop stage (#940 typed-judge-only).
- * Post-merge cleanup (#603) runs after host auto-merge, not inside this loop.
+ * #941: stops at mergeable; landing Action owns docs/merge/close/cleanup.
  * Exit conditions are worker judge dispositions only — no mechanical round cap.
  */
 export async function runOnlineReviewLoopStage(
@@ -957,21 +961,8 @@ export async function runOnlineReviewLoopStage(
         disposition === "converged" &&
         checkRunsConverged(checkRuns, emptyMeans)
       ) {
-        const released = await dispatch.dispatchDocRelease(landing);
-        if (released === false) {
-          return {
-            ok: false,
-            terminalState: "decision_gate_raised",
-            round,
-            stopSummary: stageFailureStopSummary({
-              status: "online_review_failed",
-              summary:
-                "family 文档发布 returned released:false — skill fail / hang / required push fail",
-              repairHint:
-                "fix the docRelease skill or push failure and re-feed the family run",
-            }),
-          };
-        }
+        // #941 / ID-013: online-review Action ends at mergeable. Landing Action
+        // owns docs release, merge, MERGED confirm, close, and cleanup.
         return { ok: true, terminalState: "mergeable", round };
       }
 

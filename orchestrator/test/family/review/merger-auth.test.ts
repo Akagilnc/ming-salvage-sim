@@ -238,7 +238,7 @@ describe("correctness N3 — merger agy mount + fail-closed", () => {
             verify: "gpt-5.6-sol",
             fixer: "sonnet",
             cleanup: "sonnet",
-            docRelease: "sonnet",
+            landing: "sonnet",
           },
           legCollections: {
             cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],

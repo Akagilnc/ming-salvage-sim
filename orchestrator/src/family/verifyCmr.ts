@@ -24,23 +24,13 @@ import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { shWithClock } from "../externalCall.js";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
-import {
-  familyAutoMergeIncomplete,
-  runFamilyAutoMergeStage,
-} from "./familyAutoMerge.js";
-import { buildCleanupLanding } from "../postMergeCleanup.js";
-import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
-import { stubCleanupResult } from "../reviewLoopOutcome.js";
-import {
-  shouldReclaimFamilyHost,
-} from "../hostReclaim.js";
+import { runLandingAction } from "./landing.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
   type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import {
-  docReleaseWorkerSpec,
   fixerWorkerSpec,
   verifyWorkerSpec,
 } from "../dispatchWorker.js";
@@ -94,7 +84,6 @@ import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
-  CleanupResult,
   DispatchContext,
   EscalationAnswerPayload,
   Finding,
@@ -130,10 +119,6 @@ import {
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
-  familyPostMergeCleanupForHead,
-  familyPrMergedForHead,
-  mergedSet,
-  recordPostMergeCleanup,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
 import {
@@ -1366,23 +1351,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output.kind === "fixer" ? result.output : undefined;
     },
-    // #740: family S12 crash-retry continues as-is (no scoped cleanup hook).
-    dispatchDocRelease: async (landing: WorkerLandingPayload) => {
-      const docPool = poolForKind("docRelease");
-      const result = await dispatchFamilyReviewWorker(
-        input.familyBackend,
-        docReleaseWorkerSpec(input.resolvedRoute),
-        {
-          ...baseCtx,
-          ...(docPool !== undefined ? { billingPool: docPool } : {}),
-        },
-        landing,
-      );
-      if (result.kind !== "completed") return false;
-      return result.output.kind === "docRelease"
-        ? result.output.released
-        : undefined;
-    },
+    // #941: landing Action owns docs/merge/close/cleanup after this loop.
     // #940 / ID-012: verify worker owns GitHub side effects; host does not
     // re-apply reply/resolve/deferred after the worker's typed disposition.
     retriggerAfterFix: async () => {
@@ -2833,33 +2802,29 @@ export async function runVerifyCmr(
       : {}),
   });
 
-  const autoMerge = await runFamilyAutoMergeStage({
+  // #941 / ID-013: landing Action owns docs + merge + MERGED + close + cleanup.
+  // Host auto-merge courts and cleanup-fail classification are deleted.
+  const landing = await runLandingAction({
     familyBackend,
     familyBase,
+    ...(runId !== undefined ? { runId } : {}),
     convergedHeadOid: convergedFamilyHead,
     prUrl: shipPr,
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    resolvedRoute,
+    ...scopedPoolFields,
   });
-  if (familyAutoMergeIncomplete(autoMerge)) {
-    const baseStop =
-      autoMerge.stopSummary ??
+  if (!landing.ok) {
+    const stopSummary =
+      landing.stopSummary ??
       decisionGateParkStopSummary({
-        summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+        summary: `family landing did not complete (${landing.terminalState})`,
         repairHint:
-          "resolve merge blockers or answer the decision gate, then re-run the family final barrier",
+          "resolve landing blockers or answer the decision gate, then re-enter landing",
       });
-    const isPark = baseStop.reason === "decision_gate_park";
-    const stopSummary = isPark
-      ? baseStop
-      : stageFailureStopSummary({
-          status: "merge_failed",
-          summary: baseStop.summary,
-          repairHint:
-            baseStop.repairHint ??
-            "resolve merge blockers, then re-run the family final barrier",
-          ...(baseStop.metadata !== undefined
-            ? { metadata: baseStop.metadata }
-            : {}),
-        });
+    const isPark =
+      landing.terminalState === "decision_gate" ||
+      stopSummary.reason === "decision_gate_park";
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -2870,156 +2835,17 @@ export async function runVerifyCmr(
       phase,
       reason: stopSummary.summary,
       familyHeadAfter: convergedFamilyHead,
-      stopSummary,
+      stopSummary: isPark
+        ? stopSummary
+        : stageFailureStopSummary({
+            status: "merge_failed",
+            summary: stopSummary.summary,
+            repairHint:
+              stopSummary.repairHint ??
+              "repair landing and re-run the family final barrier",
+          }),
     });
     return isPark ? { ok: false, ran: true } : stageGate("merge_failed");
   }
-
-  const cleanupGate = await ensureFamilyPostMergeCleanup({
-    familyBackend,
-    familyBase,
-    ...(runId !== undefined ? { runId } : {}),
-    familyHeadAfter: convergedFamilyHead,
-    prUrl: shipPr,
-    ...(familyIssue !== undefined ? { familyIssue } : {}),
-    phase,
-    recordAbortOnFailure: true,
-  });
-  if (!cleanupGate.ok) return stageGate("cleanup_failed");
   return { ok: true, ran: true };
-}
-
-/**
- * #603 — after `pr_merged` for a head, require terminal+ok `post_merge_cleanup`
- * (or dispatch cleanup → record → optional reclaim). Shared by the fresh final
- * barrier and family resume already_done exits so remote residue is never
- * reported as success.
- */
-export async function ensureFamilyPostMergeCleanup(input: {
-  readonly familyBackend: FamilyBackend;
-  readonly familyBase: string;
-  readonly runId?: string;
-  readonly familyHeadAfter: string;
-  readonly prUrl: string;
-  readonly familyIssue?: number;
-  readonly phase?: VerifyCmrPhase;
-  /** When true (final barrier), write durable abort on cleanup failure. */
-  readonly recordAbortOnFailure?: boolean;
-}): Promise<{ readonly ok: boolean; readonly reason?: string }> {
-  const {
-    familyBackend,
-    familyBase,
-    familyHeadAfter,
-    prUrl,
-    familyIssue,
-    phase = "final",
-    recordAbortOnFailure = false,
-  } = input;
-  const ledger = await familyBackend.readFamilyLedger();
-  const priorCleanup = familyPostMergeCleanupForHead(ledger, familyHeadAfter);
-  if (priorCleanup !== undefined) {
-    return { ok: true };
-  }
-  const prMergedRow = familyPrMergedForHead(ledger, familyHeadAfter);
-  if (prMergedRow === undefined) {
-    return { ok: true };
-  }
-  const familyRepo =
-    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-  const coveredIssues = [...mergedSet(ledger)];
-  const cleanupLanding: WorkerLandingPayload = {
-    cleanupDispatch: buildCleanupLanding({
-      record: {
-        prUrl: prMergedRow.pr,
-        prNumber: prMergedRow.prNumber,
-        remoteBranchName: prMergedRow.remoteBranchName,
-        mergedHeadOid: prMergedRow.mergedHeadOid,
-        convergedHeadOid: familyHeadAfter,
-      },
-      coveredIssues,
-      ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
-    }),
-  };
-  let reportedCleanup: CleanupResult;
-  try {
-    const cleanupContext: DispatchContext = {
-      familyBase,
-      ...(input.runId !== undefined ? { runId: input.runId } : {}),
-      repo: familyRepo,
-      prUrl,
-    };
-    if (familyBackend.runPostMergeCleanup !== undefined) {
-      reportedCleanup = await familyBackend.runPostMergeCleanup(
-        cleanupLanding,
-        cleanupContext,
-      );
-    } else if (offlineReviewLoopDispatchAdmissible(cleanupContext, familyRepo)) {
-      reportedCleanup = stubCleanupResult();
-    } else {
-      throw new Error("family backend is missing deterministic post-merge cleanup");
-    }
-  } catch (error) {
-    const reason = `family post-merge cleanup failed: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    if (recordAbortOnFailure) {
-      await familyBackend.recordAborted?.({
-        phase,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase,
-        reason,
-        familyHeadAfter,
-        stopSummary: stageFailureStopSummary({
-          status: "cleanup_failed",
-          summary: reason,
-          repairHint:
-            "verify PR is MERGED with matching head, then re-run the family final barrier",
-        }),
-      });
-    }
-    return { ok: false, reason };
-  }
-  if (!reportedCleanup.terminal || !reportedCleanup.ok) {
-    const reason = "family post-merge cleanup did not reach a terminal success outcome";
-    if (recordAbortOnFailure) {
-      await familyBackend.recordAborted?.({
-        phase,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase,
-        reason,
-        familyHeadAfter,
-        stopSummary: stageFailureStopSummary({
-          status: "cleanup_failed",
-          summary: reason,
-          repairHint:
-            "verify PR is MERGED with matching head, then re-run the family final barrier",
-        }),
-      });
-    }
-    return { ok: false, reason };
-  }
-  await recordPostMergeCleanup(familyBackend, {
-    familyHeadAfter,
-    cleanupOutput: reportedCleanup,
-  });
-  const postCleanupLedger = await familyBackend.readFamilyLedger();
-  if (
-    shouldReclaimFamilyHost(postCleanupLedger) &&
-    familyBackend.reapFamilyHost !== undefined
-  ) {
-    try {
-      await familyBackend.reapFamilyHost(familyBase);
-    } catch {
-      // Best-effort terminal GC — must not flip a successful cleanup.
-    }
-  }
-  return { ok: true };
 }

@@ -268,7 +268,7 @@ when adding a new model/CLI row.
 
 Presets (factory content of `config/route-presets.json`):
 
-| preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
+| preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/landing | cmrReview legs |
 | --- | --- | --- | --- | --- |
 | `normal` | gpt-5.6-terra | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
 | `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | sonnet | opus + agy + codex sol |

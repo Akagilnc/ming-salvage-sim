@@ -894,7 +894,7 @@ export function mergerStationReceiptSchema(): z.ZodType {
 
 /**
  * Production SO schema for family online-review-loop gate seats
- * (verify / fixer / cleanup / docRelease). Role cargo stays sidecar.
+ * (verify / fixer / cleanup / landing). Role cargo stays sidecar.
  */
 export function onlineReviewStationReceiptSchema(): z.ZodType {
   const completed = z

@@ -534,7 +534,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           fixCommitSha: `fix-sha-${n}`,
         };
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       resolveFixCommitSha: async (sha) => {
         const lastFixer = fixerLandings[fixerLandings.length - 1]!;
         familyLedger.push({
@@ -659,7 +659,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
             fixCommitSha: `resume-fix-${landing.onlineReviewRound ?? "?"}`,
           };
         },
-        dispatchDocRelease: async () => true,
+        dispatchLanding: async () => true,
         resolveFixCommitSha: async (sha) => {
           const lastFixer = fixerLandings[fixerLandings.length - 1]!;
           familyLedger.push({
@@ -743,7 +743,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           fixCommitSha: "fix-once",
         };
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
 
