@@ -6,13 +6,15 @@
 
 import {
   applyCoderRecToRoute,
+  applyRelayBatonToRoute,
   applyTightRoutePolicy,
   degradeOptionalRouteSmokeFailures,
   resolveActiveModelRoute,
   routeSmokeFailure,
+  type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import type { Backend, Escalation } from "./types.js";
+import type { Backend, Escalation, StepId } from "./types.js";
 import { classifyExternalCallFailure } from "./externalCall.js";
 
 export const MAX_METADATA_ATTEMPTS = 6;
@@ -119,6 +121,32 @@ export function admitCoderRec(
       kind: "stop",
       escalation: {
         reason: "Coder-Rec admission failure",
+        diagnosis: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
+/**
+ * #934 ID-002 / R6 F1 — after a relay baton rewrites the final route, re-satisfy
+ * the same tight gate as admission before any further dispatch. Pure apply is
+ * {@link applyRelayBatonToRoute}; this is apply + admit, not a second policy court.
+ */
+export function admitRelayBaton(
+  route: ResolvedModelRoute,
+  baton: { readonly slug: string },
+  wallStep: StepId = "S2",
+  opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
+): AdmissionRouteResult {
+  try {
+    return admitTightRoute(
+      applyRelayBatonToRoute(route, baton, wallStep, opts),
+    );
+  } catch (err) {
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "relay baton admission failure",
         diagnosis: err instanceof Error ? err.message : String(err),
       },
     };

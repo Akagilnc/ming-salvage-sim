@@ -19,7 +19,6 @@
  *     control flow consumes without changing route()/validate().
  */
 
-import type { ChildProcess } from "node:child_process";
 import { shWithClock } from "./externalCall.js";
 import {
   appendFileSync,
@@ -59,6 +58,7 @@ import {
   dispatchMonitoredCliWorker,
   readLogActivity,
   silenceWholeMinutes,
+  waitForChildExit,
   type MonitoredCliDispatchInput,
   type WorkerMonitorDeps,
 } from "./workerMonitor.js";
@@ -630,35 +630,6 @@ export interface DispatchWorkerWithMonitorOptions {
   ) => void | Promise<void>;
   /** Injectable monitor I/O for tests; production uses verified OS helpers. */
   readonly monitorDeps?: WorkerMonitorDeps;
-}
-
-type ChildExit =
-  | { readonly kind: "exit"; readonly exitCode: number | null }
-  | { readonly kind: "killed"; readonly signal: NodeJS.Signals };
-
-/**
- * Wait for a monitored child to leave the process table.
- * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
- * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.
- * #937: no idle race — silence is observational only (#934 ID-007).
- */
-function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
-  const toExit = (
-    code: number | null,
-    signal: NodeJS.Signals | null,
-  ): ChildExit => {
-    if (signal !== null) {
-      return { kind: "killed", signal };
-    }
-    return { kind: "exit", exitCode: code };
-  };
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve(toExit(child.exitCode, child.signalCode));
-  }
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve(toExit(code, signal)));
-  });
 }
 
 /**

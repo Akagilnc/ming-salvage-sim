@@ -8,7 +8,11 @@ import {
 } from "./autoMerge.js";
 import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
-import { decodeSubIssueNodes, type Sh } from "./familyDriver.js";
+import {
+  decodeSubIssueEntry,
+  decodeSubIssueNodes,
+  type Sh,
+} from "./familyDriver.js";
 import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
@@ -89,35 +93,6 @@ export function shouldCloseParentIssue(
   );
 }
 
-function parseLiveSubIssue(node: unknown, index: number): LiveSubIssue {
-  if (node === null || typeof node !== "object" || Array.isArray(node)) {
-    throw new Error(
-      `sub_issues entry schema error: sub_issue[${index}]: expected object entry, got ${
-        node === null ? "null" : Array.isArray(node) ? "array" : typeof node
-      }`,
-    );
-  }
-  const number = (node as { number?: unknown }).number;
-  const state = (node as { state?: unknown }).state;
-  if (typeof number !== "number" || !Number.isFinite(number)) {
-    throw new Error(
-      `sub_issues entry schema error: sub_issue[${index}]: missing or non-finite number (got ${
-        number === undefined
-          ? "undefined"
-          : typeof number === "number"
-            ? String(number)
-            : typeof number
-      })`,
-    );
-  }
-  if (typeof state !== "string" || state.trim().length === 0) {
-    throw new Error(
-      `sub_issues entry schema error: sub_issue[${index}]: missing or empty state`,
-    );
-  }
-  return { number, state };
-}
-
 /** Paginated native sub-issues (per_page=100, page until short). */
 export function fetchPaginatedSubIssues(
   sh: Sh,
@@ -132,7 +107,14 @@ export function fetchPaginatedSubIssues(
     ]);
     const nodes = decodeSubIssueNodes(JSON.parse(raw));
     for (let i = 0; i < nodes.length; i++) {
-      all.push(parseLiveSubIssue(nodes[i], all.length + i));
+      const index = all.length + i;
+      const entry = decodeSubIssueEntry(nodes[i], index);
+      if (entry.state === undefined) {
+        throw new Error(
+          `sub_issues entry schema error: sub_issue[${index}]: missing or empty state`,
+        );
+      }
+      all.push({ number: entry.number, state: entry.state });
     }
     if (nodes.length < 100) break;
   }

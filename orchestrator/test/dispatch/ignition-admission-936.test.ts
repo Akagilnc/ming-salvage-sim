@@ -17,6 +17,7 @@ import { join } from "node:path";
 import {
   admitCoderRec,
   admitPlannedRouteSmoke,
+  admitRelayBaton,
   admitRouteFromEnv,
   admitTightRoute,
   isGithubAuthFailure,
@@ -24,7 +25,11 @@ import {
 } from "../../src/admissionPreflight.js";
 import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
-import { resolveRouteModels, type ResolvedModelRoute } from "../../src/modelRoutes.js";
+import {
+  applyRelayBatonToRoute,
+  resolveRouteModels,
+  type ResolvedModelRoute,
+} from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
 import {
   cutFamilyBase,
@@ -142,6 +147,24 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     const route = resolveRouteModels("claude-tight", { merger: "opus" });
     const decision = admitTightRoute(route);
     expect(decision.kind).toBe("stop");
+  });
+
+  it("F1: tight-violating relay baton stops (same gate as admission)", () => {
+    // claude-tight keeps claude family off every seat. opus is claude → baton
+    // must re-admit and stop before any further dispatch.
+    const route = resolveRouteModels("claude-tight", {});
+    expect(route.tightFamilyViolations).toEqual([]);
+    const pureApplied = applyRelayBatonToRoute(route, { slug: "opus" }, "S7");
+    expect(pureApplied.tightFamilyViolations.length).toBeGreaterThan(0);
+    // Pure apply alone is not the gate — admitRelayBaton re-checks.
+    const admitted = admitRelayBaton(route, { slug: "opus" }, "S7");
+    expect(admitted.kind).toBe("stop");
+    if (admitted.kind === "stop") {
+      expect(admitted.escalation.reason).toBe("tight route violation");
+    }
+    // Legal baton on the same route continues.
+    const ok = admitRelayBaton(route, { slug: "gpt-5.6-terra" }, "S2");
+    expect(ok.kind).toBe("ready");
   });
 
   it("positive+negative: Coder-Rec restaffs coder; broken mark fails closed", () => {
