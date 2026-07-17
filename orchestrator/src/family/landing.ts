@@ -17,6 +17,7 @@ import {
   executePrMergeCommit,
   fetchPrMergeLiveState,
   githubFieldEquals,
+  mergeRecordIfHeadAligned,
   type PrMergeLiveState,
   type PrMergedTerminalRecord,
 } from "../autoMerge.js";
@@ -297,27 +298,37 @@ async function resolveLandingMarkerHead(
 }
 
 /**
- * Accept live MERGED only when head equals the post-docs completion OID
- * (CR-7 / CX-1). Mismatch → park, never record/cleanup a foreign merge.
+ * Dual-key ledger resume: live (post-docs) HEAD first, then pre-doc
+ * convergedHeadOid fallback for markers stamped before the post-doc re-key.
+ * Single authority — do not re-copy live ?? pre-doc at call sites.
  */
-function mergeRecordIfHeadAligned(
-  live: PrMergeLiveState,
-  completionHeadOid: string,
-):
-  | { readonly kind: "aligned"; readonly record: PrMergedTerminalRecord }
-  | { readonly kind: "mismatch" }
-  | { readonly kind: "not_merged" } {
-  if (!githubFieldEquals(live.state, "MERGED")) return { kind: "not_merged" };
-  if (live.headOid !== completionHeadOid) return { kind: "mismatch" };
+function dualKeyLedgerLookup<T>(
+  lookup: (head: string) => T | undefined,
+  liveMarkerHead: string,
+  preDocHead: string,
+): T | undefined {
+  return (
+    lookup(liveMarkerHead) ??
+    (liveMarkerHead !== preDocHead ? lookup(preDocHead) : undefined)
+  );
+}
+
+function landingCiIoPark(
+  detail: string,
+  phase: "poll" | "state_fetch",
+): LandingActionResult {
+  const summary =
+    phase === "poll"
+      ? `landing PR review poll failed repeatedly during CI readiness: ${detail}`
+      : `landing PR state fetch failed repeatedly during CI poll: ${detail}`;
   return {
-    kind: "aligned",
-    record: {
-      prUrl: live.prUrl,
-      prNumber: live.prNumber,
-      remoteBranchName: live.headRefName,
-      mergedHeadOid: live.headOid,
-      convergedHeadOid: completionHeadOid,
-    },
+    ok: false,
+    terminalState: "decision_gate",
+    stopSummary: decisionGateParkStopSummary({
+      summary,
+      repairHint:
+        "restore gh/auth connectivity or answer the decision gate, then re-enter landing",
+    }),
   };
 }
 
@@ -370,27 +381,27 @@ export async function runLandingAction(
     input.familyBase,
     input.convergedHeadOid,
   );
-  const priorCleanup =
-    familyPostMergeCleanupForHead(ledger, liveMarkerHead) ??
-    (liveMarkerHead !== input.convergedHeadOid
-      ? familyPostMergeCleanupForHead(ledger, input.convergedHeadOid)
-      : undefined);
+  const priorCleanup = dualKeyLedgerLookup(
+    (head) => familyPostMergeCleanupForHead(ledger, head),
+    liveMarkerHead,
+    input.convergedHeadOid,
+  );
   if (priorCleanup !== undefined) {
     return { ok: true, terminalState: "already_done" };
   }
 
-  const priorMerged =
-    familyPrMergedForHead(ledger, liveMarkerHead) ??
-    (liveMarkerHead !== input.convergedHeadOid
-      ? familyPrMergedForHead(ledger, input.convergedHeadOid)
-      : undefined);
+  const priorMerged = dualKeyLedgerLookup(
+    (head) => familyPrMergedForHead(ledger, head),
+    liveMarkerHead,
+    input.convergedHeadOid,
+  );
   // Durable docs release (CR-6): crash after worker push must not re-dispatch
   // VERSION/CHANGELOG. Keyed post-release HEAD (dual-key with pre-doc fallback).
-  let priorDocsReleased =
-    familyDocsReleasedForHead(ledger, liveMarkerHead) ??
-    (liveMarkerHead !== input.convergedHeadOid
-      ? familyDocsReleasedForHead(ledger, input.convergedHeadOid)
-      : undefined);
+  let priorDocsReleased = dualKeyLedgerLookup(
+    (head) => familyDocsReleasedForHead(ledger, head),
+    liveMarkerHead,
+    input.convergedHeadOid,
+  );
   // Infer successful prior release when HEAD advanced past pre-doc OID but the
   // docs_released row never landed (crash after push, before ledger write).
   // Empty-run leaves HEAD unchanged → re-dispatch is idempotent (文档发布空跑).
@@ -594,15 +605,7 @@ export async function runLandingAction(
           consecutivePollFailures += 1;
           if (consecutivePollFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
             const detail = err instanceof Error ? err.message : String(err);
-            return {
-              ok: false,
-              terminalState: "decision_gate",
-              stopSummary: decisionGateParkStopSummary({
-                summary: `landing PR review poll failed repeatedly during CI readiness: ${detail}`,
-                repairHint:
-                  "restore gh/auth connectivity or answer the decision gate, then re-enter landing",
-              }),
-            };
+            return landingCiIoPark(detail, "poll");
           }
           // Fail-closed (R3-G2): do not assess with a prior snapshot this round.
           await sleepPendingCiPollInterval();
@@ -635,15 +638,7 @@ export async function runLandingAction(
           consecutiveFetchFailures += 1;
           if (consecutiveFetchFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
             const detail = err instanceof Error ? err.message : String(err);
-            return {
-              ok: false,
-              terminalState: "decision_gate",
-              stopSummary: decisionGateParkStopSummary({
-                summary: `landing PR state fetch failed repeatedly during CI poll: ${detail}`,
-                repairHint:
-                  "restore gh/auth connectivity or answer the decision gate, then re-enter landing",
-              }),
-            };
+            return landingCiIoPark(detail, "state_fetch");
           }
           // Fail-closed: do not judge MERGED/ready from stale live this round.
           continue;

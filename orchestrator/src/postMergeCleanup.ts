@@ -96,7 +96,7 @@ export function shouldCloseParentIssue(
   const covered = new Set(coveredIssues);
   return subIssues.every(
     (s) =>
-      s.state.toUpperCase() === "CLOSED" || covered.has(s.number),
+      githubFieldEquals(s.state, "CLOSED") || covered.has(s.number),
   );
 }
 
@@ -287,7 +287,7 @@ export function runPostMergeCleanup(
 
   for (const issue of input.coveredIssues) {
     const state = fetchIssueState(issue);
-    if (state.toUpperCase() !== "CLOSED") {
+    if (!githubFieldEquals(state, "CLOSED")) {
       closeIssue(issue);
       issuesClosed.push(issue);
     }
@@ -301,7 +301,7 @@ export function runPostMergeCleanup(
       fetchPaginatedSubIssues(input.sh, input.repo, input.parentIssue);
     if (shouldCloseParentIssue(subIssues, input.coveredIssues)) {
       cachedParentState = fetchIssueState(input.parentIssue);
-      if (cachedParentState.toUpperCase() !== "CLOSED") {
+      if (!githubFieldEquals(cachedParentState, "CLOSED")) {
         closeIssue(input.parentIssue);
         parentClosedThisRun = true;
       }
@@ -323,7 +323,7 @@ export function runPostMergeCleanup(
     } else {
       const parentState =
         cachedParentState ?? fetchIssueState(input.parentIssue);
-      parentIssueClosed = parentState.toUpperCase() === "CLOSED";
+      parentIssueClosed = githubFieldEquals(parentState, "CLOSED");
     }
   }
 
