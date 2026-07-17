@@ -47,6 +47,7 @@ import {
   readMetadataWithRetry,
 } from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
 import {
   RealBackend,
   type RealBackendOptions,
@@ -280,12 +281,23 @@ export interface OpenExternalBlocker {
  * #934 ID-002 / root epic OPEN blocker: park the whole family before
  * clone/smoke/worksite (ID-001 wait-for-external). Distinct from ordinary
  * per-child external blockers, which only produce a visible filter.
+ *
+ * Optional `diagnostics` carries sibling metadata-read failures collected
+ * before the park decision (ID-002/003: full read + aggregate, no first-error
+ * return). They do not change the park edge — only complete the inventory.
  */
 export class FamilyRootBlockerError extends Error {
-  constructor(readonly openBlockers: ReadonlyArray<number>) {
-    super(
+  constructor(
+    readonly openBlockers: ReadonlyArray<number>,
+    readonly diagnostics: ReadonlyArray<string> = [],
+  ) {
+    const base =
       `family admission parked: root epic has open blocker(s) ` +
-        openBlockers.map((n) => `#${n}`).join(", "),
+      openBlockers.map((n) => `#${n}`).join(", ");
+    super(
+      diagnostics.length > 0
+        ? `${base}; metadata diagnostics (${diagnostics.length}): ${diagnostics.join("; ")}`
+        : base,
     );
     this.name = "FamilyRootBlockerError";
   }
@@ -495,8 +507,10 @@ export function readFamilyEpic(
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
 
-  // #934 ID-002: read + adjudicate the ROOT epic blocked_by before worksite.
-  // OPEN root blockers park the whole family (ID-001 wait-for-external).
+  // #934 ID-002: read ROOT epic blocked_by, but do NOT first-error return on
+  // OPEN blockers — finish enumerable child metadata first, then park with
+  // the complete inventory (root blocker fact + sibling diagnostics).
+  let openRootBlockers: ReadonlyArray<number> | undefined;
   try {
     const rootRaw = sh("gh", [
       "api",
@@ -507,10 +521,9 @@ export function readFamilyEpic(
       .filter((b) => b.state !== "closed")
       .map((b) => b.number);
     if (openRoot.length > 0) {
-      throw new FamilyRootBlockerError(openRoot);
+      openRootBlockers = openRoot;
     }
   } catch (err) {
-    if (err instanceof FamilyRootBlockerError) throw err;
     errors.push(
       `root #${epicIssue} blocked_by: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -547,6 +560,11 @@ export function readFamilyEpic(
     );
   } catch (err) {
     errors.push(`issue bodies: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // OPEN root blocker parks (ID-001) after the full metadata pass; sibling
+  // read failures ride along as diagnostics, not a first-error short-circuit.
+  if (openRootBlockers !== undefined) {
+    throw new FamilyRootBlockerError(openRootBlockers, errors);
   }
   if (errors.length > 0) {
     throw new Error(`issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`);
@@ -1231,24 +1249,24 @@ export async function runFamilyDriver(
       children: [],
     };
   }
-  const coderRec = admitCoderRec(
+  // #934 ID-003: parent + every planned child Coder-Rec aggregated once.
+  // Parent failure must not short-circuit the child pass — decide only after
+  // the full planned-issue inventory is collected.
+  const coderRecErrors: string[] = [];
+  const plannedRoutes: ResolvedModelRoute[] = [];
+  const parentCoderRec = admitCoderRec(
     admitted.route,
     issueBodies.get(options.epicIssue),
   );
-  if (coderRec.kind === "stop") {
-    const diagnosis = admissionRouteFailureDiagnosis(coderRec.escalation.diagnosis);
-    return {
-      status: "escalated",
-      familyBase: options.familyBase,
-      escalation: { reason: coderRec.escalation.reason, diagnosis },
-      stopSummary: infraFailureStopSummary({
-        summary: `${coderRec.escalation.reason}: ${diagnosis}`,
-        repairHint: "repair the owner-authored Coder-Rec before rerun",
-      }),
-      children: [],
-    };
+  if (parentCoderRec.kind === "stop") {
+    coderRecErrors.push(
+      `issue #${options.epicIssue}: ${parentCoderRec.escalation.diagnosis}`,
+    );
+  } else {
+    plannedRoutes.push(parentCoderRec.route);
   }
-  if (epic.children.length === 0) {
+
+  if (epic.children.length === 0 && coderRecErrors.length === 0) {
     return {
       status: "success",
       familyBase: options.familyBase,
@@ -1264,11 +1282,6 @@ export async function runFamilyDriver(
     };
   }
 
-  // Validate every planned child's Coder-Rec before clone/smoke/worksite. Do
-  // not abort on the first malformed child: Admission reports the complete
-  // planned-issue inventory in one failure (#934 ID-003).
-  const plannedRoutes = [coderRec.route];
-  const coderRecErrors: string[] = [];
   for (const child of epic.children) {
     try {
       const body = readIssueBodyCached(
@@ -1307,6 +1320,23 @@ export async function runFamilyDriver(
         : {}),
     };
   }
+  // All planned issues admitted — parent is ready (errors would have returned).
+  if (parentCoderRec.kind !== "ready") {
+    // Unreachable: empty errors + parent stop is contradictory, but keep the
+    // exhaustiveness net for the type checker.
+    const diagnosis = parentCoderRec.escalation.diagnosis;
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
+        repairHint: "repair the owner-authored Coder-Rec before rerun",
+      }),
+      children: [],
+    };
+  }
+  const coderRec = parentCoderRec;
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure

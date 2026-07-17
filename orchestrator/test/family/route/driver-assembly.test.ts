@@ -725,6 +725,53 @@ describe("#934 readFamilyEpic root blocked_by + external filter (ID-002)", () =>
     }
   });
 
+  it("OPEN root blocker still finishes enumerable child metadata before park (no first-error return)", () => {
+    const childBlockedByReads: number[] = [];
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([
+          { number: 11, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+          { number: 12, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (String(args[1]).includes("/issues/291/dependencies/blocked_by")) {
+        return JSON.stringify([{ number: 100, state: "open" }]);
+      }
+      const child = Number(/issues\/(\d+)\//.exec(String(args[1]) ?? "")?.[1]);
+      if (child === 11 || child === 12) {
+        childBlockedByReads.push(child);
+        if (child === 11) {
+          throw new Error("child #11 blocked_by unavailable");
+        }
+        return "[]";
+      }
+      return "[]";
+    };
+    try {
+      readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+      expect.unreachable("expected FamilyRootBlockerError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FamilyRootBlockerError);
+      const err = e as FamilyRootBlockerError;
+      expect(err.openBlockers).toEqual([100]);
+      // Both enumerable children were read despite the OPEN root blocker.
+      expect(childBlockedByReads.sort((a, b) => a - b)).toEqual([11, 12]);
+      // Child metadata failure is retained in park diagnostics (not dropped).
+      expect(err.message).toMatch(/child #11 blocked_by/);
+      expect(err.diagnostics.some((d) => /child #11 blocked_by/.test(d))).toBe(
+        true,
+      );
+    }
+  });
+
   it("visibly filters a child with open external blocker and admits the sibling", () => {
     const sh: Sh = (file, args) => {
       expect(file).toBe("gh");
