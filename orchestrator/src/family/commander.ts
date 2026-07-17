@@ -7,18 +7,9 @@
  * commander reads those现成 children + edges and selects the next WAVE — the
  * children whose every blocker is already merged into the family base.
  *
- * #293 ships the THINNEST selection: a pure function over the children + the set
- * of already-merged child issue numbers. #294 layered multi-wave ordering +
- * cycle detection ON this module — it extends THIS selector, it does NOT rewrite
- * the family main loop, which only ever CALLS selectWave / assertAcyclic.
- *
- * No LLM dependency inference (ADR 0022: we have explicit blocked_by, so the
- * native Plan's LLM selector is neither used nor needed). #938 / #934 ID-009:
- * `assertAcyclic` is the residual-cycle probe the spine runs at empty-wave +
- * still-unmerged residual (not a startup whole-family guard). Runnable components
- * are never blocked by a residual cycle among other siblings. #293's selectWave
- * contract is unchanged: given children + a merged set, return the unmerged
- * children whose blocked_by ⊆ merged, in input order (deterministic).
+ * Pure selection over children + merged set. #938 / ID-009: `assertAcyclic` is
+ * the residual-cycle probe at empty-wave (not startup whole-family guard).
+ * selectWave: unmerged children whose blocked_by ⊆ merged, input order.
  */
 
 import type { ChildSlice } from "./types.js";
@@ -85,22 +76,8 @@ export function selectWave(
 }
 
 /**
- * Residual-cycle probe (#934 ID-009 / #938; historically ADR 0022 decisions 3①/4).
- *
- * The wave loop schedules a child once every blocker it is `blocked_by` is
- * merged. If a still-unmerged residual subgraph forms a CYCLE (A↦B, B↦A, or a
- * self-loop A↦A), no residual member can EVER unblock — `selectWave` returns an
- * empty wave forever. The family spine calls this ONLY at empty-wave + residual
- * unmerged, never as a startup whole-family guard, so already-runnable siblings
- * keep their progress. Throws {@link DependencyCycleError} so the spine can
- * surface a typed `dependency_cycle` boundary.
- *
- * Scope: only INTRA-FAMILY edges count — a `blocked_by` issue that is NOT one of
- * the children (an external blocker) cannot be part of a cycle WITH the children,
- * so such edges are ignored here. Detection is an iterative DFS over the directed
- * graph child → blocker; a back-edge to a node on the current DFS stack is a
- * cycle, and the stack slice from that node is reported as the cycle path
- * (deterministic in input order).
+ * Residual-cycle probe (#934 ID-009 / #938). Spine calls only at empty-wave +
+ * still-unmerged residual. Intra-family edges only; throws DependencyCycleError.
  */
 export function assertAcyclic(children: ReadonlyArray<ChildSlice>): void {
   // Node set = the children's own issue numbers; only edges to nodes IN this set
