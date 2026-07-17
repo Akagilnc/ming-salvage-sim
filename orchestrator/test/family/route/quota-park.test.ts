@@ -909,17 +909,15 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toEqual(["verify"]);
     // Default when step missing: online_review → S9 (not S7/ship).
     const errNoStep = quotaWaitError({ resetAt, pool: "grok", step: "S3" });
-    // strip step
+    // Valid error first, then strip step without audit-trigger cast (#982).
     const bare = new QuotaWaitForResetError({
       disposition: errNoStep.disposition,
       applied: {
-        ledgerEntry: {
-          ...errNoStep.applied.ledgerEntry!,
-          step: undefined as unknown as "S3",
-        },
+        ledgerEntry: { ...errNoStep.applied.ledgerEntry! },
       },
-      pool: errNoStep.pool
+      pool: errNoStep.pool,
     });
+    Reflect.deleteProperty(bare.applied.ledgerEntry!, "step");
     expect(
       familyWallStepFromQuotaWait({ err: bare, phase: "online_review" }),
     ).toBe("S9");
@@ -936,13 +934,11 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     const bare = new QuotaWaitForResetError({
       disposition: errNoStep.disposition,
       applied: {
-        ledgerEntry: {
-          ...errNoStep.applied.ledgerEntry!,
-          step: undefined as unknown as "S3",
-        },
+        ledgerEntry: { ...errNoStep.applied.ledgerEntry! },
       },
       pool: errNoStep.pool,
     });
+    Reflect.deleteProperty(bare.applied.ledgerEntry!, "step");
     const wallStep = familyWallStepFromQuotaWait({
       err: bare,
       phase: "correctness_checkpoint",

@@ -1368,6 +1368,65 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
+  it("#982: S8(failed)+decision is terminal — answer does not reopen as answerable decision", async () => {
+    // failed is terminal ABI; only parked+decision reopens. An answer after a
+    // failed S8 must not re-enter the escalated step (no dispatch).
+    const resumeState: ResumeStateFixture = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446-failed-decision",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S3",
+          sessionId: "session-escalated",
+          output: {
+            kind: "judge",
+            status: "escalate",
+            reason: "product decision needed",
+            diagnosis: "needs owner call",
+            escalate: {
+              reason: "product decision needed",
+              diagnosis: "needs owner call",
+            },
+          },
+        },
+        {
+          step: "S8",
+          handoffStatus: "failed",
+          escalationKind: "decision",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "failed while writing decision park",
+            repairHint: "inspect S8 write path; do not reopen as answerable",
+          },
+        },
+        {
+          step: "S3",
+          event: "escalation_answered",
+          forStep: "S3",
+          answer: "ship the simpler option",
+          source: "human",
+        },
+      ],
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("failed");
+    expect(backend.dispatched).toEqual([]);
+  });
+
   it("maps scoped human or resume-input escalation answers to the matching active S4 finding only", async () => {
     for (const source of ["human", "resume_input"] as const) {
       const resumeState: ResumeStateFixture = {

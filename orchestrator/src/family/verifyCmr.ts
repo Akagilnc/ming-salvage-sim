@@ -1690,6 +1690,8 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       familyHeadAfter: resolvedFamilyHeadAfter,
       routeFingerprint,
+      // #982: checkpoint green must not free-skip final IC admission.
+      phase: ledgerPhase,
     })
   ) {
     return {

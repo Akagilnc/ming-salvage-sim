@@ -1,6 +1,8 @@
 /**
  * PR #982 online bot findings (HQ fix_now) — regression nails.
- * G1 spread order · C1 ledgerPhase on coder-fix · C2 route smoke public cause
+ * Prior: G1 spread · C1 ledgerPhase · C2 route smoke
+ * R2: P1 phase-scoped cmr pass · dual snapshot continue · severity ·
+ *     failedPhase comment · S8 failed terminal
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -46,5 +48,71 @@ describe("PR #982 online bot fix_now regressions", () => {
     expect(fn).toBeTruthy();
     expect(fn).toMatch(/cause:\s*"route_smoke_failed"/);
     expect(fn).not.toMatch(/cause:\s*"worktree_prepare_failed"/);
+  });
+
+  it("P1: cmrPassAlreadyPassed is phase-scoped (checkpoint ≢ final)", () => {
+    const src = readSrc("family/ledger.ts");
+    const fn = src.match(
+      /export function cmrPassAlreadyPassed[\s\S]*?^export function/m,
+    )?.[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(/cmrBarrierPhaseOf/);
+    expect(fn).toMatch(/queryPhase/);
+    // Must not treat both phases as equivalent court identity for admission.
+    expect(fn).not.toMatch(
+      /final and correctness_checkpoint share the same court identity/,
+    );
+  });
+
+  it("verifyCmr passes ledgerPhase into cmrPassAlreadyPassed", () => {
+    const src = readSrc("family/verifyCmr.ts");
+    const call = src.match(
+      /cmrPassAlreadyPassed\([\s\S]*?\}\)/,
+    )?.[0];
+    expect(call).toBeTruthy();
+    expect(call).toMatch(/phase:\s*ledgerPhase/);
+  });
+
+  it("priorCmrFindings continue after explicit blocking keys (no dual snapshot)", () => {
+    const src = readSrc("priorRoundFindings.ts");
+    const fn = src.match(
+      /export function priorCmrFindingsFromFamilyLedger[\s\S]*?^}/m,
+    )?.[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(/continue;/);
+    expect(fn).toMatch(/Prefer explicit persisted keys/);
+  });
+
+  it("projectJudgeContinueBlocking maps severity from cargo findings", () => {
+    const src = readSrc("judgeStation.ts");
+    const fn = src.match(
+      /export function projectJudgeContinueBlocking[\s\S]*?^export function/m,
+    )?.[0];
+    expect(fn).toBeTruthy();
+    expect(fn).toMatch(/severityByIdentity/);
+    expect(fn).not.toMatch(
+      /judgeTerminalsToLedgerDispositions\(\s*dispositions,\s*"medium",\s*currentStoreStatusByIdentity,\s*\)/,
+    );
+  });
+
+  it("FamilyRunResultBase.failedPhase comment includes correctness_checkpoint", () => {
+    const src = readSrc("family/types.ts");
+    expect(src).toMatch(
+      /Barrier phase diagnostic \(wave\|correctness_checkpoint\|final\)/,
+    );
+    expect(src).not.toMatch(
+      /Barrier phase diagnostic \(wave\|final\); not public status/,
+    );
+  });
+
+  it("planResume only reopens parked+decision — not failed+decision", () => {
+    const src = readSrc("runner.ts");
+    // Reopen branch must require parked (not parked|failed).
+    expect(src).toMatch(
+      /handoffStatus === "parked" &&\s*\n\s*lastEntry\.escalationKind !== undefined/,
+    );
+    expect(src).not.toMatch(
+      /handoffStatus === "parked" \|\| lastEntry\.handoffStatus === "failed"\) &&\s*\n\s*lastEntry\.escalationKind/,
+    );
   });
 });

@@ -115,6 +115,11 @@ export function judgeTerminalsToLedgerDispositions(
   currentStoreStatusByIdentity?: Readonly<
     Partial<Record<string, FindingStoreStatus>>
   >,
+  /**
+   * #982: identity-keyed severity from cargo findings. Missing keys fall back
+   * to the `severity` argument (default medium).
+   */
+  severityByIdentity?: Readonly<Partial<Record<string, Finding["severity"]>>>,
 ): FindingDisposition[] {
   const out: FindingDisposition[] = [];
   // Working copy so same-table sequential flips see prior terminal status
@@ -124,6 +129,7 @@ export function judgeTerminalsToLedgerDispositions(
   };
   for (const d of dispositions) {
     const from = known[d.identityKey] ?? OPEN_FINDING_STORE_STATUS;
+    const rowSeverity = severityByIdentity?.[d.identityKey] ?? severity;
     if (d.action === "refute") {
       pushTerminalOrThrow(
         out,
@@ -132,7 +138,7 @@ export function judgeTerminalsToLedgerDispositions(
           from,
           to: "refuted",
           reason: `${d.reason}: ${d.evidence}`,
-          severity,
+          severity: rowSeverity,
           source: "judge_kill",
           scope: d.reason,
         }),
@@ -156,7 +162,7 @@ export function judgeTerminalsToLedgerDispositions(
           from,
           to: "suppressed",
           reason: d.evidence,
-          severity,
+          severity: rowSeverity,
           source: groundSource,
           scope: groundKind,
         }),
@@ -636,12 +642,18 @@ export function projectJudgeContinueBlocking(
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
+  const cargo = output.findings ?? [];
+  // #982: preserve cargo severity on terminal ledger flips (fallback medium).
+  const severityByIdentity: Partial<Record<string, Finding["severity"]>> = {};
+  for (const f of cargo) {
+    severityByIdentity[findingIdentityKey(f)] = f.severity;
+  }
   const terminals = judgeTerminalsToLedgerDispositions(
     dispositions,
     "medium",
     currentStoreStatusByIdentity,
+    severityByIdentity,
   );
-  const cargo = output.findings ?? [];
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
   const rawBody =

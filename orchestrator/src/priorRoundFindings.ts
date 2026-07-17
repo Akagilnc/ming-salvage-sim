@@ -107,6 +107,9 @@ export function priorCmrFindingsFromFamilyLedger(
         blockingFindingIdentityKeys: [...entry.blockingFindingIdentityKeys],
       });
       round += 1;
+      // Prefer explicit persisted keys over historical output fallback for the
+      // same row — dual emit would invent two prior rounds for one review (#982).
+      continue;
     }
     // #919 CR N3: live court paper is kind:judge; residual kind:cmr is
     // historical ledger width only (production residual is kind:reviewer).

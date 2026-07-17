@@ -364,9 +364,20 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     // inline host PR path — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
-    // #961: at least one IC checkpoint correctness + final completeness.
-    expect(backend.cmrCalls.some((c) => c.cmrPass === "completeness")).toBe(true);
-    expect(backend.cmrCalls.some((c) => c.cmrPass === "correctness")).toBe(true);
+    // #961 / #982: final barrier must be completeness then correctness in order
+    // (checkpoint-only green must not satisfy final court ordering via .some()).
+    const passes = backend.cmrCalls.map((c) => c.cmrPass);
+    expect(passes).toContain("completeness");
+    expect(passes).toContain("correctness");
+    const finalCompletenessIdx = passes.lastIndexOf("completeness");
+    const finalCorrectnessIdx = passes.lastIndexOf("correctness");
+    expect(finalCompletenessIdx).toBeGreaterThanOrEqual(0);
+    expect(finalCorrectnessIdx).toBeGreaterThan(finalCompletenessIdx);
+    // Trailing final pair is completeness → correctness.
+    expect(passes.slice(finalCompletenessIdx, finalCompletenessIdx + 2)).toEqual([
+      "completeness",
+      "correctness",
+    ]);
     expect(backend.cmrCalls.every((c) => c.familyBase === familyBase)).toBe(true);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).

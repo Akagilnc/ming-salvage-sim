@@ -898,11 +898,25 @@ export function familyEscalationState(
 }
 
 /**
- * Heads reachable from `fromHead` by walking barrier-internal
- * `cmr_fix_committed` rows (phase `final` or `correctness_checkpoint`) that
- * appear AFTER `startIndex` and whose `familyHeadBefore` is already reachable.
- * Used by the #881 live-semantic resume guard: barrier-internal coder-fix
- * commits advance HEAD without invalidating an earlier pass.
+ * Barrier phase for CMR pass-admission / fix-chain reachability.
+ * Missing or non-checkpoint phases normalize to `"final"` (legacy rows).
+ */
+function cmrBarrierPhaseOf(
+  phase: string | undefined,
+): "final" | "correctness_checkpoint" {
+  return phase === "correctness_checkpoint"
+    ? "correctness_checkpoint"
+    : "final";
+}
+
+/**
+ * Heads reachable from `fromHead` by walking same-barrier
+ * `cmr_fix_committed` rows that appear AFTER `startIndex` and whose
+ * `familyHeadBefore` is already reachable.
+ *
+ * Phase is scoped (#982 Codex P1 / #961): a `correctness_checkpoint` pass only
+ * extends via checkpoint-phase fix commits; a `final` pass only via final-phase
+ * fixes. Cross-phase fix advances must not free-skip a different court.
  *
  * Fail closed: incomplete fix rows (missing before/after) never extend the
  * set; pre-pass fix rows are ignored because the scan starts after the pass.
@@ -911,6 +925,7 @@ function barrierInternalHeadsReachableFrom(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   startIndex: number,
   fromHead: string,
+  barrierPhase: "final" | "correctness_checkpoint",
 ): Set<string> {
   const reachable = new Set<string>([fromHead]);
   for (let i = startIndex + 1; i < entries.length; i++) {
@@ -918,7 +933,7 @@ function barrierInternalHeadsReachableFrom(
     if (
       e.status !== "cmr_fix_committed" ||
       e.event !== "cmr_fix_committed" ||
-      (e.phase !== "final" && e.phase !== "correctness_checkpoint")
+      cmrBarrierPhaseOf(e.phase) !== barrierPhase
     ) {
       continue;
     }
@@ -938,11 +953,13 @@ function barrierInternalHeadsReachableFrom(
  * explained only by barrier-internal fix commits)?
  *
  * Resume guard (#434, revised #881 to match live barrier semantics; #961
- * extends to `correctness_checkpoint` phase markers):
- *   - exact head match on a complete `cmr_passed` row → skip
- *   - head advanced ONLY via barrier-internal `cmr_fix_committed` chain after
- *     that pass marker → skip
- *   - head advanced without such a chain (barrier-external) → re-verify
+ * checkpoint phase; #982 separates checkpoint vs final admission):
+ *   - exact head match on a complete `cmr_passed` row of the **same phase** → skip
+ *   - head advanced ONLY via same-phase barrier-internal `cmr_fix_committed`
+ *     chain after that pass marker → skip
+ *   - head advanced without such a chain (barrier-external or other phase) → re-verify
+ *   - a `correctness_checkpoint` green never free-skips a later `final` court
+ *     (checkpoint reuse is for checkpoint admission / same-barrier resume only)
  *
  * Fails closed when the current head is missing or the ledger row lacks the
  * complete cmr_passed shape (status/event/pass/head/routeFingerprint).
@@ -953,6 +970,11 @@ export function cmrPassAlreadyPassed(
     readonly cmrPass: IntegratedCmrPass;
     readonly familyHeadAfter?: string;
     readonly routeFingerprint?: string;
+    /**
+     * Court phase asking for admission. Defaults to `"final"`.
+     * Checkpoint and final are distinct for pass reuse (#982).
+     */
+    readonly phase?: "final" | "correctness_checkpoint";
   },
 ): boolean {
   if (
@@ -969,14 +991,15 @@ export function cmrPassAlreadyPassed(
   }
   const currentHead = input.familyHeadAfter.trim();
   const routeFingerprint = input.routeFingerprint.trim();
+  const queryPhase = cmrBarrierPhaseOf(input.phase);
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]!;
     if (
       e.status !== "cmr_passed" ||
       e.event !== "cmr_passed" ||
-      // #961: final and correctness_checkpoint share the same court identity.
-      (e.phase !== "final" && e.phase !== "correctness_checkpoint") ||
+      // #982: checkpoint ≢ final for final-court skip.
+      cmrBarrierPhaseOf(e.phase) !== queryPhase ||
       e.cmrPass !== input.cmrPass ||
       e.familyHeadAfter === undefined ||
       e.familyHeadAfter.trim().length === 0 ||
@@ -987,8 +1010,13 @@ export function cmrPassAlreadyPassed(
     }
     const passHead = e.familyHeadAfter.trim();
     if (passHead === currentHead) return true;
-    // #881: same barrier, head advanced only by barrier-internal fixes.
-    const reachable = barrierInternalHeadsReachableFrom(entries, i, passHead);
+    // #881: same barrier + same phase, head advanced only by barrier-internal fixes.
+    const reachable = barrierInternalHeadsReachableFrom(
+      entries,
+      i,
+      passHead,
+      queryPhase,
+    );
     if (reachable.has(currentHead)) return true;
   }
   return false;
