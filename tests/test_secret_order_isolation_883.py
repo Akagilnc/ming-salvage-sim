@@ -808,3 +808,103 @@ def test_883_public_llm_contexts_never_preload_secret_orders(game):
     assert marker not in str(simulator_payload)
     assert all(marker not in str(context) for context in public_contexts)
     assert secret_context["secret_orders"]["在办"][0]["content"] == marker
+
+
+def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
+    """跨人承办：密令口谕在召对 speaker 侧，分类须绑 speaker 血缘，不得 release 进共享。
+
+    皇帝对甲召对口述密令，工具登记 assignee=乙；withhold 不得只看乙。
+    """
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+    assert speaker.name != assignee.name
+    secret_text = "密令：着尔密查国丈家产虚实，勿使外廷知。"
+    extracted = "暗访国丈家产虚实"
+
+    mid = db.append_chat_message(speaker.name, state.turn, "user", secret_text)
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", extracted, [],
+        origin_minister_name=speaker.name,
+    )
+    assert oid > 0
+
+    status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"]
+    assert status == "withheld"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0] == 0
+    assert all(secret_text not in body for body in _shared_bodies(db))
+    assert all(secret_text not in body for body in _event_bodies(db))
+
+    other = next(
+        m for m in _active_ministers(db, content)
+        if m.name not in (speaker.name, assignee.name)
+    )
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert secret_text not in other_text
+    assert extracted not in other_text
+
+
+def test_976_same_window_pure_public_user_survives_secret_classification(game):
+    """同窗口先公开后密令：纯公开 user 不得被整窗 withheld 吞掉（S3 参与即知）。
+
+    现实现把 assignee 全部 held user 永久 withheld；公开问话既不进共享也不进私有事件。
+    收窄后：仅最新同回合密令口谕 user withheld；更早公开 user 至少进接令者私有轨。
+    """
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    public_q = "近来京营操练如何？"
+    public_a = "臣报：京营操练如常，无异常。"
+    secret_q = (
+        "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
+
+    mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
+    mid_ans = db.append_chat_message(assignee.name, state.turn, "minister", public_a)
+    mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
+    assert oid > 0
+
+    pub_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,)
+    ).fetchone()["knowledge_status"]
+    sec_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+    ).fetchone()["knowledge_status"]
+    ans_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ans,)
+    ).fetchone()["knowledge_status"]
+
+    assert sec_status == "withheld"
+    assert ans_status == "private"
+    # Pure public user must not black-hole: private (assignee active brief) or released.
+    assert pub_status in ("private", "released")
+    assert pub_status != "withheld"
+
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(
+        item.get("body", "")
+        for item in assignee_view["events"] + assignee_view.get("public_events", [])
+    )
+    assert public_q in assignee_text
+    assert public_a in assignee_text
+
+    # Secret oral line never shared; other ministers must not see it.
+    assert all(secret_q not in body for body in _shared_bodies(db))
+    assert all(secret_q not in body for body in _event_bodies(db))
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert secret_q not in other_text
+    assert extracted not in other_text
