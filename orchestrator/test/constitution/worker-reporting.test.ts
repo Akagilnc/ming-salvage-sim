@@ -214,6 +214,10 @@ describe("#825 Group A family roles", () => {
       cmrCalls = 0;
       shipCalls = 0;
       async mergeChildIntoFamilyBase() { return { familyHead: "head" }; }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry) { this.ledger.push(entry); }
       async readFamilyLedger() { return this.ledger; }
       async readFamilyHead() { return "head"; }
@@ -273,7 +277,8 @@ describe("#825 Group A family roles", () => {
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
         dispatchDocRelease: async () => true,
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
       },
     );
     expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 2 });
@@ -300,7 +305,8 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
         dispatchDocRelease: async () => true,
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
       },
     );
     expect({ verifyCalls, ok: result.ok, terminalState: result.terminalState }).toEqual({

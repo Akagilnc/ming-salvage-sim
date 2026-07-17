@@ -87,6 +87,10 @@ class FakeFamilyBackend implements FamilyBackend {
     this.mergeOrder.push(child.childIssue);
     return { familyHead: `h${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

@@ -9,6 +9,9 @@ const familyBackend: FamilyBackend = {
   async mergeChildIntoFamilyBase() {
     throw new Error("family backend should not run");
   },
+  async resolveMergeConflict() {
+    throw new Error("family backend should not run");
+  },
   async appendFamilyLedger() {
     throw new Error("family backend should not run");
   },
@@ -72,6 +75,7 @@ describe("family startup smoke gate (#685)", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const backend: FamilyBackend = {
       async mergeChildIntoFamilyBase() { throw new Error("must not merge"); },
+      async resolveMergeConflict() { throw new Error("must not resolve"); },
       async appendFamilyLedger(entry) { entries.push(entry); },
       async readFamilyLedger() {
         return [
@@ -113,6 +117,7 @@ describe("family startup smoke gate (#685)", () => {
     const entries: import("../../../src/family/types.js").FamilyLedgerEntry[] = [];
     const backend: FamilyBackend = {
       async mergeChildIntoFamilyBase() { throw new Error("must not merge"); },
+      async resolveMergeConflict() { throw new Error("must not resolve"); },
       async appendFamilyLedger(entry) { entries.push(entry); },
       async readFamilyLedger() {
         return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];

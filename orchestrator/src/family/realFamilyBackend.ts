@@ -1694,11 +1694,26 @@ export class RealFamilyBackend implements FamilyBackend {
           // path (single-slice already does via resumeSession / runAgentSandbox).
           // Capability gate matches runner #955: incapable provider → fresh open
           // with priorJudgeVerdicts still landed above (AC4 session-loss shape).
+          // When the ledger id is present but the host session file is gone,
+          // omit resumeSession (fresh open) — still keep priorJudgeVerdicts.
           const resumeCapable = this.resumeCapableForSpec(spec, ctx);
-          const resumeSessionId =
+          const agent = this.agentForSpec(spec, ctx);
+          let resumeSessionId: string | undefined =
             typeof ctx.resumeSessionId === "string" && resumeCapable
               ? ctx.resumeSessionId
               : undefined;
+          if (
+            resumeSessionId !== undefined &&
+            agent.sessionStorage?.existsOnHost !== undefined
+          ) {
+            const present = await agent.sessionStorage.existsOnHost(
+              this.opts.workingRepo,
+              resumeSessionId,
+            );
+            if (!present) {
+              resumeSessionId = undefined;
+            }
+          }
           result = await this.runAgentSandbox({
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1714,7 +1729,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // symmetry): resolve the worker's slug through the shared family registry —
             // no constant that could silently drift
             // from the spec the runner declares.
-            agent: this.agentForSpec(spec, ctx),
+            agent,
             // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
             // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
             // sequencing and accounting.
@@ -4157,6 +4172,8 @@ function reviewLoopCargoResult(
 /**
  * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
  * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
+ * Host fail-safe applicator (correctness K1) needs threadReplies /
+ * threadsToResolve / deferredIssueUrls decoded when well-typed.
  */
 export function parseVerifyOutcome(
   stdout: string,

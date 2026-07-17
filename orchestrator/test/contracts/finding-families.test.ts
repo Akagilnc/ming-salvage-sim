@@ -545,6 +545,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         });
         return sha;
       },
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     }, {
       enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
@@ -672,7 +673,8 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           });
           return sha;
         },
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
       },
       {
         initialRound: 2,
@@ -744,6 +746,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         };
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
 

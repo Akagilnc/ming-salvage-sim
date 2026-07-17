@@ -2,11 +2,12 @@
  * Family PR review-loop orchestration helpers (#600 / #940).
  *
  * Host-side deterministic glue between bot polling, verify/fixer worker dispatch,
- * and ledger markers. The online-review verify worker owns finding judgment AND
- * GitHub side effects (reply / resolve / deferred issue); it self-reports judge
- * three-state after side effects succeed. The host loop only routes on that
- * disposition (`converged | continue | escalate`) — no host side-effect module,
- * no mechanical round cap, no empty-success from counts (#934 ID-012).
+ * GitHub side-effect application, and ledger markers. The verify worker owns
+ * finding judgment and should execute reply/resolve/deferred before self-report;
+ * the host still applies cargo plan fields as a fail-safe before accepting a
+ * disposition as mergeable. Host routes on three-state disposition
+ * (`converged | continue | escalate`) — no mechanical round cap, no
+ * empty-success from counts (#934 ID-012).
  */
 
 import {
@@ -48,6 +49,11 @@ import {
 } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
+import {
+  fixMarkedFindingThreadsFromVerify,
+  fixMarkedKeysFromVerify,
+  type FixMarkedFindingThread,
+} from "../onlineReviewSideEffects.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
 
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
@@ -71,28 +77,8 @@ export function onlineReviewJudgeDisposition(
   return "continue";
 }
 
-/** Identity↔thread binding for fixer landing cargo (not a host side-effect plan). */
-export type FixMarkedFindingThread = {
-  readonly identityKey: string;
-  readonly threadId: string;
-};
-
-/** Preserve only the verify worker's self-reported fix-marked identity keys. */
-export function fixMarkedKeysFromVerify(verify: VerifyResult): string[] {
-  return [...(verify.fixMarkedFindingIdentityKeys ?? [])];
-}
-
-/** Preserve the thread that a fix-marked identity was judged against. */
-export function fixMarkedFindingThreadsFromVerify(
-  verify: VerifyResult,
-): FixMarkedFindingThread[] {
-  const keys = new Set(fixMarkedKeysFromVerify(verify));
-  return (verify.findingDispositions ?? []).flatMap((disposition) =>
-    disposition.action === "fix" && keys.has(disposition.identityKey)
-      ? [{ identityKey: disposition.identityKey, threadId: disposition.threadId }]
-      : [],
-  );
-}
+export type { FixMarkedFindingThread };
+export { fixMarkedKeysFromVerify, fixMarkedFindingThreadsFromVerify };
 
 export type { OnlineReviewTerminalState } from "../types.js";
 
@@ -501,9 +487,23 @@ export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
   });
 }
 
+/** Stop summary when host GitHub verify side effects fail closed (#600 r18). */
+export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
+  const detail = err instanceof Error ? err.message : String(err);
+  // #922: family surface terminal owns online_review_failed at the source —
+  // do not emit infra_failure for callers to restamp.
+  return stageFailureStopSummary({
+    status: "online_review_failed",
+    summary: `online review verify side effects failed: ${detail}`,
+    repairHint:
+      "fix GitHub side-effect preconditions (valid PR ref, recheck fixing commit, defer issue creation) and rerun the online review loop",
+  });
+}
+
 /**
  * Stop summary when a host-owned online-review operation fails closed
- * (e.g. post-fix retrigger). Side effects themselves are worker-owned (#940).
+ * (e.g. post-fix retrigger). Side-effect failures use
+ * {@link verifySideEffectFailureStopSummary}.
  */
 export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary {
   const detail = err instanceof Error ? err.message : String(err);
@@ -796,9 +796,15 @@ export interface OnlineReviewLoopDispatch {
     landing: WorkerLandingPayload,
   ) => Promise<boolean | undefined>;
   /**
-   * #940 / ID-012: host no longer applies GitHub side effects. The verify
-   * worker owns reply/resolve/deferred and only self-reports after they succeed.
+   * Host fail-safe GitHub side-effect applicator (#600 / correctness K1).
+   * Must run after a usable verify disposition and before mergeable acceptance.
+   * Live production wires {@link applyVerifySideEffects}; tests may pass identity.
    */
+  readonly applySideEffects: (
+    landing: WorkerLandingPayload,
+    verify: VerifyResult,
+    fixingCommitSha?: string,
+  ) => VerifyResult;
   readonly retriggerAfterFix: () => void | Promise<void>;
   /**
    * Record/persist the fixing commit SHA after fixer success.
@@ -828,6 +834,8 @@ export async function runOnlineReviewLoopStage(
   dispatch: OnlineReviewLoopDispatch,
   opts?: {
     readonly initialRound?: number;
+    /** Prior fixing commit SHA for recheck side-effect resolve (#600). */
+    readonly initialFixCommitSha?: string;
     /** Durable fixer authorization reconstructed for a post-crash recheck. */
     readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     /** Durable identity-to-thread bindings reconstructed for fixer landing. */
@@ -843,6 +851,7 @@ export async function runOnlineReviewLoopStage(
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
+  let lastFixCommitSha = opts?.initialFixCommitSha;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -926,6 +935,7 @@ export async function runOnlineReviewLoopStage(
       // Pending CI only: re-poll without finite host fail (#934 ID-004).
       // Bot overdue window is for bots only — CI pending keeps sleeping until
       // check-runs go terminal (or the worker escalates on a later poll).
+      // Do not apply side effects while CI is still pending.
       if (
         verifyBlockedOnlyOnPendingCheckRuns(
           verify,
@@ -936,8 +946,29 @@ export async function runOnlineReviewLoopStage(
         continue;
       }
 
-      // #940: side effects are worker-owned — host only reads opaque cargo for
-      // fixer landing (identity keys / threads), never for routing.
+      // Host fail-safe applicator: reply/resolve/deferred land before mergeable
+      // (or fixer continue). Worker should have executed already; cargo plan is
+      // still applied deterministically so effects cannot be skipped.
+      try {
+        verify = dispatch.applySideEffects(
+          landing,
+          verify,
+          round > 1 ? lastFixCommitSha : undefined,
+        );
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) {
+          throw err;
+        }
+        return {
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: verifySideEffectFailureStopSummary(err),
+        };
+      }
+      // Re-derive disposition after applicator (e.g. deferredIssueUrls filled).
+      disposition = onlineReviewJudgeDisposition(verify);
+
       fixKeys = fixMarkedKeysFromVerify(verify);
       fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
       landing = {
@@ -1018,11 +1049,11 @@ export async function runOnlineReviewLoopStage(
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
       if (envelopeFixSha !== undefined) {
         try {
-          // #940: resolveFixCommitSha persists the envelope SHA for ledger /
-          // recheck landing; host no longer threads it into side effects.
-          if (dispatch.resolveFixCommitSha) {
-            await dispatch.resolveFixCommitSha(envelopeFixSha);
-          }
+          // Persist envelope SHA for ledger / recheck landing AND thread it into
+          // the next round's host side-effect resolve (threadsToResolve).
+          lastFixCommitSha = dispatch.resolveFixCommitSha
+            ? await dispatch.resolveFixCommitSha(envelopeFixSha)
+            : envelopeFixSha;
         } catch (err) {
           if (err instanceof OnlineReviewLoopTerminal) {
             throw err;

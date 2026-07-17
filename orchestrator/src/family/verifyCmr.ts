@@ -67,6 +67,7 @@ import {
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
 } from "../findingFamilies.js";
+import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 
 import {
   familyCoderFixWorkerSpec,
@@ -101,6 +102,7 @@ import type {
   FindingFamily,
   ShipResult,
   ReviewFixRefuseRecord,
+  VerifyResult,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -1383,8 +1385,33 @@ export async function runFamilyOnlineReviewLoop(input: {
         ? result.output.released
         : undefined;
     },
-    // #940 / ID-012: verify worker owns GitHub side effects; host does not
-    // re-apply reply/resolve/deferred after the worker's typed disposition.
+    // Host fail-safe applicator: live poll path applies reply/resolve/deferred
+    // from verify cargo before disposition is accepted as mergeable. Offline
+    // synthetic poll has no live PR — pass cargo through unchanged.
+    applySideEffects: (
+      landing: WorkerLandingPayload,
+      verify: VerifyResult,
+      fixingCommitSha?: string,
+    ) => {
+      if (!livePoll) {
+        return verify;
+      }
+      const applied = applyVerifySideEffects({
+        sh: ghSh,
+        repo,
+        prUrl,
+        verify,
+        fixingCommitSha,
+        landingThreads: landing.onlineReviewSnapshot?.threads,
+        approvedFixMarkedFindingThreads: landing.fixMarkedFindingThreads,
+      });
+      return {
+        ...verify,
+        ...(applied.deferredIssueUrls.length > 0
+          ? { deferredIssueUrls: applied.deferredIssueUrls }
+          : {}),
+      };
+    },
     retriggerAfterFix: async () => {
       if (livePoll) {
         const retriggered = retriggerBotsAndPoll(
@@ -1428,6 +1455,9 @@ export async function runFamilyOnlineReviewLoop(input: {
   },
       {
         initialRound: loopState.round,
+        ...(loopState.lastFixSha !== undefined
+          ? { initialFixCommitSha: loopState.lastFixSha }
+          : {}),
         initialFixMarkedFindingIdentityKeys:
           resumedFixAuthorization.fixMarkedFindingIdentityKeys,
         initialFixMarkedFindingThreads:
