@@ -47,6 +47,7 @@ import {
 } from "./modelRoutes.js";
 import { resolveModelSlugForPool } from "./modelRegistry.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
+import { workerResultFromAgentError } from "./sandcastleAgentError.js";
 import {
   createTelemetryLegStamper,
   scheduleTelemetryEnvironmentStamp,
@@ -546,10 +547,18 @@ export async function dispatchWorker(
   if (smokeFailure !== undefined) {
     throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
   }
-  if (backend.dispatchWorker !== undefined) {
-    return backend.dispatchWorker(spec, ctx, landing);
+  try {
+    if (backend.dispatchWorker !== undefined) {
+      return await backend.dispatchWorker(spec, ctx, landing);
+    }
+    return await legacyDispatchWorker(backend, spec, ctx, landing);
+  } catch (err) {
+    // #964: single AgentError → typed failure court at Worker Invocation seam
+    // (single-slice coder/judge + any legacy path). Merger has its own seat court.
+    const agentFailure = workerResultFromAgentError(err, spec.kind);
+    if (agentFailure !== undefined) return agentFailure;
+    throw err;
   }
-  return legacyDispatchWorker(backend, spec, ctx, landing);
 }
 
 /**

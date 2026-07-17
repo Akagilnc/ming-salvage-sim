@@ -24,6 +24,7 @@
 import { abandonSpawnAfterAdoptionFailure } from "../dispatchRetry.js";
 import { isMissingMonitorSidecarResult } from "../cliMonitorHooks.js";
 import { workerHostForModel } from "../dispatchWorker.js";
+import { workerResultFromAgentError } from "../sandcastleAgentError.js";
 import {
   createTelemetryLegStamper,
   scheduleTelemetryEnvironmentStamp,
@@ -197,10 +198,18 @@ export async function dispatchFamilyWorker(
   if (smokeFailure !== undefined) {
     throw new Error(`family worker dispatch refused (fail-closed): ${smokeFailure}`);
   }
-  if (familyBackend.dispatchWorker !== undefined) {
-    return familyBackend.dispatchWorker(spec, ctx, landing);
+  try {
+    if (familyBackend.dispatchWorker !== undefined) {
+      return await familyBackend.dispatchWorker(spec, ctx, landing);
+    }
+    return await legacyDispatchFamilyWorker(familyBackend, spec, ctx);
+  } catch (err) {
+    // #964: single AgentError → typed failure court at family Worker Invocation
+    // seam (cmr / coder-fix / ship / online-review). Merger seat has its own court.
+    const agentFailure = workerResultFromAgentError(err, `family ${spec.kind}`);
+    if (agentFailure !== undefined) return agentFailure;
+    throw err;
   }
-  return legacyDispatchFamilyWorker(familyBackend, spec, ctx);
 }
 
 export interface DispatchFamilyWorkerWithMonitorOutcome {
