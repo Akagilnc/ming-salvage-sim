@@ -890,6 +890,14 @@ export interface MergeResult {
    * "不静默吞"). Absent / `false` ⇒ the merge was a clean deterministic merge.
    */
   readonly conflictResolvedByLlm?: boolean;
+  /**
+   * Optional human-readable unresolved detail when {@link conflicted} is true
+   * (#964). Carries the merger worker's non-empty reason (e.g. AgentError /
+   * missing auth preflight) so the family runner can surface it on wave
+   * diagnostics / child failureCause for re-login ops. Not a public failed
+   * cause token — never invents `auth_expired` or expands ID-001.
+   */
+  readonly reason?: string;
 }
 
 // ─────────────────────────── family run I/O ───────────────────────────

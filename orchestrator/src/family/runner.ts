@@ -2427,9 +2427,18 @@ export async function runFamily(
         }
         if (mergeResult.conflicted === true) {
           // ID-010: trust merger worker once; stop serial merge on conflicted base.
+          // #964: non-empty MergeResult.reason (AgentError / preflight detail) is
+          // ops surface for re-login — not a public cause token.
           familyHead = mergeResult.familyHead;
+          const detail =
+            typeof mergeResult.reason === "string" &&
+            mergeResult.reason.trim().length > 0
+              ? mergeResult.reason.trim()
+              : "conflict unresolved on the family base";
           const cause =
-            `merger_worker left child #${r.issue} conflict unresolved on the family base`;
+            detail === "conflict unresolved on the family base"
+              ? `merger_worker left child #${r.issue} ${detail}`
+              : `merger_worker left child #${r.issue} conflict unresolved: ${detail}`;
           waveDiagnostics.push({ issue: r.issue, cause, kind: "merger_worker" });
           childResults.push({
             issue: r.issue,

@@ -3,9 +3,6 @@
  * Route smoke is bare-ping only (#884); old bash/nonce-file evidence helpers are gone.
  */
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -168,12 +165,6 @@ describe("#807 grok bare-ping smoke wiring", () => {
     expect(() => resolveModelSlug("grok-4.5-build")).toThrow(/unknown model slug/i);
   });
 
-  it("pins the official Grok CLI package to an exact version", () => {
-    const containerfile = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "..", "..", "image", "Containerfile"),
-      "utf8",
-    );
-    expect(containerfile).toMatch(/npm install -g @xai-official\/grok@0\.2\.93/);
-    expect(containerfile).toMatch(/grok --version \| grep -F "0\.2\.93"/);
-  });
+  // Container grok pin assert lives only in grok-mid-run-auth-964.test.ts (#964 AC /
+  // CR R1 N2: single canonical pin test; string-match of Containerfile is enough).
 });
