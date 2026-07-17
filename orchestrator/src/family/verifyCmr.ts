@@ -109,6 +109,7 @@ import type {
 import { findingIdentityKey } from "../findings.js";
 import {
   closeFamilyCourtFromJudgeOutput,
+  familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
@@ -551,8 +552,6 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
-    /** #930 — per-pass family judge session for resume across fix rounds. */
-    readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
     /** #930 / #919 R2 — refuse keys blind-routed back to the family judge. */
     readonly refusedFindingIdentityKeysByPass?: Partial<
       Record<IntegratedCmrPass, readonly string[]>
@@ -608,12 +607,9 @@ async function runCmrCoderFix(input: {
   readonly resolvedRoute: ResolvedModelRoute;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  /** #930 — judge session to resume after fix / refuse. */
-  readonly judgeSessionId?: string;
   readonly priorCmrFindingIdentityKeysByPass?: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   >;
-  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -631,9 +627,7 @@ async function runCmrCoderFix(input: {
     resolvedRoute,
     billingPool,
     billingPoolSlots,
-    judgeSessionId,
     priorCmrFindingIdentityKeysByPass,
-    judgeSessionIdByPass,
   } = input;
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
@@ -826,18 +820,12 @@ async function runCmrCoderFix(input: {
   return {
     result: { ok: true, ran: true },
     familyHeadAfter,
-    // Surface refuse + judge session so the pass loop re-opens the court.
+    // Surface refuse cargo so the pass loop re-opens the court.
+    // #966: judge resume sessionId is derived from family ledger on re-open
+    // (no judgeSessionIdByPass memory relay — ledger is sole truth).
     restartFinalBarrier: {
       familyHeadAfter,
       priorCmrFindingIdentityKeysByPass: priorCmrFindingIdentityKeysByPass ?? {},
-      ...(judgeSessionId !== undefined || judgeSessionIdByPass !== undefined
-        ? {
-            judgeSessionIdByPass: {
-              ...(judgeSessionIdByPass ?? {}),
-              ...(judgeSessionId !== undefined ? { [pass]: judgeSessionId } : {}),
-            },
-          }
-        : {}),
       ...(refusedFindingIdentityKeys.length > 0
         ? {
             refusedFindingIdentityKeysByPass: {
@@ -1750,8 +1738,6 @@ async function runIntegratedCmrPass(input: {
   readonly allowCoderFix: boolean;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  /** #930 — resume the family judge session for this pass when present. */
-  readonly judgeSessionId?: string;
   /** #930 — refuse keys from prior coder-fix for judge re-ruling. */
   readonly refusedFindingIdentityKeys?: readonly string[];
   /**
@@ -1759,7 +1745,6 @@ async function runIntegratedCmrPass(input: {
    * (信封宪法: keys on thin ctx; cargo on landing only).
    */
   readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
-  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1777,10 +1762,8 @@ async function runIntegratedCmrPass(input: {
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
-    judgeSessionId,
     refusedFindingIdentityKeys,
     refuseRecords,
-    judgeSessionIdByPass,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -1804,22 +1787,22 @@ async function runIntegratedCmrPass(input: {
       resolvedRoute: activeRoute,
     };
   }
-  // #930: resume the same family judge when we hold a session id; otherwise
-  // open fresh and land priorJudgeVerdicts from the ledger (session-loss path).
-  const resumeJudgeSessionId =
-    typeof judgeSessionId === "string" && judgeSessionId.length > 0
-      ? judgeSessionId
-      : undefined;
-  const spec = cmrWorkerSpec(
-    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
-    pass,
-    resolvedRoute,
-  );
+  // #966 / #930: resume sessionId is derived from family ledger court rows
+  // (cmr_reviewed / cmr_passed) — sole truth, no process-local ByPass relay.
+  // Absent sessionId → fresh open; priorJudgeVerdicts still land for trajectory
+  // / session-loss recovery (same shape as single-slice #925).
   const familyLedger = await familyBackend.readFamilyLedger();
   const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const priorJudgeVerdicts = priorFamilyJudgeVerdictRowsFromLedger(
     familyLedger,
     pass,
+  );
+  const resumeJudgeSessionId =
+    familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
+  const spec = cmrWorkerSpec(
+    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
+    pass,
+    resolvedRoute,
   );
   const cmrPool = billingPoolForFamilyWorker({
     ...(billingPool !== undefined ? { billingPool } : {}),
@@ -2035,19 +2018,6 @@ async function runIntegratedCmrPass(input: {
       : undefined;
   const skippedLegs = cargoSource?.skippedLegs;
   const findingFamilies = cargoSource?.findingFamilies;
-
-  const mergeRestart = (
-    base: NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]>,
-  ): NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]> => ({
-    ...base,
-    judgeSessionIdByPass: {
-      ...(judgeSessionIdByPass ?? {}),
-      ...(base.judgeSessionIdByPass ?? {}),
-      ...(openedJudgeSessionId !== undefined
-        ? { [pass]: openedJudgeSessionId }
-        : {}),
-    },
-  });
 
   if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>
@@ -2298,13 +2268,9 @@ async function runIntegratedCmrPass(input: {
       resolvedRoute: activeRoute,
       ...(billingPool !== undefined ? { billingPool } : {}),
       ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
-      ...(openedJudgeSessionId !== undefined
-        ? { judgeSessionId: openedJudgeSessionId }
-        : {}),
       ...(priorCmrFindingIdentityKeysByPass !== undefined
         ? { priorCmrFindingIdentityKeysByPass }
         : {}),
-      ...(judgeSessionIdByPass !== undefined ? { judgeSessionIdByPass } : {}),
     });
     if (!fixRound.result.ok) {
       return { ...fixRound, resolvedRoute: activeRoute };
@@ -2316,11 +2282,13 @@ async function runIntegratedCmrPass(input: {
       ]),
     ];
     const fromFix = fixRound.restartFinalBarrier;
+    // #966: sessionId already on cmr_reviewed ledger row above; next open
+    // derives resume from ledger (no ByPass packing).
     return {
       result: { ok: true, ran: true },
       familyHeadAfter: fixRound.familyHeadAfter,
       resolvedRoute: activeRoute,
-      restartFinalBarrier: mergeRestart({
+      restartFinalBarrier: {
         familyHeadAfter: fixRound.familyHeadAfter,
         priorCmrFindingIdentityKeysByPass: {
           ...(priorCmrFindingIdentityKeysByPass ?? {}),
@@ -2336,10 +2304,7 @@ async function runIntegratedCmrPass(input: {
         ...(fromFix?.refuseRecordsByPass !== undefined
           ? { refuseRecordsByPass: fromFix.refuseRecordsByPass }
           : {}),
-        ...(fromFix?.judgeSessionIdByPass !== undefined
-          ? { judgeSessionIdByPass: fromFix.judgeSessionIdByPass }
-          : {}),
-      }),
+      },
     };
   }
 
@@ -2475,9 +2440,10 @@ export async function runVerifyCmr(
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
     activePriorKeysByPass[pass];
-  // Process-local judge session + refuse maps survive barrier restarts within
-  // this final-phase invocation (persistent court across fix rounds).
-  let judgeSessionIdByPass: Partial<Record<IntegratedCmrPass, string>> = {};
+  // #966: judge resume sessionId is derived from the family ledger on each
+  // open (cmr_reviewed / cmr_passed). Process-local refuse maps still survive
+  // barrier restarts within this final-phase invocation for the immediate
+  // re-open after coder-fix refuse.
   let refusedFindingIdentityKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   > = {};
@@ -2508,9 +2474,6 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       ...scopedPoolFields,
-      ...(judgeSessionIdByPass.completeness !== undefined
-        ? { judgeSessionId: judgeSessionIdByPass.completeness }
-        : {}),
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
             refusedFindingIdentityKeys:
@@ -2520,7 +2483,6 @@ export async function runVerifyCmr(
       ...(refuseRecordsByPass.completeness !== undefined
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
-      judgeSessionIdByPass,
     });
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
@@ -2547,10 +2509,6 @@ export async function runVerifyCmr(
       completeness.restartFinalBarrier.familyHeadAfter;
     completenessPriorKeysByPass =
       completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    judgeSessionIdByPass = {
-      ...judgeSessionIdByPass,
-      ...(completeness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
-    };
     // Keep refuse keys + cargo only for the immediate next judge open.
     const nextRefuse =
       completeness.restartFinalBarrier.refusedFindingIdentityKeysByPass
@@ -2587,9 +2545,6 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       ...scopedPoolFields,
-      ...(judgeSessionIdByPass.correctness !== undefined
-        ? { judgeSessionId: judgeSessionIdByPass.correctness }
-        : {}),
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
             refusedFindingIdentityKeys:
@@ -2599,7 +2554,6 @@ export async function runVerifyCmr(
       ...(refuseRecordsByPass.correctness !== undefined
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
-      judgeSessionIdByPass,
     });
     if (!correctness.result.ok) return correctness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
@@ -2622,10 +2576,6 @@ export async function runVerifyCmr(
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    judgeSessionIdByPass = {
-      ...judgeSessionIdByPass,
-      ...(correctness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
-    };
     const nextRefuse =
       correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
         ?.correctness;
