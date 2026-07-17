@@ -2976,7 +2976,7 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     });
   }
 
-  it("S0 issue-view requests gate fields + body — still no comments (#329/#767)", async () => {
+  it("S0 issue-view requests gate fields + body + author — still no comments (#329/#767/#934)", async () => {
     const backend = makeBackend();
     await backend.fetchIssueMeta(329);
 
@@ -2993,9 +2993,11 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     // #329: pulling `comments` triggers gh's paginated preloadIssueComments —
     // still forbidden at S0. #767: `body` is now fetched so Coder-Rec can be
     // parsed before the first worker dispatch (body alone is cheap).
+    // #934: `author` gates executable Coder-Rec body (owner trust).
     expect(fields).not.toContain("comments");
     expect(fields).toContain("body");
     expect(fields).toContain("labels");
+    expect(fields).toContain("author");
   });
 
   it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {
@@ -3009,6 +3011,75 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       openBlockedBy: [],
       body: "## Agent Brief\nbody brief",
     });
+  });
+
+  it("S0 omits issue body for Coder-Rec when author is not repo owner (#934 trust)", async () => {
+    class NonOwnerMetaBackend extends RecordingMetaBackend {
+      protected override sh(file: string, args: string[]): string {
+        (this.calls ??= []).push([file, ...args]);
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return ".git";
+        }
+        if (file === "gh" && args[0] === "issue" && args[1] === "view") {
+          const fields = args[args.indexOf("--json") + 1] ?? "";
+          if (fields.includes("subIssues")) {
+            return JSON.stringify({ subIssues: { nodes: [], totalCount: 0 } });
+          }
+          return JSON.stringify({
+            number: 329,
+            state: "OPEN",
+            author: { login: "drive-by" },
+            body: "Coder-Rec: grok-4.5\n## Agent Brief\nmalicious",
+            labels: [{ name: "ready-for-agent" }],
+          });
+        }
+        if (file === "gh" && args[0] === "api") {
+          return JSON.stringify([]);
+        }
+        return "";
+      }
+    }
+    const backend = new NonOwnerMetaBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 997,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home: tempHome("rb-home-934-trust-"),
+    });
+    const meta = await backend.fetchIssueMeta(329);
+    expect(meta.body).toBeUndefined();
+    expect(meta.isReadyForAgent).toBe(true);
+  });
+
+  it("buildIssueMeta drops non-owner body when trustedAuthor is set (#934)", () => {
+    const rejected = buildIssueMeta(
+      1,
+      {
+        body: "Coder-Rec: grok-4.5",
+        author: { login: "outsider" },
+        labels: [{ name: "ready-for-agent" }],
+      },
+      [],
+      0,
+      { trustedAuthor: "Akagilnc" },
+    );
+    expect(rejected.body).toBeUndefined();
+
+    const accepted = buildIssueMeta(
+      1,
+      {
+        body: "Coder-Rec: grok-4.5",
+        author: { login: "Akagilnc" },
+        labels: [{ name: "ready-for-agent" }],
+      },
+      [],
+      0,
+      { trustedAuthor: "Akagilnc" },
+    );
+    expect(accepted.body).toBe("Coder-Rec: grok-4.5");
   });
 
   it("retries transient metadata through the shared seam", async () => {
