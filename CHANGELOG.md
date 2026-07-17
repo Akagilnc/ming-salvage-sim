@@ -4,6 +4,20 @@
 
 ## [未发布]
 
+## [0.31.0.0] — 2026-07-17
+
+### Added
+- **#934 family W1（#936 / #937 / #939）**：Runner 控制面切片合入 family base——ignition 准入先于 worksite 与 durable re-entry；统一 worker dispatch 终态并删除静默判刑；family verify 区分 operational error 与合法空命令。
+
+### Changed
+- **admission / Coder-Rec / tight**：`admitRouteFromEnv` 仅 preset；relay 改 route 后 `admitRelayBaton` 再过 tight；sticky re-hold 同 court。
+- **receipt maxRetries**：与 #955 对齐，按 `resumeCapableForSlug` 布尔门，非 provider 字符串硬表。
+- **family durable park/relay**：family 只写 family-ledger；禁用旁路 steps.jsonl 半双庭。
+
+### Fixed
+- **CR R1–R8 收口**：ledger shape / dual phrase / smoke dropped union / public silence proof / capacity relay persist 分类 / DRY adoption+baton / hashPrompt warn / branchExists fail-closed 等。
+- **与 main 合流**：#955 grok resume 与 #965/#55a5cbff soul 哨兵删除；测试接缝改 Coder-Rec 而非 env 单槽。
+
 ## [0.30.1.1] — 2026-07-16
 
 ### Changed
