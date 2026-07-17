@@ -225,6 +225,7 @@ import type {
   MergeResult,
   ReconcileGit,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
@@ -3962,7 +3963,7 @@ function classifyMergerOutcomePayload(
 
 /** A one-line human-readable summary of a failed verify command (phase + error). */
 function summarizeError(
-  phase: "wave" | "final" | "correctness_checkpoint",
+  phase: VerifyCmrPhase,
   err: unknown,
 ): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the

@@ -2318,6 +2318,145 @@ async function runIntegratedCmrPass(input: {
 }
 
 /**
+ * Shared Integrated Correctness court loop (#961 CR R1 DRY).
+ *
+ * Both `correctness_checkpoint` and final Step6 run the same correctness court
+ * machine (open → fix → re-verify → re-open). Callers differ only in prefix
+ * (checkpoint: no completeness; final: completeness first) and suffix
+ * (checkpoint: early `ok`; final: ship / online-review / landing).
+ */
+async function runCorrectnessCourtLoop(input: {
+  readonly phase: VerifyCmrPhase;
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly runId?: string;
+  readonly llmResolvedChildren?: readonly number[];
+  readonly escalationAnswer?: EscalationAnswerPayload;
+  readonly familyHeadAfter?: string;
+  readonly familyIssue?: number;
+  readonly moduleContext?: FamilyModuleContext;
+  readonly priorKeysByPass: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
+  readonly resolvedRoute: ResolvedModelRoute;
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+}): Promise<{
+  readonly result: VerifyCmrResult;
+  readonly familyHeadAfter?: string;
+  readonly resolvedRoute: ResolvedModelRoute;
+}> {
+  const {
+    phase,
+    ledgerPhase,
+    familyBackend,
+    familyBase,
+    runId,
+    llmResolvedChildren,
+    escalationAnswer,
+    familyIssue,
+    moduleContext,
+  } = input;
+  const scopedPoolFields = {
+    ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
+    ...(input.billingPoolSlots !== undefined
+      ? { billingPoolSlots: input.billingPoolSlots }
+      : {}),
+  };
+
+  let correctnessFamilyHeadAfter = input.familyHeadAfter;
+  let correctnessPriorKeysByPass = input.priorKeysByPass;
+  let resolvedRoute = input.resolvedRoute;
+  // Process-local refuse maps survive barrier restarts for the immediate
+  // re-open after coder-fix refuse (#966 / #919 R2).
+  let refusedFindingIdentityKeysByPass: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  > = {};
+  let refuseRecordsByPass: Partial<
+    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
+  > = {};
+
+  while (true) {
+    const correctness = await runIntegratedCmrPass({
+      pass: "correctness",
+      familyBackend,
+      familyBase,
+      ...(runId !== undefined ? { runId } : {}),
+      llmResolvedChildren,
+      escalationAnswer,
+      familyHeadAfter: correctnessFamilyHeadAfter,
+      familyIssue,
+      moduleContext,
+      priorCmrFindingIdentityKeys: correctnessPriorKeysByPass.correctness,
+      priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
+      resolvedRoute,
+      allowCoderFix: true,
+      ledgerPhase,
+      ...scopedPoolFields,
+      ...(refusedFindingIdentityKeysByPass.correctness !== undefined
+        ? {
+            refusedFindingIdentityKeys:
+              refusedFindingIdentityKeysByPass.correctness,
+          }
+        : {}),
+      ...(refuseRecordsByPass.correctness !== undefined
+        ? { refuseRecords: refuseRecordsByPass.correctness }
+        : {}),
+    });
+    if (!correctness.result.ok) {
+      return {
+        result: correctness.result,
+        familyHeadAfter: correctness.familyHeadAfter,
+        resolvedRoute: correctness.resolvedRoute ?? resolvedRoute,
+      };
+    }
+    // #919: sticky advanced coderFix across courts / fix rounds.
+    if (correctness.resolvedRoute !== undefined) {
+      resolvedRoute = correctness.resolvedRoute;
+    }
+    if (correctness.restartFinalBarrier === undefined) {
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: correctness.familyHeadAfter,
+        resolvedRoute,
+      };
+    }
+    const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
+      phase,
+      familyBase,
+      familyBackend,
+      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+      runId,
+      familyIssue,
+    });
+    if (verifyAfterFixFailed !== undefined) {
+      return {
+        result: verifyAfterFixFailed,
+        familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+        resolvedRoute,
+      };
+    }
+    correctnessFamilyHeadAfter =
+      correctness.restartFinalBarrier.familyHeadAfter;
+    correctnessPriorKeysByPass =
+      correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
+    // Unified refuse-map style: replace cargo for this pass only (next re-open).
+    const nextRefuse =
+      correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
+        ?.correctness;
+    refusedFindingIdentityKeysByPass =
+      nextRefuse !== undefined ? { correctness: nextRefuse } : {};
+    const nextRefuseRecords =
+      correctness.restartFinalBarrier.refuseRecordsByPass?.correctness;
+    refuseRecordsByPass =
+      nextRefuseRecords !== undefined
+        ? { correctness: nextRefuseRecords }
+        : {};
+  }
+}
+
+/**
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
@@ -2425,73 +2564,23 @@ export async function runVerifyCmr(
         : {}),
       ...(priorCmrFindingIdentityKeysByPass ?? {}),
     };
-    let correctnessFamilyHeadAfter = familyHeadAfter;
-    let correctnessPriorKeysByPass = activePriorKeysByPass;
-    let refusedFindingIdentityKeysByPass: Partial<
-      Record<IntegratedCmrPass, readonly string[]>
-    > = {};
-    let refuseRecordsByPass: Partial<
-      Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-    > = {};
-    while (true) {
-      const correctness = await runIntegratedCmrPass({
-        pass: "correctness",
-        familyBackend,
-        familyBase,
-        ...(runId !== undefined ? { runId } : {}),
-        llmResolvedChildren,
-        escalationAnswer,
-        familyHeadAfter: correctnessFamilyHeadAfter,
-        familyIssue,
-        moduleContext,
-        priorCmrFindingIdentityKeys: correctnessPriorKeysByPass.correctness,
-        priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
-        resolvedRoute,
-        allowCoderFix: true,
-        ledgerPhase: "correctness_checkpoint",
-        ...scopedPoolFields,
-        ...(refusedFindingIdentityKeysByPass.correctness !== undefined
-          ? {
-              refusedFindingIdentityKeys:
-                refusedFindingIdentityKeysByPass.correctness,
-            }
-          : {}),
-        ...(refuseRecordsByPass.correctness !== undefined
-          ? { refuseRecords: refuseRecordsByPass.correctness }
-          : {}),
-      });
-      if (!correctness.result.ok) return correctness.result;
-      if (correctness.resolvedRoute !== undefined) {
-        resolvedRoute = correctness.resolvedRoute;
-      }
-      if (correctness.restartFinalBarrier === undefined) {
-        return { ok: true, ran: true };
-      }
-      const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
-        phase,
-        familyBase,
-        familyBackend,
-        familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
-        runId,
-        familyIssue,
-      });
-      if (verifyAfterFixFailed !== undefined) return verifyAfterFixFailed;
-      correctnessFamilyHeadAfter =
-        correctness.restartFinalBarrier.familyHeadAfter;
-      correctnessPriorKeysByPass =
-        correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-      const nextRefuse =
-        correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
-          ?.correctness;
-      refusedFindingIdentityKeysByPass =
-        nextRefuse !== undefined ? { correctness: nextRefuse } : {};
-      const nextRefuseRecords =
-        correctness.restartFinalBarrier.refuseRecordsByPass?.correctness;
-      refuseRecordsByPass =
-        nextRefuseRecords !== undefined
-          ? { correctness: nextRefuseRecords }
-          : {};
-    }
+    const checkpoint = await runCorrectnessCourtLoop({
+      phase,
+      ledgerPhase: "correctness_checkpoint",
+      familyBackend,
+      familyBase,
+      ...(runId !== undefined ? { runId } : {}),
+      llmResolvedChildren,
+      escalationAnswer,
+      familyHeadAfter,
+      familyIssue,
+      moduleContext,
+      priorKeysByPass: activePriorKeysByPass,
+      resolvedRoute,
+      ...scopedPoolFields,
+    });
+    // Checkpoint ends here: early ok (or failed) — no completeness / ship suffix.
+    return checkpoint.result;
   }
 
   // #419 / #930: Step5 completeness and Step6 correctness are two ordered
@@ -2596,73 +2685,26 @@ export async function runVerifyCmr(
         ? { completeness: nextRefuseRecords }
         : {};
   }
-  refusedFindingIdentityKeysByPass = {};
-  refuseRecordsByPass = {};
-
-  let correctnessFamilyHeadAfter = completenessFamilyHeadAfter;
-  let correctnessPriorKeysByPass = completenessPriorKeysByPass;
-  while (true) {
-    const correctness = await runIntegratedCmrPass({
-      pass: "correctness",
-      familyBackend,
-      familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      llmResolvedChildren,
-      escalationAnswer,
-      familyHeadAfter: correctnessFamilyHeadAfter,
-      familyIssue,
-      moduleContext,
-      priorCmrFindingIdentityKeys: correctnessPriorKeysByPass.correctness,
-      priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
-      resolvedRoute,
-      allowCoderFix: true,
-      ...scopedPoolFields,
-      ...(refusedFindingIdentityKeysByPass.correctness !== undefined
-        ? {
-            refusedFindingIdentityKeys:
-              refusedFindingIdentityKeysByPass.correctness,
-          }
-        : {}),
-      ...(refuseRecordsByPass.correctness !== undefined
-        ? { refuseRecords: refuseRecordsByPass.correctness }
-        : {}),
-    });
-    if (!correctness.result.ok) return correctness.result;
-    // #919: sticky advanced coderFix across courts / fix rounds.
-    if (correctness.resolvedRoute !== undefined) {
-      resolvedRoute = correctness.resolvedRoute;
-    }
-    if (correctness.restartFinalBarrier === undefined) {
-      correctnessFamilyHeadAfter = correctness.familyHeadAfter;
-      break;
-    }
-    const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
-      phase,
-      familyBase,
-      familyBackend,
-      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
-      runId,
-      familyIssue,
-    });
-    if (verifyAfterFixFailed !== undefined) return verifyAfterFixFailed;
-    correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
-    correctnessPriorKeysByPass =
-      correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    const nextRefuse =
-      correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
-        ?.correctness;
-    refusedFindingIdentityKeysByPass =
-      nextRefuse !== undefined
-        ? { ...refusedFindingIdentityKeysByPass, correctness: nextRefuse }
-        : { ...refusedFindingIdentityKeysByPass, correctness: undefined };
-    const nextRefuseRecords =
-      correctness.restartFinalBarrier.refuseRecordsByPass?.correctness;
-    refuseRecordsByPass =
-      nextRefuseRecords !== undefined
-        ? { ...refuseRecordsByPass, correctness: nextRefuseRecords }
-        : { ...refuseRecordsByPass, correctness: undefined };
-  }
-  const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
+  // Correctness court shares the same loop machine as #961 checkpoint
+  // (ledgerPhase final; ship / online-review / landing continue below).
+  const correctnessCourt = await runCorrectnessCourtLoop({
+    phase,
+    ledgerPhase: "final",
+    familyBackend,
+    familyBase,
+    ...(runId !== undefined ? { runId } : {}),
+    llmResolvedChildren,
+    escalationAnswer,
+    familyHeadAfter: completenessFamilyHeadAfter,
+    familyIssue,
+    moduleContext,
+    priorKeysByPass: completenessPriorKeysByPass,
+    resolvedRoute,
+    ...scopedPoolFields,
+  });
+  if (!correctnessCourt.result.ok) return correctnessCourt.result;
+  resolvedRoute = correctnessCourt.resolvedRoute;
+  const cmrPassedFamilyHeadAfter = correctnessCourt.familyHeadAfter;
   // Both CMR passes converged. Continue through ship, online review, then
   // landing (docs / merge / MERGED / close / cleanup) below.
 
