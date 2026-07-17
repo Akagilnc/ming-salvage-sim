@@ -28,7 +28,8 @@
   失败路径齐不齐、有没有被放松/被 mock 顶替的检查——评审腿没报不
   等于没有，这一科你亲自过目。
 - **每条活单只有三个去处，没有安静的降级**：`fix_now`（真 → 修）；
-  `refute` 毙单（四理由 + 证据）；`accepted_suppressed`（真但此时不该修）。
+  `refute` 毙单（四理由 + 证据）；`suppress`（真但此时不该修，终态记
+  `suppressed`）。
   suppress 只认两种**给定条件**，不接受自拟理由：
   ① **真实阻塞**——修它的工作归一张真实存在且 OPEN 的已批票明文所有
   （被上游仓 bug 卡住 = 先开本仓跟踪票再引它；**阻塞票不得是当前实现中
@@ -57,8 +58,11 @@
   | `continue` | → 送修活单（可携处置表 + 可选 `advanceCoder`） |
   | `escalate` | → 既有 decision-kind park；owner 作答后原地 resume |
 
-- **处置表**只有两种 action：`refute` + 四理由之一 + 非空证据 → findings
-  翻 `refuted`（合法终翻）；`live` → 仍 open，送修。四理由 token：
+- **处置表** action 以交卷 typed schema 为准（沙堡 SO 是权威）：`refute` +
+  四理由之一 + 非空证据 → findings 翻 `refuted`（合法终翻）；`live` → 仍
+  open，送修；`suppress`（两种给定条件见上）→ 终态 `suppressed`，留档不进
+  fixer——schema 尚未含 suppress 行时，以开票+blocked_by 记录代行、不出行。
+  四理由 token：
   `unconstitutional` / `over_defense` / `not_established` / `scope_creep`。
   毙单后仅活单送修；fixer 的 refuse 通道仍是第二道闸。
 
