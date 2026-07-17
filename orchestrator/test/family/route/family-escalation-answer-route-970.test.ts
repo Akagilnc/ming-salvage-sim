@@ -239,6 +239,64 @@ describe("#970 — family-level answer is NOT a child decision resume", () => {
   });
 });
 
+describe("#970 — park without sessionId is NOT a child decision resume", () => {
+  it("child_decision_parked without sessionId + child-bound answer → no inject, no fail-closed, child runs fresh", async () => {
+    // Shape-valid decision park that lacks a parked sessionId is NOT a proven
+    // child decision resume (#970 AC1 sessionId gate). Answer is still consumed
+    // at family ledger level; runChild must not inject or loud-fail.
+    const singleSliceBackend = new FreshChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    familyBackend.ledger.push(
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        phase: "wave",
+        childIssue: 883,
+        escalationKind: "decision",
+        reason: "Design-level ambiguity on field X",
+        diagnosis: "product decision required",
+        // deliberately omit sessionId — not a proven in-place resume bind
+      } as FamilyLedgerEntry,
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        childIssue: 883,
+        answer: "field X is optional; proceed",
+        source: "human",
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: epicWith(883),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/485-base",
+    });
+
+    expect(result.children.find((c) => c.issue === 883)?.status).not.toBe("failed");
+    expect(result.children.find((c) => c.issue === 883)?.failureCause).toBeUndefined();
+    expect(singleSliceBackend.preparedIssues).toContain(883);
+    expect(
+      singleSliceBackend.runStepCalls.some((c) => c.issue === 883 && c.step === "S2"),
+    ).toBe(true);
+    expect(singleSliceBackend.resumeSessionCalls).toEqual([]);
+    const injectedChildAnswer = singleSliceBackend.childLedgers
+      .get(883)
+      ?.find((e) => e.event === "escalation_answered");
+    expect(injectedChildAnswer).toBeUndefined();
+    expect(
+      familyBackend.ledger.some(
+        (e) => e.reason === "child_answer_without_parked_state",
+      ),
+    ).toBe(false);
+    expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
+    expect(result.status).toBe("success");
+  });
+});
+
 describe("#970 — true child answer without parked state fails loud", () => {
   it("child decision park answered + missing single-slice resume state → failed with typed reason + durable row", async () => {
     // Park path writes child_decision_parked; then hide resume state so injection
@@ -294,5 +352,72 @@ describe("#970 — true child answer without parked state fails loud", () => {
       ),
     ).toBe(true);
     expect(second.status).not.toBe("success");
+  });
+
+  it("park + answer + resume ledger step missing sessionId → failed with typed reason", async () => {
+    // Resume state exists and has a re-openable step, but that step has no
+    // sessionId — the other fail-closed arm (not the hide-resume branch).
+    const singleSliceBackend = new FreshChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    familyBackend.ledger.push(
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        phase: "wave",
+        childIssue: 883,
+        escalationKind: "decision",
+        sessionId: PARKED_SESSION_ID,
+        reason: "Design-level ambiguity on field X",
+        diagnosis: "product decision required",
+      } as FamilyLedgerEntry,
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        childIssue: 883,
+        answer: "field X is optional; resume in place",
+        source: "human",
+        sessionId: PARKED_SESSION_ID,
+      } as FamilyLedgerEntry,
+    );
+
+    // Child single-slice residue: escalated S2 present but sessionId absent
+    // (corrupt/legacy residue) — injection must fail closed loudly.
+    singleSliceBackend.childLedgers.set(883, [
+      {
+        step: "S2",
+        prompt_hash: "parked",
+        branchHEAD: "head-parked",
+        ts: "2026-07-17T00:00:00.000Z",
+        handoffStatus: "escalate",
+        escalationKind: "decision",
+      } as unknown as PersistentLedgerEntry,
+    ]);
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: epicWith(883),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/485-base",
+    });
+
+    const child = result.children.find((c) => c.issue === 883);
+    expect(child?.status).toBe("failed");
+    expect(child?.failureCause).toBe("child_answer_without_parked_state");
+    expect(singleSliceBackend.resumeSessionCalls).toEqual([]);
+    expect(
+      singleSliceBackend.childLedgers
+        .get(883)
+        ?.some((e) => e.event === "escalation_answered"),
+    ).toBe(false);
+    expect(
+      familyBackend.ledger.some(
+        (e) =>
+          e.childIssue === 883 && e.reason === "child_answer_without_parked_state",
+      ),
+    ).toBe(true);
+    expect(result.status).not.toBe("success");
   });
 });

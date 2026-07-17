@@ -78,6 +78,7 @@ import {
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   isMergedAccountingEntry,
+  isValidChildDecisionParked,
   mergedSet,
   recordAdmissionSkipped,
   recordChildDecisionParked,
@@ -1597,40 +1598,32 @@ export async function runFamily(
     // children. To also resume the ANSWERED ones we look up each parked child's
     // answer directly: answered → feed it into runChild (resume in place);
     // unanswered → keep the family paused (return escalated).
-    const parkedIssues = new Set<number>();
-    for (const entry of initialFamilyLedger) {
-      if (
-        entry.status === "child_decision_parked" &&
-        entry.event === "child_decision_parked" &&
-        entry.escalationKind === "decision" &&
-        typeof entry.childIssue === "number"
-      ) {
-        parkedIssues.add(entry.childIssue);
+    // Single reverse pass → latest park per child (ledger authority predicate).
+    const latestParkByChild = new Map<
+      number,
+      FamilyLedgerEntry & { readonly childIssue: number }
+    >();
+    for (let i = initialFamilyLedger.length - 1; i >= 0; i--) {
+      const entry = initialFamilyLedger[i]!;
+      if (!isValidChildDecisionParked(entry)) continue;
+      if (!latestParkByChild.has(entry.childIssue)) {
+        latestParkByChild.set(entry.childIssue, entry);
       }
     }
     const unanswered: (FamilyLedgerEntry & { readonly childIssue: number })[] = [];
     const stillUnanswered = new Set(
       unansweredChildEscalations(initialFamilyLedger).map((e) => e.childIssue),
     );
-    for (const childIssue of parkedIssues) {
-      const parkRow = [...initialFamilyLedger]
-        .reverse()
-        .find(
-          (e) =>
-            e.status === "child_decision_parked" &&
-            e.event === "child_decision_parked" &&
-            e.escalationKind === "decision" &&
-            e.childIssue === childIssue,
-        ) as (FamilyLedgerEntry & { readonly childIssue: number }) | undefined;
+    for (const [childIssue, parkRow] of latestParkByChild) {
       if (stillUnanswered.has(childIssue)) {
-        if (parkRow !== undefined) unanswered.push(parkRow);
+        unanswered.push(parkRow);
         continue;
       }
       // Injection requires a parked sessionId on the durable park row (#970).
       // Without it the bind is not a proven child decision resume — leave the
       // answer consumed at family ledger level and run the child fresh/normal.
       const parkedSessionId =
-        typeof parkRow?.sessionId === "string" ? parkRow.sessionId.trim() : "";
+        typeof parkRow.sessionId === "string" ? parkRow.sessionId.trim() : "";
       if (parkedSessionId.length === 0) continue;
       const answer = childEscalationAnswer(initialFamilyLedger, childIssue);
       if (answer !== undefined) parkedChildAnswers.set(childIssue, answer);
