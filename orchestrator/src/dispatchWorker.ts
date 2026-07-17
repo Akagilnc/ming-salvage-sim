@@ -626,8 +626,8 @@ export interface DispatchWorkerWithMonitorOutcome {
  *
  * `onMonitorHandleSpawned` fires AT SPAWN TIME — before waiting for the child
  * to exit — so the runner can persist the handle to the ledger while the worker
- * is still running (hang judge/kill/resume needs a live handle, not a post-exit
- * one).
+ * is still running (observation + exact-handle adoption/terminate need a live
+ * handle, not a post-exit one).
  */
 export interface DispatchWorkerWithMonitorOptions {
   readonly onMonitorHandleSpawned?: (
@@ -683,9 +683,10 @@ function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
  * with no monitor handle.
  *
  * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
- * land a ledger-rebuildable handle and hang/kill judgment never needs global
- * process-name matching. RealBackend / RealFamilyBackend implement the hooks so
- * Child S2/S3/S5/S6 and family S9–S12 take this monitored branch in production.
+ * land a ledger-rebuildable handle and exact-handle adoption/terminate never
+ * needs global process-name matching. RealBackend / RealFamilyBackend implement
+ * the hooks so Child S2/S3/S5/S6 and family S9–S12 take this monitored branch in
+ * production.
  */
 export async function dispatchWorkerWithMonitor(
   backend: Backend,

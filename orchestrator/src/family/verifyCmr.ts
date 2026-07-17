@@ -2,18 +2,18 @@
  * verify-cmr — the family verify + integrated-cmr HOOK seam (ADR 0022 decision
  * 3④/⑤/⑥, #293 seam 4).
  *
- * #293 立 the seam ONLY: a no-op hook the family spine calls at TWO points ADR
- * 0022 decision 3 names —
+ * Production export is the real hook body (default for the family spine — not a
+ * success no-op). The spine calls it at TWO points ADR 0022 decision 3 names —
  *   - the per-wave barrier (decision 3④: run family verify, typecheck + unit
  *     tests, fail-fast — a red wave aborts BEFORE 排下一波), and
  *   - after all waves merge (decision 3⑤/⑥: the end-of-run 全量 verify + the
  *     load-bearing integrated cross-model cmr that catches 跨片接缝; the native
  *     pipeline has zero review).
- * The `phase` field tells #296 which of the two it is running.
+ * The `phase` field tells which of the two is running.
  *
- * #296 fills the hook body: wave = verify fail-fast; final = full verify then
- * ordered completeness/correctness CMR courts, coder-fix on blocking findings,
- * then ship. #939: `runFamilyVerify` is a required capability (no success no-op).
+ * Wave = verify fail-fast; final = full verify then ordered
+ * completeness/correctness CMR courts, coder-fix on blocking findings, then
+ * ship. #939: `runFamilyVerify` is a required capability (no success no-op).
  * Missing CMR/ship after a real verify fails-safe to stage-named red (not success).
  * Family court closure is the shared T2 judge tri-state; residual open-count is
  * boundary-only transport. Three-channel routing stays (exit / judge status /

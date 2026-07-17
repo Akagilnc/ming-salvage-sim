@@ -1641,9 +1641,9 @@ export async function runFamily(
     (moduleContext.acceptedSuppressionSources?.length ?? 0) > 0
       ? moduleContext
       : undefined;
-  // The verify-cmr hook: the injected impl (#296 / tests) or the #293 no-op module
-  // default. The spine's call sites + fail-fast on `ok===false` are identical
-  // either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
+  // The verify-cmr hook: production default is the real {@link runVerifyCmr};
+  // tests may inject a stub. Spine call sites + fail-fast on `ok===false` are
+  // identical either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
   const verifyCmr = input.verifyCmr ?? runVerifyCmr;
   const childResults: FamilyChildResult[] = [];
   let familyHead: string | undefined;
@@ -1664,9 +1664,9 @@ export async function runFamily(
   //     (most urgent among non-escalated outcomes). Otherwise the run is
   //     `"success"` iff EVERY child is merged, else `"incomplete"`.
   //
-  // #293's happy path (all independent children merge, no-op verify passes) is
-  // always `"success"`; incomplete / stage-failure / ledger-merged branches
-  // guard honesty for the failure + #294/#298 / #922 paths.
+  // Happy path (all independent children merge, every barrier green) is always
+  // `"success"`; incomplete / stage-failure / ledger-merged branches guard
+  // honesty for the failure + #294/#298 / #922 paths.
   const finalize = async (
     opts?: {
       readonly failedStatus?: FamilyStageFailureStatus;
@@ -2189,11 +2189,10 @@ export async function runFamily(
       return await finalize();
     }
 
-    // ── verify-cmr hook: per-wave barrier (#293 no-op seam, #296 fills) ─────────
+    // ── verify-cmr hook: per-wave barrier (default = real runVerifyCmr) ────────
     // Decision 3④: a red wave fails-fast — abort BEFORE selecting the next wave.
-    // #293's no-op returns ok:true so the loop continues; the spine ALREADY acts
-    // on `ok` and passes the phase + context, so #296 fills only the hook body
-    // (run typecheck + tests in the family base) without touching this loop.
+    // The spine acts on `ok` and passes phase + context; production runs real
+    // verify in the family base. Tests inject only when stubbing the barrier.
     // #909: quota wall → park or apply baton + re-dispatch (shared machine).
     const waveBarrier = await runFamilyBarrierWithQuotaRelay({
       phase: "wave",

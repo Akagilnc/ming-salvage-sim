@@ -923,11 +923,10 @@ export interface FamilyRunInput {
   readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
   /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
-   * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
-   * {@link runVerifyCmr} module export. #296 fills the module body OR injects a
-   * real impl here; either way the spine's call sites + fail-fast on `ok===false`
-   * are already wired, so #296 does not rewrite the spine. Injectable so the
-   * spine's fail-fast branch is testable now (the repo's injected-seam idiom).
+   * fail-fast) + end-of-run integrated cmr. Optional: defaults to the real
+   * {@link runVerifyCmr} module export. Injectable only in tests (or rare run
+   * overrides) so the spine's fail-fast branch stays unit-testable without
+   * rewriting call sites.
    */
   readonly verifyCmr?: (input: VerifyCmrInput) => Promise<VerifyCmrResult>;
   /**
@@ -1068,9 +1067,8 @@ export interface FamilyChildResult {
  * The family-run outcome (ADR 0022 decision 3④/⑤/⑥ + #922 terminal real names).
  *
  * - `"success"` — every verify barrier passed AND every epic child is merged into
- *   the family base. Only a fully-closed family run is `"success"` (in #293 the
- *   no-op verify always passes, so N independent children that all merge ⇒
- *   `"success"`).
+ *   the family base. Only a fully-closed family run is `"success"` (N independent
+ *   children that all merge with green barriers ⇒ `"success"`).
  * - Stage failures (#922) — the post-wave final barrier used to mash every stage
  *   death into `"verify_failed"`. Each stage now has its own terminal name, and
  *   `stopSummary.reason` uses the same token:
@@ -1083,8 +1081,8 @@ export interface FamilyChildResult {
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤
- *   "不静默吞"); the caller MUST NOT treat it as fully closed. (#293's happy path
- *   never produces this — all children merge; it guards the honest result.)
+ *   "不静默吞"); the caller MUST NOT treat it as fully closed. (A full-merge
+ *   happy path never produces this — it guards the honest result.)
  *
  * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
  *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
@@ -1110,9 +1108,9 @@ export interface FamilyRunResult {
   /**
    * The family-run outcome. Stage-failure statuses (#922) mean a post-child
    * barrier died at that named stage; the caller MUST NOT treat the run as
-   * shippable. #293's no-op verify always passes, so a complete #293 run is
-   * `"success"`; failure paths are wired + tested (via injected `verifyCmr`
-   * and real `runVerifyCmr`) for #296 / #922.
+   * shippable. A complete run with green barriers is `"success"`; failure paths
+   * are wired + tested (via injected `verifyCmr` in tests and real
+   * `runVerifyCmr` in production) for #296 / #922.
    */
   readonly status: FamilyRunStatus;
   /**

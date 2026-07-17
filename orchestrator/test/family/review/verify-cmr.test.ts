@@ -1,9 +1,10 @@
 /**
  * #296 — the verify-cmr HOOK BODY (ADR 0022 decision 3④/⑤/⑥/4).
  *
- * #293 立 the seam (a no-op called at the wave barrier + end-of-run, with phase +
- * context, the spine acting on `ok`). #296 fills the BODY behind that same
- * `runVerifyCmr(input)` signature — it never touches the spine call sites:
+ * Production default is the real `runVerifyCmr` (not a success no-op). The spine
+ * calls it at the wave barrier + end-of-run with phase + context and acts on
+ * `ok`. This module is that body behind the same `runVerifyCmr(input)` signature
+ * — it never rewrites the spine call sites:
  *
  *   - "wave" phase  → family verify (typecheck + unit tests), FAIL-FAST: red ⇒
  *                     `{ok:false}` (spine aborts before the next wave) + an
@@ -15,10 +16,9 @@
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached through the
  * `FamilyBackend` seam (the input the frozen spine passes is `{phase, familyBase,
- * familyBackend}`), as OPTIONAL methods — a backend that does not implement them
- * without `runFamilyVerify` fails closed (`verify_failed`), so the spine's
- * existing default path is untouched. Everything is driven by a zero-container
- * fake — no real codex / container / push.
+ * familyBackend}`). Missing `runFamilyVerify` fails closed (`verify_failed`).
+ * Tests inject stubs only when needed. Zero-container fakes — no real codex /
+ * container / push.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";

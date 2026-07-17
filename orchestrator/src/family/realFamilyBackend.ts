@@ -41,6 +41,7 @@
  */
 
 import { shWithClock } from "../externalCall.js";
+import { gitExitStatus, isFileNotFound } from "../fsErrors.js";
 import {
   appendFileSync,
   existsSync,
@@ -605,10 +606,9 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+    // #934: per-line shape gate (not bare JSON.parse cast). Invalid JSON or
+    // off-shape object fails closed — never silent-as-typed cargo.
+    return parseLegacyEscalationJsonl(raw);
   }
 
   private legacyEscalationLedgerEntries(): ReadonlyArray<FamilyLedgerEntry> {
@@ -3917,20 +3917,6 @@ function classifyMergerOutcomePayload(
   return { resolved: false, reason: "merger did not resolve" };
 }
 
-/**
- * Is this read error a "file does not exist yet" (ENOENT)? Used to keep the
- * ledger/escalation reads fail-CLOSED: only a missing file maps to an empty set;
- * any other read failure (EACCES / EISDIR / IO / corruption) must rethrow so an
- * unreadable-but-present durable file is never silently read as empty (codex R2).
- */
-function isFileNotFound(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === "object" &&
-    (err as { code?: unknown }).code === "ENOENT"
-  );
-}
-
 /** A one-line human-readable summary of a failed verify command (phase + error). */
 function summarizeError(phase: "wave" | "final", err: unknown): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
@@ -3963,15 +3949,64 @@ function decodeChildOutput(v: unknown): string {
 }
 
 /**
- * The process exit status carried by an `execFileSync` throw (`err.status`), or
- * `undefined` if the error is not an exit-code failure (e.g. ENOENT spawning git).
- * Lets a git predicate tell a LEGIT non-zero (`merge-base --is-ancestor` exits 1 for
- * "not an ancestor") from an OPERATIONAL failure (exit 128: bad object / broken repo)
- * that must propagate rather than read as a false predicate (online R1 CodeRabbit).
+ * Parse legacy family-escalations.jsonl fail-closed: every non-empty line must
+ * JSON.parse AND pass {@link isLegacyEscalationRecordShape}. Blank lines ok.
  */
-function gitExitStatus(err: unknown): number | undefined {
-  const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" ? status : undefined;
+function parseLegacyEscalationJsonl(raw: string): FamilyEscalationRecord[] {
+  const records: FamilyEscalationRecord[] = [];
+  let lineNo = 0;
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    lineNo += 1;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not valid JSON — ` +
+          `refusing to read a partially-readable escalation log (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isLegacyEscalationRecordShape(parsed)) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not a valid ` +
+          `FamilyEscalationRecord shape (must be an object with string reason) — ` +
+          `refusing silent cast (fail closed).`,
+      );
+    }
+    records.push(parsed);
+  }
+  return records;
+}
+
+/**
+ * Minimum shape for a legacy escalation stuck-point row. `reason` is the only
+ * required field; optional known fields are type-checked when present. Extra
+ * migration keys (e.g. `ts`) are tolerated on a valid object.
+ */
+function isLegacyEscalationRecordShape(v: unknown): v is FamilyEscalationRecord {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.reason !== "string" || o.reason.trim().length === 0) return false;
+  if (
+    o.escalationKind !== undefined &&
+    o.escalationKind !== "decision" &&
+    o.escalationKind !== "failure"
+  ) {
+    return false;
+  }
+  if (o.familyHeadAfter !== undefined && typeof o.familyHeadAfter !== "string") {
+    return false;
+  }
+  if (o.phase !== undefined && o.phase !== "wave" && o.phase !== "final") {
+    return false;
+  }
+  if (o.diagnosis !== undefined && typeof o.diagnosis !== "string") {
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

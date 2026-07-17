@@ -567,6 +567,13 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     ).toThrow(/refusing stale local base fallback/i);
   });
 
+  /** Precise missing-ref for `git rev-parse -q --verify` is exit status 1. */
+  function missingRefError(message = "missing branch"): Error {
+    const err = new Error(message) as Error & { status: number };
+    err.status = 1;
+    return err;
+  }
+
   it("family base cut refuses a failed configured origin fetch", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-base-fetch-"));
     const calls: string[] = [];
@@ -576,7 +583,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           const command = args.slice(2).join(" ");
           calls.push(command);
           if (command === "rev-parse -q --verify refs/heads/family/934") {
-            throw new Error("missing branch");
+            throw missingRefError();
           }
           if (command === "remote get-url origin") return "https://example.invalid/repo.git";
           if (command === "fetch origin main") throw new Error("network down");
@@ -598,7 +605,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           const command = args.slice(2).join(" ");
           calls.push(command);
           if (command === "rev-parse -q --verify refs/heads/family/934") {
-            throw new Error("missing branch");
+            throw missingRefError();
           }
           if (command === "remote get-url origin") {
             throw new Error("fatal: not a git repository");
@@ -621,7 +628,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         const command = args.slice(2).join(" ");
         calls.push(command);
         if (command === "rev-parse -q --verify refs/heads/family/934") {
-          throw new Error("missing branch");
+          throw missingRefError();
         }
         if (command === "remote get-url origin") {
           throw new Error("fatal: No such remote 'origin'");
@@ -633,6 +640,32 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(head).toBe("abc123local");
       expect(calls).toContain("branch family/934 main");
       expect(calls).not.toContain("fetch origin main");
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("family base cut fails closed when rev-parse is operational (not missing-ref/exit 1) (#934 ID-015)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-base-revparse-op-"));
+    const calls: string[] = [];
+    try {
+      const opErr = new Error("fatal: not a git repository") as Error & {
+        status: number;
+      };
+      opErr.status = 128;
+      expect(() =>
+        cutFamilyBase("/repo", "family/934", "main", (_file, args) => {
+          const command = args.slice(2).join(" ");
+          calls.push(command);
+          if (command === "rev-parse -q --verify refs/heads/family/934") {
+            throw opErr;
+          }
+          throw new Error(`unexpected git command: ${command}`);
+        }, ledgerDir),
+      ).toThrow(/not a precise missing-ref|refusing to treat the branch as absent/i);
+      // Must not soft-as-absent and re-cut over a possibly-live base.
+      expect(calls).not.toContain("branch family/934 main");
+      expect(calls).not.toContain("remote get-url origin");
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
