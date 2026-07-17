@@ -180,7 +180,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 });
 
 describe("#825 Group A family roles", () => {
-  it("Group A merger missing sidecar: unresolved report redispatches mechanically and records the landed merge", async () => {
+  it("Group A merger still-conflicted: Action trusts one worker outcome and does not host-redispatch (#938)", async () => {
     class MergerBackend implements FamilyBackend {
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
@@ -193,18 +193,19 @@ describe("#825 Group A family roles", () => {
       }
       async resolveMergeConflict() {
         this.resolves += 1;
-        return this.resolves === 1
-          ? { conflicted: true, familyHead: "base" }
-          : { conflicted: false, familyHead: "merged", familyHeadBefore: "base", childHead: "child" };
+        // Still conflicted after the worker returns once — Action converges that
+        // outcome (ID-010); process-root retry lives inside the worker leg.
+        return { conflicted: true, familyHead: "base" };
       }
       async appendFamilyLedger(entry: FamilyLedgerEntry) { this.ledger.push(entry); }
       async readFamilyLedger() { return this.ledger; }
     }
     const backend = new MergerBackend();
     const result = await mergeChild(backend, { childIssue: 825, childBranch: "feat/child-825" });
-    expect(result.familyHead).toBe("merged");
-    expect(backend.resolves).toBe(2);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({ status: "merged", familyHeadAfter: "merged" }));
+    expect(result.conflicted).toBe(true);
+    expect(result.familyHead).toBe("base");
+    expect(backend.resolves).toBe(1);
+    expect(backend.ledger).toEqual([]);
   });
 
   it("Group A CMR reviewer bad envelope: real family gate retries then continues to ship", async () => {

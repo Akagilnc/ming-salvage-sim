@@ -533,30 +533,22 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
-   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295).
+   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295;
+   * #934 ID-010 / #938).
    *
-   * Invoked by the merger ONLY when {@link mergeChildIntoFamilyBase} reports a
-   * conflict ({@link MergeResult.conflicted}) — the "确定性优先、仅冲突上 LLM"
-   * inversion of Sandcastle's native "一上来就整段 LLM" merge. The real Backend
-   * starts ONE agent under the `merger` soul + the `resolving-merge-conflicts`
-   * skill, scoped to THIS one in-progress conflicting merge: it resolves each
-   * hunk (preserving both intents where possible; never inventing behaviour;
-   * never `--abort`), stages, and commits the merge — leaving the resolved result
-   * on the family base for the downstream family verify + integrated cmr (#296)
-   * to审 ("不静默吞"). The fake injects a synthetic resolved head.
+   * Invoked by the Family Integration Merge Action ONLY when
+   * {@link mergeChildIntoFamilyBase} reports a conflict
+   * ({@link MergeResult.conflicted}) — "确定性优先、仅冲突上 LLM". Production and
+   * conflict-path tests guarantee this resolver exists; clean-merge-only fakes
+   * may omit it because the Action never reaches this method without a real
+   * conflict. Process-root transport retry lives inside the implementation
+   * (ID-004); the Action converges the completed/raise outcome once — no host
+   * still-conflicted re-dispatch court.
    *
    * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
    * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
-   * result), the merger does NOT write a `merged` ledger entry — an unresolved
+   * result), the Action does NOT write a `merged` ledger entry — an unresolved
    * conflict must never look clean.
-   *
-   * OPTIONAL: a #293-era backend (the no-op default, the existing zero-container
-   * fakes) does not implement it — it is reached ONLY on the conflict path, which
-   * those backends never take. If a conflict IS hit on a backend without this
-   * method, the merger fails loud (throws a descriptive error) rather than writing
-   * a `merged` ledger entry — the conflict is surfaced, never swallowed. (Same
-   * optional-capability pattern the sibling verify-cmr seams use, so existing
-   * fakes need no throwing stub.)
    */
   resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
@@ -1066,6 +1058,22 @@ export interface FamilyChildEscalation {
   readonly sessionId?: string;
 }
 
+/**
+ * Per-sibling root-cause diagnostic for a family wave aggregation
+ * (#934 ID-009 / #938). Child process / durable-persist / runner-invariant /
+ * merger-worker truths ride here — not a second outer cause.
+ */
+export interface FamilyChildDiagnostic {
+  readonly issue: number;
+  readonly cause: string;
+  readonly kind:
+    | "process"
+    | "durable_persist"
+    | "runner_invariant"
+    | "child_execution"
+    | "merger_worker";
+}
+
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {
   readonly issue: number;
@@ -1078,6 +1086,11 @@ export interface FamilyChildResult {
    * `child_decision_parked` ledger row and resumes from.
    */
   readonly escalation?: FamilyChildEscalation;
+  /**
+   * Optional root-cause string when `status==="failed"` (#938 / ID-009).
+   * Prefer {@link FamilyRunResult.diagnostics} for the full wave inventory.
+   */
+  readonly failureCause?: string;
 }
 
 /**
@@ -1146,6 +1159,13 @@ export interface FamilyRunResult {
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
+  /**
+   * Wave-aggregated sibling root causes (#934 ID-009 / #938). Present when any
+   * child process, durable-persist, runner-invariant, or merger-worker failure
+   * was observed; outer status/cause stay on the existing result surface until
+   * #942 public ABI cutover.
+   */
+  readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
 }
