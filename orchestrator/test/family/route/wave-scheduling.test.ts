@@ -201,7 +201,8 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
     expect(familyBackend.escalationCalls).toEqual([]);
     expect(result.status).toBe("incomplete");
     expect(result.children.find((child) => child.issue === 10)?.status).toBe("failed");
-    expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
+    // #938: same-wave peer already allSettled as ran — honest `ran`, not fake skipped.
+    expect(result.children.find((child) => child.issue === 11)?.status).toBe("ran");
     expect(JSON.stringify(result)).not.toMatch(/still-conflicted retries/i);
   });
 
@@ -228,7 +229,8 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
     expect(familyBackend.ledger).toContainEqual(
       expect.objectContaining({ status: "escalated", escalationKind: "decision", phase: "wave" }),
     );
-    expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
+    // #938: mid-wave decision escalate drains remaining ran siblings honestly.
+    expect(result.children.find((child) => child.issue === 11)?.status).toBe("ran");
   });
 
   it("a 3-link chain (10 → 11 → 12) merges in topological order across waves", async () => {
