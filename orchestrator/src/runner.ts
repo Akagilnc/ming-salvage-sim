@@ -70,6 +70,7 @@ import {
 } from "./quotaParkRelay.js";
 import {
   applyCoderRecToRoute,
+  applyRelayBatonToRoute,
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
@@ -82,6 +83,7 @@ import {
 } from "./modelRoutes.js";
 import {
   admitCoderRec,
+  admitRelayBaton,
   admitRouteFromEnv,
   admissionRouteFailureDiagnosis,
   isGithubAuthFailure,
@@ -1547,10 +1549,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
-        modelRoute = {
-          ...modelRoute,
-          slots: { ...modelRoute.slots, coderFix: stickyRelayCoderFixSlug },
-        };
+        // Pure slot apply recomputes tightFamilyViolations (F2).
+        modelRoute = applyRelayBatonToRoute(
+          modelRoute,
+          { slug: stickyRelayCoderFixSlug },
+          "S5",
+        );
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
         if (
@@ -1754,36 +1758,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     );
   };
 
-  /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
-  const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
-    currentBillingPool = baton.pool;
-    activeRelayStep = wallStep ?? "S2";
-    const relaySlot = relaySlotForSingleSliceWallStep(wallStep ?? "S2");
-    const slots = { ...modelRoute.slots };
-    if (relaySlot === "verify") {
-      // #923: S3/S6 judge openings share the verify slot.
-      slots.verify = baton.slug;
-    } else if (relaySlot === "coderFix") {
-      slots.coderFix = baton.slug;
-      stickyRelayCoderFixSlug = baton.slug;
-    } else {
-      // S2/default — coder (+ coderFix) slot; sticky for resource relay only.
-      modelRoute = withCoderSlot(modelRoute, baton.slug);
-      stickyRelayCoderSlug = baton.slug;
-      stepSpecs = stepSpecsForRoute(modelRoute);
-      routeSmokeChecked = false;
-      console.info(
-        `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
-      );
-      return;
+  /**
+   * #686 / #934 R6 F1–F2 — apply a relay baton via the pure helper
+   * ({@link applyRelayBatonToRoute} / {@link admitRelayBaton}) so every slot
+   * recomputes tightFamilyViolations, then re-satisfy the same tight gate as
+   * admission. Hand-editing slots is deleted (verify/coderFix used to skip the
+   * pure path and leave violations stale).
+   */
+  const applyRelayBaton = (
+    baton: NextRelayBaton,
+    wallStep?: StepId,
+  ):
+    | { readonly kind: "ready" }
+    | { readonly kind: "stop"; readonly escalation: Escalation } => {
+    const step = wallStep ?? "S2";
+    const admitted = admitRelayBaton(modelRoute, baton, step);
+    if (admitted.kind === "stop") {
+      return admitted;
     }
-    modelRoute = { ...modelRoute, slots };
+    currentBillingPool = baton.pool;
+    activeRelayStep = step;
+    modelRoute = admitted.route;
+    const relaySlot = relaySlotForSingleSliceWallStep(step);
+    if (relaySlot === "coderFix") {
+      stickyRelayCoderFixSlug = baton.slug;
+    } else if (relaySlot === "coder") {
+      stickyRelayCoderSlug = baton.slug;
+    }
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     console.info(
       `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}` +
         (wallStep !== undefined ? ` (slot for ${wallStep})` : ""),
     );
+    return { kind: "ready" };
   };
 
   // #686 P1: count the chain from the FULL ledger (resume history + in-memory),
@@ -2737,7 +2745,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // recorded baton before re-entering the interrupted step.
     if (relayResume !== undefined) {
       const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
-      applyRelayBaton(
+      const applied = applyRelayBaton(
         {
           modelId: relayResume.toModelId,
           slug: batonEntry?.slug ?? relayResume.toModelId,
@@ -2745,6 +2753,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
+      if (applied.kind === "stop") {
+        return await stopForCoderRecTightRoutePolicy(applied.escalation);
+      }
       activeRelayBrief = renderEphemeralRelayBrief(relayResume);
     }
   }
@@ -3370,7 +3381,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (outcome.relayBrief !== undefined) {
               activeRelayBrief = outcome.relayBrief;
             }
-            applyRelayBaton(outcome.nextBaton, step);
+            {
+              const applied = applyRelayBaton(outcome.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
             continue orchestratorStepLoop;
           }
           // #686/#787/#937: capacity resource failure relays without retry
@@ -3443,7 +3459,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
             activeRelayBrief = renderEphemeralRelayBrief(entry);
             completeMechanicalRetryInvocation(step);
-            applyRelayBaton(handoff.nextBaton, step);
+            {
+              const applied = applyRelayBaton(handoff.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
             continue orchestratorStepLoop;
           }
           return await errorTermination(step, err);

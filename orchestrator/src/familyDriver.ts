@@ -137,6 +137,42 @@ export function decodeSubIssueNodes(parsed: unknown): unknown[] {
   );
 }
 
+/**
+ * Fail-closed single sub-issue entry decoder (#934 R6 N2 / ID-003).
+ * Shared by family admission and post-merge cleanup — one object+number court.
+ * `state` is optional here: post-merge cleanup requires it for close decisions;
+ * family admission uses {@link skipReason} soft-state (CLOSED label path).
+ */
+export function decodeSubIssueEntry(
+  node: unknown,
+  index: number,
+): { readonly number: number; readonly state?: string } {
+  if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: expected object entry, got ${
+        node === null ? "null" : Array.isArray(node) ? "array" : typeof node
+      }`,
+    );
+  }
+  const number = (node as { number?: unknown }).number;
+  if (typeof number !== "number" || !Number.isFinite(number)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: missing or non-finite number (got ${
+        number === undefined
+          ? "undefined"
+          : typeof number === "number"
+            ? String(number)
+            : typeof number
+      })`,
+    );
+  }
+  const rawState = (node as { state?: unknown }).state;
+  if (typeof rawState === "string" && rawState.trim().length > 0) {
+    return { number, state: rawState };
+  }
+  return { number };
+}
+
 function labelNames(node: unknown): string[] | undefined {
   const raw = (node as { labels?: unknown })?.labels;
   if (raw === undefined) return undefined;
@@ -209,20 +245,13 @@ export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
   const entryErrors: string[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
-    if (n === null || typeof n !== "object" || Array.isArray(n)) {
+    let num: number;
+    try {
+      num = decodeSubIssueEntry(n, i).number;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       entryErrors.push(
-        `sub_issue[${i}]: expected object entry, got ${
-          n === null ? "null" : Array.isArray(n) ? "array" : typeof n
-        }`,
-      );
-      continue;
-    }
-    const num = (n as { number?: unknown }).number;
-    if (typeof num !== "number" || !Number.isFinite(num)) {
-      entryErrors.push(
-        `sub_issue[${i}]: missing or non-finite number (got ${
-          num === undefined ? "undefined" : typeof num === "number" ? String(num) : typeof num
-        })`,
+        msg.replace(/^sub_issues entry schema error:\s*/, ""),
       );
       continue;
     }

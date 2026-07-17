@@ -78,7 +78,9 @@ describe("#934 parkQuotaWaitForReset durable write fail-closed", () => {
         resolveBranchHEAD: async () => "abc",
         hashPrompt: async () => "hash",
       }),
-    ).rejects.toThrow(/ENOSPC disk full/);
+    ).rejects.toThrow(
+      /record_persist_failed: quota_wait_for_reset:.*ENOSPC disk full/,
+    );
     // Durable failure must not leave a false park marker as the only truth.
     expect(ledger.some((e) => e.event === "quota_wait_for_reset")).toBe(false);
   });

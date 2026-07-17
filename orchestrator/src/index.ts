@@ -88,10 +88,12 @@ export {
   silenceWholeMinutes,
   terminateSpawnedChild,
   validateMonitorHandle,
+  waitForChildExit,
   WorkerTerminationFailedError,
   isWorkerTerminationFailedError,
 } from "./workerMonitor.js";
 export type {
+  ChildExit,
   LogActivitySnapshot,
   MonitoredCliDispatchInput,
   MonitoredCliDispatchResult,

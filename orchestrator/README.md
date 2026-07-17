@@ -196,7 +196,8 @@ Rules of engagement:
   for MERGING orchestrator changes, not for launching).
 
 Startup is fail-closed: if the route smoke fails, the run records an
-`infra_failure` escalation, skips every child, and exits 0 — read the
+`infra_failure` escalation, skips every child, and exits **10**
+(`escalated` / pre-#942 process codes — see `terminalExitCode.ts`) — read the
 `stopSummary` in `run.log` for the reason.
 
 ### 5. Monitor
@@ -252,7 +253,7 @@ Staffing is resolved before worksite creation:
 config file preset (sole table: config/route-presets.json, selected by
 ORCHESTRATOR_ROUTE; ORCHESTRATOR_ROUTE_PRESETS_PATH may select another table)
   → owner-authored issue Coder-Rec for coder/coderFix
-  → startup route smoke validates the FINAL lineup, slot by slot
+  → startup host bare-ping smoke validates the FINAL lineup (unique models)
 ```
 
 Pure model swaps: edit `config/route-presets.json` (or point
@@ -297,14 +298,14 @@ Roster conventions (from the exam/marathon evidence, 2026-07):
 
 ## Route smoke (startup gate)
 
-Before any real work each selected model×pipe must prove it can act inside the
-container: the smoke prompt carries a random `{{NONCE}}` (sandcastle substitutes
-`{{KEY}}` placeholders from `promptArgs` — placeholders in
-`prompts/route-smoke.md` are load-bearing). The worker must print exactly that
-nonce to stdout; no shell command or evidence file is part of the contract. A
-regression test drives the real rendering and a text-only-obedient agent, plus a
-negative case proving a value-less prompt fails. Any slot failing smoke =
-fail-closed startup escalation; nothing mutates.
+Before any real work each selected model must prove host bare-ping auth
+(#884 / #934 ID-003) — one-shot host CLI per unique model×pipe, empty workspace,
+no container/tool loop. The smoke prompt carries a random `{{NONCE}}`
+(placeholders in `prompts/route-smoke.md` are load-bearing). The CLI must print
+exactly that nonce to stdout; no shell command or evidence file is part of the
+contract. A regression test drives the real rendering and a text-only-obedient
+agent, plus a negative case proving a value-less prompt fails. Any required
+smoke failing = fail-closed startup escalation (exit 10); nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated

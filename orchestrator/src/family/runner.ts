@@ -37,6 +37,7 @@ import {
 } from "../modelRoutes.js";
 import {
   admitRouteFromEnv,
+  admitTightRoute,
   admissionRouteFailureDiagnosis,
 } from "../admissionPreflight.js";
 import {
@@ -421,18 +422,14 @@ async function decideFamilyQuotaWall(opts: {
     opts.wallHitBillingPools,
   );
 
-  // C6: durable handoff into family telemetry/ledger dir when available —
-  // never invent progress with stateDir undefined while still staging focus.
-  const familyStateDir = opts.familyBackend.resolveTelemetryDir?.({
-    familyBase: opts.familyBase,
-    familyIssue: opts.epicIssue,
-  });
-
+  // #934 R6 F4: family Recovery only reads family-ledger.jsonl. Do not also
+  // write slice steps.jsonl via parkOrRelayQuotaWall (half dual court). The
+  // sole durable boundary is appendFamilyLedger below (fail-closed).
   const outcome = await parkOrRelayQuotaWall({
     step: parkStep,
     err: opts.err,
     ledger: inMemoryLedger,
-    stateDir: familyStateDir,
+    stateDir: undefined,
     sessionId: opts.runId,
     backend: opts.singleSliceBackend,
     resolveBranchHEAD: async () => {
@@ -487,13 +484,39 @@ async function decideFamilyQuotaWall(opts: {
 
   // Relay: APPLY baton onto the REAL family consume slots + re-dispatch.
   // Identity / coder-only apply is hollow and must fail consumed-slot nails.
+  // #934 ID-002 / R6 F1: after any apply (production or test override),
+  // re-satisfy the same tight gate as admission ({@link admitTightRoute} /
+  // {@link admitRelayBaton} composition — no parallel policy court).
   const applyFn = opts.applyRelayBatonToRoute ?? applyRelayBatonToRoute;
-  const appliedRoute = applyFn(
+  const appliedRaw = applyFn(
     opts.modelRoute,
     outcome.nextBaton,
     wallStep,
     { slots: wallSlots },
   );
+  const tight = admitTightRoute(appliedRaw);
+  if (tight.kind === "stop") {
+    const diagnosis = tight.escalation.diagnosis;
+    await opts.familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `quota_relay:${opts.phase}`,
+      reason: `tight route violation after relay baton — refuse dispatch: ${diagnosis}`,
+    });
+    return buildParkResult(
+      {
+        reason: "infra_failure",
+        summary: `${tight.escalation.reason}: ${diagnosis}`,
+        repairHint:
+          "pick a baton/route preset that preserves tight-family invariants, then re-feed",
+      },
+      {
+        reason: tight.escalation.reason,
+        diagnosis,
+      },
+    );
+  }
+  const appliedRoute = tight.route;
   // Durable family-ledger relay boundary first; write failure fails closed.
   await opts.familyBackend.appendFamilyLedger({
     status: "worker_dispatched",

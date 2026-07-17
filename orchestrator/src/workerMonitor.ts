@@ -236,6 +236,35 @@ export function silenceWholeMinutes(
 }
 
 /**
+ * Wait for a monitored child to leave the process table (#934 ID-006 / R6 F5).
+ * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
+ * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.
+ * Shared by single-slice and family dispatch — one court, no parallel shape.
+ */
+export type ChildExit =
+  | { readonly kind: "exit"; readonly exitCode: number | null }
+  | { readonly kind: "killed"; readonly signal: NodeJS.Signals };
+
+export function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
+  const toExit = (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): ChildExit => {
+    if (signal !== null) {
+      return { kind: "killed", signal };
+    }
+    return { kind: "exit", exitCode: code };
+  };
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(toExit(child.exitCode, child.signalCode));
+  }
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve(toExit(code, signal)));
+  });
+}
+
+/**
  * #934 ID-006 — exact-handle termination could not confirm the child exited
  * after SIGTERM + SIGKILL. Carries PID evidence (never a PID-tree walk).
  */

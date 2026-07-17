@@ -144,16 +144,25 @@ export async function parkQuotaWaitForReset(opts: {
   // is established. A writeLedger failure must fail closed — never return a
   // parked/resumable outcome from an in-memory-only marker.
   if (stateDir !== undefined) {
-    await backend.writeLedger(
-      {
-        ...marker,
-        sessionId,
-        prompt_hash: await opts.hashPrompt(undefined, step),
-        branchHEAD: await opts.resolveBranchHEAD(),
-        ts: ledgerEntry.ts,
-      },
-      stateDir,
-    );
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await opts.hashPrompt(undefined, step),
+          branchHEAD: await opts.resolveBranchHEAD(),
+          ts: ledgerEntry.ts,
+        },
+        stateDir,
+      );
+    } catch (writeErr) {
+      // Same vocabulary as {@link persistRelayBatonHandoff} (N1 / #934 R6).
+      throw new Error(
+        `record_persist_failed: quota_wait_for_reset: ${
+          writeErr instanceof Error ? writeErr.message : String(writeErr)
+        }`,
+      );
+    }
   }
   ledger.push(marker);
   const resetHint =

@@ -21,9 +21,8 @@
  * {@link unusableResidualOpenCountPaper} (kind:"reviewer"), NOT `failed`.
  */
 
-import type { ChildProcess } from "node:child_process";
-
 import { abandonSpawnAfterAdoptionFailure } from "../dispatchRetry.js";
+import { isMissingMonitorSidecarResult } from "../cliMonitorHooks.js";
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
   createTelemetryLegStamper,
@@ -32,6 +31,8 @@ import {
 import {
   dispatchMonitoredCliWorker,
   readLogActivity,
+  silenceWholeMinutes,
+  waitForChildExit,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
 import type {
@@ -211,22 +212,14 @@ export interface DispatchFamilyWorkerWithMonitorOptions {
   readonly onDispatchConfirmed?: () => void | Promise<void>;
 }
 
-function waitForChildExit(child: ChildProcess): Promise<number | null> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve(child.exitCode);
-  }
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
-  });
-}
-
 /**
  * #684 production family dispatch path — parallel to single-slice
  * `dispatchWorkerWithMonitor`. When the family backend supplies a CLI spawn via
  * {@link FamilyBackend.resolveCliMonitorDispatch}, the monitor handle is
  * generated atomically at spawn (and optionally persisted via
  * `onMonitorHandleSpawned` before wait).
+ * #934 R6 F5: shared {@link waitForChildExit} + kill classification with
+ * single-slice (no parallel wrong `number|null` path).
  */
 export async function dispatchFamilyWorkerWithMonitor(
   familyBackend: FamilyBackend,
@@ -330,28 +323,55 @@ export async function dispatchFamilyWorkerWithMonitor(
           });
         }
       }
-      const exitCode = await exitPromise;
+      const race = await exitPromise;
       reconcileFirstOutputAt();
+      // #934 ID-007: observational silence report (optional, same as single-slice).
+      if (monitorHandle !== undefined) {
+        const lastActivity = readLogActivity(monitorHandle);
+        if (lastActivity !== undefined) {
+          const quietMin = silenceWholeMinutes(lastActivity.mtimeMs);
+          if (quietMin > 0) {
+            console.info(
+              `[orchestrator] family worker ${spec.id} silence_whole_minutes=${quietMin}`,
+            );
+          }
+        }
+      }
+      const exitCode = race.kind === "exit" ? race.exitCode : null;
+      const killSignal = race.kind === "killed" ? race.signal : null;
       if (familyBackend.awaitMonitoredCliWorker === undefined) {
-        const result: WorkerResult = {
-          kind: "failed",
-          reason:
-            `family CLI worker ${spec.id} finished (exit ${exitCode}) but backend ` +
-            `has no awaitMonitoredCliWorker to map the process into a WorkerResult`,
-        };
+        const result: WorkerResult =
+          killSignal !== null
+            ? {
+                kind: "failed",
+                reason: `family CLI worker ${spec.id} killed by signal ${killSignal}`,
+              }
+            : {
+                kind: "failed",
+                reason:
+                  `family CLI worker ${spec.id} finished (exit ${exitCode}) but backend ` +
+                  `has no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+              };
         telemetry.stampCollect(
           { kind: "result", result },
           { logPath, logStartOffset, firstOutputAt },
         );
         return { result, monitorHandle: handle, telemetryEnvironmentStamp };
       }
-      const result = await familyBackend.awaitMonitoredCliWorker(
+      let result = await familyBackend.awaitMonitoredCliWorker(
         handle,
         exitCode,
         spec,
         ctx,
         landing,
       );
+      // Align with single-slice: no usable sidecar after signal kill → killed.
+      if (killSignal !== null && isMissingMonitorSidecarResult(result)) {
+        result = {
+          kind: "failed",
+          reason: `family CLI worker ${spec.id} killed by signal ${killSignal}`,
+        };
+      }
       reconcileFirstOutputAt();
       telemetry.stampCollect(
         { kind: "result", result },
