@@ -59,6 +59,7 @@ import {
   judgeContinue,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -106,6 +107,18 @@ function completedJudge(output: JudgeResult, sessionId?: string): WorkerResult {
 }
 
 class FamilyJudgeLedgerBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: Array<{
     readonly kind: string;
@@ -394,6 +407,18 @@ describe("#966 family judge session from ledger", () => {
     const repo = realRepo966();
     const runs: Array<Parameters<typeof sc.run>[0]> = [];
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
         return this.runCmrWorker(workerSpec, ctx);
       }
@@ -437,6 +462,18 @@ describe("#966 family judge session from ledger", () => {
     const repo = realRepo966();
     const runs: Array<Parameters<typeof sc.run>[0]> = [];
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
         return this.runCmrWorker(workerSpec, ctx);
       }

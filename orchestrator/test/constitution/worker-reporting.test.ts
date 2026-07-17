@@ -29,10 +29,12 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/825-behavior",
@@ -182,6 +184,18 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 describe("#825 Group A family roles", () => {
   it("Group A merger still-conflicted: Action trusts one worker outcome and does not host-redispatch (#938)", async () => {
     class MergerBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -210,6 +224,18 @@ describe("#825 Group A family roles", () => {
 
   it("Group A CMR reviewer bad envelope: real family gate retries then continues to ship", async () => {
     class CmrBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       cmrCalls = 0;
       shipCalls = 0;
@@ -272,7 +298,6 @@ describe("#825 Group A family roles", () => {
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );
@@ -299,7 +324,6 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );

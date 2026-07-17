@@ -22,6 +22,7 @@ import {
   liveCmrJudgeContinue,
 } from "../../helpers/judge-fixtures.js";
 import type {
+
   FamilyBackend,
   FamilyEscalation,
   FamilyLedgerEntry,
@@ -30,6 +31,7 @@ import type {
   IntegratedCmrRequest,
   IntegratedCmrResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -58,6 +60,18 @@ function completedJudgeGreen(
 
 /** A capable FamilyBackend that records the unified worker calls. */
 class CapableFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   verifyCalls: FamilyVerifyRequest[] = [];
   cmrCalls: IntegratedCmrRequest[] = [];
   prCalls: Array<{ readonly familyBase: string }> = [];
@@ -303,6 +317,18 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
    * fail-safed a new-seam-only backend to a stage fail-safe gate).
    */
   class NewSeamFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     dispatched: Array<{
       kind: WorkerSpec["kind"];
       promptFile: string;
@@ -453,6 +479,18 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
 describe("#331 the family ship worker must return a SHIP payload (codex R2 guard)", () => {
   /** A new-seam backend whose ship worker returns a completed NON-ship payload. */
   class WrongShipFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
@@ -511,6 +549,18 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
    * family delivery (the PR never opened / opened on the wrong branch).
    */
   class OffContractShipFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     shipOutput: WorkerResult;
     constructor(shipOutput: WorkerResult) {
       this.shipOutput = shipOutput;
@@ -682,6 +732,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
    * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
    */
   class RecordingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     constructor(
       private readonly cmrOut: WorkerResult,
@@ -708,6 +770,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
   }
 
   class NoShipCapabilityAfterCmrBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     readonly aborted: FamilyLedgerEntry[] = [];
     async mergeChildIntoFamilyBase(): Promise<never> {
@@ -742,6 +816,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
   }
 
   class PrHeadMismatchRecordingBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     private shipDispatched = false;
     async mergeChildIntoFamilyBase(): Promise<never> {
@@ -839,6 +925,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
 
 describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
   class EscalatingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     escalations: FamilyEscalation[] = [];
     ledger: FamilyLedgerEntry[] = [];
     escalateOn: "cmr" | "ship";
@@ -878,6 +976,18 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
   }
 
   class ShipEscalatesWithoutEscalateSeamBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     ledger: FamilyLedgerEntry[] = [];
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");

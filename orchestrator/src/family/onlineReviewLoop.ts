@@ -793,13 +793,6 @@ export interface OnlineReviewLoopDispatch {
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
   /**
-   * @deprecated #941 — landing Action owns docs/merge/close/cleanup after this
-   * loop returns mergeable. Optional residual hook ignored by the loop.
-   */
-  readonly dispatchLanding?: (
-    landing: WorkerLandingPayload,
-  ) => Promise<boolean | undefined>;
-  /**
    * #940 / ID-012: host no longer applies GitHub side effects. The verify
    * worker owns reply/resolve/deferred and only self-reports after they succeed.
    */

@@ -430,7 +430,7 @@ export function fixerWorkerSpec(
  * Family S12 文档发布 worker (#735): invoke `/gstack-document-release` in a spawned /
  * non-interactive session. Success (including 文档发布空跑) → `released:true`;
  * skill crash / hang / explicit fail / required push fail → not released.
- * Offline/test may still synthesize via the offline hatch only.
+ * Landing Action dispatches this seat; no offline green stub hatch.
  */
 export function landingWorkerSpec(
   route?: ResolvedModelRoute,

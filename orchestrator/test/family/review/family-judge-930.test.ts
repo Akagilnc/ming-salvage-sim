@@ -44,6 +44,7 @@ import {
   judgeEscalate,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const FINDING = sampleFinding("family open claim", "orchestrator/src/family/verifyCmr.ts:1");
 const FINDING_KEY = findingIdentityKey(FINDING);
@@ -60,6 +61,18 @@ function completedJudge(
 }
 
 class FamilyJudgeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: Array<{
     readonly kind: string;

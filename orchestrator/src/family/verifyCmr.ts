@@ -111,6 +111,7 @@ import {
 } from "../telemetry.js";
 import {
   cmrPassAlreadyPassed,
+  mechanicalRedispatchAttemptsFromFamilyLedger,
   recordAborted as recordDurableAbort,
   recordCmrFixCommitted,
   recordCmrPassed,
@@ -120,6 +121,8 @@ import {
   recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
+// Stable re-export for existing test imports (#934 ID-004 budget walk).
+export { mechanicalRedispatchAttemptsFromFamilyLedger };
 import { isFilledString } from "../shipOutcome.js";
 import {
   contractDriftStopSummary,
@@ -1426,46 +1429,6 @@ export async function runFamilyOnlineReviewLoop(input: {
     }
     throw err;
   }
-}
-
-/**
- * Reconstruct durable process-root attempts already consumed for a family
- * worker step (#934 ID-004 / #937). Mirrors single-slice
- * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
- * failure markers for this workerStep, stop at any non-spawn boundary so a
- * later successful phase does not inherit an earlier crash streak.
- */
-export function mechanicalRedispatchAttemptsFromFamilyLedger(
-  ledger: ReadonlyArray<FamilyLedgerEntry>,
-  workerStep: string,
-): number {
-  let durableAttempts = 0;
-  for (let index = ledger.length - 1; index >= 0; index--) {
-    const entry = ledger[index]!;
-    const attempt = entry.mechanicalRedispatchAttempt;
-    if (
-      entry.event === "worker_dispatched" &&
-      entry.workerStep === workerStep &&
-      typeof attempt === "number" &&
-      Number.isSafeInteger(attempt) &&
-      attempt >= 1
-    ) {
-      durableAttempts = Math.max(durableAttempts, attempt);
-      continue;
-    }
-    // Spawn adoption / advisory git telemetry: worker_dispatched without a
-    // retry counter — skip so inter-retry spawn rows do not reset the streak.
-    if (
-      entry.event === "worker_dispatched" &&
-      entry.mechanicalRedispatchAttempt === undefined
-    ) {
-      continue;
-    }
-    // Any other durable fact (phase success, escalate, merge, …) is a budget
-    // boundary for this workerStep.
-    break;
-  }
-  return durableAttempts;
 }
 
 function familyWorkerStepKey(

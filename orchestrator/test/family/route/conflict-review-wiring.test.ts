@@ -39,6 +39,7 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import type {
+
   ConflictResolveRequest,
   FamilyBackend,
   FamilyEpic,
@@ -50,6 +51,7 @@ import type {
   MergeRequest,
   MergeResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -88,6 +90,18 @@ class ChildBackend implements Backend {
  * request, and supplies the #296 verify/cmr/PR capabilities.
  */
 class ConflictCmrFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly prCalls: Array<{ readonly familyBase: string }> = [];

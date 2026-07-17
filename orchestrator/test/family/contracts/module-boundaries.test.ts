@@ -39,11 +39,13 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +120,18 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
   it("prints the resolved model route lineup before the first family child worker dispatch", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     class OneChildFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -174,6 +188,18 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     // merger seam. Here the seam stamps a custom head per child; the spine's result
     // must reflect it verbatim → the spine routes the merge through the seam.
     class CustomHeadFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -209,6 +235,18 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     // exists — i.e. the spine re-reads `mergedSet` from the ledger each wave.
     // (Two waves: 10 first, then 11 once 10 is in the ledger.)
     class RecordingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

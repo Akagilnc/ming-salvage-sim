@@ -16,12 +16,26 @@ import { describe, expect, it } from "vitest";
 import { mergeChild } from "../../../src/family/merger.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import type {
+
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

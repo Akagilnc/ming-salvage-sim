@@ -93,7 +93,7 @@ import {
   runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
-import { runLandingAction, ensureLandingComplete } from "./landing.js";
+import { runLandingAction } from "./landing.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
   decisionGateParkStopSummary,
@@ -1030,7 +1030,7 @@ async function ensureLandingForResume(input: {
     readonly message: string;
   }>;
 }): Promise<FamilyRunResult | undefined> {
-  const landing = await ensureLandingComplete({
+  const landing = await runLandingAction({
     familyBackend: input.familyBackend,
     familyBase: input.familyBase,
     runId: input.runId,
