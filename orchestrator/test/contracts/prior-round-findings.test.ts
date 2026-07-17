@@ -50,11 +50,20 @@ function isHistoricalAdr(path: string): boolean {
   return rel === "docs/adr" || rel.startsWith("docs/adr/");
 }
 
+/**
+ * Release notes name deleted channels as history — same class of AC exception
+ * as docs/adr (not production residual). CI failed when CHANGELOG recorded #977.
+ */
+function isHistoricalReleaseNote(path: string): boolean {
+  const rel = relPosix(path);
+  return rel === "CHANGELOG.md" || rel.endsWith("/CHANGELOG.md");
+}
+
 function walkFiles(root: string, acc: string[] = []): string[] {
   for (const name of readdirSync(root)) {
     if (name === "node_modules" || name === "dist" || name === ".git") continue;
     const full = join(root, name);
-    if (isHistoricalAdr(full)) continue;
+    if (isHistoricalAdr(full) || isHistoricalReleaseNote(full)) continue;
     const st = statSync(full);
     if (st.isDirectory()) walkFiles(full, acc);
     else if (/\.(ts|md|json|js|mjs|cjs)$/.test(name)) acc.push(full);

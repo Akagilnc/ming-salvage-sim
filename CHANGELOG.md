@@ -11,7 +11,7 @@
 - **#952 typed `suppress` disposition**：内部终态 `suppressed`；写入点校验合法状态跳转；terminal-only continue 关庭。
 - **#961 family Integrated Correctness 增量 checkpoint**（ADR 0139）：波次 verify 绿后全量 IC 并行子 coding；`lastCorrectnessConvergedHead` 庭记忆；Runner 不准入。
 - **#964 grok 运行中 auth 失效 → typed failure**：禁止 headless device-auth 挂起；fail-fast 探针。
-- **#977 拆除 fix-focus / findingFamilies 旁路**（ADR 0137）。
+- **#977 拆除 pattern-brief 旁路信道**（ADR 0137）。
 - **#978 判词即包**（ADR 0138）：`fixPacketBody` 唯一送修正文路径；缺 body 响亮失败。
 - **#979 fixer 同链 resume**：同 findings 链复用 fixer session；`cmr_passed` 截断链界。
 - **#981 grok-cap 忽略 AppleDouble / `.DS_Store`**：侧车不炸会话 integrity。
