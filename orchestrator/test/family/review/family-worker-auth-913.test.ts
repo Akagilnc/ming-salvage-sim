@@ -30,6 +30,8 @@ import {
   provisionFamilyWorkerAuth,
 } from "../../../src/realBackend.js";
 import { CONTAINER_CODEX_CONFIG_TOML } from "../../../src/containerCodexConfig.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 const soulsDir = join(import.meta.dirname ?? ".", "..", "..", "..", "image", "souls");
 const promptsDir = join(import.meta.dirname ?? ".", "..", "..", "..", "prompts");
@@ -201,6 +203,18 @@ describe("#913 provisionFamilyWorkerAuth — shared family auth core", () => {
 
 describe("#913 family mount*Auth wrappers share the core (public shapes)", () => {
   class Exposed extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public merger() {
       return this.mountMergerAuth();
     }

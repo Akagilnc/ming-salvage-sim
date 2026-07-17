@@ -36,6 +36,7 @@ import type {
 import { terminateSpawnedChild } from "../../../src/workerMonitor.js";
 import type { PrReviewSnapshot } from "../../../src/botPolling.js";
 import type {
+
   Backend,
   CliMonitorSpawnSpec,
   ShipResult,
@@ -43,6 +44,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -120,6 +122,18 @@ function completedShip(): WorkerResult {
 
 /** Minimal family backend that always has the production dispatchWorker seam. */
 class DispatchCapableBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   constructor(
     private readonly onDispatch: (spec: WorkerSpec) => Promise<WorkerResult>,
@@ -192,7 +206,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
           fixCommitSha: `fix-${fixerCalls}`,
         };
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (sha) => sha,
     });
@@ -216,9 +229,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
-      },
-      dispatchLanding: async () => {
-        throw new Error("landing must not run after escalate disposition");
       },
       retriggerAfterFix: () => {},
     });
@@ -249,7 +259,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         committed: true,
         fixCommitSha: "fix-sha",
       }),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });

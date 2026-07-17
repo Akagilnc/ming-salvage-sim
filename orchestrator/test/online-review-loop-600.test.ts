@@ -112,6 +112,8 @@ import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 import type { WorkerLandingPayload } from "../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../src/family/landing.js";
+
 
 function ghFixture(input: { calls: string[] }): Sh {
   return (file, args) => {
@@ -2486,7 +2488,6 @@ describe("#600 r26 runner-owned isRecheck", () => {
           };
         },
         dispatchFixer: async () => fixerCommitted(),
-        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
         resolveFixCommitSha: async (envelopeFixSha) => {
           // #940: envelope SHA is host-owned via resolveFixCommitSha only
@@ -2549,7 +2550,6 @@ describe("#600 r26 runner-owned isRecheck", () => {
           return { kind: "verify", converged: true };
         },
         dispatchFixer: async () => fixerCommitted(),
-        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );
@@ -2605,7 +2605,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2640,7 +2639,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(fixerCalls).toBe(0);
@@ -2682,7 +2680,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2724,7 +2721,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result.ok).toBe(true);
@@ -2747,7 +2743,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(landingBranch).toBe("family/epic-600");
@@ -2780,7 +2775,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2823,7 +2817,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2859,7 +2852,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
             };
       },
       dispatchFixer: async () => fixerNotFixed(),
-      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
@@ -2875,7 +2867,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         terminalState: "decision_gate_raised",
       }),
       dispatchFixer: async () => fixerNotFixed(),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(stageResult.stopSummary).toEqual(
@@ -2896,7 +2887,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => fixerCommitted(),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         throw new Error("retriggerBotsAndPoll: gh api failed");
       },
@@ -2923,7 +2913,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => fixerCommitted(),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2944,7 +2933,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("dispatchFamilyReviewWorker: container start failed");
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2965,7 +2953,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => {
         throw new Error("dispatchFamilyReviewWorker: fixer residue unsafe");
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -3004,7 +2991,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         retriggerCalls += 1;
       },
@@ -3049,7 +3035,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
@@ -3091,7 +3076,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return malformed;
       },
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
       },
@@ -3170,7 +3154,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
-      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         expect(envelopeFixSha).toBe("family-landed-sha");
@@ -3203,7 +3186,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     // Deep self-check R8: do not dispatch fixer with empty fix marks on CI red
@@ -3264,6 +3246,18 @@ describe("#600 r5 legacy skeleton gate — family", () => {
 
 describe("#600 r7 family online review — cleanup landing + in-band failures", () => {
   class ReviewLoopFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -3827,6 +3821,18 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   it("#743 online R1: family rebuild accepts the production recordOnlineReviewFixCommitted row shape", async () => {
     // Gemini alleged status-only rows; pin the real writer output and rebuild from it.
     class CaptureFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -4085,6 +4091,18 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     const realSoulsDir = join(here, "..", "image", "souls");
     try {
       class ProbeBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
         readonly reviewLoopKinds: WorkerKind[] = [];
         readonly landings: WorkerLandingPayload[] = [];
         protected override async runFamilyReviewLoopWorker(

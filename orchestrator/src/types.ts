@@ -1285,16 +1285,16 @@ export interface CleanupResult {
 }
 
 /**
- * 文档发布 worker output (#735 / S12). Thin schema only: skill success
+ * Landing worker output (#735 / S12 / #941). Thin schema only: skill success
  * (including 文档发布空跑) → `released:true`; crash / hang / skill fail /
  * required push fail → `released:false`. Tip continues via ledger `branchHEAD`.
- * Offline/test may still synthesize a green stub under the offline hatch only.
+ * Landing Action owns merge only after released:true; no offline green stub.
  */
 export interface LandingResult {
   readonly kind: "landing";
   /**
    * Whether 文档发布 finished successfully (true includes empty-run; false
-   * blocks auto-merge).
+   * fails the landing Action before merge).
    */
   readonly released: boolean;
 }

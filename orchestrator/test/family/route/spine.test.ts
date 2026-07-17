@@ -38,6 +38,8 @@ import type {
 import { resolveActiveModelRoute } from "../../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { StopSummary } from "../../../src/stopSummary.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +91,18 @@ class ChildBackend implements Backend {
 
 /** A FamilyBackend that records merges + ledger writes (the "family base" model). */
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly workingRepo: string;

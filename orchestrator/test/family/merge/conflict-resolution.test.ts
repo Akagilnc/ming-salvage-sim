@@ -32,12 +32,14 @@
 import { describe, expect, it } from "vitest";
 import { mergeChild } from "../../../src/family/merger.js";
 import type {
+
   ConflictResolveRequest,
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
   MergeResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 /**
  * A fake family Backend whose deterministic merge can be told to "conflict" for
@@ -46,6 +48,18 @@ import type {
  * call and returns a synthetic resolved head.
  */
 class ConflictingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -140,6 +154,18 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     // (no-conflict) deterministic merge must NOT leak a false LLM-resolved signal
     // downstream — the merger is the sole source of truth for the flag.
     class FlagStampingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

@@ -1511,6 +1511,46 @@ export function isFamilyLedgerEntryShape(
 }
 
 /**
+ * Reconstruct durable process-root attempts already consumed for a family
+ * worker step (#934 ID-004 / #937). Mirrors single-slice
+ * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
+ * failure markers for this workerStep, stop at any non-spawn boundary so a
+ * later successful phase does not inherit an earlier crash streak.
+ */
+export function mechanicalRedispatchAttemptsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  workerStep: string,
+): number {
+  let durableAttempts = 0;
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    const attempt = entry.mechanicalRedispatchAttempt;
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.workerStep === workerStep &&
+      typeof attempt === "number" &&
+      Number.isSafeInteger(attempt) &&
+      attempt >= 1
+    ) {
+      durableAttempts = Math.max(durableAttempts, attempt);
+      continue;
+    }
+    // Spawn adoption / advisory git telemetry: worker_dispatched without a
+    // retry counter — skip so inter-retry spawn rows do not reset the streak.
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.mechanicalRedispatchAttempt === undefined
+    ) {
+      continue;
+    }
+    // Any other durable fact (phase success, escalate, merge, …) is a budget
+    // boundary for this workerStep.
+    break;
+  }
+  return durableAttempts;
+}
+
+/**
  * Parse family-ledger.jsonl fail-closed: every non-empty line must JSON.parse
  * AND pass {@link isFamilyLedgerEntryShape}. Blank lines tolerated.
  */

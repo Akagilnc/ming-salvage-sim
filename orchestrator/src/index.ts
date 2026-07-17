@@ -144,7 +144,7 @@ export {
   fetchPrMergeLiveState,
   isPrMergedMarker,
 } from "./autoMerge.js";
-export { runLandingAction, ensureLandingComplete } from "./family/landing.js";
+export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {

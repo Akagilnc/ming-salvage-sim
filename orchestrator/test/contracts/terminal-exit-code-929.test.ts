@@ -36,6 +36,7 @@ import {
 } from "../../src/terminalExitCode.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
+
   Backend,
   CoderOutput,
   Escalation,
@@ -47,6 +48,7 @@ import type {
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 // ── pure map ───────────────────────────────────────────────────────────────
 
@@ -158,6 +160,18 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -409,6 +423,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       const freshCode = familyDriverExitCode(fresh);
 
       class ResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -481,6 +507,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: same accident (child still fails, still unmerged) → same terminal + code.
     // Ledger is the prior incomplete residue (no merges); re-entry re-runs the child.
     class IncompleteResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -532,6 +570,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: unanswered child_decision_parked early-exits before the wave loop
     // with the same escalated terminal (production #604 F8 path).
     class EscalatedResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

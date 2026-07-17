@@ -29,11 +29,13 @@ import type {
 import type { BillingPoolEntry } from "../../src/quotaPoolTable.js";
 import type { CoderRosterEntry } from "../../src/coderRoster.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 function makeQuotaErr(): QuotaWaitForResetError {
   const resetAt = new Date("2026-07-08T16:10:00.000Z");
@@ -183,6 +185,18 @@ class ChildBackend implements Backend {
 }
 
 class FailingFamilyLedgerBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly workingRepo: string;
   head = "family-base-0";

@@ -29,6 +29,8 @@ import type {
   WorkerSpec,
 } from "../../src/types.js";
 import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -46,6 +48,18 @@ const NEW_BLOCKER: Finding = {
 };
 
 class ClosureOrderingBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
   currentFamilyHead = "head-1";

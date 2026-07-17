@@ -46,6 +46,7 @@ import type {
   ModelRouteSlot,
   ResolvedModelRoute,
 } from "../modelRoutes.js";
+import type { LandingLiveHooks } from "./landing.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -645,12 +646,20 @@ export interface FamilyBackend {
    */
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
   /**
-   * Absolute git working directory for the family base clone. Optional — used to
-   * compute `landingPaths` for diagnostics only (ADR 0123 / #735). Missing
-   * working-repo does not block merge: path allowlist is not a merge gate.
-   * Merge still requires readiness + doc-release completed; paths are diagnostics.
+   * Absolute git working directory for the family base clone. Optional —
+   * diagnostics / working-tree helpers only. Missing working-repo does not
+   * block landing merge; final readiness / merge are owned by the landing Action.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
+  /**
+   * Optional explicit landing live hooks (offline/unit tests). Production
+   * backends omit this; callers must not invent silent MERGED hatches here.
+   */
+  resolveLandingLiveHooks?(input: {
+    readonly prUrl: string;
+    readonly convergedHeadOid: string;
+    readonly familyBase: string;
+  }): LandingLiveHooks | undefined;
   /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
@@ -1082,8 +1091,8 @@ export interface FamilyChildResult {
  *   - `"cmr_failed"` — integrated CMR / missing CMR capability
  *   - `"ship_failed"` — family ship worker / ship capability
  *   - `"online_review_failed"` — online review loop did not converge
- *   - `"merge_failed"` — auto-merge did not complete (non-decision hard fail)
- *   - `"cleanup_failed"` — post-merge cleanup did not reach terminal success
+ *   - `"merge_failed"` — landing merge / docs worker hard fail (non-decision)
+ *   - `"cleanup_failed"` — legacy token; post-#941 cleanup never fails the run
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤

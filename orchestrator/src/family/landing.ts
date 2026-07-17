@@ -19,9 +19,13 @@ import {
   type PrMergeLiveState,
   type PrMergedTerminalRecord,
 } from "../autoMerge.js";
-import type { PrReviewSnapshot } from "../botPolling.js";
-import { isLiveGithubReviewPollEnabled } from "../botPolling.js";
+import {
+  pollPrReviewState,
+  type PrReviewSnapshot,
+} from "../botPolling.js";
+import { withMechanicalRetry } from "../dispatchRetry.js";
 import { landingWorkerSpec } from "../dispatchWorker.js";
+import { buildRoundTrigger } from "../evidenceAdmissibility.js";
 import { shWithClock } from "../externalCall.js";
 import {
   isMissingGitRefError,
@@ -32,17 +36,27 @@ import {
   decisionGateParkStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type { CleanupResult, DispatchContext, WorkerResult } from "../types.js";
-import type { ResolvedModelRoute } from "../modelRoutes.js";
+import type {
+  CleanupResult,
+  DispatchContext,
+  WorkerLandingPayload,
+  WorkerMonitorHandle,
+  WorkerResult,
+  WorkerSpec,
+} from "../types.js";
+import type { ModelRouteSlot, ResolvedModelRoute } from "../modelRoutes.js";
+import type { BillingPoolId } from "../quotaPoolTable.js";
 import {
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
+  mechanicalRedispatchAttemptsFromFamilyLedger,
   mergedSet,
   recordPostMergeCleanup,
   recordPrMerged,
 } from "./ledger.js";
 import { billingPoolForFamilyWorker } from "./familyWorkerSlots.js";
-import { dispatchFamilyWorker } from "./dispatchFamilyWorker.js";
+import { dispatchFamilyWorkerWithMonitor } from "./dispatchFamilyWorker.js";
+import { sleepPendingCiPollInterval } from "./onlineReviewLoop.js";
 import type { FamilyBackend } from "./types.js";
 import { shouldReclaimFamilyHost } from "../hostReclaim.js";
 
@@ -67,6 +81,7 @@ export interface LandingLiveHooks {
   readonly confirmMerged?: (
     expectedHeadOid: string,
   ) => PrMergedTerminalRecord | undefined;
+  /** Real readiness snapshot; production uses pollPrReviewState when absent. */
   readonly pollSnapshot?: () => Promise<PrReviewSnapshot>;
   readonly closeIssue?: (issue: number) => void;
   readonly deleteBranch?: (branch: string) => void;
@@ -85,10 +100,79 @@ export interface LandingActionInput {
   readonly familyIssue?: number;
   readonly resolvedRoute?: ResolvedModelRoute;
   readonly billingPool?: string;
-  readonly billingPoolSlots?: ReadonlyArray<string>;
-  /** Skip docs worker when review_loop already released (re-entry after merge only). */
-  readonly skipDocsWorker?: boolean;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly live?: LandingLiveHooks;
+}
+
+/**
+ * Explicit live-hook builder for offline/unit tests.
+ * Not a silent 伪 PR hatch — caller must attach the result to
+ * {@link LandingActionInput.live} or {@link FamilyBackend.resolveLandingLiveHooks}.
+ */
+export function buildExplicitLandingLiveHooks(input: {
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly remoteBranchName: string;
+  readonly prNumber?: number;
+}): LandingLiveHooks {
+  let merged = false;
+  const prNumber = input.prNumber ?? 1;
+  const greenSnapshot = (): PrReviewSnapshot => ({
+    repo: "test/repo",
+    prNumber,
+    prUrl: input.prUrl,
+    headOid: input.headOid,
+    pollCount: 1,
+    bots: {
+      coderabbit: { state: "complete", findingCount: 0 },
+      sourcery: { state: "complete", findingCount: 0 },
+      codex: { state: "complete", findingCount: 0 },
+      gemini: { state: "complete", findingCount: 0 },
+    },
+    threads: [],
+    checkRuns: [
+      {
+        id: 1,
+        name: "ci",
+        status: "completed",
+        conclusion: "success",
+        headSha: input.headOid,
+      },
+    ],
+    totalFindingCount: 0,
+    quiescent: true,
+    roundTriggerUsed: {
+      headOid: input.headOid,
+      triggeredAt: "1970-01-01T00:00:00.000Z",
+    },
+    checkRunsEmptyMeans: "pending",
+  });
+  return {
+    fetchState: () => ({
+      prNumber,
+      prUrl: input.prUrl,
+      state: merged ? "MERGED" : "OPEN",
+      headOid: input.headOid,
+      headRefName: input.remoteBranchName,
+      mergeStateStatus: "CLEAN",
+    }),
+    executeMerge: () => {
+      merged = true;
+    },
+    confirmMerged: (expectedHeadOid) => ({
+      prUrl: input.prUrl,
+      prNumber,
+      remoteBranchName: input.remoteBranchName,
+      mergedHeadOid: expectedHeadOid,
+      convergedHeadOid: expectedHeadOid,
+    }),
+    pollSnapshot: async () => greenSnapshot(),
+    closeIssue: () => {},
+    deleteBranch: () => {},
+    branchExists: () => false,
+    fetchIssueState: () => "CLOSED",
+    fetchSubIssues: () => [],
+  };
 }
 
 function ghSh(): (file: string, args: string[]) => string {
@@ -96,12 +180,86 @@ function ghSh(): (file: string, args: string[]) => string {
     shWithClock(file, args, { stage: `landing:${file}` });
 }
 
-function defaultFetchState(
-  sh: (file: string, args: string[]) => string,
-  repo: string,
-  prUrl: string,
-): PrMergeLiveState {
-  return fetchPrMergeLiveState(sh, repo, prUrl);
+/**
+ * Dispatch landing docs worker through the same process-root ownership court
+ * as family review-loop workers (ID-004 / ID-006): monitored spawn +
+ * withMechanicalRetry + durable mechanical_redispatch budget.
+ */
+async function dispatchLandingDocsWorker(
+  familyBackend: FamilyBackend,
+  spec: WorkerSpec,
+  ctx: DispatchContext,
+  landing?: WorkerLandingPayload,
+): Promise<WorkerResult> {
+  const workerStep = `landing`;
+  const ledger = await familyBackend.readFamilyLedger();
+  const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
+    ledger,
+    workerStep,
+  );
+  try {
+    return await withMechanicalRetry(
+      spec,
+      ctx,
+      async (s, c) => {
+        let dispatchError: unknown | undefined;
+        let workerResult: WorkerResult;
+        try {
+          const monitored = await dispatchFamilyWorkerWithMonitor(
+            familyBackend,
+            s,
+            c,
+            landing,
+            {
+              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
+                await familyBackend.appendFamilyLedger({
+                  status: "worker_dispatched",
+                  event: "worker_dispatched",
+                  monitorHandle: handle,
+                });
+              },
+            },
+          );
+          workerResult = monitored.result;
+          await monitored.telemetryEnvironmentStamp;
+        } catch (err) {
+          dispatchError = err;
+        }
+        if (dispatchError !== undefined) throw dispatchError;
+        return workerResult!;
+      },
+      {
+        attemptsAlreadyUsed,
+        // Vitest: no wall-clock 15s backoff (same pattern as pending-CI poll).
+        ...(process.env.VITEST !== undefined
+          ? { sleepMs: async () => {} }
+          : {}),
+        onFailure: async (outcome, attempt) => {
+          const reason =
+            "result" in outcome
+              ? outcome.result.kind === "failed"
+                ? outcome.result.reason
+                : `worker returned ${outcome.result.kind}`
+              : outcome.error instanceof Error
+                ? outcome.error.message
+                : String(outcome.error);
+          await familyBackend.appendFamilyLedger({
+            status: "worker_dispatched",
+            event: "worker_dispatched",
+            workerStep,
+            mechanicalRedispatchAttempt: attempt,
+            reason,
+          });
+        },
+        rethrowOnExhaustion: true,
+      },
+    );
+  } catch (err) {
+    const reason = `family landing worker threw on startup: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    return { kind: "failed", reason };
+  }
 }
 
 /**
@@ -109,7 +267,9 @@ function defaultFetchState(
  *
  * close/cleanup failures become leftovers only (ID-013); never park/fail/flip
  * completed after live MERGED. Readiness/ruleset/manual merge failures emit a
- * typed decision gate.
+ * typed decision gate. CI pending continuously re-polls (ID-004, no whole-run
+ * deadline). 伪 PR offline synthetic MERGED is deleted — inject live hooks or
+ * use a real pollable PR.
  */
 export async function runLandingAction(
   input: LandingActionInput,
@@ -139,32 +299,31 @@ export async function runLandingAction(
 
   const priorMerged = familyPrMergedForHead(ledger, input.convergedHeadOid);
   const sh = ghSh();
-  const liveHooks = input.live;
+  // Explicit live surface only — no silent non-live pr:// MERGED hatch (ID-013).
+  const liveHooks =
+    input.live ??
+    input.familyBackend.resolveLandingLiveHooks?.({
+      prUrl,
+      convergedHeadOid: input.convergedHeadOid,
+      familyBase: input.familyBase,
+    });
   const fetchState =
     liveHooks?.fetchState ??
-    (() => defaultFetchState(sh, familyRepo, prUrl));
-
-  // Non-live PR URLs (pr:// stubs, offline hatch): landing still owns the
-  // durable terminal — no host auto-merge court, no fake live MERGED via gh.
-  // Live hooks always take the real path below.
-  const nonLivePr =
-    liveHooks === undefined &&
-    !isLiveGithubReviewPollEnabled(prUrl, familyRepo);
+    (() => fetchPrMergeLiveState(sh, familyRepo, prUrl));
 
   // ── 1. Docs + push (landing worker seat — former docRelease) ───────────
-  // Always attempt when the backend can dispatch (including non-live pr://).
-  if (priorMerged === undefined && input.skipDocsWorker !== true) {
+  if (priorMerged === undefined) {
     const pool = billingPoolForFamilyWorker({
       kind: "landing",
-      ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
+      ...(input.billingPool !== undefined
+        ? { billingPool: input.billingPool }
+        : {}),
       ...(input.billingPoolSlots !== undefined
-        ? { billingPoolSlots: input.billingPoolSlots as never }
+        ? { billingPoolSlots: input.billingPoolSlots }
         : {}),
     });
-    const spec = landingWorkerSpec(
-      input.resolvedRoute as never,
-      pool as never,
-    );
+    const poolId = pool as BillingPoolId | undefined;
+    const spec = landingWorkerSpec(input.resolvedRoute, poolId);
     const ctx: DispatchContext = {
       familyBase: input.familyBase,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
@@ -172,22 +331,16 @@ export async function runLandingAction(
       prUrl,
       ...(pool !== undefined ? { billingPool: pool } : {}),
       ...(input.resolvedRoute !== undefined
-        ? { modelRoute: input.resolvedRoute as never }
+        ? { modelRoute: input.resolvedRoute }
         : {}),
     };
     let workerResult: WorkerResult;
     try {
-      // Prefer the unified dispatchWorker seam (ID-006). Fall back to the
-      // family helper when the backend only exposes legacy methods.
-      if (input.familyBackend.dispatchWorker !== undefined) {
-        workerResult = await input.familyBackend.dispatchWorker(spec, ctx);
-      } else {
-        workerResult = await dispatchFamilyWorker(
-          input.familyBackend,
-          spec,
-          ctx,
-        );
-      }
+      workerResult = await dispatchLandingDocsWorker(
+        input.familyBackend,
+        spec,
+        ctx,
+      );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       return {
@@ -216,30 +369,27 @@ export async function runLandingAction(
       workerResult.output?.kind === "landing" &&
       workerResult.output.released === true;
     if (!docsOk) {
-      // Live paths must fail/park on docs failure. Non-live pr:// stubs record
-      // leftovers and continue so offline drivers still reach durable landing.
-      if (!nonLivePr) {
-        const reason =
-          workerResult.kind === "failed"
-            ? workerResult.reason
-            : workerResult.kind === "completed" &&
-                workerResult.output?.kind === "landing"
-              ? "landing returned released:false"
-              : `landing worker returned ${workerResult.kind}`;
-        return {
-          ok: false,
-          terminalState: "landing_failed",
-          stopSummary: {
-            reason: "merge_failed",
-            summary: `landing worker failed: ${reason}`,
-            repairHint: "fix the landing skill/push failure and re-enter landing",
-          },
-        };
-      }
+      const reason =
+        workerResult.kind === "failed"
+          ? workerResult.reason
+          : workerResult.kind === "completed" &&
+              workerResult.output?.kind === "landing"
+            ? "landing returned released:false"
+            : `landing worker returned ${workerResult.kind}`;
+      return {
+        ok: false,
+        terminalState: "landing_failed",
+        stopSummary: {
+          reason: "merge_failed",
+          summary: `landing worker failed: ${reason}`,
+          repairHint: "fix the landing skill/push failure and re-enter landing",
+        },
+      };
     }
   }
 
   // ── 2. Merge + live MERGED confirm (Action-owned; no host auto-merge court)
+  // No 伪 PR synthetic MERGED: tests inject live hooks; production uses gh.
   let mergeRecord: PrMergedTerminalRecord | undefined =
     priorMerged !== undefined
       ? {
@@ -250,41 +400,6 @@ export async function runLandingAction(
           convergedHeadOid: input.convergedHeadOid,
         }
       : undefined;
-
-  if (mergeRecord === undefined && nonLivePr) {
-    // Durable offline completion owned by landing Action (not a host court).
-    mergeRecord = {
-      prUrl,
-      prNumber: 1,
-      remoteBranchName: input.familyBase,
-      mergedHeadOid: input.convergedHeadOid,
-      convergedHeadOid: input.convergedHeadOid,
-    };
-    await recordPrMerged(input.familyBackend, {
-      pr: prUrl,
-      prNumber: mergeRecord.prNumber,
-      remoteBranchName: mergeRecord.remoteBranchName,
-      mergedHeadOid: mergeRecord.mergedHeadOid,
-      familyHeadAfter: input.convergedHeadOid,
-    });
-    const offlineCleanup: CleanupResult = {
-      kind: "cleanup",
-      terminal: true,
-      ok: true,
-      branchOutcome: "already_gone",
-      skippedReasons: ["non_live_pr"],
-    };
-    await recordPostMergeCleanup(input.familyBackend, {
-      familyHeadAfter: input.convergedHeadOid,
-      cleanupOutput: offlineCleanup,
-    });
-    return {
-      ok: true,
-      terminalState: "completed",
-      record: mergeRecord,
-      leftovers: ["non_live_pr"],
-    };
-  }
 
   if (mergeRecord === undefined) {
     let live: PrMergeLiveState;
@@ -321,120 +436,112 @@ export async function runLandingAction(
         }),
       };
     } else {
-      // readiness: CI pending → keep polling (ID-004); other blockers → gate
-      const poll =
-        liveHooks?.pollSnapshot ??
-        (async (): Promise<PrReviewSnapshot> => {
-          // Minimal empty-converged snapshot when no poll injected (live readiness
-          // still uses mergeStateStatus from gh pr view).
-          return {
-            repo: familyRepo,
-            prNumber: live.prNumber,
-            prUrl,
-            headOid: live.headOid,
-            pollCount: 1,
-            bots: {
-              coderabbit: { state: "complete", findingCount: 0 },
-              sourcery: { state: "complete", findingCount: 0 },
-              codex: { state: "complete", findingCount: 0 },
-              gemini: { state: "complete", findingCount: 0 },
-            },
-            threads: [],
-            checkRuns: [],
-            totalFindingCount: 0,
-            quiescent: true,
-            roundTriggerUsed: {
-              headOid: live.headOid,
-              triggeredAt: new Date(0).toISOString(),
-            },
-            checkRunsEmptyMeans: "converged",
-          };
+      // Final readiness: real poll (or injected live poll). Never fabricate
+      // green bots/check-runs. CI pending → continuous re-poll (ID-004).
+      const pollOnce = async (): Promise<PrReviewSnapshot> => {
+        if (liveHooks?.pollSnapshot !== undefined) {
+          return liveHooks.pollSnapshot();
+        }
+        return pollPrReviewState(sh, {
+          repo: familyRepo,
+          prUrl,
+          roundTrigger: buildRoundTrigger(live.headOid),
+          pollCount: 1,
         });
+      };
 
-      // Single readiness pass for non-CI; CI pending is re-fetched once more.
-      // Unlimited CI poll lives at the online-review Action; here readiness
-      // that is only ci_pending raises a decision gate so re-entry resumes.
-      const snapshot = await poll();
-      // Re-fetch live after poll so head/ruleset stay fresh
-      try {
-        live = fetchState();
-      } catch {
-        /* keep prior live */
-      }
-      const readiness = assessMergeReadiness(live, snapshot);
-      if (!readiness.ready) {
+      let readiness = assessMergeReadiness(live, await pollOnce());
+      while (!readiness.ready) {
         const pendingOnly =
           readiness.blockers.length > 0 &&
           readiness.blockers.every((b) => b === "ci_pending");
-        return {
-          ok: false,
-          terminalState: "decision_gate",
-          stopSummary: decisionGateParkStopSummary({
-            summary: pendingOnly
-              ? "landing: CI still pending on PR head — re-enter when green"
-              : `landing merge blocked: ${readiness.blockers.join(", ")}`,
-            repairHint: pendingOnly
-              ? "wait for CI, then re-enter landing (no whole-run deadline)"
-              : "resolve ruleset / threads / CI or answer the decision gate",
-          }),
-        };
-      }
-
-      const doMerge =
-        liveHooks?.executeMerge ??
-        ((prNumber: number, headOid: string) =>
-          executePrMergeCommit(sh, familyRepo, prNumber, headOid));
-      try {
-        doMerge(live.prNumber, live.headOid);
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        return {
-          ok: false,
-          terminalState: "decision_gate",
-          stopSummary: decisionGateParkStopSummary({
-            summary: `landing merge failed: ${detail}`,
-            repairHint: "inspect the PR merge failure and re-enter landing",
-          }),
-        };
-      }
-
-      try {
-        const confirm =
-          liveHooks?.confirmMerged ??
-          ((expectedHeadOid: string) =>
-            confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
-        mergeRecord = confirm(live.headOid);
-      } catch {
-        mergeRecord = undefined;
-      }
-      if (mergeRecord === undefined) {
-        // Re-check live state once for eventual consistency / test hooks
-        try {
-          const after = fetchState();
-          if (after.state.toUpperCase() === "MERGED") {
-            mergeRecord = {
-              prUrl: after.prUrl,
-              prNumber: after.prNumber,
-              remoteBranchName: after.headRefName,
-              mergedHeadOid: after.headOid,
-              convergedHeadOid: input.convergedHeadOid,
-            };
-          }
-        } catch {
-          /* fall through */
+        if (!pendingOnly) {
+          return {
+            ok: false,
+            terminalState: "decision_gate",
+            stopSummary: decisionGateParkStopSummary({
+              summary: `landing merge blocked: ${readiness.blockers.join(", ")}`,
+              repairHint:
+                "resolve ruleset / threads / CI or answer the decision gate",
+            }),
+          };
         }
+        // CI still pending — keep polling; no whole-run deadline (ID-004).
+        await sleepPendingCiPollInterval();
+        try {
+          live = fetchState();
+        } catch {
+          /* keep prior live */
+        }
+        if (live.state.toUpperCase() === "MERGED") {
+          mergeRecord = {
+            prUrl: live.prUrl,
+            prNumber: live.prNumber,
+            remoteBranchName: live.headRefName,
+            mergedHeadOid: live.headOid,
+            convergedHeadOid: input.convergedHeadOid,
+          };
+          break;
+        }
+        readiness = assessMergeReadiness(live, await pollOnce());
       }
+
       if (mergeRecord === undefined) {
-        return {
-          ok: false,
-          terminalState: "decision_gate",
-          stopSummary: decisionGateParkStopSummary({
-            summary:
-              "landing merge returned but live GitHub state did not confirm MERGED",
-            repairHint:
-              "inspect the PR on GitHub and re-enter landing once MERGED is unambiguous",
-          }),
-        };
+        const doMerge =
+          liveHooks?.executeMerge ??
+          ((prNumber: number, headOid: string) =>
+            executePrMergeCommit(sh, familyRepo, prNumber, headOid));
+        try {
+          doMerge(live.prNumber, live.headOid);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            terminalState: "decision_gate",
+            stopSummary: decisionGateParkStopSummary({
+              summary: `landing merge failed: ${detail}`,
+              repairHint: "inspect the PR merge failure and re-enter landing",
+            }),
+          };
+        }
+
+        try {
+          const confirm =
+            liveHooks?.confirmMerged ??
+            ((expectedHeadOid: string) =>
+              confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
+          mergeRecord = confirm(live.headOid);
+        } catch {
+          mergeRecord = undefined;
+        }
+        if (mergeRecord === undefined) {
+          try {
+            const after = fetchState();
+            if (after.state.toUpperCase() === "MERGED") {
+              mergeRecord = {
+                prUrl: after.prUrl,
+                prNumber: after.prNumber,
+                remoteBranchName: after.headRefName,
+                mergedHeadOid: after.headOid,
+                convergedHeadOid: input.convergedHeadOid,
+              };
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+        if (mergeRecord === undefined) {
+          return {
+            ok: false,
+            terminalState: "decision_gate",
+            stopSummary: decisionGateParkStopSummary({
+              summary:
+                "landing merge returned but live GitHub state did not confirm MERGED",
+              repairHint:
+                "inspect the PR on GitHub and re-enter landing once MERGED is unambiguous",
+            }),
+          };
+        }
       }
     }
 
@@ -451,27 +558,6 @@ export async function runLandingAction(
   const coveredIssues = [...mergedSet(await input.familyBackend.readFamilyLedger())];
   const leftovers: string[] = [];
   let cleanupOutput: CleanupResult;
-
-  if (nonLivePr && liveHooks === undefined) {
-    cleanupOutput = {
-      kind: "cleanup",
-      terminal: true,
-      ok: true,
-      branchOutcome: "already_gone",
-      skippedReasons: ["non_live_pr"],
-    };
-    leftovers.push("non_live_pr");
-    await recordPostMergeCleanup(input.familyBackend, {
-      familyHeadAfter: input.convergedHeadOid,
-      cleanupOutput,
-    });
-    return {
-      ok: true,
-      terminalState: "completed",
-      record: mergeRecord,
-      leftovers,
-    };
-  }
 
   try {
     const liveForCleanup = (() => {
@@ -595,14 +681,4 @@ export async function runLandingAction(
       ? { leftovers: normalizedLeftovers }
       : {}),
   };
-}
-
-/**
- * Resume/already_done helper: re-enter landing when pr_merged exists without
- * terminal cleanup, or when nothing is recorded yet. Never invents host courts.
- */
-export async function ensureLandingComplete(
-  input: LandingActionInput,
-): Promise<LandingActionResult> {
-  return runLandingAction(input);
 }

@@ -24,15 +24,19 @@ import {
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
 } from "../../../src/dispatchRetry.js";
-import { dispatchWorkerWithMonitor, landingWorkerSpec } from "../../../src/dispatchWorker.js";
+import { landingWorkerSpec } from "../../../src/dispatchWorker.js";
 import { runOnlineReviewLoopStage } from "../../../src/family/onlineReviewLoop.js";
 import { runLandingAction } from "../../../src/family/landing.js";
-import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
   FamilyVerifyResult,
 } from "../../../src/family/types.js";
+import {
+  resolveRouteModels,
+  routeSmokeEntries,
+  type ResolvedModelRoute,
+} from "../../../src/modelRoutes.js";
 import { terminateSpawnedChild } from "../../../src/workerMonitor.js";
 import type { PrReviewSnapshot } from "../../../src/botPolling.js";
 import type {
@@ -70,33 +74,56 @@ const BASE_SNAPSHOT: PrReviewSnapshot = {
     gemini: { state: "complete", findingCount: 0 },
   },
   threads: [],
-  checkRuns: [],
+  checkRuns: [
+    {
+      id: 1,
+      name: "ci",
+      status: "completed",
+      conclusion: "success",
+      headSha: "head-941",
+    },
+  ],
   totalFindingCount: 0,
   quiescent: true,
   roundTriggerUsed: {
     headOid: "head-941",
     triggeredAt: "1970-01-01T00:00:00.000Z",
   },
-  checkRunsEmptyMeans: "converged",
+  checkRunsEmptyMeans: "pending",
 };
 
-function coderSpec(): WorkerSpec {
-  return {
-    id: "S2",
-    kind: "coder",
-    role: "coder",
-    host: "codex",
-    session: "fresh",
-    contextRetention: "retain",
-    promptFile: "coder.md",
-    maxIter: 1,
-    model: "grok-4.5",
-    soul: "coder",
-    toolchain: [],
-  } as WorkerSpec;
+const PENDING_CI_SNAPSHOT: PrReviewSnapshot = {
+  ...BASE_SNAPSHOT,
+  checkRuns: [
+    {
+      id: 1,
+      name: "ci",
+      status: "in_progress",
+      headSha: "head-941",
+    },
+  ],
+};
+
+function smokedRoute(): ResolvedModelRoute {
+  const base = resolveRouteModels("normal", {});
+  const smoke = Object.fromEntries(
+    routeSmokeEntries(base).map((entry) => [
+      entry.key,
+      {
+        state: "passed" as const,
+        at: new Date().toISOString(),
+        cliVersion: `cli-${entry.slug}`,
+      },
+    ]),
+  );
+  return resolveRouteModels("normal", {}, {}, smoke);
 }
 
-/** Minimal family backend with production dispatchWorker seam. */
+/**
+ * Minimal family backend with production dispatchWorker seam.
+ * Intentionally omits resolveLandingLiveHooks so #941 can prove non-live pr://
+ * without hooks fails closed (no silent MERGED hatch).
+ */
 class DispatchCapableBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   constructor(
@@ -122,6 +149,54 @@ class DispatchCapableBackend implements FamilyBackend {
   }
 }
 
+function liveOpenHooks(opts: {
+  mergeExecuted: { n: number };
+  closedIssues?: number[];
+  poll?: () => Promise<PrReviewSnapshot>;
+  executeMerge?: () => void;
+  closeIssue?: (n: number) => void;
+  deleteBranch?: () => void;
+  branchExists?: () => boolean;
+  fetchBranchTip?: () => string | undefined;
+  fetchIssueState?: () => string;
+  fetchSubIssues?: () => ReadonlyArray<{ number: number; state: string }>;
+  state?: () => "OPEN" | "MERGED" | "CLOSED";
+  mergeStateStatus?: string;
+}) {
+  return {
+    fetchState: () => ({
+      prNumber: 941,
+      prUrl: STAGE_SHIP.pr!,
+      state:
+        opts.state?.() ??
+        (opts.mergeExecuted.n > 0 ? "MERGED" : "OPEN"),
+      headOid: "head-941",
+      headRefName: "family/epic-941",
+      mergeStateStatus: opts.mergeStateStatus ?? "CLEAN",
+    }),
+    executeMerge:
+      opts.executeMerge ??
+      (() => {
+        opts.mergeExecuted.n += 1;
+      }),
+    pollSnapshot: opts.poll ?? (async () => BASE_SNAPSHOT),
+    closeIssue:
+      opts.closeIssue ??
+      ((n: number) => {
+        opts.closedIssues?.push(n);
+      }),
+    deleteBranch: opts.deleteBranch ?? (() => {}),
+    branchExists: opts.branchExists ?? (() => false),
+    ...(opts.fetchBranchTip !== undefined
+      ? { fetchBranchTip: opts.fetchBranchTip }
+      : {}),
+    fetchIssueState: opts.fetchIssueState ?? (() => "OPEN"),
+    fetchSubIssues:
+      opts.fetchSubIssues ??
+      (() => [{ number: 9411, state: "OPEN" }]),
+  };
+}
+
 describe("#941 public driver — ID-013 landing owns merge close cleanup", () => {
   it("POSITIVE: host auto-merge / familyAutoMerge modules and docRelease name are gone", async () => {
     const srcDir = join(
@@ -129,26 +204,21 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       "../../../src",
     );
     expect(existsSync(join(srcDir, "family/familyAutoMerge.ts"))).toBe(false);
-    expect(existsSync(join(srcDir, "family/familyAutoMerge.js"))).toBe(false);
-    // landing Action is the single post-online-review owner
     expect(existsSync(join(srcDir, "family/landing.ts"))).toBe(true);
 
     const landingMod = await import("../../../src/family/landing.js");
     expect(typeof landingMod.runLandingAction).toBe("function");
-    // Host court entry points deleted
+    expect("ensureLandingComplete" in landingMod).toBe(false);
     expect("runFamilyAutoMergeStage" in landingMod).toBe(false);
-    expect("familyAutoMergeIncomplete" in landingMod).toBe(false);
     expect("ensureFamilyPostMergeCleanup" in landingMod).toBe(false);
 
     const autoMergeMod = await import("../../../src/autoMerge.js");
-    // Host stage courts deleted — only live gh primitives remain for landing Action
     expect("runAutoMergeStage" in autoMergeMod).toBe(false);
     expect("tryResumePrMergedBackfill" in autoMergeMod).toBe(false);
     expect(typeof autoMergeMod.fetchPrMergeLiveState).toBe("function");
     expect(typeof autoMergeMod.executePrMergeCommit).toBe("function");
     expect(typeof autoMergeMod.confirmPrMergedLive).toBe("function");
 
-    // Atomic rename: landing seat, no landing projection
     const spec = landingWorkerSpec();
     expect(spec.kind).toBe("landing");
     expect(spec.role).toBe("landing");
@@ -156,8 +226,7 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(spec.id).toBe("S12");
   });
 
-  it("POSITIVE: online review converge hands off to landing; no host landing-only court", async () => {
-    let landingDispatchedFromLoop = 0;
+  it("POSITIVE: online review converge stops at mergeable; no host landing hook", async () => {
     const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
       poll: async () => BASE_SNAPSHOT,
       dispatchVerify: async () =>
@@ -165,23 +234,15 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       dispatchFixer: async () => {
         throw new Error("fixer must not run on green converge");
       },
-      // #941: loop may still accept a landing hook for docs, but must not own merge
-      dispatchLanding: async () => {
-        landingDispatchedFromLoop += 1;
-        return true;
-      },
       retriggerAfterFix: () => {},
     });
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("mergeable");
-    // After #941 the online-review Action stops at mergeable; landing Action owns the rest.
-    // If the loop still dispatches docs, that is optional pre-hand-off only — merge is not host.
-    expect(landingDispatchedFromLoop).toBeLessThanOrEqual(1);
   });
 
   it("POSITIVE: landing Action completes docs → merge → MERGED confirm → close/cleanup leftovers", async () => {
     const closedIssues: number[] = [];
-    let mergeExecuted = 0;
+    const mergeExecuted = { n: 0 };
     let landingWorkerCalls = 0;
     const backend = new DispatchCapableBackend(async (spec) => {
       if (spec.kind === "landing") {
@@ -210,41 +271,18 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       convergedHeadOid: "head-941",
       prUrl: STAGE_SHIP.pr!,
       familyIssue: 941,
-      resolvedRoute: undefined,
-      // Injected live primitives — no fake PR offline hatch
-      live: {
-        fetchState: () => ({
-          prNumber: 941,
-          prUrl: STAGE_SHIP.pr!,
-          state: mergeExecuted > 0 ? "MERGED" : "OPEN",
-          headOid: "head-941",
-          headRefName: "family/epic-941",
-          mergeStateStatus: "CLEAN",
-        }),
-        executeMerge: () => {
-          mergeExecuted += 1;
-        },
-        closeIssue: (n) => {
-          closedIssues.push(n);
-        },
-        deleteBranch: () => {},
-        branchExists: () => false,
-        fetchIssueState: () => "OPEN",
-        fetchSubIssues: () => [{ number: 9411, state: "OPEN" }],
-      },
+      resolvedRoute: smokedRoute(),
+      live: liveOpenHooks({ mergeExecuted, closedIssues }),
     });
 
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("completed");
     expect(landingWorkerCalls).toBe(1);
-    expect(mergeExecuted).toBe(1);
-    // live MERGED before close (ID-013); delivered child closed; parent may
-    // close only when every native sub-issue is covered/CLOSED.
+    expect(mergeExecuted.n).toBe(1);
     expect(closedIssues).toContain(9411);
     expect(closedIssues[0]).toBe(9411);
     const statuses = backend.ledger.map((e) => e.status);
     expect(statuses).toContain("pr_merged");
-    // cleanup may leave leftovers but must not fail completed
     expect(result.leftovers === undefined || Array.isArray(result.leftovers)).toBe(
       true,
     );
@@ -272,7 +310,7 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       convergedHeadOid: "head-941",
       prUrl: STAGE_SHIP.pr!,
       familyIssue: 941,
-      resolvedRoute: undefined,
+      resolvedRoute: smokedRoute(),
       live: {
         fetchState: () => ({
           prNumber: 941,
@@ -298,7 +336,6 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       },
     });
 
-    // close/cleanup fail → leftovers / already-gone; never park/fail after MERGED
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("completed");
     expect(result.leftovers !== undefined && result.leftovers!.length > 0).toBe(
@@ -322,7 +359,7 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       familyBase: "family/epic-941",
       convergedHeadOid: "head-941",
       prUrl: STAGE_SHIP.pr!,
-      resolvedRoute: undefined,
+      resolvedRoute: smokedRoute(),
       live: {
         fetchState: () => ({
           prNumber: 941,
@@ -344,14 +381,74 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 
-  it("POSITIVE: ID-016 production surface drops host court modules (compile inventory)", async () => {
+  it("NEGATIVE: non-live pr:// without live hooks does not synthesize MERGED (伪 PR hatch deleted)", async () => {
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected kind ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: "pr://family/941-offline-hatch",
+      resolvedRoute: smokedRoute(),
+      // no live hooks — production path would call gh and fail closed
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(backend.ledger.some((e) => e.status === "pr_merged")).toBe(false);
+    expect(
+      backend.ledger.some((e) => e.status === "post_merge_cleanup"),
+    ).toBe(false);
+  });
+
+  it("POSITIVE: CI pending continuously re-polls until green (ID-004; no fake-green snapshot)", async () => {
+    const mergeExecuted = { n: 0 };
+    let pollCount = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: liveOpenHooks({
+        mergeExecuted,
+        poll: async () => {
+          pollCount += 1;
+          return pollCount < 3 ? PENDING_CI_SNAPSHOT : BASE_SNAPSHOT;
+        },
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("completed");
+    expect(pollCount).toBeGreaterThanOrEqual(3);
+    expect(mergeExecuted.n).toBe(1);
+  });
+
+  it("POSITIVE: ID-016 production surface drops host court modules", async () => {
     const srcDir = join(
       dirname(fileURLToPath(import.meta.url)),
       "../../../src",
     );
-    // Deleted host court modules / names
     expect(existsSync(join(srcDir, "family/familyAutoMerge.ts"))).toBe(false);
-    // docRelease soul/prompt atomically renamed to landing
     const root = join(srcDir, "..");
     expect(existsSync(join(root, "image/souls/docRelease.md"))).toBe(false);
     expect(existsSync(join(root, "prompts/docRelease.md"))).toBe(false);
@@ -382,7 +479,7 @@ describe("#941 public driver — ID-015 cleanup already-gone", () => {
       familyBase: "family/epic-941",
       convergedHeadOid: "head-941",
       prUrl: STAGE_SHIP.pr!,
-      resolvedRoute: undefined,
+      resolvedRoute: smokedRoute(),
       live: {
         fetchState: () => ({
           prNumber: 941,
@@ -395,8 +492,7 @@ describe("#941 public driver — ID-015 cleanup already-gone", () => {
         executeMerge: () => {},
         closeIssue: () => {},
         deleteBranch: () => {
-          const err = new Error("HTTP 404 Not Found");
-          throw err;
+          throw new Error("HTTP 404 Not Found");
         },
         branchExists: () => true,
         fetchBranchTip: () => "head-941",
@@ -407,7 +503,6 @@ describe("#941 public driver — ID-015 cleanup already-gone", () => {
 
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("completed");
-    // already-gone is legal degradation, not a hard leftover failure
     const leftovers = result.leftovers ?? [];
     expect(leftovers.every((l) => !/fail/i.test(l) || /already.?gone/i.test(l))).toBe(
       true,
@@ -423,34 +518,64 @@ describe("#941 unified worker dispatch — ID-004 / ID-006 still hold", () => {
     ]);
   });
 
-  it("POSITIVE: withMechanicalRetry exhausts at fixed position (ID-004)", async () => {
+  it("POSITIVE: landing docs worker rides withMechanicalRetry on transport throw (ID-004)", async () => {
     let calls = 0;
-    const result = await withMechanicalRetry(
-      coderSpec(),
-      {},
-      async () => {
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
         calls += 1;
-        return { kind: "failed", reason: "dispatch threw: boom" };
-      },
-      { sleepMs: async () => {} },
-    );
+        throw new Error("spawn crashed");
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: liveOpenHooks({ mergeExecuted: { n: 0 } }),
+    });
+
     expect(calls).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(result.kind).toBe("failed");
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("landing_failed");
+    // durable mechanical_redispatch markers bind budget
+    const attempts = backend.ledger.filter(
+      (e) =>
+        e.event === "worker_dispatched" &&
+        e.workerStep === "landing" &&
+        typeof e.mechanicalRedispatchAttempt === "number",
+    );
+    expect(attempts.length).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
   it("POSITIVE: terminateSpawnedChild remains the exact-handle ownership seam (ID-006)", () => {
-    // Unified dispatch ownership — no parallel landing kill machinery.
     expect(typeof terminateSpawnedChild).toBe("function");
     expect(terminateSpawnedChild.name).toBe("terminateSpawnedChild");
   });
 
-  it("POSITIVE: dispatchWorkerWithMonitor still owns process-root entry (ID-006)", async () => {
-    // Smoke: unified seam export remains the real entry (no parallel landing baton)
-    expect(typeof dispatchWorkerWithMonitor).toBe("function");
-    expect(typeof landingWorkerSpec).toBe("function");
+  it("POSITIVE: landingWorkerSpec is the S12 seat; dispatch uses family monitored path", async () => {
     const spec = landingWorkerSpec();
     expect(spec.kind).toBe("landing");
     expect(spec.role).toBe("landing");
+    expect(spec.id).toBe("S12");
+    // Smoke the same mechanical-retry seam review-loop workers use
+    let hits = 0;
+    const result = await withMechanicalRetry(
+      spec,
+      {},
+      async () => {
+        hits += 1;
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      },
+      { sleepMs: async () => {} },
+    );
+    expect(hits).toBe(1);
+    expect(result.kind).toBe("completed");
   });
 });
 

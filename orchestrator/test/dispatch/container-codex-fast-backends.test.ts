@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { RealFamilyBackend, type RealFamilyBackendOptions } from "../../src/family/realFamilyBackend.js";
 import { RealBackend, type RealBackendOptions } from "../../src/realBackend.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+
 
 const here = dirname(fileURLToPath(import.meta.url));
 const promptsDir = join(here, "..", "..", "prompts");
@@ -82,6 +84,18 @@ class ExposedRealBackend extends RealBackend {
 }
 
 class ExposedRealFamilyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   mountMergerAuthForTest() {
     return this.mountMergerAuth();
   }
