@@ -29,10 +29,12 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/825-behavior",
@@ -180,8 +182,20 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 });
 
 describe("#825 Group A family roles", () => {
-  it("Group A merger missing sidecar: unresolved report redispatches mechanically and records the landed merge", async () => {
+  it("Group A merger still-conflicted: Action trusts one worker outcome and does not host-redispatch (#938)", async () => {
     class MergerBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -193,26 +207,43 @@ describe("#825 Group A family roles", () => {
       }
       async resolveMergeConflict() {
         this.resolves += 1;
-        return this.resolves === 1
-          ? { conflicted: true, familyHead: "base" }
-          : { conflicted: false, familyHead: "merged", familyHeadBefore: "base", childHead: "child" };
+        // Still conflicted after the worker returns once — Action converges that
+        // outcome (ID-010); process-root retry lives inside the worker leg.
+        return { conflicted: true, familyHead: "base" };
       }
       async appendFamilyLedger(entry: FamilyLedgerEntry) { this.ledger.push(entry); }
       async readFamilyLedger() { return this.ledger; }
     }
     const backend = new MergerBackend();
     const result = await mergeChild(backend, { childIssue: 825, childBranch: "feat/child-825" });
-    expect(result.familyHead).toBe("merged");
-    expect(backend.resolves).toBe(2);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({ status: "merged", familyHeadAfter: "merged" }));
+    expect(result.conflicted).toBe(true);
+    expect(result.familyHead).toBe("base");
+    expect(backend.resolves).toBe(1);
+    expect(backend.ledger).toEqual([]);
   });
 
   it("Group A CMR reviewer bad envelope: real family gate retries then continues to ship", async () => {
     class CmrBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       cmrCalls = 0;
       shipCalls = 0;
       async mergeChildIntoFamilyBase() { return { familyHead: "head" }; }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry) { this.ledger.push(entry); }
       async readFamilyLedger() { return this.ledger; }
       async readFamilyHead() { return "head"; }
@@ -225,8 +256,22 @@ describe("#825 Group A family roles", () => {
           }
           return { kind: "completed", output: { kind: "judge", status: "converged", successfulLegs: ["opus", "gpt-5.6-sol", "agy"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
         }
-        this.shipCalls += 1;
-        return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
+        if (spec.kind === "ship") {
+          this.shipCalls += 1;
+          return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
+        }
+        // #940: offline skeleton / explicit role cargo — do not return ship
+        // envelopes for verify/fixer (would hang the uncapped continue loop).
+        if (spec.kind === "verify") {
+          return { kind: "completed", output: { kind: "verify", converged: true } };
+        }
+        if (spec.kind === "fixer") {
+          return { kind: "completed", output: { kind: "fixer", committed: false } };
+        }
+        if (spec.kind === "landing") {
+          return { kind: "completed", output: { kind: "landing", released: true } };
+        }
+        return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
       }
     }
     const backend = new CmrBackend();
@@ -257,7 +302,6 @@ describe("#825 Group A family roles", () => {
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        dispatchDocRelease: async () => true,
         applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
       },
@@ -285,7 +329,6 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        dispatchDocRelease: async () => true,
         applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
       },

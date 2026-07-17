@@ -66,6 +66,8 @@ import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../../src/familyDriver.js
 import { PROVISION_SUBPROCESS_TIMEOUT_MS } from "../../../src/provisionNodeModules.js";
 import type { WorkerSpec } from "../../../src/types.js";
 import * as telemetry from "../../../src/telemetry.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -118,6 +120,18 @@ afterEach(() => {
 
 describe("RealFamilyBackend live officer effort", () => {
   class Probe extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public agentForLiveSpec(spec: WorkerSpec, billingPool?: string): sc.AgentProvider {
       return this.agentForSpec(spec, { billingPool });
     }
@@ -436,6 +450,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // `verifyCwd`, and (#5) be the PROJECT'S OWN npm scripts, not a hardcoded npx.
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -469,6 +495,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   it("never appends telemetry reporters or compiler flags to the project's declared verify commands (#786)", async () => {
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -514,6 +552,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     writeFileSync(lock, JSON.stringify({ name: "test-proj", version: "0.0.1", lockfileVersion: 3, "updated-by-wave": true }));
 
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -554,6 +604,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // web change with TS errors passes verify as long as Vitest does).
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -590,6 +652,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // ROOT (no package.json) → verify_failed for valid non-code changes. Now: skip.
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -610,6 +684,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     const loopPath = join(root, "package.json");
     symlinkSync(loopPath, loopPath);
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         throw new Error("verify commands must not run after probe failure");
       }
@@ -632,6 +718,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // root still skips, R1 T2).
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";
@@ -666,6 +764,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // un-verified merge. (An inference-FAILURE fails closed via familyDiffFiles, which
     // no longer swallows git errors.)
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -688,6 +798,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     writeFileSync(join(proj, "package.json"), "{not-valid-json");
     const npmCalls: string[] = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[]): string {
         if (file === "npm") npmCalls.push(args.join(" "));
         return "";
@@ -713,6 +835,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     );
     const npmCalls: string[] = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[]): string {
         if (file === "npm") npmCalls.push(args.join(" "));
         return "";
@@ -734,6 +868,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     // isNodeProject can be true while a subsequent read fails (race / override).
     // That is operational error, not legal empty.
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -759,6 +905,18 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       JSON.stringify({ name: "bad", version: "0.0.0", scripts: ["test"] }),
     );
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -850,7 +1008,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "merger_resolve_conflict.md",
         "verify.md",
         "fixer.md",
-        "docRelease.md",
+        "landing.md",
       ]),
     );
   });
@@ -884,6 +1042,18 @@ describe("family CMR prompt output contract", () => {
 
 /** A subclass that fakes the external seams (merger agent / verify / cmr / sh). */
 class FakeSeamsBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   mergerOutcome: ReturnType<typeof mergerOutcomeFromResult> = { resolved: true };
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
@@ -998,6 +1168,18 @@ class FakeSeamsBackend extends RealFamilyBackend {
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
   it("checks conflict markers only in files introduced or modified by the merge", () => {
     class MarkerScopeBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       hasMarkers(before: string, after: string): boolean {
         return this.hasConflictMarkers(before, after, this.opts.workingRepo);
       }
@@ -1017,6 +1199,18 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 
   it("rejects a two-parent merge commit that still contains conflict markers", async () => {
     class MarkerLeavingMergerBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override async runMergerAgent(req: ConflictResolveRequest) {
         writeFileSync(
           join(this.opts.workingRepo, "shared.txt"),
@@ -1394,7 +1588,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ["verify", "parseVerifyOutcome"],
     ["fixer", "parseFixerOutcome"],
     ["cleanup", "parseCleanupOutcome"],
-    ["docRelease", "parseDocReleaseOutcome"],
+    ["landing", "parseLandingOutcome"],
   ] as const)(
     "%s cargo with nested escalate is opaque cargo (no decision-gate dual)",
     async (tag, parser) => {
@@ -1460,8 +1654,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
     ).toEqual({ kind: "cleanup", terminal: true, ok: true });
     expect(
-      mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
-    ).toEqual({ kind: "docRelease", released: true });
+      mod.parseLandingOutcome('<landing>{"released": true}</landing>', outcomePath),
+    ).toEqual({ kind: "landing", released: true });
   });
 
   it("prefers readable sidecar cargo over a stdout decision bell (no bell-shop)", async () => {
@@ -1478,7 +1672,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     )).toEqual({ kind: "verify", converged: true });
   });
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "fails family %s when typed decision Output.object is absent",
     async (role) => {
       // #899: SO seat without result.output must not become cargo/no-gate success.
@@ -1496,6 +1690,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         toolchain: [],
       });
       class Harness extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
         public classify(
           result: {
             output?: unknown;
@@ -1537,6 +1743,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   );
 
   class FamilyCoderDecodeHarness extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public classify(
       result: {
         output?: unknown;
@@ -1766,7 +1984,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toThrow(/illegal coder station receipt|refusedFindingIdentityKeys/i);
   });
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "does not let sidecar bells override a schema-validated typed %s decision signal",
     async (role) => {
       // #899 finding: when typed Output.object exists it is the sole fate channel;
@@ -1785,6 +2003,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         toolchain: [],
       });
       class Harness extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
         public classify(
           result: {
             output?: unknown;
@@ -1851,7 +2081,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     },
   );
 
-  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+  it.each(["verify", "fixer", "cleanup", "landing"] as const)(
     "family %s T2 onlineReview escalate still parks decision",
     async (role) => {
       const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
@@ -1868,6 +2098,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         toolchain: [],
       });
       class Harness extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
         public classify(
           result: {
             output?: unknown;
@@ -1948,8 +2190,26 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("drops malformed optional cargo without discarding worker buttons", async () => {
+  it("decodes well-typed host side-effect plan fields; drops malformed optional cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
+    // Correctness K1: host fail-safe applicator needs plan cargo decoded when
+    // well-typed; malformed values stay dropped (not crash).
+    expect(
+      mod.parseVerifyOutcome(
+        `<verify>${JSON.stringify({
+          converged: true,
+          threadReplies: [{ threadId: "t1", body: "fixed" }],
+          threadsToResolve: ["t1"],
+          deferredIssueUrls: ["https://github.com/o/r/issues/1"],
+        })}</verify>`,
+      ),
+    ).toEqual({
+      kind: "verify",
+      converged: true,
+      threadReplies: [{ threadId: "t1", body: "fixed" }],
+      threadsToResolve: ["t1"],
+      deferredIssueUrls: ["https://github.com/o/r/issues/1"],
+    });
     expect(
       mod.parseVerifyOutcome(
         `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
@@ -1962,10 +2222,11 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("RAW extra keys on docRelease remain cargo", async () => {
+  it("RAW extra keys on landing remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
-    expect(out.kind).toBe("docRelease");
+    const out = mod.parseLandingOutcome(`<landing>{"released": true, "x": 9}</landing>`);
+    // Pin released (CR-11); unknown extra keys are dropped, not cargo shape.
+    expect(out).toEqual({ kind: "landing", released: true });
   });
 
   // === pinning the canonical family last-complete-block semantics ===
@@ -2696,6 +2957,18 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     ledgerDirs.push(ledgerDir);
     const calls: Parameters<typeof sc.run>[0][] = [];
     class AttachBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(req: ConflictResolveRequest) {
         return this.runMergerAgent(req);
       }
@@ -2730,6 +3003,18 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
     ledgerDirs.push(ledgerDir);
     let outcomePathAtRun: string | undefined;
     class CleanupBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(req: ConflictResolveRequest) {
         return this.runMergerAgent(req);
       }
@@ -2770,6 +3055,18 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "merger-missing-typed-ledger-"));
     ledgerDirs.push(ledgerDir);
     class MissingTypedMergerBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(req: ConflictResolveRequest) {
         return this.runMergerAgent(req);
       }
@@ -2804,6 +3101,18 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       timeoutMs: number | undefined;
     }> = [];
     class LongVerifyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(
         file: string,
         args: string[],
@@ -2847,6 +3156,18 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
   it("records unknown counts without rewriting the project's typecheck or wave-unit commands", async () => {
     const commands: Array<{ file: string; args: string[] }> = [];
     class ObservedVerifyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], _cwd?: string): string {
         commands.push({ file, args });
         if (args.includes("test")) {
@@ -2890,6 +3211,18 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
 
   it("keeps later verification stamps flowing after one unexpected stamp failure", async () => {
     class ObservedVerifyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string { return ""; }
       protected override async installDeps(_cwd: string): Promise<void> {}
       protected override isNodeProject(_cwd: string): boolean { return true; }
@@ -2920,6 +3253,18 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
 
   it("keeps a failed typecheck count unknown instead of parsing its diagnostic prose", async () => {
     class FailedTypecheckBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], _cwd?: string): string {
         if (file === "npm" && args.includes("typecheck")) {
           const error = new Error("Command failed: npm run typecheck") as Error & {
@@ -2961,6 +3306,18 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
 
   it("records a failed final observation and preserves the verification verdict", async () => {
     class FailedObservedVerifyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], _cwd?: string): string {
         if (file === "npm" && args[0] === "test") throw new Error("plain test output");
         return "";
@@ -3117,7 +3474,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
   it("preserves a merger failure's wave shape through the real backend seam", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({
-      reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+      reason: "merger_worker left child #10 conflict unresolved on the family base",
       familyHeadAfter: "conflicted-10",
       escalationKind: "failure",
       phase: "wave",
@@ -3128,7 +3485,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
         status: "escalated",
         event: "escalated",
         phase: "wave",
-        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+        reason: "merger_worker left child #10 conflict unresolved on the family base",
         familyHeadAfter: "conflicted-10",
         escalationKind: "failure",
       }),
@@ -3242,6 +3599,18 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
 describe("RealFamilyBackend runtime file git excludes", () => {
   it("removes a stale fix-focus file when no family brief is mounted", () => {
     class Probe extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public clearFixFocus(landing?: Parameters<RealFamilyBackend["writeFamilyFixFocusFile"]>[0]) {
         return this.writeFamilyFixFocusFile(landing);
       }
@@ -3257,6 +3626,18 @@ describe("RealFamilyBackend runtime file git excludes", () => {
 
   it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
     class Probe extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public exclude(filename: string): void {
         this.excludeOptionalRuntimeFileFromGit(filename);
       }
@@ -3273,6 +3654,18 @@ describe("RealFamilyBackend runtime file git excludes", () => {
 
   it("treats CRLF exclude entries as existing lines in the CMR exclude helper too", () => {
     class Probe extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public excludeCmr(filename: string): void {
         this.excludeFromGit(filename);
       }
@@ -3316,6 +3709,18 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   }
 
   class FamilyIdleBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public sandcastleReached = false;
 
     protected override async invokeSandcastleRun(

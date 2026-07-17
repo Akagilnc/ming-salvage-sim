@@ -65,8 +65,10 @@ describe("commander.assertAcyclic (#294 acceptance 3 — fail-closed on cycle)",
   });
 
   it("THROWS on a cycle even when an INDEPENDENT acyclic child exists too", () => {
-    // 99 is independent and schedulable; 10↔11 form a cycle. The whole run must
-    // fail-closed (a partial-but-deadlocked epic is not silently shippable).
+    // Pure residual probe: when the residual set still includes an independent
+    // node AND a cycle, assertAcyclic still reports the cycle. The spine (#938)
+    // only feeds residual unmerged children here — independent siblings that
+    // already merged are excluded from the residual set.
     const children = [child(99), child(10, [11]), child(11, [10])];
     expect(() => assertAcyclic(children)).toThrow(/cycle/i);
   });

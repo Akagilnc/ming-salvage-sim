@@ -36,6 +36,8 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import { judgeContinue, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -43,6 +45,18 @@ const CMR_EVIDENCE = {
 
 describe("review-round persistence immunity", () => {
   class ReviewRoundStampBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly telemetryDir = mkdtempSync(join(tmpdir(), "verify-cmr-review-round-"));
     readonly ledger: FamilyLedgerEntry[] = [];
     currentFamilyHead = "review-head";
@@ -54,6 +68,10 @@ describe("review-round persistence immunity", () => {
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
 
     async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
       return this.ledger;
@@ -145,13 +163,13 @@ describe("review-round persistence immunity", () => {
   });
 });
 
-/** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
+/** #600/#603: successful pr_opened ship → verify → landing → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
   expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
-  expect.objectContaining({ kind: "docRelease", promptFile: "docRelease.md" }),
+  expect.objectContaining({ kind: "landing", promptFile: "landing.md" }),
 ] as const;
 
-/** Deterministic skeleton for verify/fixer/cleanup/docRelease after ship (#600). */
+/** Deterministic skeleton for verify/fixer/cleanup/landing after ship (#600). */
 function onlineReviewLoopWorkerOrThrow(spec: WorkerSpec): WorkerResult {
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) {
@@ -180,6 +198,18 @@ interface DispatchRecord {
  * converged/accounted pass verdicts.
  */
 class SchedulerFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
@@ -198,6 +228,10 @@ class SchedulerFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -337,6 +371,18 @@ function expectNoBudgetExhaustedAbort(
 }
 
 class ReviewFixRereviewBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -347,6 +393,10 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -441,6 +491,18 @@ class ReviewFixRereviewBackend implements FamilyBackend {
 }
 
 class CountChannelFixBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly landings: Array<WorkerLandingPayload | undefined> = [];
@@ -456,6 +518,10 @@ class CountChannelFixBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -528,6 +594,18 @@ class CountChannelFixBackend implements FamilyBackend {
  * coder-fix by identity key.
  */
 class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -543,6 +621,10 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -635,6 +717,18 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
 }
 
 class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -650,6 +744,10 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -745,6 +843,18 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
 }
 
 class RepeatedReviewFixRereviewBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-repeat-cmr-review";
@@ -754,6 +864,10 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -880,6 +994,18 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
 }
 
 class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-excessive-cmr-review";
@@ -889,6 +1015,10 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1016,6 +1146,18 @@ const DOGFOOD_272_KEYS = DOGFOOD_272_FINDINGS.map((finding) =>
 );
 
 class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-dogfood-272";
@@ -1025,6 +1167,10 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1143,6 +1289,18 @@ const ESCALATE_NONCONV_KEYS = ESCALATE_NONCONV_FINDINGS.map((finding) =>
 );
 
 class EscalateOnNonConvergenceBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly escalations: FamilyEscalation[] = [];
@@ -1153,6 +1311,10 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1494,12 +1656,28 @@ class AlwaysHeadStuckCoderBackend extends ReviewFixRereviewBackend {
 }
 
 class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
 
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1970,10 +2148,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyHeadAfter: "head-after-bad-coder-fix",
       blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
     }));
-    // One resolution schedules the coder-fix commit range and one belongs to
-    // the independent terminal family auto-merge observation. Evidence-only
-    // retries must not add further resolutions for the same coder-fix range.
-    expect(backend.telemetryRepoResolutions).toBe(2);
+    // #941: host auto-merge observation deleted. One resolution schedules the
+    // coder-fix commit range; evidence-only retries must not add more.
+    expect(backend.telemetryRepoResolutions).toBe(1);
   });
 
   it("head not moved → fixed topology still alternates to fresh re-review", async () => {
@@ -2644,7 +2821,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       "cmr",
       "ship",
       "verify",
-      "docRelease",
+      "landing",
     ]);
   });
 it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", async () => {

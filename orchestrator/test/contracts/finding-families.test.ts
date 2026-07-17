@@ -534,8 +534,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           fixCommitSha: `fix-sha-${n}`,
         };
       },
-      dispatchDocRelease: async () => true,
-      applySideEffects: (_landing, verify) => verify,
       resolveFixCommitSha: async (sha) => {
         const lastFixer = fixerLandings[fixerLandings.length - 1]!;
         familyLedger.push({
@@ -546,6 +544,7 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         });
         return sha;
       },
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     }, {
       enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
@@ -660,8 +659,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
             fixCommitSha: `resume-fix-${landing.onlineReviewRound ?? "?"}`,
           };
         },
-        dispatchDocRelease: async () => true,
-        applySideEffects: (_landing, verify) => verify,
         resolveFixCommitSha: async (sha) => {
           const lastFixer = fixerLandings[fixerLandings.length - 1]!;
           familyLedger.push({
@@ -674,11 +671,11 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           });
           return sha;
         },
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
       },
       {
         initialRound: 2,
-        initialFixCommitSha: "sha-r1",
         // MERGE ledger + in-process — either/or loses pre-resume history.
         enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
       },
@@ -746,7 +743,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           fixCommitSha: "fix-once",
         };
       },
-      dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });

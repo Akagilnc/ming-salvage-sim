@@ -22,6 +22,7 @@ import {
   liveCmrJudgeContinue,
 } from "../../helpers/judge-fixtures.js";
 import type {
+
   FamilyBackend,
   FamilyEscalation,
   FamilyLedgerEntry,
@@ -30,6 +31,7 @@ import type {
   IntegratedCmrRequest,
   IntegratedCmrResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -58,6 +60,18 @@ function completedJudgeGreen(
 
 /** A capable FamilyBackend that records the unified worker calls. */
 class CapableFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   verifyCalls: FamilyVerifyRequest[] = [];
   cmrCalls: IntegratedCmrRequest[] = [];
   prCalls: Array<{ readonly familyBase: string }> = [];
@@ -66,6 +80,10 @@ class CapableFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(): Promise<void> {}
   async readFamilyLedger(): Promise<[]> {
     return [];
@@ -303,6 +321,18 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
    * fail-safed a new-seam-only backend to a stage fail-safe gate).
    */
   class NewSeamFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     dispatched: Array<{
       kind: WorkerSpec["kind"];
       promptFile: string;
@@ -314,6 +344,10 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -370,7 +404,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       if (
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
-        spec.kind === "docRelease"
+        spec.kind === "landing"
       ) {
         return {
           kind: "completed",
@@ -383,7 +417,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
                   committed: true,
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
-                : { kind: "docRelease", released: true },
+                : { kind: "landing", released: true },
         };
       }
       return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
@@ -411,7 +445,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md" },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "landing", promptFile: "landing.md" },
     ]);
   });
 
@@ -445,7 +479,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "landing", promptFile: "landing.md" },
     ]);
   });
 });
@@ -453,9 +487,25 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
 describe("#331 the family ship worker must return a SHIP payload (codex R2 guard)", () => {
   /** A new-seam backend whose ship worker returns a completed NON-ship payload. */
   class WrongShipFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
@@ -511,6 +561,18 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
    * family delivery (the PR never opened / opened on the wrong branch).
    */
   class OffContractShipFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     shipOutput: WorkerResult;
     constructor(shipOutput: WorkerResult) {
       this.shipOutput = shipOutput;
@@ -518,6 +580,10 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
@@ -536,7 +602,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
         spec.kind === "cleanup" ||
-        spec.kind === "docRelease"
+        spec.kind === "landing"
       ) {
         return {
           kind: "completed",
@@ -551,7 +617,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
                 }
                 : spec.kind === "cleanup"
                   ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                  : { kind: "docRelease", released: true },
+                  : { kind: "landing", released: true },
         };
       }
       return this.shipOutput;
@@ -682,6 +748,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
    * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
    */
   class RecordingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     constructor(
       private readonly cmrOut: WorkerResult,
@@ -690,6 +768,10 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -708,11 +790,27 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
   }
 
   class NoShipCapabilityAfterCmrBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     readonly aborted: FamilyLedgerEntry[] = [];
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -742,11 +840,27 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
   }
 
   class PrHeadMismatchRecordingBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     private shipDispatched = false;
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -763,16 +877,25 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
-      this.shipDispatched = true;
+      if (spec.kind === "ship") {
+        this.shipDispatched = true;
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "feat/445",
+            status: "pr_opened",
+            pr: "pr://feat/445",
+            prHead: "stale-pr-head",
+          },
+        };
+      }
+      // #940: host no longer caps online-review rounds. Returning non-verify
+      // cargo forever would hang the for(;;) loop — fail closed so the stage
+      // still proves ship persisted before online-review failure.
       return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: "feat/445",
-          status: "pr_opened",
-          pr: "pr://feat/445",
-          prHead: "stale-pr-head",
-        },
+        kind: "failed",
+        reason: `test pin: online-review ${spec.kind} incomplete after ship`,
       };
     }
   }
@@ -830,6 +953,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
 
 describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R4)", () => {
   class EscalatingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     escalations: FamilyEscalation[] = [];
     ledger: FamilyLedgerEntry[] = [];
     escalateOn: "cmr" | "ship";
@@ -839,6 +974,10 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -869,10 +1008,26 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
   }
 
   class ShipEscalatesWithoutEscalateSeamBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     ledger: FamilyLedgerEntry[] = [];
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }

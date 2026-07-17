@@ -39,6 +39,8 @@ import type {
 } from "../../../src/types.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import type { FamilyStageFailureStatus } from "../../../src/family/familyTerminal.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 class ChildBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -71,6 +73,18 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -79,6 +93,10 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(e);
   }
@@ -246,10 +264,26 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
 
   it("missing integrated CMR capability is cmr_failed, not verify_failed", async () => {
     class VerifyOnlyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `+${c.childIssue}` };
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }
@@ -310,6 +344,18 @@ describe("#922 fresh / resume same accident → same terminal name", () => {
 
       // Resume: children already merged; final barrier re-hits the same stage death.
       class ResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -324,6 +370,10 @@ describe("#922 fresh / resume same accident → same terminal name", () => {
         async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
           throw new Error("resume must not re-merge");
         }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
         async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
           this.ledger.push(e);
         }

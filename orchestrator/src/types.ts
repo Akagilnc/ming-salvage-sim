@@ -103,7 +103,7 @@ export type StepRole =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /** Terminal handoff status (ADR 0018 / PRD #244 route table). */
 export type HandoffStatus = "success" | "escalate" | "error";
@@ -131,7 +131,7 @@ export type StepSoul =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -670,7 +670,7 @@ export type WorkerKind =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
 export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
@@ -811,10 +811,13 @@ export interface OnlineReviewThreadReply {
   readonly body: string;
 }
 
-/** Terminal states a verify worker may self-declare (#600 wire schema). */
+/**
+ * Terminal states a verify worker may self-declare (#600 wire schema / #940).
+ * Mechanical `round_budget_exhausted` deleted — continue vs escalate is the
+ * persistent verify judge's three-state (#934 ID-012).
+ */
 export type VerifyWorkerTerminalState =
   | "mergeable"
-  | "round_budget_exhausted"
   | "decision_gate_raised";
 
 /** Runner-internal online review terminals (contract_drift retained for non-git protocol failures). */
@@ -1075,7 +1078,7 @@ export interface DispatchContext {
   readonly prHead?: string;
   /** GitHub `owner/repo` for gh api polling. */
   readonly repo?: string;
-  /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
+  /** 1-based online review round (ledger / landing cargo; #940 no host round cap). */
   readonly onlineReviewRound?: number;
   /**
    * Judge workers only: prior-round finding snapshots extracted from ledger (#711).
@@ -1198,19 +1201,30 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review verify worker output (#600). The verify worker owns per-finding
- * fix / reject / defer judgment; the runner applies GitHub side effects and only
- * counts findings (0 / non-0) for routing — it does not interpret finding content.
+ * Online review verify worker output (#600 / #940).
+ *
+ * The worker owns per-finding judgment and should execute GitHub side effects
+ * (reply / resolve / deferred) before self-reporting. The host still applies
+ * cargo plan fields as a fail-safe applicator ({@link threadReplies} /
+ * {@link threadsToResolve} / {@link deferredIssueUrls}) before accepting a
+ * disposition as mergeable — effects must land even when the worker only emits
+ * the plan. Host routes on three-state disposition + CI, never on findings
+ * counts (#934 ID-012).
  */
 export interface VerifyResult {
   readonly kind: "verify";
-  /** Bot/online review converged (green) ⇒ the fix loop can stop. */
+  /**
+   * Judge green (converged). Combined with host CI check-runs for mergeability;
+   * `false` is the continue disposition unless {@link terminalState} escalates.
+   * Worker must not set this until reply/resolve/deferred side effects succeed
+   * (or the host fail-safe applicator will apply remaining plan cargo).
+   */
   readonly converged: boolean;
-  /** Per-finding dispositions judged by the verify worker. */
+  /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
    * Identity keys carried through as data for the verify worker to use when
-   * reporting which fix-marked findings it evaluated.
+   * reporting which fix-marked findings it evaluated (fixer landing).
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
@@ -1219,7 +1233,7 @@ export interface VerifyResult {
   readonly threadsToResolve?: ReadonlyArray<string>;
   /** Tracked issue URLs created for deferred findings (runner-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
-  /** Documented terminal state when the loop ends (#600 AC1/AC5). */
+  /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
@@ -1274,16 +1288,16 @@ export interface CleanupResult {
 }
 
 /**
- * 文档发布 worker output (#735 / S12). Thin schema only: skill success
+ * Landing worker output (#735 / S12 / #941). Thin schema only: skill success
  * (including 文档发布空跑) → `released:true`; crash / hang / skill fail /
  * required push fail → `released:false`. Tip continues via ledger `branchHEAD`.
- * Offline/test may still synthesize a green stub under the offline hatch only.
+ * Landing Action owns merge only after released:true; no offline green stub.
  */
-export interface DocReleaseResult {
-  readonly kind: "docRelease";
+export interface LandingResult {
+  readonly kind: "landing";
   /**
    * Whether 文档发布 finished successfully (true includes empty-run; false
-   * blocks auto-merge).
+   * fails the landing Action before merge).
    */
   readonly released: boolean;
 }
@@ -1299,7 +1313,7 @@ export type WorkerOutput =
   | VerifyResult
   | FixerResult
   | CleanupResult
-  | DocReleaseResult;
+  | LandingResult;
 
 /**
  * The result of dispatching ONE worker — a discriminated union so the runner can

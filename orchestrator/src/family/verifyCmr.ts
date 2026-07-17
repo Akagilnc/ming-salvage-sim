@@ -25,22 +25,15 @@ import { shWithClock } from "../externalCall.js";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
 import {
-  familyAutoMergeIncomplete,
-  runFamilyAutoMergeStage,
-} from "./familyAutoMerge.js";
-import { buildCleanupLanding } from "../postMergeCleanup.js";
-import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
-import { stubCleanupResult } from "../reviewLoopOutcome.js";
-import {
-  shouldReclaimFamilyHost,
-} from "../hostReclaim.js";
+  recordLandingActionFailure,
+  runLandingAction,
+} from "./landing.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
   type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import {
-  docReleaseWorkerSpec,
   fixerWorkerSpec,
   verifyWorkerSpec,
 } from "../dispatchWorker.js";
@@ -68,14 +61,14 @@ import {
   priorOnlineReviewFindingsFromFamilyLedger,
 } from "../findingFamilies.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
+
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
-  dispatchFamilyWorkerWithMonitor,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { withMechanicalRetry } from "../dispatchRetry.js";
+import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import { executeAdvanceCoderSuggestion } from "../advanceCoderEffect.js";
 import {
   applyRelayBatonToRoute,
@@ -91,17 +84,15 @@ import {
   familyWorkerSlotForDispatch,
 } from "./familyWorkerSlots.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
-import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
-  CleanupResult,
   DispatchContext,
   EscalationAnswerPayload,
   Finding,
   FindingFamily,
   ShipResult,
-  VerifyResult,
   ReviewFixRefuseRecord,
+  VerifyResult,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -110,6 +101,7 @@ import type {
 import { findingIdentityKey } from "../findings.js";
 import {
   closeFamilyCourtFromJudgeOutput,
+  familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
@@ -122,19 +114,19 @@ import {
 } from "../telemetry.js";
 import {
   cmrPassAlreadyPassed,
+  mechanicalRedispatchAttemptsFromFamilyLedger,
   recordAborted as recordDurableAbort,
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
+  recordFamilyEscalated,
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   recordShipped,
-  familyPostMergeCleanupForHead,
-  familyPrMergedForHead,
-  mergedSet,
-  recordPostMergeCleanup,
 } from "./ledger.js";
+// Stable re-export for existing test imports (#934 ID-004 budget walk).
+export { mechanicalRedispatchAttemptsFromFamilyLedger };
 import { isFilledString } from "../shipOutcome.js";
 import {
   contractDriftStopSummary,
@@ -552,8 +544,6 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
-    /** #930 — per-pass family judge session for resume across fix rounds. */
-    readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
     /** #930 / #919 R2 — refuse keys blind-routed back to the family judge. */
     readonly refusedFindingIdentityKeysByPass?: Partial<
       Record<IntegratedCmrPass, readonly string[]>
@@ -609,12 +599,9 @@ async function runCmrCoderFix(input: {
   readonly resolvedRoute: ResolvedModelRoute;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  /** #930 — judge session to resume after fix / refuse. */
-  readonly judgeSessionId?: string;
   readonly priorCmrFindingIdentityKeysByPass?: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   >;
-  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -632,9 +619,7 @@ async function runCmrCoderFix(input: {
     resolvedRoute,
     billingPool,
     billingPoolSlots,
-    judgeSessionId,
     priorCmrFindingIdentityKeysByPass,
-    judgeSessionIdByPass,
   } = input;
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
@@ -827,18 +812,12 @@ async function runCmrCoderFix(input: {
   return {
     result: { ok: true, ran: true },
     familyHeadAfter,
-    // Surface refuse + judge session so the pass loop re-opens the court.
+    // Surface refuse cargo so the pass loop re-opens the court.
+    // #966: judge resume sessionId is derived from family ledger on re-open
+    // (no judgeSessionIdByPass memory relay — ledger is sole truth).
     restartFinalBarrier: {
       familyHeadAfter,
       priorCmrFindingIdentityKeysByPass: priorCmrFindingIdentityKeysByPass ?? {},
-      ...(judgeSessionId !== undefined || judgeSessionIdByPass !== undefined
-        ? {
-            judgeSessionIdByPass: {
-              ...(judgeSessionIdByPass ?? {}),
-              ...(judgeSessionId !== undefined ? { [pass]: judgeSessionId } : {}),
-            },
-          }
-        : {}),
       ...(refusedFindingIdentityKeys.length > 0
         ? {
             refusedFindingIdentityKeysByPass: {
@@ -1061,34 +1040,13 @@ function familyOnlineReviewLoopFailureStopSummary(
         : {}),
     });
   }
-  const reason =
-    reviewLoop.terminalState === "round_budget_exhausted"
-      ? "family online review loop exhausted the 3-round budget"
-      : "family online review loop did not converge";
+  // #940: mechanical round-budget exhaust deleted; remaining non-success is
+  // worker/judge disposition (decision_gate / online_review_failed).
   return stageFailureStopSummary({
     status: "online_review_failed",
-    summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
+    summary: `family online review loop did not converge (terminal: ${reviewLoop.terminalState})`,
     repairHint: "resolve remaining online review findings or answer the decision gate",
   });
-}
-
-async function dispatchFamilyReviewWorker(
-  familyBackend: FamilyBackend,
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-  opts?: {
-    readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
-  },
-): Promise<WorkerResult> {
-  const primary = await dispatchOrAbort(
-    familyBackend,
-    spec,
-    ctx,
-    landing,
-    opts,
-  );
-  return primary;
 }
 
 export async function runFamilyOnlineReviewLoop(input: {
@@ -1256,7 +1214,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     dispatchVerify: async (landing, round) => {
       let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
       const verifyPool = poolForKind("verify");
-      const result = await dispatchFamilyReviewWorker(
+      const result = await dispatchOrAbort(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
         {
@@ -1333,7 +1291,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       lastFixMarkedFindingThreads = landing.fixMarkedFindingThreads ?? [];
       lastFixerOnlineReviewRound = round;
       const fixerPool = poolForKind("fixer");
-      const result = await dispatchFamilyReviewWorker(
+      const result = await dispatchOrAbort(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
         {
@@ -1381,23 +1339,11 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output.kind === "fixer" ? result.output : undefined;
     },
-    // #740: family S12 crash-retry continues as-is (no scoped cleanup hook).
-    dispatchDocRelease: async (landing: WorkerLandingPayload) => {
-      const docPool = poolForKind("docRelease");
-      const result = await dispatchFamilyReviewWorker(
-        input.familyBackend,
-        docReleaseWorkerSpec(input.resolvedRoute),
-        {
-          ...baseCtx,
-          ...(docPool !== undefined ? { billingPool: docPool } : {}),
-        },
-        landing,
-      );
-      if (result.kind !== "completed") return false;
-      return result.output.kind === "docRelease"
-        ? result.output.released
-        : undefined;
-    },
+    // #941: landing Action owns docs/merge/close/cleanup after this loop
+    // (no host dispatchDocRelease here).
+    // Host fail-safe applicator (correctness K1): live poll path still applies
+    // reply/resolve/deferred from verify cargo until workers truly own gh.
+    // Offline synthetic poll has no live PR — pass cargo through unchanged.
     applySideEffects: (
       landing: WorkerLandingPayload,
       verify: VerifyResult,
@@ -1465,7 +1411,9 @@ export async function runFamilyOnlineReviewLoop(input: {
   },
       {
         initialRound: loopState.round,
-        initialFixCommitSha: loopState.lastFixSha,
+        ...(loopState.lastFixSha !== undefined
+          ? { initialFixCommitSha: loopState.lastFixSha }
+          : {}),
         initialFixMarkedFindingIdentityKeys:
           resumedFixAuthorization.fixMarkedFindingIdentityKeys,
         initialFixMarkedFindingThreads:
@@ -1494,150 +1442,6 @@ export async function runFamilyOnlineReviewLoop(input: {
       return err.result;
     }
     throw err;
-  }
-}
-
-/**
- * Reconstruct durable process-root attempts already consumed for a family
- * worker step (#934 ID-004 / #937). Mirrors single-slice
- * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
- * failure markers for this workerStep, stop at any non-spawn boundary so a
- * later successful phase does not inherit an earlier crash streak.
- */
-export function mechanicalRedispatchAttemptsFromFamilyLedger(
-  ledger: ReadonlyArray<FamilyLedgerEntry>,
-  workerStep: string,
-): number {
-  let durableAttempts = 0;
-  for (let index = ledger.length - 1; index >= 0; index--) {
-    const entry = ledger[index]!;
-    const attempt = entry.mechanicalRedispatchAttempt;
-    if (
-      entry.event === "worker_dispatched" &&
-      entry.workerStep === workerStep &&
-      typeof attempt === "number" &&
-      Number.isSafeInteger(attempt) &&
-      attempt >= 1
-    ) {
-      durableAttempts = Math.max(durableAttempts, attempt);
-      continue;
-    }
-    // Spawn adoption / advisory git telemetry: worker_dispatched without a
-    // retry counter — skip so inter-retry spawn rows do not reset the streak.
-    if (
-      entry.event === "worker_dispatched" &&
-      entry.mechanicalRedispatchAttempt === undefined
-    ) {
-      continue;
-    }
-    // Any other durable fact (phase success, escalate, merge, …) is a budget
-    // boundary for this workerStep.
-    break;
-  }
-  return durableAttempts;
-}
-
-function familyWorkerStepKey(
-  spec: Parameters<typeof dispatchFamilyWorker>[1],
-  ctx: Parameters<typeof dispatchFamilyWorker>[2],
-): string {
-  return `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`;
-}
-
-async function dispatchOrAbort(
-  familyBackend: FamilyBackend,
-  spec: Parameters<typeof dispatchFamilyWorker>[1],
-  ctx: Parameters<typeof dispatchFamilyWorker>[2],
-  landing?: Parameters<typeof dispatchFamilyWorker>[3],
-  opts?: {
-    readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
-  },
-): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
-  try {
-    // #598 / 2026-07-08: a family worker that CRASHES (throws) re-dispatches a fresh
-    // session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS — every role,
-    // read-only and write-capable alike. Every RESOLVED result (failed / malformed /
-    // completed / escalated) is DEFERRED to this gate's own rich terminal handling.
-    // #934 ID-004: durable mechanical_redispatch markers bind the budget across
-    // process re-entry (same contract as single-slice runner.ts).
-    const workerStep = familyWorkerStepKey(spec, ctx);
-    const ledger = await familyBackend.readFamilyLedger();
-    const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
-      ledger,
-      workerStep,
-    );
-    return await withMechanicalRetry(
-      spec,
-      ctx,
-      async (s, c) => {
-        let dispatchError: unknown | undefined;
-        let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
-        try {
-          const monitored = await dispatchFamilyWorkerWithMonitor(
-            familyBackend,
-            s,
-            c,
-            landing,
-            {
-              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
-                opts?.onMonitorHandle?.(handle);
-                // #934 ID-006 / #937: adoption/persist failure terminates the
-                // exact ChildProcess via dispatchFamilyWorkerWithMonitor —
-                // rethrow so terminateSpawnedChild runs (no best-effort swallow).
-                await familyBackend.appendFamilyLedger({
-                  status: "worker_dispatched",
-                  event: "worker_dispatched",
-                  monitorHandle: handle,
-                });
-              },
-            },
-          );
-          workerResult = monitored.result;
-          await monitored.telemetryEnvironmentStamp;
-        } catch (err) {
-          dispatchError = err;
-        }
-        if (dispatchError !== undefined) throw dispatchError;
-        return workerResult!;
-      },
-      {
-        attemptsAlreadyUsed,
-        onFailure: async (outcome, attempt) => {
-          const reason =
-            "result" in outcome
-              ? outcome.result.kind === "failed"
-                ? outcome.result.reason
-                : `worker returned ${outcome.result.kind}`
-              : outcome.error instanceof Error
-                ? outcome.error.message
-                : String(outcome.error);
-          await familyBackend.appendFamilyLedger({
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep,
-            mechanicalRedispatchAttempt: attempt,
-            reason,
-          });
-        },
-        rethrowOnExhaustion: true,
-      },
-    );
-  } catch (err) {
-    if (err instanceof OnlineReviewLoopTerminal) throw err;
-    // #909: 429/quota park signal must NOT collapse into generic startup
-    // `{kind:"failed"}` (leg-kill). Rethrow so upper family/runner can park or
-    // relay — same typed terminal as single-slice withMechanicalRetry.
-    if (isQuotaWaitForResetError(err)) {
-      // N2: stamp the hit CMR pass so wall relay rewrites only that slot.
-      if (ctx.cmrPass === "completeness" || ctx.cmrPass === "correctness") {
-        err.cmrPass = ctx.cmrPass;
-      }
-      throw err;
-    }
-    const reason = `family ${spec.kind} worker threw on startup: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
-    return { kind: "failed", reason };
   }
 }
 
@@ -1776,8 +1580,6 @@ async function runIntegratedCmrPass(input: {
   readonly allowCoderFix: boolean;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  /** #930 — resume the family judge session for this pass when present. */
-  readonly judgeSessionId?: string;
   /** #930 — refuse keys from prior coder-fix for judge re-ruling. */
   readonly refusedFindingIdentityKeys?: readonly string[];
   /**
@@ -1785,7 +1587,6 @@ async function runIntegratedCmrPass(input: {
    * (信封宪法: keys on thin ctx; cargo on landing only).
    */
   readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
-  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1803,10 +1604,8 @@ async function runIntegratedCmrPass(input: {
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
-    judgeSessionId,
     refusedFindingIdentityKeys,
     refuseRecords,
-    judgeSessionIdByPass,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -1830,22 +1629,22 @@ async function runIntegratedCmrPass(input: {
       resolvedRoute: activeRoute,
     };
   }
-  // #930: resume the same family judge when we hold a session id; otherwise
-  // open fresh and land priorJudgeVerdicts from the ledger (session-loss path).
-  const resumeJudgeSessionId =
-    typeof judgeSessionId === "string" && judgeSessionId.length > 0
-      ? judgeSessionId
-      : undefined;
-  const spec = cmrWorkerSpec(
-    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
-    pass,
-    resolvedRoute,
-  );
+  // #966 / #930: resume sessionId is derived from family ledger court rows
+  // (cmr_reviewed / cmr_passed) — sole truth, no process-local ByPass relay.
+  // Absent sessionId → fresh open; priorJudgeVerdicts still land for trajectory
+  // / session-loss recovery (same shape as single-slice #925).
   const familyLedger = await familyBackend.readFamilyLedger();
   const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const priorJudgeVerdicts = priorFamilyJudgeVerdictRowsFromLedger(
     familyLedger,
     pass,
+  );
+  const resumeJudgeSessionId =
+    familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
+  const spec = cmrWorkerSpec(
+    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
+    pass,
+    resolvedRoute,
   );
   const cmrPool = billingPoolForFamilyWorker({
     ...(billingPool !== undefined ? { billingPool } : {}),
@@ -2061,19 +1860,6 @@ async function runIntegratedCmrPass(input: {
       : undefined;
   const skippedLegs = cargoSource?.skippedLegs;
   const findingFamilies = cargoSource?.findingFamilies;
-
-  const mergeRestart = (
-    base: NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]>,
-  ): NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]> => ({
-    ...base,
-    judgeSessionIdByPass: {
-      ...(judgeSessionIdByPass ?? {}),
-      ...(base.judgeSessionIdByPass ?? {}),
-      ...(openedJudgeSessionId !== undefined
-        ? { [pass]: openedJudgeSessionId }
-        : {}),
-    },
-  });
 
   if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>
@@ -2324,13 +2110,9 @@ async function runIntegratedCmrPass(input: {
       resolvedRoute: activeRoute,
       ...(billingPool !== undefined ? { billingPool } : {}),
       ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
-      ...(openedJudgeSessionId !== undefined
-        ? { judgeSessionId: openedJudgeSessionId }
-        : {}),
       ...(priorCmrFindingIdentityKeysByPass !== undefined
         ? { priorCmrFindingIdentityKeysByPass }
         : {}),
-      ...(judgeSessionIdByPass !== undefined ? { judgeSessionIdByPass } : {}),
     });
     if (!fixRound.result.ok) {
       return { ...fixRound, resolvedRoute: activeRoute };
@@ -2342,11 +2124,13 @@ async function runIntegratedCmrPass(input: {
       ]),
     ];
     const fromFix = fixRound.restartFinalBarrier;
+    // #966: sessionId already on cmr_reviewed ledger row above; next open
+    // derives resume from ledger (no ByPass packing).
     return {
       result: { ok: true, ran: true },
       familyHeadAfter: fixRound.familyHeadAfter,
       resolvedRoute: activeRoute,
-      restartFinalBarrier: mergeRestart({
+      restartFinalBarrier: {
         familyHeadAfter: fixRound.familyHeadAfter,
         priorCmrFindingIdentityKeysByPass: {
           ...(priorCmrFindingIdentityKeysByPass ?? {}),
@@ -2362,10 +2146,7 @@ async function runIntegratedCmrPass(input: {
         ...(fromFix?.refuseRecordsByPass !== undefined
           ? { refuseRecordsByPass: fromFix.refuseRecordsByPass }
           : {}),
-        ...(fromFix?.judgeSessionIdByPass !== undefined
-          ? { judgeSessionIdByPass: fromFix.judgeSessionIdByPass }
-          : {}),
-      }),
+      },
     };
   }
 
@@ -2442,25 +2223,11 @@ export async function runVerifyCmr(
   // (decision 3⑤/⑥). A green wave verify clears the wave.
   if (phase === "wave") return { ok: true, ran: true };
 
-  // ── integrated cmr 承重闸 (decision 3⑥): only AFTER a green full verify. No cmr
-  //    capability ⇒ the hook CANNOT run the load-bearing review, so it must NOT
-  //    report a pass: a real verify already ran, and `{ok:true}` here would make
-  //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
-  //    Fail-safe to ok:false + cmr_failed (#922) — NOT the #293 nothing-ran no-op. ──
-  // ADR 0026 / #331: the integrated cmr is dispatched as a FAMILY cmr WORKER
-  // through the unified seam (no longer the inline `runIntegratedCmr`). The
-  // capability check stays: NO cmr capability ⇒ cmr_failed (the load-bearing
-  // review cannot run; never a false pass). The capability is satisfied by EITHER
-  // the new unified `dispatchWorker` seam OR the legacy `runIntegratedCmr` (the
-  // dispatch helper prefers the former, forwards to the latter) — gating on the
-  // legacy method ALONE would wrongly fail-safe a backend that implements ONLY the
-  // new seam (codex cmr finding).
-  if (
-    familyBackend.dispatchWorker === undefined &&
-    familyBackend.runIntegratedCmr === undefined
-  ) {
-    return stageGate("cmr_failed");
-  }
+  // ── integrated cmr 承重闸 (decision 3⑥): only AFTER a green full verify.
+  // #940 / ID-012: production/test contract guarantees CMR capability via the
+  // unified dispatchWorker seam (legacy runIntegratedCmr remains a residual
+  // fallback inside dispatchFamilyWorker). Missing-capability host fake exits
+  // are deleted — dispatch failures surface as normal worker/process outcomes.
   let resolvedRoute: ResolvedModelRoute;
   try {
     resolvedRoute = modelRoute ?? resolveActiveModelRoute();
@@ -2515,9 +2282,10 @@ export async function runVerifyCmr(
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
     activePriorKeysByPass[pass];
-  // Process-local judge session + refuse maps survive barrier restarts within
-  // this final-phase invocation (persistent court across fix rounds).
-  let judgeSessionIdByPass: Partial<Record<IntegratedCmrPass, string>> = {};
+  // #966: judge resume sessionId is derived from the family ledger on each
+  // open (cmr_reviewed / cmr_passed). Process-local refuse maps still survive
+  // barrier restarts within this final-phase invocation for the immediate
+  // re-open after coder-fix refuse.
   let refusedFindingIdentityKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   > = {};
@@ -2548,9 +2316,6 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       ...scopedPoolFields,
-      ...(judgeSessionIdByPass.completeness !== undefined
-        ? { judgeSessionId: judgeSessionIdByPass.completeness }
-        : {}),
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
             refusedFindingIdentityKeys:
@@ -2560,7 +2325,6 @@ export async function runVerifyCmr(
       ...(refuseRecordsByPass.completeness !== undefined
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
-      judgeSessionIdByPass,
     });
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
@@ -2587,10 +2351,6 @@ export async function runVerifyCmr(
       completeness.restartFinalBarrier.familyHeadAfter;
     completenessPriorKeysByPass =
       completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    judgeSessionIdByPass = {
-      ...judgeSessionIdByPass,
-      ...(completeness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
-    };
     // Keep refuse keys + cargo only for the immediate next judge open.
     const nextRefuse =
       completeness.restartFinalBarrier.refusedFindingIdentityKeysByPass
@@ -2627,9 +2387,6 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       ...scopedPoolFields,
-      ...(judgeSessionIdByPass.correctness !== undefined
-        ? { judgeSessionId: judgeSessionIdByPass.correctness }
-        : {}),
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
             refusedFindingIdentityKeys:
@@ -2639,7 +2396,6 @@ export async function runVerifyCmr(
       ...(refuseRecordsByPass.correctness !== undefined
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
-      judgeSessionIdByPass,
     });
     if (!correctness.result.ok) return correctness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
@@ -2662,10 +2418,6 @@ export async function runVerifyCmr(
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    judgeSessionIdByPass = {
-      ...judgeSessionIdByPass,
-      ...(correctness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
-    };
     const nextRefuse =
       correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
         ?.correctness;
@@ -2681,62 +2433,14 @@ export async function runVerifyCmr(
         : { ...refuseRecordsByPass, correctness: undefined };
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
-  // Both CMR passes converged. Continue through ship, online review, auto-merge,
-  // and post-merge cleanup below.
+  // Both CMR passes converged. Continue through ship, online review, then
+  // landing (docs / merge / MERGED / close / cleanup) below.
 
   // ── Ship stage: green verify + converged CMR ⇒ open the family PR, then the
-  //    same final barrier continues through online review, auto-merge, and cleanup.
-  //    No PR capability means that continuation cannot start; verify + CMR already
-  //    ran, so `{ok:true}` would report `"success"` for a run whose PR never opened
-  //    — fail-safe to `ok:false` (NOT the no-op). The ship action is a FAMILY SHIP
-  //    WORKER through the unified seam. Without that worker capability the final
-  //    barrier remains incomplete.
-  if (familyBackend.dispatchWorker === undefined) {
-    const reason =
-      "family ship worker unavailable after converged CMR: backend has no dispatchWorker capability";
-    const postCmrFamilyHead = await readPostCmrFamilyHead(
-      familyBackend,
-      familyBase,
-      cmrPassedFamilyHeadAfter,
-    );
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: { reason },
-      familyHeadAfter: postCmrFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason,
-      familyHeadAfter: postCmrFamilyHead,
-      stopSummary: stageFailureStopSummary({
-        status: "ship_failed",
-        summary: `${reason}; the terminal PR gate cannot open a PR`,
-        repairHint:
-          "provide the family ship worker dispatch seam, then rerun the final family barrier",
-        metadata: {
-          ship: {
-            latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
-            currentFamilyHead: postCmrFamilyHead,
-            shipPrState: "ship-capability-missing",
-          },
-          heads: {
-            ...(postCmrFamilyHead !== undefined
-              ? { actualFamilyHead: postCmrFamilyHead }
-              : {}),
-            ...(cmrPassedFamilyHeadAfter !== undefined
-              ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
-              : {}),
-            sources: {
-              actualFamilyHead: "family head after CMR before missing ship capability",
-              verifiedCmrHead: "latest cmr_passed ledger row",
-            },
-          },
-        },
-      }),
-    });
-    return stageGate("ship_failed");
-  }
+  //    same final barrier continues through online review and landing.
+  // #940 / ID-012: ship capability is guaranteed by production/test contract
+  // (dispatchWorker). Missing-capability host fake exits deleted — ship is
+  // always dispatched; worker/process failure is the only ship_failed path.
   const shipSpec = familyShipWorkerSpec(resolvedRoute);
   const shipPool = billingPoolForFamilyWorker({
     ...scopedPoolFields,
@@ -2971,193 +2675,39 @@ export async function runVerifyCmr(
       : {}),
   });
 
-  const autoMerge = await runFamilyAutoMergeStage({
-    familyBackend,
-    familyBase,
-    convergedHeadOid: convergedFamilyHead,
-    prUrl: shipPr,
-  });
-  if (familyAutoMergeIncomplete(autoMerge)) {
-    const baseStop =
-      autoMerge.stopSummary ??
-      decisionGateParkStopSummary({
-        summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
-        repairHint:
-          "resolve merge blockers or answer the decision gate, then re-run the family final barrier",
-      });
-    const isPark = baseStop.reason === "decision_gate_park";
-    const stopSummary = isPark
-      ? baseStop
-      : stageFailureStopSummary({
-          status: "merge_failed",
-          summary: baseStop.summary,
-          repairHint:
-            baseStop.repairHint ??
-            "resolve merge blockers, then re-run the family final barrier",
-          ...(baseStop.metadata !== undefined
-            ? { metadata: baseStop.metadata }
-            : {}),
-        });
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: { reason: stopSummary.summary },
-      familyHeadAfter: convergedFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason: stopSummary.summary,
-      familyHeadAfter: convergedFamilyHead,
-      stopSummary,
-    });
-    return isPark ? { ok: false, ran: true } : stageGate("merge_failed");
-  }
-
-  const cleanupGate = await ensureFamilyPostMergeCleanup({
+  // #941 / ID-013: landing Action owns docs + merge + MERGED + close + cleanup.
+  // Host auto-merge courts and cleanup-fail classification are deleted.
+  const landing = await runLandingAction({
     familyBackend,
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
-    familyHeadAfter: convergedFamilyHead,
+    convergedHeadOid: convergedFamilyHead,
     prUrl: shipPr,
     ...(familyIssue !== undefined ? { familyIssue } : {}),
-    phase,
-    recordAbortOnFailure: true,
+    resolvedRoute,
+    ...scopedPoolFields,
   });
-  if (!cleanupGate.ok) return stageGate("cleanup_failed");
-  return { ok: true, ran: true };
-}
-
-/**
- * #603 — after `pr_merged` for a head, require terminal+ok `post_merge_cleanup`
- * (or dispatch cleanup → record → optional reclaim). Shared by the fresh final
- * barrier and family resume already_done exits so remote residue is never
- * reported as success.
- */
-export async function ensureFamilyPostMergeCleanup(input: {
-  readonly familyBackend: FamilyBackend;
-  readonly familyBase: string;
-  readonly runId?: string;
-  readonly familyHeadAfter: string;
-  readonly prUrl: string;
-  readonly familyIssue?: number;
-  readonly phase?: VerifyCmrPhase;
-  /** When true (final barrier), write durable abort on cleanup failure. */
-  readonly recordAbortOnFailure?: boolean;
-}): Promise<{ readonly ok: boolean; readonly reason?: string }> {
-  const {
-    familyBackend,
-    familyBase,
-    familyHeadAfter,
-    prUrl,
-    familyIssue,
-    phase = "final",
-    recordAbortOnFailure = false,
-  } = input;
-  const ledger = await familyBackend.readFamilyLedger();
-  const priorCleanup = familyPostMergeCleanupForHead(ledger, familyHeadAfter);
-  if (priorCleanup !== undefined) {
-    return { ok: true };
-  }
-  const prMergedRow = familyPrMergedForHead(ledger, familyHeadAfter);
-  if (prMergedRow === undefined) {
-    return { ok: true };
-  }
-  const familyRepo =
-    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-  const coveredIssues = [...mergedSet(ledger)];
-  const cleanupLanding: WorkerLandingPayload = {
-    cleanupDispatch: buildCleanupLanding({
-      record: {
-        prUrl: prMergedRow.pr,
-        prNumber: prMergedRow.prNumber,
-        remoteBranchName: prMergedRow.remoteBranchName,
-        mergedHeadOid: prMergedRow.mergedHeadOid,
-        convergedHeadOid: familyHeadAfter,
-      },
-      coveredIssues,
-      ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
-    }),
-  };
-  let reportedCleanup: CleanupResult;
-  try {
-    const cleanupContext: DispatchContext = {
+  if (!landing.ok) {
+    // family/914 CR — single durable exit (recordLandingActionFailure); same
+    // writer as ensureLandingForResume. Callers only map kind → result shape.
+    const recorded = await recordLandingActionFailure(
+      familyBackend,
+      landing,
+      { phase: "final", familyHeadAfter: convergedFamilyHead },
+    );
+    if (recorded.kind === "park") {
+      // failedStatus omitted → spine finalize escalates via barrier stopSummary
+      return { ok: false, ran: true };
+    }
+    // hard_fail: optional #296 in-memory hook (RealFamilyBackend no-op); durable
+    // aborted row already written by recordLandingActionFailure.
+    await familyBackend.recordAborted?.({
+      phase,
       familyBase,
-      ...(input.runId !== undefined ? { runId: input.runId } : {}),
-      repo: familyRepo,
-      prUrl,
-    };
-    if (familyBackend.runPostMergeCleanup !== undefined) {
-      reportedCleanup = await familyBackend.runPostMergeCleanup(
-        cleanupLanding,
-        cleanupContext,
-      );
-    } else if (offlineReviewLoopDispatchAdmissible(cleanupContext, familyRepo)) {
-      reportedCleanup = stubCleanupResult();
-    } else {
-      throw new Error("family backend is missing deterministic post-merge cleanup");
-    }
-  } catch (error) {
-    const reason = `family post-merge cleanup failed: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
-    if (recordAbortOnFailure) {
-      await familyBackend.recordAborted?.({
-        phase,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase,
-        reason,
-        familyHeadAfter,
-        stopSummary: stageFailureStopSummary({
-          status: "cleanup_failed",
-          summary: reason,
-          repairHint:
-            "verify PR is MERGED with matching head, then re-run the family final barrier",
-        }),
-      });
-    }
-    return { ok: false, reason };
+      errorPackage: { reason: recorded.stopSummary.summary },
+      familyHeadAfter: convergedFamilyHead,
+    });
+    return stageGate("merge_failed");
   }
-  if (!reportedCleanup.terminal || !reportedCleanup.ok) {
-    const reason = "family post-merge cleanup did not reach a terminal success outcome";
-    if (recordAbortOnFailure) {
-      await familyBackend.recordAborted?.({
-        phase,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase,
-        reason,
-        familyHeadAfter,
-        stopSummary: stageFailureStopSummary({
-          status: "cleanup_failed",
-          summary: reason,
-          repairHint:
-            "verify PR is MERGED with matching head, then re-run the family final barrier",
-        }),
-      });
-    }
-    return { ok: false, reason };
-  }
-  await recordPostMergeCleanup(familyBackend, {
-    familyHeadAfter,
-    cleanupOutput: reportedCleanup,
-  });
-  const postCleanupLedger = await familyBackend.readFamilyLedger();
-  if (
-    shouldReclaimFamilyHost(postCleanupLedger) &&
-    familyBackend.reapFamilyHost !== undefined
-  ) {
-    try {
-      await familyBackend.reapFamilyHost(familyBase);
-    } catch {
-      // Best-effort terminal GC — must not flip a successful cleanup.
-    }
-  }
-  return { ok: true };
+  return { ok: true, ran: true };
 }

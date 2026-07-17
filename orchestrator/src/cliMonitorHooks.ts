@@ -44,7 +44,7 @@ const MONITORED_KINDS: ReadonlySet<WorkerKind> = new Set([
   "verify",
   "fixer",
   "cleanup",
-  "docRelease",
+  "landing",
 ]);
 
 /** Internal provenance marker for a result synthesized because no sidecar existed. */

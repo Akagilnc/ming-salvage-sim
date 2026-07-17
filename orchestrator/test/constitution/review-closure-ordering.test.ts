@@ -29,6 +29,8 @@ import type {
   WorkerSpec,
 } from "../../src/types.js";
 import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -46,6 +48,18 @@ const NEW_BLOCKER: Finding = {
 };
 
 class ClosureOrderingBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
   currentFamilyHead = "head-1";
@@ -53,6 +67,10 @@ class ClosureOrderingBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: "unused" };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

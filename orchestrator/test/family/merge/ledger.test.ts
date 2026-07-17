@@ -27,9 +27,23 @@ import {
   recordShipped,
 } from "../../../src/family/ledger.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 /** A zero-IO fake family backend that keeps the ledger in memory. */
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -38,8 +52,12 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
     return { familyHead: "head" };
   }
-  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this ledger
-  // test never merges with a conflict, so the fake omits it entirely.
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam.
+  // Throwing stub must remain unreachable on this clean/no-conflict path.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }

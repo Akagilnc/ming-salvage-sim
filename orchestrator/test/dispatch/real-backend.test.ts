@@ -861,7 +861,7 @@ describe("realBackend soulsDirError (#372)", () => {
     expect(soulsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REQUIRED_SOUL_FILES lists every file under image/souls incl. docRelease (#739)", () => {
+  it("REQUIRED_SOUL_FILES lists every file under image/souls incl. landing (#739)", () => {
     // Source of truth = orchestrator/image/souls/ directory listing via readdirSync.
     // Spot-checks + hard-coded count (e.g. size===11) still pass when a new soul
     // lands on disk but is missing from REQUIRED_SOUL_FILES — that is the #739
@@ -874,16 +874,16 @@ describe("realBackend soulsDirError (#372)", () => {
       .sort();
     const required = [...REQUIRED_SOUL_FILES].sort();
     expect(required).toEqual(onDisk);
-    expect(onDisk).toContain("docRelease.md");
-    expect(REQUIRED_SOUL_FILES).toContain("docRelease.md");
+    expect(onDisk).toContain("landing.md");
+    expect(REQUIRED_SOUL_FILES).toContain("landing.md");
     // No duplicates in the constant (sort hides them in the equality above).
     expect(new Set(REQUIRED_SOUL_FILES).size).toBe(REQUIRED_SOUL_FILES.length);
   });
 
-  it("soulsDirError reports missing docRelease.md by name (#739 fail-fast)", () => {
-    const err = soulsDirError(abs, true, true, ["docRelease.md"]);
+  it("soulsDirError reports missing landing.md by name (#739 fail-fast)", () => {
+    const err = soulsDirError(abs, true, true, ["landing.md"]);
     expect(err).toMatch(/missing required soul file\(s\)/);
-    expect(err).toMatch(/docRelease\.md/);
+    expect(err).toMatch(/landing\.md/);
     expect(err).toMatch(/All of \[/);
   });
 });
@@ -1927,8 +1927,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   // exercises RealBackend single-slice reviewer open-count + coder decision-gate
   // at the real sc.run boundary (scripted provider, no LLM).
 
-  // sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-  describe.sequential("#899 single-slice production SO four-case matrix", () => {
+  // #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
+  describe("#899 single-slice production SO four-case matrix", () => {
     const cleanups: string[] = [];
     afterEach(() => {
       while (cleanups.length > 0) {

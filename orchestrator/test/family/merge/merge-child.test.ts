@@ -16,12 +16,26 @@ import { describe, expect, it } from "vitest";
 import { mergeChild } from "../../../src/family/merger.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import type {
+
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -50,9 +64,13 @@ class FakeFamilyBackend implements FamilyBackend {
       childHead: `child-head-${child.childIssue}`,
     };
   }
-  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this #293
-  // no-conflict test merges cleanly and never reaches it (the conflict path has
-  // its own coverage in merger-conflict.test.ts), so the fake omits it.
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam.
+  // Throwing stub must remain unreachable on this clean/no-conflict path
+  // (conflict path is covered in merger-conflict.test.ts).
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }

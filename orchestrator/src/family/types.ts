@@ -46,6 +46,7 @@ import type {
   ModelRouteSlot,
   ResolvedModelRoute,
 } from "../modelRoutes.js";
+import type { LandingLiveHooks } from "./landing.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -111,6 +112,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "review_loop_converged",
   "pr_merged",
   "post_merge_cleanup",
+  /** Landing docs/VERSION release completed (before merge) — durable re-entry. */
+  "docs_released",
   "cmr_reviewed",
   "cmr_fix_committed",
   "cmr_passed",
@@ -177,7 +180,7 @@ export interface FamilyLedgerEntry {
    *     Written after the shipped PR has passed the online review/PR-check loop.
    *     The spine's resume guard reads it so only a fully-converged HEAD skips
    *     re-verify / re-cmr / re-ship / re-loop. NOT counted as merged.
-   *   - `"pr_merged"` — the TERMINAL family auto-merge marker (#602). Written
+   *   - `"pr_merged"` — the TERMINAL family landing-merge marker (#602 / #941). Written
    *     after live GitHub confirms the PR merged at the converged head. NOT
    *     counted as merged (no `childIssue`).
    *   - `"post_merge_cleanup"` — the TERMINAL post-merge cleanup marker (#603).
@@ -232,6 +235,8 @@ export interface FamilyLedgerEntry {
    *     written after live GitHub confirms the PR merged (#602).
    *   - `"post_merge_cleanup"` — paired with `status:"post_merge_cleanup"`;
    *     the terminal marker written after post-merge verify+act cleanup (#603).
+   *   - `"docs_released"` — paired with `status:"docs_released"`; durable
+   *     landing-docs completion so crash re-entry does not re-run VERSION/CHANGELOG.
    *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
    *     reviewer outcome before the runner sends it to coder-fix (#550).
    *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
@@ -256,6 +261,7 @@ export interface FamilyLedgerEntry {
     | "review_loop_converged"
     | "pr_merged"
     | "post_merge_cleanup"
+    | "docs_released"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
@@ -533,32 +539,12 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
-   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295).
-   *
-   * Invoked by the merger ONLY when {@link mergeChildIntoFamilyBase} reports a
-   * conflict ({@link MergeResult.conflicted}) — the "确定性优先、仅冲突上 LLM"
-   * inversion of Sandcastle's native "一上来就整段 LLM" merge. The real Backend
-   * starts ONE agent under the `merger` soul + the `resolving-merge-conflicts`
-   * skill, scoped to THIS one in-progress conflicting merge: it resolves each
-   * hunk (preserving both intents where possible; never inventing behaviour;
-   * never `--abort`), stages, and commits the merge — leaving the resolved result
-   * on the family base for the downstream family verify + integrated cmr (#296)
-   * to审 ("不静默吞"). The fake injects a synthetic resolved head.
-   *
-   * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
-   * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
-   * result), the merger does NOT write a `merged` ledger entry — an unresolved
-   * conflict must never look clean.
-   *
-   * OPTIONAL: a #293-era backend (the no-op default, the existing zero-container
-   * fakes) does not implement it — it is reached ONLY on the conflict path, which
-   * those backends never take. If a conflict IS hit on a backend without this
-   * method, the merger fails loud (throws a descriptive error) rather than writing
-   * a `merged` ledger entry — the conflict is surfaced, never swallowed. (Same
-   * optional-capability pattern the sibling verify-cmr seams use, so existing
-   * fakes need no throwing stub.)
+   * Conflict-only merger worker leg (#934 ID-010 / #938). Required seam —
+   * production/test contract guarantees the resolver (type-system, not optional
+   * + `!`). Action converges once; process-root retry is ID-004 inside the impl.
+   * Clean-merge paths never call it; still-conflicted/throw ⇒ no `merged` ledger.
    */
-  resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
+  resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
    * family-ledger seam (ADR 0022 decision 5, #298 extends): append one event to
    * the append-only family ledger (a sibling of the family base worktree, OUTSIDE
@@ -644,10 +630,10 @@ export interface FamilyBackend {
   ): Promise<WorkerResult>;
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // Verify is REQUIRED (#939 / #934 ID-011): missing capability is not a success
-  // no-op. CMR/ship and other downstream methods may remain optional for older
-  // fakes; production RealFamilyBackend supplies the full set. The verify-cmr
-  // module ({@link runVerifyCmr}) reaches these off the `familyBackend` handed by
-  // the frozen spine input `{phase, familyBase, familyBackend}`.
+  // no-op. CMR/ship are production/test contract guarantees via dispatchWorker
+  // (#940 / #934 ID-012) — host missing-capability fake exits deleted. The
+  // verify-cmr module ({@link runVerifyCmr}) reaches these off the `familyBackend`
+  // handed by the frozen spine input `{phase, familyBase, familyBackend}`.
 
   /**
    * #296 verify seam (ADR 0022 decision 3④/⑤): run the family verify (typecheck
@@ -665,12 +651,20 @@ export interface FamilyBackend {
    */
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
   /**
-   * Absolute git working directory for the family base clone. Optional — used to
-   * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
-   * working-repo does not block merge: path allowlist is not a merge gate.
-   * Merge still requires readiness + doc-release completed; paths are diagnostics.
+   * Absolute git working directory for the family base clone. Optional —
+   * diagnostics / working-tree helpers only. Missing working-repo does not
+   * block landing merge; final readiness / merge are owned by the landing Action.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
+  /**
+   * Optional explicit landing live hooks (offline/unit tests). Production
+   * backends omit this; callers must not invent silent MERGED hatches here.
+   */
+  resolveLandingLiveHooks?(input: {
+    readonly prUrl: string;
+    readonly convergedHeadOid: string;
+    readonly familyBase: string;
+  }): LandingLiveHooks | undefined;
   /**
    * #298-OWNED aborted-event seam — #296 only CALLS it. A red verify writes an
    * `aborted` event (携带错误包 + the family base at the time) so a failed wave is
@@ -1066,6 +1060,13 @@ export interface FamilyChildEscalation {
   readonly sessionId?: string;
 }
 
+/** Per-sibling root cause (#934 ID-009 / #938) — not a second outer cause. */
+export interface FamilyChildDiagnostic {
+  readonly issue: number;
+  readonly cause: string;
+  readonly kind: "process" | "child_execution" | "merger_worker";
+}
+
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {
   readonly issue: number;
@@ -1078,6 +1079,8 @@ export interface FamilyChildResult {
    * `child_decision_parked` ledger row and resumes from.
    */
   readonly escalation?: FamilyChildEscalation;
+  /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */
+  readonly failureCause?: string;
 }
 
 /**
@@ -1093,8 +1096,8 @@ export interface FamilyChildResult {
  *   - `"cmr_failed"` — integrated CMR / missing CMR capability
  *   - `"ship_failed"` — family ship worker / ship capability
  *   - `"online_review_failed"` — online review loop did not converge
- *   - `"merge_failed"` — auto-merge did not complete (non-decision hard fail)
- *   - `"cleanup_failed"` — post-merge cleanup did not reach terminal success
+ *   - `"merge_failed"` — landing merge / docs worker hard fail (non-decision)
+ *   - `"cleanup_failed"` — legacy token; post-#941 cleanup never fails the run
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤
@@ -1146,6 +1149,8 @@ export interface FamilyRunResult {
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
+  /** Wave sibling root causes (#938 / ID-009); outer status until #942 cutover. */
+  readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
 }

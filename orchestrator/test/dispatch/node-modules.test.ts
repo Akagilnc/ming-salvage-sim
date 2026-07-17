@@ -41,6 +41,7 @@ import {
   type RealBackendOptions,
   repoSlug,
 } from "../../src/realBackend.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -437,6 +438,18 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         if (file === "cp") {
@@ -481,6 +494,18 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
 
     const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
     class SpyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(file: string, args: string[], cwd?: string): string {
         calls.push({ file, args, cwd });
         return "";

@@ -68,7 +68,7 @@ import type {
   StepId,
 } from "../types.js";
 import { escalateOf, isValidEscalation } from "../validate.js";
-import { assertAcyclic, selectWave } from "./commander.js";
+import { assertAcyclic, DependencyCycleError, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
   familyEscalationState,
@@ -78,6 +78,7 @@ import {
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   isMergedAccountingEntry,
+  isValidChildDecisionParked,
   mergedSet,
   recordAdmissionSkipped,
   recordChildDecisionParked,
@@ -89,15 +90,13 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import {
-  ensureFamilyPostMergeCleanup,
   runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
 import {
-  familyAutoMergeIncomplete,
-  isFamilyPrLiveMerged,
-  runFamilyAutoMergeStage,
-} from "./familyAutoMerge.js";
+  recordLandingActionFailure,
+  runLandingAction,
+} from "./landing.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
   decisionGateParkStopSummary,
@@ -116,6 +115,7 @@ import {
 import type {
   ChildSlice,
   FamilyBackend,
+  FamilyChildDiagnostic,
   FamilyChildEscalation,
   FamilyChildResult,
   FamilyLedgerEntry,
@@ -843,18 +843,57 @@ function escalatedChildStep(
   return undefined;
 }
 
+/**
+ * #970 typed fail-closed reason: a TRUE child-bound decision answer was present
+ * (ledger-proven park + answer) but the child's single-slice parked resume state
+ * is missing. Must never be silent / generic — field #485 triple-fail swallowed
+ * this path into `owning_issue_still_red` with no durable cause.
+ */
+export const CHILD_ANSWER_WITHOUT_PARKED_STATE =
+  "child_answer_without_parked_state" as const;
+
+/**
+ * Fail closed when a true child decision answer cannot resume in place (#604 P1-b
+ * + #970 loud reason). Writes a durable family-ledger audit row so the typed
+ * reason survives re-entry diagnostics (not just in-memory failureCause).
+ */
+async function failClosedChildAnswerWithoutParkedState(
+  familyBackend: FamilyBackend,
+  childIssue: number,
+): Promise<FamilyChildResult> {
+  // Audit-only durable marker (worker_dispatched) — do NOT write phase `aborted`
+  // / family `escalated` here: those would poison barrier terminal resolution or
+  // next re-entry park state. The child outcome remains `"failed"` + failureCause.
+  await familyBackend.appendFamilyLedger({
+    childIssue,
+    status: "worker_dispatched",
+    event: "worker_dispatched",
+    workerStep: "child_answer_resume",
+    reason: CHILD_ANSWER_WITHOUT_PARKED_STATE,
+  });
+  return {
+    issue: childIssue,
+    status: "failed",
+    failureCause: CHILD_ANSWER_WITHOUT_PARKED_STATE,
+  };
+}
+
 async function runChild(
   child: ChildSlice,
   singleSliceBackend: Backend,
   parentIssue: number,
   familyBase: string,
   familyChildIssues: ReadonlySet<number>,
+  familyBackend: FamilyBackend,
   /**
-   * A family-level human answer to THIS child's parked decision escalation (#604
-   * slice 5). When present, it is INJECTED into the child's own single-slice ledger
-   * (as an `escalation_answered` row targeting the escalated step) BEFORE re-running
-   * `runOrchestrator`, so the child's `planResume` reopens the paused step in its
-   * recorded session (原地 resume). Absent ⇒ a normal fresh/continued child run.
+   * A family-ledger-proven answer to THIS child's parked decision escalation
+   * (#604 slice 5 / #970). Only set when the ledger proves a decision-kind park
+   * with sessionId for this child — family-level answers (or free-text mentions of
+   * a child issue number) must NOT reach here. When present, it is INJECTED into
+   * the child's own single-slice ledger (as an `escalation_answered` row targeting
+   * the escalated step) BEFORE re-running `runOrchestrator`, so the child's
+   * `planResume` reopens the paused step in its recorded session (原地 resume).
+   * Absent ⇒ a normal fresh/continued child run.
    */
   escalationAnswer?: EscalationAnswerPayload,
 ): Promise<FamilyChildResult> {
@@ -872,7 +911,8 @@ async function runChild(
         .reverse()
         .find((entry) => entry.step === forStep)?.sessionId;
       if (parkedSessionId === undefined) {
-        return { issue: child.issue, status: "failed" };
+        // #970: loud typed fail-closed (was silent bare `"failed"`).
+        return failClosedChildAnswerWithoutParkedState(familyBackend, child.issue);
       }
       const answerEntry: PersistentLedgerEntry = {
         step: forStep,
@@ -896,9 +936,9 @@ async function runChild(
       // or no re-openable non-terminal step exists). We MUST NOT fall through to a
       // fresh `runOrchestrator` (that would re-run the child FROM SCRATCH, losing
       // committed progress and violating 原地-resume / never-from-scratch, ADR 0062).
-      // Fail-closed: return `"failed"` (A-class incomplete) so a human repairs the
-      // missing state and reruns — never a silent from-scratch run.
-      return { issue: child.issue, status: "failed" };
+      // #970: fail-closed with loud typed reason + durable ledger row — never a
+      // silent bare `"failed"` that collapses into owning_issue_still_red with no cause.
+      return failClosedChildAnswerWithoutParkedState(familyBackend, child.issue);
     }
   }
   const result = await runOrchestrator({
@@ -974,12 +1014,116 @@ async function readCurrentFamilyHead(
 }
 
 /**
- * #603 — already_done / resume success is allowed only when the head has a
- * terminal+ok `post_merge_cleanup` ledger row (or cleanup re-enters successfully).
- * Returns an escalated FamilyRunResult when cleanup cannot complete; undefined
- * means the caller may report already_done.
+ * Std S1 — one final-quota wall wrap around {@link ensureLandingForResume}.
+ * Resume tails (already-converged / shipped-resume) sit outside the primary
+ * final barrier and must share this helper; open-shipped is already inside the
+ * wall and calls ensureLandingForResume directly.
+ *
+ * @returns terminal FamilyRunResult on park/fail; ok carries post-barrier route
+ *          + baton binding so callers stitch activeRoute / runRelayBilling.
  */
-async function requirePostMergeCleanupForAlreadyDone(input: {
+async function runLandingUnderFinalQuotaWall(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly singleSliceBackend: Backend;
+  readonly familyBase: string;
+  readonly familyHead: string;
+  readonly runId: string;
+  readonly modelRoute: ResolvedModelRoute;
+  readonly recordedResults: ReadonlyArray<FamilyChildResult>;
+  readonly epicChildren: ReadonlyArray<ChildSlice>;
+  readonly epicIssue: number;
+  readonly relayHandoffs: { count: number };
+  readonly wallHitBillingPools: Set<BillingPoolId>;
+  readonly prUrl: string;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly runRelayBilling?: FamilyRelayBillingBinding;
+  readonly applyRelayBatonToRoute?: ApplyRelayBatonToRouteFn;
+  readonly relayPools?: FamilyRunInput["relayPools"];
+  readonly now?: () => Date;
+  readonly admissionSkipped?: ReadonlyArray<{
+    readonly issue: number;
+    readonly reason: string;
+    readonly message: string;
+  }>;
+}): Promise<
+  | { readonly kind: "terminal"; readonly result: FamilyRunResult }
+  | {
+      readonly kind: "ok";
+      readonly route: ResolvedModelRoute;
+      readonly relayBilling: FamilyRelayBillingBinding | undefined;
+    }
+> {
+  const landingBarrier = await runFamilyBarrierWithQuotaRelay({
+    phase: "final",
+    familyBackend: input.familyBackend,
+    singleSliceBackend: input.singleSliceBackend,
+    familyBase: input.familyBase,
+    familyHead: input.familyHead,
+    runId: input.runId,
+    modelRoute: input.modelRoute,
+    recordedResults: input.recordedResults,
+    epicChildren: input.epicChildren,
+    epicIssue: input.epicIssue,
+    relayHandoffs: input.relayHandoffs,
+    wallHitBillingPools: input.wallHitBillingPools,
+    ...(input.runRelayBilling !== undefined
+      ? { initialRelayBilling: input.runRelayBilling }
+      : {}),
+    ...(input.applyRelayBatonToRoute !== undefined
+      ? { applyRelayBatonToRoute: input.applyRelayBatonToRoute }
+      : {}),
+    ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+    ...(input.now !== undefined ? { now: input.now } : {}),
+    ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+      ? { admissionSkipped: input.admissionSkipped }
+      : {}),
+    run: (route, relayBilling) =>
+      ensureLandingForResume({
+        familyBackend: input.familyBackend,
+        familyBase: input.familyBase,
+        runId: input.runId,
+        familyHeadAfter: input.familyHead,
+        prUrl: input.prUrl,
+        familyIssue: input.epicIssue,
+        resolvedRoute: route,
+        children: input.children,
+        ...(relayBilling !== undefined
+          ? {
+              billingPool: relayBilling.pool,
+              billingPoolSlots: relayBilling.slots,
+            }
+          : {}),
+        ...(input.admissionSkipped !== undefined &&
+        input.admissionSkipped.length > 0
+          ? { admissionSkipped: input.admissionSkipped }
+          : {}),
+      }),
+  });
+  if (landingBarrier.kind === "park") {
+    return { kind: "terminal", result: landingBarrier.result };
+  }
+  if (landingBarrier.value !== undefined) {
+    return { kind: "terminal", result: landingBarrier.value };
+  }
+  return {
+    kind: "ok",
+    route: landingBarrier.route,
+    relayBilling: landingBarrier.relayBilling,
+  };
+}
+
+/**
+ * #941 — resume/already_done re-enters landing Action (docs/merge/close/cleanup).
+ * Host auto-merge + cleanup-fail courts are deleted. Undefined means the caller
+ * may report already_done / success.
+ *
+ * Callers on resume tails MUST wrap this in {@link runFamilyBarrierWithQuotaRelay}
+ * / {@link runLandingUnderFinalQuotaWall} (ID-004): landing docs 429 rethrows
+ * from process-root and needs park/relay.
+ * Thread {@link billingPool}/{@link billingPoolSlots} so post-relay baton pool
+ * reaches the landing seat (slot-scoped).
+ */
+async function ensureLandingForResume(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
   readonly runId: string;
@@ -988,45 +1132,55 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
   readonly familyIssue: number;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly admissionSkipped?: ReadonlyArray<{
     readonly issue: number;
     readonly reason: string;
     readonly message: string;
   }>;
 }): Promise<FamilyRunResult | undefined> {
-  const ledger = await input.familyBackend.readFamilyLedger();
-  if (
-    familyPostMergeCleanupForHead(ledger, input.familyHeadAfter) !== undefined
-  ) {
-    return undefined;
-  }
-  if (familyPrMergedForHead(ledger, input.familyHeadAfter) === undefined) {
-    return undefined;
-  }
-  const cleanup = await ensureFamilyPostMergeCleanup({
+  const landing = await runLandingAction({
     familyBackend: input.familyBackend,
     familyBase: input.familyBase,
     runId: input.runId,
-    familyHeadAfter: input.familyHeadAfter,
+    convergedHeadOid: input.familyHeadAfter,
     prUrl: input.prUrl,
     familyIssue: input.familyIssue,
-    // #922: resume cleanup failure must leave the same durable stage name as fresh.
-    recordAbortOnFailure: true,
+    resolvedRoute: input.resolvedRoute,
+    ...(input.billingPool !== undefined
+      ? { billingPool: input.billingPool }
+      : {}),
+    ...(input.billingPoolSlots !== undefined
+      ? { billingPoolSlots: input.billingPoolSlots }
+      : {}),
   });
-  if (cleanup.ok) return undefined;
-  const reason =
-    cleanup.reason ??
-    "family post-merge cleanup did not reach a terminal success outcome";
-  const stopSummary = stageFailureStopSummary({
-    status: "cleanup_failed",
-    summary: reason,
-  });
+  if (landing.ok) return undefined;
+  // family/914 CR — single durable exit (recordLandingActionFailure); not dual-
+  // written park/abort next to verifyCmr.
+  const recorded = await recordLandingActionFailure(
+    input.familyBackend,
+    landing,
+    { phase: "final", familyHeadAfter: input.familyHeadAfter },
+  );
+  if (recorded.kind === "park") {
+    return {
+      status: "escalated",
+      familyBase: input.familyBase,
+      familyHead: input.familyHeadAfter,
+      stopSummary: recorded.stopSummary,
+      children: [...input.children],
+      ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+        ? { admissionSkipped: input.admissionSkipped }
+        : {}),
+    };
+  }
   return {
-    status: "cleanup_failed",
+    status: "merge_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
     failedPhase: "final",
-    stopSummary,
+    stopSummary: recorded.stopSummary,
     children: [...input.children],
     ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
@@ -1211,6 +1365,12 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
   ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
 }
 
+/**
+ * Barrier terminal stopSummary for finalize: durable `aborted` rows (stage
+ * failures + legacy parks) **or** decision parks authored as `escalated`
+ * (family/914 CR R1 Std M1 — landing park is escalated-only so
+ * familyEscalationState can see it after review_loop_converged).
+ */
 function latestAbortedStopSummary(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   phase: VerifyCmrPhase | undefined,
@@ -1218,10 +1378,17 @@ function latestAbortedStopSummary(
 ): StopSummary | undefined {
   for (let i = ledger.length - 1; i >= minIndex; i--) {
     const entry = ledger[i]!;
+    if (entry.stopSummary == null) continue;
+    if (phase !== undefined && entry.phase !== phase) continue;
+    if (entry.status === "aborted") {
+      return entry.stopSummary;
+    }
+    // Landing / answerable decision park durable shape (not aborted).
     if (
-      entry.status === "aborted" &&
-      (phase === undefined || entry.phase === phase) &&
-      entry.stopSummary != null
+      entry.status === "escalated" &&
+      entry.event === "escalated" &&
+      entry.escalationKind === "decision" &&
+      entry.stopSummary.reason === "decision_gate_park"
     ) {
       return entry.stopSummary;
     }
@@ -1529,25 +1696,10 @@ export async function runFamily(
   // REBUILD the dependency graph from LIVE GitHub metadata, NOT the cached epic
   // (decision 4 不信缓存; else a stale cycle re-escalates, agy R2). Absent ⇒ the
   // passed `epic` is used unchanged (a fresh run). The commander then schedules
-  // off the live graph below — and #294's cycle guard validates THIS live graph
-  // (so a re-entry whose human edit broke the cycle is NOT re-rejected off the
-  // stale cached edges).
+  // off the live graph below.
   const epic =
     input.refetchEpic !== undefined ? await input.refetchEpic() : input.epic;
-  // ── #294: fail-closed cycle guard (ADR 0022 decisions 3①/4) ────────────────
-  // BEFORE any scheduling (but AFTER the #298 live re-fetch above, so the guard
-  // sees the live graph): validate the children's intra-family `blocked_by`
-  // graph is acyclic. A cycle makes selectWave return an empty wave forever (a
-  // SILENT deadlock — the members never unblock), so the commander throws a
-  // DependencyCycleError here and runFamily fails closed (the caller escalates to
-  // a human per decision 4, who fixes the to-issues edges and re-runs). This runs
-  // up front so nothing is fanned out / merged before the deadlock is caught.
-  assertAcyclic(epic.children);
-  // The set of THIS family's child issue numbers — used to split a child's
-  // `blocked_by` into intra-family blockers (the commander can ledger-merge them)
-  // vs external blockers (never in the family ledger; filtered at family admission
-  // per `filterExternalBlockedChildren`, #934 ID-002 — NOT relied upon at S0).
-  // Invariant for the run (epic.children is fixed), so computed once.
+  // ID-009: no startup whole-family cycle guard (residual probe is at empty-wave).
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // ── #604 slice 5: child decision-escalation re-entry ────────────────────────
   // Read the family ledger for children PARKED on a decision题 (a `child_decision_parked`
@@ -1561,38 +1713,43 @@ export async function runFamily(
   //     just re-escalate). Supports multiple children parked + answered separately.
   const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
   {
+    // #970 type-split: inject into runChild ONLY when the ledger proves a
+    // decision-kind park (child_decision_parked + escalationKind=decision +
+    // non-empty parked sessionId) AND a later matching child-bound answer.
+    // Family-level answers (no childIssue), free-text mentions of a child issue
+    // number, or park rows without sessionId are NOT child decision resumes —
+    // they must not enter parkedChildAnswers (noop for runChild).
     // `unansweredChildEscalations` returns ONLY the still-unanswered parked
     // children. To also resume the ANSWERED ones we look up each parked child's
     // answer directly: answered → feed it into runChild (resume in place);
-    // unanswered → keep the family paused (return escalated). A parked child is one
-    // with a `child_decision_parked` row; iterate them by scanning the ledger for that.
-    const parkedIssues = new Set<number>();
-    for (const entry of initialFamilyLedger) {
-      if (
-        entry.status === "child_decision_parked" &&
-        entry.event === "child_decision_parked" &&
-        typeof entry.childIssue === "number"
-      ) {
-        parkedIssues.add(entry.childIssue);
+    // unanswered → keep the family paused (return escalated).
+    // Single reverse pass → latest park per child (ledger authority predicate).
+    const latestParkByChild = new Map<
+      number,
+      FamilyLedgerEntry & { readonly childIssue: number }
+    >();
+    for (let i = initialFamilyLedger.length - 1; i >= 0; i--) {
+      const entry = initialFamilyLedger[i]!;
+      if (!isValidChildDecisionParked(entry)) continue;
+      if (!latestParkByChild.has(entry.childIssue)) {
+        latestParkByChild.set(entry.childIssue, entry);
       }
     }
     const unanswered: (FamilyLedgerEntry & { readonly childIssue: number })[] = [];
     const stillUnanswered = new Set(
       unansweredChildEscalations(initialFamilyLedger).map((e) => e.childIssue),
     );
-    for (const childIssue of parkedIssues) {
+    for (const [childIssue, parkRow] of latestParkByChild) {
       if (stillUnanswered.has(childIssue)) {
-        const row = [...initialFamilyLedger]
-          .reverse()
-          .find(
-            (e) =>
-              e.status === "child_decision_parked" &&
-              e.event === "child_decision_parked" &&
-              e.childIssue === childIssue,
-          ) as (FamilyLedgerEntry & { readonly childIssue: number }) | undefined;
-        if (row !== undefined) unanswered.push(row);
+        unanswered.push(parkRow);
         continue;
       }
+      // Injection requires a parked sessionId on the durable park row (#970).
+      // Without it the bind is not a proven child decision resume — leave the
+      // answer consumed at family ledger level and run the child fresh/normal.
+      const parkedSessionId =
+        typeof parkRow.sessionId === "string" ? parkRow.sessionId.trim() : "";
+      if (parkedSessionId.length === 0) continue;
       const answer = childEscalationAnswer(initialFamilyLedger, childIssue);
       if (answer !== undefined) parkedChildAnswers.set(childIssue, answer);
     }
@@ -1675,7 +1832,14 @@ export async function runFamily(
   // identical either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
   const verifyCmr = input.verifyCmr ?? runVerifyCmr;
   const childResults: FamilyChildResult[] = [];
+  /** Wave-aggregated sibling root causes (#938 / ID-009). */
+  const waveDiagnostics: FamilyChildDiagnostic[] = [];
   let familyHead: string | undefined;
+
+  const attachDiagnostics = <T extends FamilyRunResult>(result: T): T => {
+    if (waveDiagnostics.length === 0) return result;
+    return { ...result, diagnostics: [...waveDiagnostics] };
+  };
 
   // Build the family result, accounting for EVERY epic child, and deriving an
   // HONEST family status (decision 3⑤ "不静默吞" — the result must not silently
@@ -1801,7 +1965,7 @@ export async function runFamily(
             },
           }
         : computedStopSummary;
-    return {
+    return attachDiagnostics({
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
@@ -1817,7 +1981,7 @@ export async function runFamily(
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-    };
+    });
   };
 
   // #604 slice 5: build the family result when a CHILD decision escalation parked
@@ -1973,33 +2137,56 @@ export async function runFamily(
     const wave = selectWave(epic.children, merged).filter(
       (c) => !attempted.has(c.issue),
     );
-    if (wave.length === 0) break;
+    if (wave.length === 0) {
+      // ID-009: residual cycle only at empty-wave + still-unmerged residual.
+      const residual = epic.children.filter((c) => !merged.has(c.issue));
+      if (residual.length > 0) {
+        try {
+          assertAcyclic(residual);
+        } catch (err) {
+          if (!(err instanceof DependencyCycleError)) throw err;
+          const children: FamilyChildResult[] = epic.children.map((c) => {
+            const recorded = childResults.find((entry) => entry.issue === c.issue);
+            if (recorded !== undefined) return recorded;
+            return merged.has(c.issue)
+              ? { issue: c.issue, status: "already_done" as const }
+              : { issue: c.issue, status: "skipped" as const };
+          });
+          const escalationReason = `dependency_cycle: ${err.cycle.map((n) => `#${n}`).join(" → ")}`;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason,
+          });
+          await familyBackend.escalateFamily?.({
+            reason: escalationReason,
+            diagnosis: err.message,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+            escalationKind: "failure",
+            phase: "wave",
+          });
+          return attachDiagnostics({
+            status: "escalated" as const,
+            familyBase,
+            familyHead,
+            escalation: { reason: escalationReason, diagnosis: err.message },
+            stopSummary,
+            children,
+            ...(epic.admissionSkipped !== undefined &&
+            epic.admissionSkipped.length > 0
+              ? { admissionSkipped: epic.admissionSkipped }
+              : {}),
+          });
+        }
+      }
+      break;
+    }
 
-    // ── fan out the wave: each child through the reused single-slice runner ──
-    // ADR 0022 decision 2 (native fork + distinct branch) is the RealBackend's
-    // job (each child run cuts its own distinct branch in the shared clone). The
-    // wave-level fan-out POLICY — how the wave's children are run relative to each
-    // other — lives in THIS loop, not in the Backend (the Backend interface is
-    // per-child: prepareWorktree / runStep / push; it has no whole-wave method).
-    //
-    // #291 B7 (the deferred US7 work this comment foretold): the wave's children
-    // run CONCURRENTLY — `Promise.allSettled(wave.map(runChild))` — so their LLM
-    // work overlaps instead of串行. This is the local fan-out change the seam
-    // boundary anticipated: the wave/MERGE/verify structure around it is unchanged
-    // (the merge loop below is still serial + in wave order). Distinct child
-    // branches isolate the LOGICAL work but NOT git-level locks; concurrent
-    // `git worktree add` / ref updates on the one shared clone contend on
-    // `.git/index.lock`, so the git-MUTATING critical sections are serialised by a
-    // per-clone mutex INSIDE the RealBackend (gitMutex, NOT the spine) — LLM
-    // concurrent, git临界区 serial. `allSettled` preserves input order, so `ran` is
-    // still in wave order for the serial merge.
-    //
-    // FAIL-CLOSED preservation: a child whose single-slice run THROWS (e.g. its own
-    // S0 backstop rejects a blocker that RE-opened after the admission gate cleared
-    // it — decision 6③ soundness) must still fail the whole run, exactly as the prior
-    // `for…await` let the throw propagate. So after settling we RE-THROW the first
-    // rejection before recording any wave result (nothing is merged on a thrown wave —
-    // the cycle / admission external-blocker guards stay fail-closed).
+    // Concurrent fan-out (allSettled, wave order); serial merge below.
+    // #938: rethrow-first deleted — keep every sibling outcome.
     logDriverStage(
       "dispatch",
       `wave n=${wave.length} issues=${wave.map((c) => c.issue).join(",")}`,
@@ -2013,19 +2200,43 @@ export async function runFamily(
           epic.issue,
           familyBase,
           familyChildIssues,
-          // #604 slice 5: a parked child that a human answered resumes IN PLACE.
+          familyBackend,
+          // #604 slice 5 / #970: only ledger-proven decision parks with sessionId.
           parkedChildAnswers.get(child.issue),
         ),
       ),
     );
-    const firstRejected = settled.find((s) => s.status === "rejected");
-    if (firstRejected !== undefined && firstRejected.status === "rejected") {
-      throw firstRejected.reason;
-    }
-    const ran: FamilyChildResult[] = settled.map((s) => {
-      // Every entry is fulfilled here (a rejection re-threw above); the cast is
-      // narrowing for TS, not a runtime assumption.
-      return (s as PromiseFulfilledResult<FamilyChildResult>).value;
+    const ran: FamilyChildResult[] = settled.map((s, i) => {
+      if (s.status === "fulfilled") {
+        const value = s.value;
+        if (value.status === "failed") {
+          const cause =
+            value.failureCause ??
+            `child #${value.issue} single-slice execution did not succeed`;
+          waveDiagnostics.push({
+            issue: value.issue,
+            cause,
+            kind: "child_execution",
+          });
+          return value.failureCause !== undefined
+            ? value
+            : { ...value, failureCause: cause };
+        }
+        return value;
+      }
+      const child = wave[i]!;
+      const cause =
+        s.reason instanceof Error ? s.reason.message : String(s.reason);
+      waveDiagnostics.push({
+        issue: child.issue,
+        cause,
+        kind: "process",
+      });
+      return {
+        issue: child.issue,
+        status: "failed" as const,
+        failureCause: cause,
+      };
     });
 
     // ── serial merge: each reviewed child branch into the family base ──────────
@@ -2036,6 +2247,36 @@ export async function runFamily(
     // `"ran"` (single-slice success, not yet merged), and we flip it to `"merged"`
     // here once mergeChild resolves — so a future #295 merge failure can leave the
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
+    //
+    // #938: mid-wave early exit (merger decision escalate / still-conflicted)
+    // must drain remaining allSettled siblings into childResults first. Without
+    // that flush, finalize / residual maps map executed peers to fake "skipped".
+    // "skipped" is only for never-schedulable / never-ran children.
+    // Spread the whole sibling so optional fields (branch / escalation /
+    // failureCause / future FamilyChildResult cargo) are never silently dropped.
+    const recordWaveSibling = (sibling: FamilyChildResult): void => {
+      childResults.push({ ...sibling });
+    };
+    const drainRemainingWaveSiblings = (): void => {
+      const recorded = new Set(childResults.map((c) => c.issue));
+      for (const sibling of ran) {
+        if (recorded.has(sibling.issue)) continue;
+        recordWaveSibling(sibling);
+        recorded.add(sibling.issue);
+      }
+    };
+    /** #938: drain allSettled peers then residual-map epic children for early exits. */
+    const residualChildrenAfterDrain = async (): Promise<FamilyChildResult[]> => {
+      drainRemainingWaveSiblings();
+      const ledgerMerged = await currentMerged(familyBackend);
+      return epic.children.map((child) => {
+        const recorded = childResults.find((entry) => entry.issue === child.issue);
+        if (recorded !== undefined) return recorded;
+        return ledgerMerged.has(child.issue)
+          ? { issue: child.issue, status: "already_done" as const }
+          : { issue: child.issue, status: "skipped" as const };
+      });
+    };
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
         // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
@@ -2075,7 +2316,12 @@ export async function runFamily(
               runId,
             }),
         });
-        if (mergeBarrier.kind === "park") return mergeBarrier.result;
+        if (mergeBarrier.kind === "park") {
+          // #938: remount residual children after drain so executed siblings stay
+          // honest `ran`, not fake `skipped`; attach wave diagnostics too.
+          const children = await residualChildrenAfterDrain();
+          return attachDiagnostics({ ...mergeBarrier.result, children });
+        }
         activeRoute = mergeBarrier.route;
         if (mergeBarrier.relayBilling !== undefined) {
           runRelayBilling = mergeBarrier.relayBilling;
@@ -2084,14 +2330,7 @@ export async function runFamily(
         if (mergeResult.escalation !== undefined) {
           familyHead = mergeResult.familyHead;
           childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
-          const ledgerMerged = await currentMerged(familyBackend);
-          const children = epic.children.map((child) => {
-            const recorded = childResults.find((entry) => entry.issue === child.issue);
-            if (recorded !== undefined) return recorded;
-            return ledgerMerged.has(child.issue)
-              ? { issue: child.issue, status: "already_done" as const }
-              : { issue: child.issue, status: "skipped" as const };
-          });
+          const children = await residualChildrenAfterDrain();
           const escalation = mergeResult.escalation;
           const stopSummary = familyStopSummary({
             status: "escalated",
@@ -2107,7 +2346,7 @@ export async function runFamily(
             escalationKind: "decision",
             phase: "wave",
           });
-          return {
+          return attachDiagnostics({
             status: "escalated" as const,
             familyBase,
             familyHead,
@@ -2117,62 +2356,27 @@ export async function runFamily(
             },
             stopSummary,
             children,
-          };
+          });
         }
         if (mergeResult.conflicted === true) {
-          // A merger step that exhausted its bounded mechanical re-dispatch is
-          // a family-level escalation boundary, not an uncaught run exception.
-          // The merge result is intentionally not ledger-recorded by merger.ts;
-          // preserve the Git-observed head and stop before scheduling another
-          // wave on an unresolved MERGE_HEAD/conflict state.
+          // ID-010: trust merger worker once; stop serial merge on conflicted base.
           familyHead = mergeResult.familyHead;
-          childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
-          const ledgerMerged = await currentMerged(familyBackend);
-          const children = epic.children.map((child) => {
-            const recorded = childResults.find((entry) => entry.issue === child.issue);
-            if (recorded !== undefined) return recorded;
-            return ledgerMerged.has(child.issue)
-              ? { issue: child.issue, status: "already_done" as const }
-              : { issue: child.issue, status: "skipped" as const };
+          const cause =
+            `merger_worker left child #${r.issue} conflict unresolved on the family base`;
+          waveDiagnostics.push({ issue: r.issue, cause, kind: "merger_worker" });
+          childResults.push({
+            issue: r.issue,
+            status: "failed",
+            branch: r.branch,
+            failureCause: cause,
           });
-          const escalationReason =
-            `merger step for child #${r.issue} exhausted bounded still-conflicted retries`;
-          const stopSummary = familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead,
-            children,
-            escalationReason,
-          });
-          await familyBackend.escalateFamily?.({
-            reason: escalationReason,
-            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-            stopSummary,
-            escalationKind: "failure",
-            phase: "wave",
-          });
-          return {
-            status: "escalated" as const,
-            familyBase,
-            familyHead,
-            escalation: {
-              reason: escalationReason,
-              diagnosis:
-                "Git still reports an unresolved merge after the bounded merger-step re-dispatch; repair the conflict and rerun the family.",
-            },
-            stopSummary,
-            children,
-          };
+          drainRemainingWaveSiblings();
+          return await finalize();
         }
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {
-        childResults.push({
-          issue: r.issue,
-          status: r.status,
-          branch: r.branch,
-          ...(r.escalation !== undefined ? { escalation: r.escalation } : {}),
-        });
+        recordWaveSibling(r);
       }
     }
 
@@ -2326,217 +2530,40 @@ export async function runFamily(
         : { issue: c.issue, status: "skipped" as const },
     );
 
-    const priorPrMerged = familyPrMergedForHead(preFinalLedger, preFinalFamilyHead);
-    if (priorPrMerged !== undefined) {
-      familyHead = preFinalFamilyHead;
-      const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
-        familyBackend,
-        familyBase,
-        runId,
-        familyHeadAfter: preFinalFamilyHead!,
-        prUrl: priorPrMerged.pr,
-        familyIssue: epic.issue,
-        resolvedRoute: activeRoute,
-        children,
-        ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
-          ? { admissionSkipped: epic.admissionSkipped }
-          : {}),
-      });
-      if (cleanupBlocked !== undefined) return cleanupBlocked;
-      const convergedVerifiedCmrHead =
-        convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
-        preFinalFamilyHead;
-      const alreadyDoneSummary: StopSummary = {
-        reason: "already_done",
-        summary: "family run already converged for the current family HEAD",
-        metadata: {
-          heads: {
-            actualFamilyHead: preFinalFamilyHead,
-            reportedFamilyHead: convergedRecord.familyHeadAfter,
-            verifiedCmrHead: convergedVerifiedCmrHead,
-            sources: {
-              actualFamilyHead: "current family head",
-              reportedFamilyHead: "review_loop_converged ledger row",
-              verifiedCmrHead:
-                typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
-                "string"
-                  ? "review_loop_converged ledger stop summary"
-                  : "review_loop_converged ledger row",
-            },
-          },
-        },
-      };
-      return {
-        status: "success",
-        familyBase,
-        familyHead,
-        stopSummary: alreadyDoneSummary,
-        children,
-        ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
-          ? { admissionSkipped: epic.admissionSkipped }
-          : {}),
-      };
-    }
-
-    if (
-      isFamilyPrLiveMerged(convergedRecord.pr) &&
-      preFinalFamilyHead !== undefined
-    ) {
-      const mergedBackfill = await runFamilyAutoMergeStage({
-        familyBackend,
-        familyBase,
-        convergedHeadOid: preFinalFamilyHead,
-        prUrl: convergedRecord.pr,
-      });
-      if (!familyAutoMergeIncomplete(mergedBackfill)) {
-        familyHead = preFinalFamilyHead;
-        const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
-          familyBackend,
-          familyBase,
-          runId,
-          familyHeadAfter: preFinalFamilyHead,
-          prUrl: convergedRecord.pr,
-          familyIssue: epic.issue,
-        resolvedRoute: activeRoute,
-          children,
-          ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
-            ? { admissionSkipped: epic.admissionSkipped }
-            : {}),
-        });
-        if (cleanupBlocked !== undefined) return cleanupBlocked;
-        const convergedVerifiedCmrHead =
-          convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
-          preFinalFamilyHead;
-        const alreadyDoneSummary: StopSummary = {
-          reason: "already_done",
-          summary: "family run already converged for the current family HEAD",
-          metadata: {
-            heads: {
-              actualFamilyHead: preFinalFamilyHead,
-              reportedFamilyHead: convergedRecord.familyHeadAfter,
-              verifiedCmrHead: convergedVerifiedCmrHead,
-              sources: {
-                actualFamilyHead: "current family head",
-                reportedFamilyHead: "review_loop_converged ledger row",
-                verifiedCmrHead:
-                  typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
-                  "string"
-                    ? "review_loop_converged ledger stop summary"
-                    : "review_loop_converged ledger row",
-              },
-            },
-          },
-        };
-        return {
-          status: "success",
-          familyBase,
-          familyHead,
-          stopSummary: alreadyDoneSummary,
-          children,
-          ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
-            ? { admissionSkipped: epic.admissionSkipped }
-            : {}),
-        };
-      }
-      const rawStop =
-        mergedBackfill.stopSummary ??
-        decisionGateParkStopSummary({
-          summary: `family auto-merge did not complete (${mergedBackfill.terminalState})`,
-          repairHint:
-            "resolve merge blockers or answer the decision gate, then re-feed the family run",
-        });
-      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
-      if (terminal.status === "escalated") {
-        await recordFamilyEscalated(familyBackend, {
-          escalationKind: "decision",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: preFinalFamilyHead,
-          stopSummary: terminal.stopSummary,
-        });
-      } else {
-        await familyBackend.appendFamilyLedger({
-          status: "aborted",
-          event: "aborted",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: preFinalFamilyHead,
-          stopSummary: terminal.stopSummary,
-        });
-      }
-      return {
-        status: terminal.status,
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        ...(terminal.status === "merge_failed"
-          ? { failedPhase: "final" as const }
-          : {}),
-        stopSummary: terminal.stopSummary,
-        children,
-      };
-    }
-
-
-    const autoMerge = await runFamilyAutoMergeStage({
-      familyBackend,
-      familyBase,
-      convergedHeadOid: preFinalFamilyHead!,
-      prUrl: convergedRecord.pr,
-    });
-    if (familyAutoMergeIncomplete(autoMerge)) {
-      const rawStop =
-        autoMerge.stopSummary ??
-        decisionGateParkStopSummary({
-          summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
-          repairHint:
-            "resolve merge blockers or answer the decision gate, then re-feed the family run",
-        });
-      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
-      if (terminal.status === "escalated") {
-        await recordFamilyEscalated(familyBackend, {
-          escalationKind: "decision",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: preFinalFamilyHead,
-          stopSummary: terminal.stopSummary,
-        });
-      } else {
-        await familyBackend.appendFamilyLedger({
-          status: "aborted",
-          event: "aborted",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: preFinalFamilyHead,
-          stopSummary: terminal.stopSummary,
-        });
-      }
-      return {
-        status: terminal.status,
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        ...(terminal.status === "merge_failed"
-          ? { failedPhase: "final" as const }
-          : {}),
-        stopSummary: terminal.stopSummary,
-        children,
-      };
-    }
-
+    // #941: single re-entry through landing Action (no host auto-merge courts).
+    // ID-004 / Std S1: shared final-quota wrap (resume tail outside primary barrier).
     familyHead = preFinalFamilyHead;
-    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+    const landingWall = await runLandingUnderFinalQuotaWall({
       familyBackend,
+      singleSliceBackend,
       familyBase,
+      familyHead: preFinalFamilyHead!,
       runId,
-      familyHeadAfter: preFinalFamilyHead!,
+      modelRoute: activeRoute,
+      recordedResults: children,
+      epicChildren: epic.children,
+      epicIssue: epic.issue,
+      relayHandoffs,
+      wallHitBillingPools,
       prUrl: convergedRecord.pr,
-      familyIssue: epic.issue,
-      resolvedRoute: activeRoute,
       children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+      ...(runRelayBilling !== undefined
+        ? { runRelayBilling }
+        : {}),
+      ...(applyRelayOverride !== undefined
+        ? { applyRelayBatonToRoute: applyRelayOverride }
+        : {}),
+      ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+      ...(input.now !== undefined ? { now: input.now } : {}),
+      ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     });
-    if (cleanupBlocked !== undefined) return cleanupBlocked;
+    if (landingWall.kind === "terminal") return landingWall.result;
+    activeRoute = landingWall.route;
+    if (landingWall.relayBilling !== undefined) {
+      runRelayBilling = landingWall.relayBilling;
+    }
     const convergedVerifiedCmrHead =
       convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
       preFinalFamilyHead;
@@ -2552,7 +2579,8 @@ export async function runFamily(
             actualFamilyHead: "current family head",
             reportedFamilyHead: "review_loop_converged ledger row",
             verifiedCmrHead:
-              convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
+              typeof convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ===
+              "string"
                 ? "review_loop_converged ledger stop summary"
                 : "review_loop_converged ledger row",
           },
@@ -2565,7 +2593,7 @@ export async function runFamily(
       familyHead,
       stopSummary: alreadyDoneSummary,
       children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+      ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
@@ -2692,65 +2720,39 @@ export async function runFamily(
         ? { stopSummary: shippedRecord.stopSummary }
         : {}),
     });
-    const autoMerge = await runFamilyAutoMergeStage({
-      familyBackend,
-      familyBase,
-      convergedHeadOid: convergedHead,
-      prUrl: shippedRecord.pr,
-    });
-    if (familyAutoMergeIncomplete(autoMerge)) {
-      const rawStop =
-        autoMerge.stopSummary ??
-        decisionGateParkStopSummary({
-          summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
-          repairHint: "resolve the worker-reported merge stop, then re-feed the family run",
-        });
-      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
-      if (terminal.status === "escalated") {
-        await recordFamilyEscalated(familyBackend, {
-          escalationKind: "decision",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: convergedHead,
-          stopSummary: terminal.stopSummary,
-        });
-      } else {
-        await familyBackend.appendFamilyLedger({
-          status: "aborted",
-          event: "aborted",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: convergedHead,
-          stopSummary: terminal.stopSummary,
-        });
-      }
-      return {
-        status: terminal.status,
-        familyBase,
-        familyHead: convergedHead,
-        ...(terminal.status === "merge_failed"
-          ? { failedPhase: "final" as const }
-          : {}),
-        stopSummary: terminal.stopSummary,
-        children,
-      };
-    }
-
     familyHead = convergedHead;
-    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+    // ID-004 / Std S1: shared final-quota wrap (shipped-resume outside primary barrier).
+    const landingWall = await runLandingUnderFinalQuotaWall({
       familyBackend,
+      singleSliceBackend,
       familyBase,
+      familyHead: convergedHead,
       runId,
-      familyHeadAfter: convergedHead,
+      modelRoute: activeRoute,
+      recordedResults: children,
+      epicChildren: epic.children,
+      epicIssue: epic.issue,
+      relayHandoffs,
+      wallHitBillingPools,
       prUrl: shippedRecord.pr,
-      familyIssue: epic.issue,
-      resolvedRoute: activeRoute,
       children,
+      ...(runRelayBilling !== undefined
+        ? { runRelayBilling }
+        : {}),
+      ...(applyRelayOverride !== undefined
+        ? { applyRelayBatonToRoute: applyRelayOverride }
+        : {}),
+      ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+      ...(input.now !== undefined ? { now: input.now } : {}),
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     });
-    if (cleanupBlocked !== undefined) return cleanupBlocked;
+    if (landingWall.kind === "terminal") return landingWall.result;
+    activeRoute = landingWall.route;
+    if (landingWall.relayBilling !== undefined) {
+      runRelayBilling = landingWall.relayBilling;
+    }
     return {
       status: "success",
       familyBase,
@@ -2899,56 +2901,9 @@ export async function runFamily(
             ? { stopSummary: openShipped.stopSummary }
             : {}),
         });
-        const autoMerge = await runFamilyAutoMergeStage({
-          familyBackend,
-          familyBase,
-          convergedHeadOid: convergedHead,
-          prUrl: openShipped.pr,
-        });
-        if (familyAutoMergeIncomplete(autoMerge)) {
-          const rawStop =
-            autoMerge.stopSummary ??
-            decisionGateParkStopSummary({
-              summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
-              repairHint:
-                "resolve the worker-reported merge stop, then re-feed the family run",
-            });
-          const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
-          if (terminal.status === "escalated") {
-            await recordFamilyEscalated(familyBackend, {
-              escalationKind: "decision",
-              phase: "final",
-              reason: terminal.stopSummary.summary,
-              familyHeadAfter: convergedHead,
-              stopSummary: terminal.stopSummary,
-            });
-          } else {
-            await familyBackend.appendFamilyLedger({
-              status: "aborted",
-              event: "aborted",
-              phase: "final",
-              reason: terminal.stopSummary.summary,
-              familyHeadAfter: convergedHead,
-              stopSummary: terminal.stopSummary,
-            });
-          }
-          openShippedTerminal = {
-            status: terminal.status,
-            familyBase,
-            familyHead: convergedHead,
-            ...(terminal.status === "merge_failed"
-              ? { failedPhase: "final" as const }
-              : {}),
-            stopSummary: terminal.stopSummary,
-            children: openChildren,
-            ...(epic.admissionSkipped !== undefined &&
-            epic.admissionSkipped.length > 0
-              ? { admissionSkipped: epic.admissionSkipped }
-              : {}),
-          };
-          return { ok: false, ran: true };
-        }
-        const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+        // Already inside final quota barrier — rethrow 429 to that wall.
+        // Thread baton pool so landing docs after relay use the rewritten seat.
+        const landingBlocked = await ensureLandingForResume({
           familyBackend,
           familyBase,
           runId,
@@ -2957,13 +2912,19 @@ export async function runFamily(
           familyIssue: epic.issue,
           resolvedRoute: route,
           children: openChildren,
+          ...(relayBilling !== undefined
+            ? {
+                billingPool: relayBilling.pool,
+                billingPoolSlots: relayBilling.slots,
+              }
+            : {}),
           ...(epic.admissionSkipped !== undefined &&
           epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
             : {}),
         });
-        if (cleanupBlocked !== undefined) {
-          openShippedTerminal = cleanupBlocked;
+        if (landingBlocked !== undefined) {
+          openShippedTerminal = landingBlocked;
           return { ok: false, ran: true };
         }
         openShippedTerminal = {

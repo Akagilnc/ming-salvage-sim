@@ -587,6 +587,19 @@ export function priorFamilyJudgeVerdictRowsFromLedger(
 }
 
 /**
+ * #966 — latest family-court session id from prior judge rows (ledger sole truth).
+ * Only the newest row counts: empty / missing sessionId on that row means fresh
+ * open (CR-10) — never resurrect an older conversation under a fresh-open row.
+ */
+export function familyJudgeResumeSessionIdFromPriorRows(
+  rows: ReadonlyArray<Pick<PriorJudgeVerdictRow, "sessionId">>,
+): string | undefined {
+  if (rows.length === 0) return undefined;
+  const sid = rows[rows.length - 1]?.sessionId;
+  return typeof sid === "string" && sid.length > 0 ? sid : undefined;
+}
+
+/**
  * #919 AS4 — honest unusable residual open-count paper.
  *
  * Not a fixer/coder seat report. Route maps residual open-count 0 via

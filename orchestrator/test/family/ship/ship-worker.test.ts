@@ -65,6 +65,7 @@ import {
   runScriptedStructuredOutput,
   type ScriptedAgent,
 } from "../../helpers/scripted-sandcastle-run.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 /**
  * Read the model id an agent was built with off an agent — its CLI model flag is
@@ -102,6 +103,18 @@ const FAMILY_BASE = "feat/330-pure-scheduler";
 
 /** A family backend whose container `runShipWorker` seam is fixtured (no sc.run). */
 class FixturedShipBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
   outcome: ReturnType<typeof shipOutcomeFromResult> = {
     kind: "shipped",
@@ -234,6 +247,18 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
 describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => {
   class ConfigBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public config(auth: ShipAuth): {
       imageName: string;
       env: Record<string, string>;
@@ -323,6 +348,18 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
    * preflight (cmr-worker-335.test.ts:512-557). codex/gh auth stays best-effort.
    */
   class NoClaudeAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     containerReached = false;
     checkoutReached = false;
     public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
@@ -395,6 +432,18 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
    * codex auth stays best-effort (in-container diff review only).
    */
   class NoGhAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     containerReached = false;
     checkoutReached = false;
     public run(spec: WorkerSpec, ctx: DispatchContext): Promise<ShipWorkerOutcome> {
@@ -458,6 +507,18 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
 describe("#336 writeShipFocusFile — threads the configured PR target base into the ship worker", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusShipBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public focus(ctx: {
       familyBase: string;
       escalationAnswer?: DispatchContext["escalationAnswer"];
@@ -537,6 +598,18 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     // existing checkout contract).
     let focusBodyAtRun: string | undefined;
     class SeamBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       // Stub the only real-I/O dependency runShipWorker has besides the focus write:
       // the git checkout (the temp repo has no `integ/291-wave3` ref) and sc.run.
       protected override sh(): string {
@@ -586,6 +659,18 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
   it("family ship with billingPool=grok-build launches the grok provider", async () => {
     let providerAtLaunch: string | undefined;
     class ProviderBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -631,6 +716,18 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
   it("runShipWorker removes the temporary outcome sidecar directory after parsing it", async () => {
     let outcomePathAtRun: string | undefined;
     class SeamBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -688,6 +785,18 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
   it("fails family ship when typed decision Output.object is absent", async () => {
     // #899: SO seat without result.output must not fall through to cargo success.
     class MissingTypedShipBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override sh(): string {
         return "";
       }
@@ -744,6 +853,18 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     // #919 D: ship seat uses T2 ship envelope on SHIP_RECEIPT_TAG;
     // PR/URL cargo stays on the opaque sidecar channel (never SO).
     class CaptureShipBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public calls: Parameters<typeof sc.run>[0][] = [];
       protected override sh(): string {
         return "";
@@ -802,8 +923,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
 // ─── #919 D: ship production T2 envelope SO four-case matrix ────────────────
 // Ship attaches shipStationReceiptSchema on SHIP_RECEIPT_TAG; cargo (status/pr)
 // stays opaque sidecar. Four-case crosses production runShipWorker + real sc.run.
-// sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-describe.sequential("#919 ship production T2 envelope SO four-case", () => {
+// #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
+describe("#919 ship production T2 envelope SO four-case", () => {
   function shipFourCaseBackend(opts: {
     emissions: ReadonlyArray<{ body: string }>;
     sessionId: string;
@@ -818,6 +939,18 @@ describe.sequential("#919 ship production T2 envelope SO four-case", () => {
     ): Promise<ShipWorkerOutcome>;
   } {
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public probeRunShipWorker(
         spec: WorkerSpec,
         ctx: DispatchContext,
@@ -1037,6 +1170,18 @@ describe.sequential("#919 ship production T2 envelope SO four-case", () => {
 // the testable seams on the single-slice path).
 describe("#336 family workers — model id is spec-derived via modelIdForSlug (cmr S336 r7 P1)", () => {
   class SeamBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public agent(spec: WorkerSpec): unknown {
       return (this as unknown as { agentForSpec(s: WorkerSpec): unknown }).agentForSpec(spec);
     }
@@ -1082,6 +1227,18 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
 
 describe("#378 family mountShipAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
   class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public auth(): ShipAuth {
       return this.mountShipAuth();
     }

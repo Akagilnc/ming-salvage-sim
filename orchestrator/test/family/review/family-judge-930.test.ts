@@ -44,6 +44,7 @@ import {
   judgeEscalate,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const FINDING = sampleFinding("family open claim", "orchestrator/src/family/verifyCmr.ts:1");
 const FINDING_KEY = findingIdentityKey(FINDING);
@@ -60,6 +61,18 @@ function completedJudge(
 }
 
 class FamilyJudgeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: Array<{
     readonly kind: string;
@@ -100,6 +113,10 @@ class FamilyJudgeBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -182,7 +199,7 @@ class FamilyJudgeBackend implements FamilyBackend {
       };
     }
 
-    // #600/#603 online-review tail after ship (verify / fixer / docRelease / cleanup).
+    // #600/#603 online-review tail after ship (verify / fixer / landing / cleanup).
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) return skeleton;
     throw new Error(`unexpected worker kind ${spec.kind}`);

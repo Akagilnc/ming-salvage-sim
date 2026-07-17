@@ -99,7 +99,7 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
  *   coder → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
- *   ship → `gstack-ship`, merge → none; review-loop agents: verify/fixer/docRelease.
+ *   ship → `gstack-ship`, merge → none; review-loop agents: verify/fixer/landing.
  *   Cleanup is the S11 host-deterministic endgame action, not an agent skill.
  *
  * Production backends invoke these routed skills through the unified dispatch
@@ -117,7 +117,7 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   fixer: "/fixer",
   cleanup: undefined,
   // #735: real 文档发布 — invoke /gstack-document-release (not a path-allowlist gate).
-  docRelease: "/gstack-document-release",
+  landing: "/gstack-document-release",
 };
 
 /**
@@ -376,10 +376,10 @@ export function stepSpecToWorkerSpec(
 }
 
 // Prompt status: verify.md / fixer.md real paths shipped in #600;
-// docRelease.md real path shipped in #735. Cleanup is host-deterministic (#603).
+// landing.md real path shipped in #735. Cleanup is host-deterministic (#603).
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
-export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
+export const LANDING_PROMPT_FILE = "landing.md";
 
 /** Family S9 online-review / PR-check worker spec (#600 real prompt). */
 export function verifyWorkerSpec(
@@ -430,25 +430,25 @@ export function fixerWorkerSpec(
  * Family S12 文档发布 worker (#735): invoke `/gstack-document-release` in a spawned /
  * non-interactive session. Success (including 文档发布空跑) → `released:true`;
  * skill crash / hang / explicit fail / required push fail → not released.
- * Offline/test may still synthesize via the offline hatch only.
+ * Landing Action dispatches this seat; no offline green stub hatch.
  */
-export function docReleaseWorkerSpec(
+export function landingWorkerSpec(
   route?: ResolvedModelRoute,
   billingPool?: BillingPoolId,
 ): WorkerSpec {
-  const model = route?.slots.docRelease ?? modelForSlot("docRelease");
+  const model = route?.slots.landing ?? modelForSlot("landing");
   return {
     id: "S12",
-    kind: "docRelease",
-    role: "docRelease",
+    kind: "landing",
+    role: "landing",
     host: workerHostForModel(model, billingPool),
     session: "fresh",
     contextRetention: "clean",
-    skill: SKILL_FOR_KIND.docRelease,
-    promptFile: DOCRELEASE_PROMPT_FILE,
+    skill: SKILL_FOR_KIND.landing,
+    promptFile: LANDING_PROMPT_FILE,
     maxIter: 1,
     model,
-    soul: "docRelease",
+    soul: "landing",
     toolchain: [],
   };
 }
