@@ -54,8 +54,9 @@ async function dirExists(path: string): Promise<boolean> {
 
 /**
  * #959 — staged session tree must be parseable before it can replace the live
- * host dir. Requires chat_history.jsonl (resume critical path) and validates
- * every .json / .jsonl file under the tree.
+ * host dir. Required-file set is intentionally minimal: only chat_history.jsonl
+ * (resume critical path) must exist; any other .json / .jsonl under the tree is
+ * validated if present.
  */
 async function assertStagedSessionIntact(dir: string): Promise<void> {
   if (!(await dirExists(dir))) {
@@ -93,7 +94,7 @@ async function assertStagedSessionIntact(dir: string): Promise<void> {
   });
 }
 
-/** Sync JSONL line parser — no I/O (nit N3: drop needless async). */
+/** Sync JSONL line parser — pure string walk, no I/O. */
 function assertJsonlParseable(body: string, label: string): void {
   const lines = body.split("\n");
   let sawRecord = false;
@@ -138,7 +139,8 @@ async function walkSessionTexts(
 /**
  * #959 test-only inject for swap-segment failure paths (vitest cannot spy/mock
  * node:fs/promises rename under ESM). Production leaves defaults; tests must
- * reset via `.reset()` in afterEach.
+ * reset via `.reset()` in afterEach. Not a DI framework — single-process
+ * vitest seam only.
  */
 export const grokSessionAtomicReplaceTestInject = {
   /** When true, place rename is skipped once and throws after displace. */
@@ -146,6 +148,8 @@ export const grokSessionAtomicReplaceTestInject = {
   /**
    * Optional hook after live target is displaced to backup (e.g. plant a
    * concurrent winner at `targetDir` so place fails and restore is suppressed).
+   * Hook must leave `targetDir` either absent or a complete tree — never a
+   * half-written partial — so production restore logic stays valid.
    */
   afterDisplace:
     null as null | ((ctx: {
@@ -236,7 +240,7 @@ async function atomicReplaceDir(
       }
     } else {
       // Concurrent winner already recreated live target — our backup is stale.
-      // Drop only the backup this call created (Standards S1 orphan cleanup).
+      // Drop only the backup this call created (do not leave an orphaned .old tree).
       await fsp.rm(backup, { recursive: true, force: true }).catch(() => {});
     }
     throw err;
@@ -281,7 +285,7 @@ async function rewriteSessionTexts(
   to: string,
 ): Promise<void> {
   if (from === to || from.length === 0) return;
-  // nit N2: reuse walkSessionTexts — one directory walk for json/jsonl files.
+  // Reuse walkSessionTexts — one directory walk for json/jsonl files.
   await walkSessionTexts(dir, async (p, body) => {
     if (!body.includes(from)) return;
 
