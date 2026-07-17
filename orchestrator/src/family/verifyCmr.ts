@@ -83,7 +83,10 @@ import {
   billingPoolForFamilyWorker,
   familyWorkerSlotForDispatch,
 } from "./familyWorkerSlots.js";
-import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
+import {
+  modelFamilyForCmrReviewLeg,
+  resumeCapableForSlug,
+} from "../modelRegistry.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
   DispatchContext,
@@ -115,6 +118,7 @@ import {
   cmrPassAlreadyPassed,
   mechanicalRedispatchAttemptsFromFamilyLedger,
   recordAborted as recordDurableAbort,
+  familyCoderFixResumeSessionIdFromLedger,
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
@@ -624,12 +628,33 @@ async function runCmrCoderFix(input: {
 
   const currentFamilyHeadBefore = familyHeadBefore;
   let telemetryFamilyHeadBefore = familyHeadBefore;
-  const coderFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
+  // #979: same findings-chain fix rounds resume the prior fixer session
+  // (ledger sole truth on cmr_fix_committed). Absent / incapable → fresh;
+  // fixer soul「修法史先于动刀」is the testimony channel when fresh.
   const fixPool = billingPoolForFamilyWorker({
     ...(billingPool !== undefined ? { billingPool } : {}),
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
     kind: "coder",
   });
+  const familyLedgerForFix = await familyBackend.readFamilyLedger();
+  const ledgerResumeSessionId = familyCoderFixResumeSessionIdFromLedger(
+    familyLedgerForFix,
+    pass,
+  );
+  // Provisional seat model (pre-session-mode) so capability gate can decide.
+  const provisionalFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
+  const seatResumeCapable = resumeCapableForSlug(
+    provisionalFixSpec.model,
+    fixPool,
+  );
+  const resumeSessionId =
+    typeof ledgerResumeSessionId === "string" && seatResumeCapable
+      ? ledgerResumeSessionId
+      : undefined;
+  const coderFixSpec = familyCoderFixWorkerSpec(
+    resolvedRoute,
+    resumeSessionId !== undefined ? "resume" : "fresh",
+  );
   const fixResult = await dispatchOrAbort(
     familyBackend,
     coderFixSpec,
@@ -638,6 +663,8 @@ async function runCmrCoderFix(input: {
       ...(runId !== undefined ? { runId } : {}),
       modelRoute: resolvedRoute,
       ...(fixPool !== undefined ? { billingPool: fixPool } : {}),
+      // #979: thread prior same-chain fixer session when resume-capable.
+      ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
       // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
       // rich finding content travels in the separate landing payload below.
       blockingFindingIdentityKeys,
@@ -744,6 +771,14 @@ async function runCmrCoderFix(input: {
     return { result: stageGate("cmr_failed"), familyHeadAfter };
   }
 
+  // #979 CR R1 S1: one pack site class-wide (mirror openedJudgeSessionId).
+  // Prefer provider-surfaced id; else keep the ledger-derived resume id so a
+  // silent-complete resume still re-records the same-chain session.
+  const openedFixerSessionId =
+    typeof fixResult.sessionId === "string" && fixResult.sessionId.length > 0
+      ? fixResult.sessionId
+      : resumeSessionId;
+
   if (fixResult.output.kind !== "coder") {
     await recordCmrFixCommitted(familyBackend, {
       cmrPass: pass,
@@ -751,6 +786,9 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       blockingFindingIdentityKeys,
       reason: `${reasonPrefix}: completed coder receipt carried another shape; family judge will re-open on the diff`,
+      ...(openedFixerSessionId !== undefined
+        ? { sessionId: openedFixerSessionId }
+        : {}),
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
   }
@@ -804,6 +842,9 @@ async function runCmrCoderFix(input: {
         : // Keep "fresh reviewer will judge findings" phrasing for ledger grep stability
           // while the re-open is the same family judge court (#930).
           `${reasonPrefix}: coder-fix completed; fresh reviewer will judge findings`,
+    ...(openedFixerSessionId !== undefined
+      ? { sessionId: openedFixerSessionId }
+      : {}),
   });
   return {
     result: { ok: true, ran: true },

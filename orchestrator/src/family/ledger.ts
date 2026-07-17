@@ -199,6 +199,12 @@ export interface CmrFixCommittedRecord {
   readonly familyHeadAfter?: string;
   readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
+  /**
+   * #979 — Sandcastle session id of this coder-fix open. Ledger sole truth for
+   * same-chain fix-round resume (mirrors #966 judge sessionId on cmr_reviewed).
+   * Absent when the provider surfaced no id.
+   */
+  readonly sessionId?: string;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -413,6 +419,10 @@ export async function recordCmrFixCommitted(
   backend: FamilyBackend,
   record: CmrFixCommittedRecord,
 ): Promise<void> {
+  const sessionId =
+    typeof record.sessionId === "string" && record.sessionId.trim().length > 0
+      ? record.sessionId.trim()
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "cmr_fix_committed",
@@ -423,6 +433,8 @@ export async function recordCmrFixCommitted(
       familyHeadBefore: record.familyHeadBefore,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      // #979: durable fixer-chain session continuity (ledger sole truth).
+      ...(sessionId !== undefined ? { sessionId } : {}),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -446,6 +458,45 @@ export async function recordCmrFixCommitted(
         }),
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * #979 — latest family coder-fix session id from `cmr_fix_committed` ledger rows.
+ *
+ * Same-pass only (completeness vs correctness are separate findings chains).
+ * Newest matching fix row is sole authority: blank/missing sessionId → fresh
+ * (never resurrect an older id under a fresh-open row — same CR-10 as #966).
+ * A later `coder_advance` (model change) after any prior fix invalidates resume
+ * so the new coder opens fresh; `coder_advance_stay_put` does not invalidate.
+ */
+export function familyCoderFixResumeSessionIdFromLedger(
+  ledger: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly cmrPass?: string;
+    readonly sessionId?: string;
+  }>,
+  pass: string,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const status = entry.status ?? entry.event;
+    if (status === "coder_advance") {
+      // Seat reassigned after a prior fix — do not hand the old conversation to
+      // the new model binding.
+      return undefined;
+    }
+    if (status === "cmr_fix_committed") {
+      if (entry.cmrPass !== pass) continue;
+      const sid = entry.sessionId;
+      // Align with recordCmrFixCommitted write-path trim: whitespace-only →
+      // absent / fresh (never hand a blank token to Sandcastle resume).
+      if (typeof sid !== "string") return undefined;
+      const trimmed = sid.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+  }
+  return undefined;
 }
 
 /** Append a PHASE-LEVEL family escalation marker (#439). */
