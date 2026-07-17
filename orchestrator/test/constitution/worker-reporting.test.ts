@@ -226,8 +226,22 @@ describe("#825 Group A family roles", () => {
           }
           return { kind: "completed", output: { kind: "judge", status: "converged", successfulLegs: ["opus", "gpt-5.6-sol", "agy"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
         }
-        this.shipCalls += 1;
-        return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
+        if (spec.kind === "ship") {
+          this.shipCalls += 1;
+          return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
+        }
+        // #940: offline skeleton / explicit role cargo — do not return ship
+        // envelopes for verify/fixer (would hang the uncapped continue loop).
+        if (spec.kind === "verify") {
+          return { kind: "completed", output: { kind: "verify", converged: true } };
+        }
+        if (spec.kind === "fixer") {
+          return { kind: "completed", output: { kind: "fixer", committed: false } };
+        }
+        if (spec.kind === "docRelease") {
+          return { kind: "completed", output: { kind: "docRelease", released: true } };
+        }
+        return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
       }
     }
     const backend = new CmrBackend();
@@ -259,7 +273,6 @@ describe("#825 Group A family roles", () => {
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
         dispatchDocRelease: async () => true,
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
       },
     );
@@ -287,7 +300,6 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
         dispatchDocRelease: async () => true,
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
       },
     );
