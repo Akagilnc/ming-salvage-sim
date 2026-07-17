@@ -1025,10 +1025,11 @@ def _assert_oral_decree_withheld_not_shared(db, state, *, mid_sec, secret_q, spe
 
 
 def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
-    """非新建 pending「更新」：stage 钉 pin 后 commit 必须消费，口谕 withheld 不进共享。
+    """非新建 pending「更新」：显式 pin 在 commit 必须消费，口谕 withheld 不进共享。
 
-    已有密令 → 皇帝对甲口述改旨 → stage 更新 → 确认语 → commit。
+    已有密令 → 皇帝对甲口述改旨 → stage 更新（显式 pin）→ 确认语 → commit。
     跨人承办：assignee=乙，origin speaker=甲。
+    非新建不默认 auto-pin held；新口谕须显式 origin_chat_message_id。
     """
     import json as _json
 
@@ -1055,6 +1056,7 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
             "new_title": "密查国丈（扩）",
             "new_content": new_content,
             "deadline_months": 0,
+            "origin_chat_message_id": mid_sec,
         },
     )
     staged = db.conn.execute(
@@ -1087,7 +1089,7 @@ def test_976_non_create_stage_commit_update_withholds_oral_pin(game):
 
 
 def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
-    """非新建 pending「催办」：stage 钉 pin 后 commit 必须消费，口谕 withheld 不进共享。"""
+    """非新建 pending「催办」：显式 pin 在 commit 必须消费，口谕 withheld 不进共享。"""
     import json as _json
 
     db, state, content = game
@@ -1106,7 +1108,11 @@ def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
     pid = db.stage_pending_action(
         state.turn, kind="secret_order", action="催办",
         minister_name=speaker.name, target_id=oid,
-        payload={"deadline_months": 1, "reason": "御限收紧"},
+        payload={
+            "deadline_months": 1,
+            "reason": "御限收紧",
+            "origin_chat_message_id": mid_sec,
+        },
     )
     staged = db.conn.execute(
         "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
@@ -1133,7 +1139,7 @@ def test_976_non_create_stage_commit_rush_withholds_oral_pin(game):
 
 
 def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game):
-    """非新建「记进展」「提交核议」：stage pin 消费后口谕 withheld（修类 sweep）。"""
+    """非新建「记进展」「提交核议」：显式 pin 消费后口谕 withheld（修类 sweep）。"""
     import json as _json
 
     db, state, content = game
@@ -1161,10 +1167,11 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
             "不得走漏半句，亦不可经司礼监转呈。"
         )
         mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+        payload = {**payload_extra, "origin_chat_message_id": mid_sec}
         pid = db.stage_pending_action(
             state.turn, kind="secret_order", action=action,
             minister_name=speaker.name, target_id=oid,
-            payload=payload_extra,
+            payload=payload,
         )
         staged = db.conn.execute(
             "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
@@ -1181,6 +1188,76 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
             db, state, mid_sec=mid_sec, secret_q=secret_q,
             speakers={speaker.name, assignee.name}, content=content,
         )
+
+
+def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
+    """无新口谕时非新建 stage 不得 auto-pin 纯公开 held → withheld 吞 S3 参与即知。
+
+    已有密令 → 纯公开问话 → stage 催办/记进展（无显式 pin）→ commit。
+    纯公开不得被误标密令血缘；可 held 至 settle，或 private/released；永非 withheld。
+    修类：催办 + 记进展；跨人 speaker≠assignee 与同人各一。
+    """
+    import json as _json
+
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+    public_q = "近来京营操练如何？先催办前令。"
+
+    for action, payload, same_person in (
+        (
+            "催办",
+            {"deadline_months": 1, "reason": "御限收紧"},
+            False,
+        ),
+        (
+            "记进展",
+            {"note": "已密访东城典当三处。"},
+            True,
+        ),
+    ):
+        minister = assignee.name if same_person else speaker.name
+        oid = db.create_secret_order(
+            state, assignee.name, f"密查-{action}", f"暗访-{action}。", [],
+            deadline_months=6,
+        )
+        assert oid > 0
+        mid_pub = db.append_chat_message(minister, state.turn, "user", public_q)
+        pid = db.stage_pending_action(
+            state.turn, kind="secret_order", action=action,
+            minister_name=minister, target_id=oid,
+            payload=dict(payload),
+        )
+        staged = db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+        ).fetchone()
+        staged_payload = _json.loads(staged["payload_json"] or "{}")
+        # 非新建无显式 pin → 不得把纯公开 held 钉成 origin
+        assert staged_payload.get("origin_chat_message_id") in (None, "", 0), (
+            f"{action}: auto-pinned pure public as origin"
+        )
+
+        applied = db.commit_pending_actions(
+            state, minister_name=minister, action_ids={pid}, content=content,
+        )
+        assert applied and applied[0]["kind"] == "secret_order", action
+
+        pub_status = db.conn.execute(
+            "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,)
+        ).fetchone()["knowledge_status"]
+        assert pub_status != "withheld", (
+            f"{action}: pure public swallowed as secret origin (status={pub_status})"
+        )
+        assert pub_status in ("held", "private", "released"), action
+        # 不得进 withheld 终态后从知识面消失：held 等 settle 放行亦可；
+        # private/released 则接令者/参与者当即可记。
+        if pub_status in ("private", "released"):
+            view = db.get_character_knowledge(state, minister)
+            text = " ".join(
+                item.get("body", "")
+                for item in view["events"] + view.get("public_events", [])
+            )
+            assert public_q in text, f"{action}: pure public not remembered after project"
+
 
 
 # ── #976 红队四轴 + 消息级 provenance 根治（正负配对，真实接缝）──────────────
