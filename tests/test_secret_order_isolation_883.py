@@ -228,6 +228,149 @@ def test_883_shared_write_seam_refuses_body_matching_active_secret_brief(game):
     assert all(marker not in body for body in bodies)
 
 
+def test_883_public_audience_same_turn_survives_secret_scrub(game):
+    """F1：接令者同回合先公开后密令时，公开召对 audience 不得被结构 scrub 一并吞掉。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    public_line = "臣报：京营操练如常，无异常。"
+    secret_chat = (
+        "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
+
+    db.append_chat_message(assignee.name, state.turn, "user", "近来京营操练如何？")
+    db.append_chat_message(assignee.name, state.turn, "minister", public_line)
+    db.append_chat_message(assignee.name, state.turn, "user", secret_chat)
+    db.append_chat_message(assignee.name, state.turn, "minister", "臣领密旨，即暗中查办。")
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
+    assert oid > 0
+
+    shared_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    event_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_events").fetchall()
+    ]
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(
+        item.get("body", "") for item in assignee_view["events"] + assignee_view.get("public_events", [])
+    )
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+
+    # 公开召对仍在共享见闻 / 接令者参与即知面。
+    assert any(public_line in body for body in shared_bodies + event_bodies)
+    assert public_line in assignee_text
+    # 密令原话与润稿不得残留共享存储；他臣不得见。
+    assert all(secret_chat not in body for body in shared_bodies)
+    assert all(extracted not in body for body in shared_bodies)
+    assert secret_chat not in other_text
+    assert extracted not in other_text
+    assert extracted in assignee_text
+
+
+def test_883_post_brief_paraphrase_audience_never_enters_shared_sources(game):
+    """F2：brief 已存在后，不含 title/body 精确子串的改写转述不得写入共享 audience 源。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    marker_body = "密查阉党余孽在京城私结会所并藏匿禁书"
+    oid = db.create_secret_order(state, assignee.name, "密查阉党", marker_body, [])
+    assert oid > 0
+
+    paraphrase = "臣已暗中查访阉党旧部在京活动，尚未惊动外廷。"
+    assert marker_body not in paraphrase
+    assert "密查阉党" not in paraphrase
+
+    mid = db.append_chat_message(assignee.name, state.turn, "minister", paraphrase)
+    shared = list(
+        db.conn.execute(
+            "SELECT body, kind FROM character_knowledge_sources WHERE source_id=?",
+            (f"chat_message:{mid}",),
+        ).fetchall()
+    )
+    assert shared == []
+    bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    assert all(paraphrase not in body for body in bodies)
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert paraphrase not in other_text
+
+
+def test_883_pure_public_archive_lands_while_secret_brief_active(game):
+    """F3：世上存在 active brief 时，纯公开月末叙事/邸报仍应入档（不整闸吞公开层）。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    public = "本月山东漕粮起运如常，无阻无欠。"
+    secret_marker = "不得入档的密令正文883"
+    db.create_secret_order(state, assignee.name, "密查某事", secret_marker, [])
+
+    db.save_turn_report(state, public)
+    db.save_chapter_memory(state, "朝局公开", public)
+    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
+    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
+    assert public in report_blob
+    assert public in chapter_blob
+    assert secret_marker not in report_blob
+    assert secret_marker not in chapter_blob
+
+    from ming_sim.decree import _record_settlement_narrative_sources
+    _record_settlement_narrative_sources(db, state, public, commit=True)
+    settlement = list(
+        db.conn.execute(
+            "SELECT body FROM character_knowledge_events WHERE source_id=?",
+            (f"settlement:narrative:{state.turn}",),
+        ).fetchall()
+    )
+    assert settlement and public in (settlement[0]["body"] or "")
+
+
+def test_883_cross_turn_chat_origin_scrubbed_on_late_secret_create(game):
+    """F4：召对原话在 T 写入共享后，T+1 才 create（润稿 body）仍须清掉跨回合残留。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    chat_origin = (
+        "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
+    assert extracted not in chat_origin and chat_origin not in extracted
+
+    db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
+    state.turn = int(state.turn) + 1
+    db.save_state(state)
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
+    assert oid > 0
+
+    shared_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    event_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_events").fetchall()
+    ]
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert all(chat_origin not in body for body in shared_bodies)
+    assert all(chat_origin not in body for body in event_bodies)
+    assert chat_origin not in other_text
+
+
 def test_883_shared_archive_bypass_positive_and_negative(game):
     """复审员旁路：共享汇总正负断言——有密令时 raw 报告不得原样入档；无密令时公开文可入。"""
     db, state, content = game
@@ -243,6 +386,9 @@ def test_883_shared_archive_bypass_positive_and_negative(game):
     chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
     assert secret_marker not in report_blob
     assert secret_marker not in chapter_blob
+    # 同闸：有密令时纯公开句仍可入档（F3；不因 brief 存在整闸吞公开层）。
+    assert "公开句" in report_blob
+    assert "公开句" in chapter_blob
 
     # 正向：无未公开密令简报时，纯公开正文可落共享档。
     db.conn.execute("DELETE FROM secret_order_briefs")

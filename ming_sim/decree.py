@@ -124,9 +124,9 @@ def _record_settlement_narrative_sources(
     # Audience chat is not an input to the month-end simulator.  Its presence
     # in the same turn therefore cannot taint an independently produced public
     # settlement narrative.  Other restricted shared sources still block it.
-    # #883: active secret-order briefs are private structure, not shared
-    # sources — their presence alone also blocks recording the aggregate as
-    # an audience source (secrets never pre-feed the public monthly judge).
+    # #883: active secret-order briefs are private structure — their presence
+    # alone must NOT swallow pure public narrative (F3).  Secret wording in
+    # the aggregate is stripped; public LLM inputs never preload secrets.
     restricted_kinds = set()
     for source_id in restricted_ids:
         row = db.conn.execute(
@@ -140,8 +140,11 @@ def _record_settlement_narrative_sources(
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return
+    narrative_text = db._strip_secret_order_text(str(narrative or ""))
+    if not narrative_text.strip():
+        return
     db.record_public_knowledge_event(
-        state, "本回合邸报", str(narrative or ""), source_id=source_id, commit=commit,
+        state, "本回合邸报", narrative_text, source_id=source_id, commit=commit,
     )
 
 
