@@ -361,7 +361,10 @@ def test_participation_survives_restore(game):
 
 
 def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
-    """撤回本轮后，已删除聊天消息的见闻源不可继续投影到人物上下文。"""
+    """撤回本轮后，已删除聊天消息的见闻源不可继续投影到人物上下文。
+
+    #976: user 行先 hold；放行共享轨后才有见闻投影；撤回仍须清掉已放行源。
+    """
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")
     marker = "撤回应一并抹去的召对事项"
@@ -369,6 +372,8 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     chat_turn_id = db.create_chat_turn(state, minister.name, "undo-knowledge", 0)
     before = db.capture_chat_rollback_snapshot()
     message_id = db.append_chat_message(minister.name, state.turn, "user", marker)
+    # Pure-public emperor speech is held until release (no secret classification).
+    db.release_held_audience_knowledge()
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(chat_turn_id, before, after)
     db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
