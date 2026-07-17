@@ -547,8 +547,12 @@ export async function recordChildDecisionParked(
   );
 }
 
-/** Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)? */
-function isValidChildDecisionParked(
+/**
+ * Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)?
+ * Single authority for "ledger-proven decision park" shape — family runner #970
+ * injection gating reuses this (do not reimplement a weaker twin).
+ */
+export function isValidChildDecisionParked(
   entry: FamilyLedgerEntry,
 ): entry is FamilyLedgerEntry & { readonly childIssue: number } {
   return (
