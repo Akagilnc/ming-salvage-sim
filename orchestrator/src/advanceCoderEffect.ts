@@ -60,7 +60,7 @@ export type AdvanceCoderProbe = (
  * Execute a judge `advanceCoder` suggestion against one seat's current slug.
  *
  * `applySlug` is the only court difference:
- *   - single-slice S3/S6 → rewrite coder (+coderFix unless env-preserved)
+ *   - single-slice S3/S6 → rewrite coder + coderFix
  *   - family CMR continue → rewrite coderFix only
  */
 export async function executeAdvanceCoderSuggestion(input: {

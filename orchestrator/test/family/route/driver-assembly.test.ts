@@ -24,10 +24,11 @@ const realPromptsDir = join(here, "..", "..", "..", "prompts");
 const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
 
 import {
-  assertExternalBlockersCleared,
   buildFamilyEpic,
   cutFamilyBase,
-  FamilyExternalBlockerError,
+  discoverSubprojects,
+  filterExternalBlockedChildren,
+  FamilyRootBlockerError,
   inferVerifyCwd,
   parseSubIssueAdmission,
   readFamilyEpic,
@@ -146,60 +147,102 @@ describe("#291 buildFamilyEpic", () => {
   });
 });
 
-describe("#291 assertExternalBlockersCleared — family-admission external-blocker gate (online R1 #1; user 2026-06-22, ADR 0022 dec6③)", () => {
-  // An EXTERNAL blocked_by (an issue NOT among this epic's children) is never merged
-  // into the family ledger, so the scheduler cannot clear it. Rather than leaning on
-  // each child's family-mode S0 (which dec6③ rewired to a ledger-merged criterion, so
-  // it does NOT reliably reject an open external blocker), validate them EXPLICITLY at
-  // admission against the live GitHub `state`: any external blocker still open fails
-  // the WHOLE family run up front, with the concrete offending list.
-  it("throws FamilyExternalBlockerError with the concrete list when an external blocker is still OPEN", () => {
+describe("#934 filterExternalBlockedChildren — per-child visible filter (ID-002)", () => {
+  // Ordinary external blockers only filter the affected child; siblings continue.
+  it("filters a child with an OPEN external blocker and keeps runnable siblings", () => {
     const blockedBy = new Map<number, GhBlockedBy[]>([
       [11, []],
       [12, [{ number: 11, state: "open" }, { number: 999, state: "open" }]], // 11 intra-family, 999 external+open
     ]);
-    let err: unknown;
-    try {
-      assertExternalBlockersCleared([11, 12], blockedBy);
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(FamilyExternalBlockerError);
-    expect((err as FamilyExternalBlockerError).openBlockers).toEqual([{ child: 12, blocker: 999 }]);
-    // the message names the concrete child + external issue so the rejection is actionable
-    expect((err as Error).message).toContain("#12");
-    expect((err as Error).message).toContain("#999");
+    const result = filterExternalBlockedChildren([11, 12], blockedBy);
+    expect(result.runnable).toEqual([11]);
+    expect(result.skipped).toEqual([
+      {
+        issue: 12,
+        reason: "open_external_blocker",
+        message: "family admission skipped child #12: open external blocker(s) #999",
+      },
+    ]);
+    expect(result.openBlockers).toEqual([{ child: 12, blocker: 999 }]);
   });
-  it("a CLOSED external blocker is satisfied ⇒ no throw (the child may schedule)", () => {
+  it("a CLOSED external blocker is satisfied ⇒ child remains runnable", () => {
     const blockedBy = new Map<number, GhBlockedBy[]>([
       [12, [{ number: 999, state: "closed" }]],
     ]);
-    expect(() => assertExternalBlockersCleared([11, 12], blockedBy)).not.toThrow();
+    const result = filterExternalBlockedChildren([11, 12], blockedBy);
+    expect(result.runnable).toEqual([11, 12]);
+    expect(result.skipped).toEqual([]);
   });
-  it("an INTRA-family blocker (even open) is NOT an external blocker ⇒ no throw (the scheduler clears it)", () => {
+  it("an INTRA-family blocker (even open) is NOT an external blocker ⇒ runnable", () => {
     const blockedBy = new Map<number, GhBlockedBy[]>([
       [12, [{ number: 11, state: "open" }]], // 11 IS a family child
     ]);
-    expect(() => assertExternalBlockersCleared([11, 12], blockedBy)).not.toThrow();
+    const result = filterExternalBlockedChildren([11, 12], blockedBy);
+    expect(result.runnable).toEqual([11, 12]);
+    expect(result.skipped).toEqual([]);
   });
-  it("no blocked_by at all ⇒ no throw", () => {
-    expect(() => assertExternalBlockersCleared([11, 12], new Map())).not.toThrow();
+  it("no blocked_by at all ⇒ all runnable", () => {
+    const result = filterExternalBlockedChildren([11, 12], new Map());
+    expect(result.runnable).toEqual([11, 12]);
+    expect(result.skipped).toEqual([]);
   });
-  it("collects EVERY open external blocker across children (the list is complete, not first-only)", () => {
+  it("collects EVERY open external blocker across children (list is complete)", () => {
     const blockedBy = new Map<number, GhBlockedBy[]>([
       [11, [{ number: 900, state: "open" }]],
       [12, [{ number: 901, state: "open" }, { number: 11, state: "open" }]],
     ]);
-    let err: FamilyExternalBlockerError | undefined;
-    try {
-      assertExternalBlockersCleared([11, 12], blockedBy);
-    } catch (e) {
-      err = e as FamilyExternalBlockerError;
-    }
-    expect(err?.openBlockers).toEqual([
+    const result = filterExternalBlockedChildren([11, 12], blockedBy);
+    expect(result.runnable).toEqual([]);
+    expect(result.openBlockers).toEqual([
       { child: 11, blocker: 900 },
       { child: 12, blocker: 901 },
     ]);
+    expect(result.skipped.map((s) => s.issue)).toEqual([11, 12]);
+  });
+});
+
+describe("#934 parseSubIssueAdmission schema fail-closed (ID-003)", () => {
+  it("throws on non-array / malformed sub_issues payloads (never soft-empty)", () => {
+    expect(() => parseSubIssueAdmission({ unexpected: [] })).toThrow(/sub_issues schema error/);
+    expect(() => parseSubIssueAdmission(null)).toThrow(/sub_issues schema error/);
+    expect(() => parseSubIssueAdmission("weird")).toThrow(/sub_issues schema error/);
+    expect(() => parseSubIssueAdmission({ subIssues: { nodes: "x" } })).toThrow(
+      /sub_issues schema error/,
+    );
+  });
+  it("accepts a valid GraphQL-shaped {subIssues.nodes} payload", () => {
+    expect(
+      parseSubIssueAdmission({
+        subIssues: {
+          nodes: [{ number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] }],
+        },
+      }),
+    ).toEqual({ admitted: [99], skipped: [] });
+  });
+  it("throws on missing/non-finite number entries (never soft-skip into all-filtered)", () => {
+    expect(() =>
+      parseSubIssueAdmission([
+        { number: 10, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        { state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+      ]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() =>
+      parseSubIssueAdmission([{ number: "12", state: "OPEN" }]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() =>
+      parseSubIssueAdmission([{ number: Number.NaN, state: "OPEN" }]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() => parseSubIssueAdmission([null, { number: 1, state: "OPEN" }])).toThrow(
+      /sub_issues entry schema error|expected object/i,
+    );
+  });
+  it("dedupes repeated finite numbers without treating them as schema garbage", () => {
+    expect(
+      parseSubIssueAdmission([
+        { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+      ]),
+    ).toEqual({ admitted: [99], skipped: [] });
   });
 });
 
@@ -432,8 +475,10 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
             },
           ]);
         }
-        // Only the admitted child reaches dependency lookup / wave scheduling.
-        expect(args[1]).toBe("repos/Akagilnc/ming-salvage-sim/issues/11/dependencies/blocked_by");
+        // Root epic + admitted children reach dependency lookup (ID-002).
+        expect(String(args[1])).toMatch(
+          /repos\/Akagilnc\/ming-salvage-sim\/issues\/(291|11)\/dependencies\/blocked_by/,
+        );
         return "[]";
       };
       const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
@@ -490,14 +535,44 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
     });
   });
 
-  it("still fails closed when an existing family's children are all skipped", () => {
-    const sh: Sh = (_file, args) =>
-      String(args[1]).includes("/sub_issues")
-        ? JSON.stringify([{ number: 405, state: "CLOSED" }])
-        : "[]";
-    expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(
-      /all native children were skipped/,
+  it("returns an empty family with visible inventory when all children are skipped", () => {
+    const sh: Sh = (_file, args) => {
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 405, state: "CLOSED" }]);
+      }
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: 404, body: "", author: { login: "Akagilnc" } });
+      }
+      return "[]";
+    };
+    expect(readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toMatchObject({
+      issue: 404,
+      children: [],
+      admissionSkipped: [{ issue: 405, reason: "closed" }],
+    });
+  });
+
+  it("aggregates sub_issues failure with root blocked_by (does not abort before root)", () => {
+    const calls: string[] = [];
+    const sh: Sh = (_file, args) => {
+      const key = String(args[1] ?? args[0]);
+      calls.push(key);
+      if (String(args[1]).includes("/sub_issues")) {
+        throw new Error("sub_issues boom");
+      }
+      if (String(args[1]).includes("/dependencies/blocked_by")) {
+        throw new Error("root blocked_by boom");
+      }
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: 291, body: "", author: { login: "Akagilnc" } });
+      }
+      return "[]";
+    };
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /issue metadata unavailable \(2 errors\).*sub_issues.*blocked_by/s,
     );
+    expect(calls.some((c) => c.includes("/sub_issues"))).toBe(true);
+    expect(calls.some((c) => c.includes("/dependencies/blocked_by"))).toBe(true);
   });
 });
 
@@ -614,6 +689,130 @@ describe("#335 runIntegratedCmr legacy per-method seam (the real cmr is the cont
     });
     await expect(b.runIntegratedCmr({ familyBase: "family/291-base" })).rejects.toThrow(
       /ak-cross-m-review|driver|manual-smoke/i,
+    );
+  });
+});
+
+
+describe("#934 readFamilyEpic root blocked_by + external filter (ID-002)", () => {
+  it("parks via FamilyRootBlockerError when the root epic has an OPEN blocker", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([{ number: 11 }, { number: 12 }]);
+      }
+      // root epic blocked_by
+      if (String(args[1]).includes("/issues/291/dependencies/blocked_by")) {
+        return JSON.stringify([{ number: 100, state: "open" }]);
+      }
+      return "[]";
+    };
+    expect(() => readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      FamilyRootBlockerError,
+    );
+    try {
+      readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+    } catch (e) {
+      expect(e).toBeInstanceOf(FamilyRootBlockerError);
+      expect((e as FamilyRootBlockerError).openBlockers).toEqual([100]);
+    }
+  });
+
+  it("OPEN root blocker still finishes enumerable child metadata before park (no first-error return)", () => {
+    const childBlockedByReads: number[] = [];
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([
+          { number: 11, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+          { number: 12, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (String(args[1]).includes("/issues/291/dependencies/blocked_by")) {
+        return JSON.stringify([{ number: 100, state: "open" }]);
+      }
+      const child = Number(/issues\/(\d+)\//.exec(String(args[1]) ?? "")?.[1]);
+      if (child === 11 || child === 12) {
+        childBlockedByReads.push(child);
+        if (child === 11) {
+          throw new Error("child #11 blocked_by unavailable");
+        }
+        return "[]";
+      }
+      return "[]";
+    };
+    try {
+      readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+      expect.unreachable("expected FamilyRootBlockerError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(FamilyRootBlockerError);
+      const err = e as FamilyRootBlockerError;
+      expect(err.openBlockers).toEqual([100]);
+      // Both enumerable children were read despite the OPEN root blocker.
+      expect(childBlockedByReads.sort((a, b) => a - b)).toEqual([11, 12]);
+      // Child metadata failure is retained in park diagnostics (not dropped).
+      expect(err.message).toMatch(/child #11 blocked_by/);
+      expect(err.diagnostics.some((d) => /child #11 blocked_by/.test(d))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("visibly filters a child with open external blocker and admits the sibling", () => {
+    const sh: Sh = (file, args) => {
+      expect(file).toBe("gh");
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "",
+          author: { login: "Akagilnc" },
+        });
+      }
+      if (String(args[1]).includes("/sub_issues")) {
+        return JSON.stringify([
+          { number: 11, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+          { number: 12, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (String(args[1]).includes("/issues/291/dependencies/blocked_by")) {
+        return "[]"; // root clear
+      }
+      const n = Number(/issues\/(\d+)\//.exec(String(args[1]) ?? "")?.[1]);
+      if (n === 12) {
+        return JSON.stringify([{ number: 999, state: "open" }]);
+      }
+      return "[]";
+    };
+    const epic = readFamilyEpic(291, "Akagilnc/ming-salvage-sim", sh);
+    expect(epic.children.map((c) => c.issue)).toEqual([11]);
+    expect(epic.admissionSkipped).toEqual([
+      {
+        issue: 12,
+        reason: "open_external_blocker",
+        message: "family admission skipped child #12: open external blocker(s) #999",
+      },
+    ]);
+  });
+});
+
+describe("#934 discoverSubprojects operational errors fail closed (ID-011)", () => {
+  it("throws when readdir fails (never soft-returns [])", () => {
+    expect(() => discoverSubprojects("/definitely/missing/path-934-subprojects")).toThrow(
+      /^family verify: failed to readdir subprojects at /,
     );
   });
 });

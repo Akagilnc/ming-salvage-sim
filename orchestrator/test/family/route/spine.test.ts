@@ -21,7 +21,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -77,14 +76,10 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.prepareBases.push(base);
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -123,8 +118,8 @@ class FakeFamilyBackend implements FamilyBackend {
     return this.workingRepo;
   }
 
-  // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
-  runFamilyVerify?: FamilyBackend["runFamilyVerify"];
+  // #596 r2 / #939: verify is required; default green for spine path tests.
+  runFamilyVerify: FamilyBackend["runFamilyVerify"] = async () => ({ ok: true });
   dispatchWorker?: (
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -147,6 +142,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11, 12),
       familyBackend,
       singleSliceBackend,
@@ -168,7 +164,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       "merged",
       "merged",
     ]);
-    // A complete clean run is observably "success" (#293 no-op verify passes).
+    // A complete clean run is observably "success" (green barriers + all merged).
     expect(result.status).toBe("success");
   });
 
@@ -187,6 +183,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -324,6 +321,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -366,6 +364,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     };
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -419,6 +418,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     };
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -532,6 +532,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -551,6 +552,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11, 12),
       familyBackend,
       singleSliceBackend,
@@ -574,6 +576,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -599,6 +602,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -627,6 +631,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,

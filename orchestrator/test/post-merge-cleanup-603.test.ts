@@ -571,6 +571,56 @@ describe("#603 fetchPaginatedSubIssues", () => {
     expect(calls.some((c) => c.includes("per_page=100"))).toBe(true);
     expect(calls.some((c) => c.includes("page=2"))).toBe(true);
   });
+
+  it("fails closed on missing/non-finite number entries (same class as admission)", () => {
+    const sh = fakeSh({
+      "gh api repos": () =>
+        JSON.stringify([
+          { number: 1, state: "OPEN" },
+          { state: "OPEN" },
+        ]),
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issues entry schema error|missing or non-finite number/i,
+    );
+  });
+
+  it("error indices are contiguous within a multi-entry page (pageOffset + i)", () => {
+    const sh = fakeSh({
+      "gh api repos": () =>
+        JSON.stringify([
+          { number: 1, state: "OPEN" },
+          { number: 2, state: "OPEN" },
+          { state: "OPEN" }, // third entry — index must be 2, not 4
+        ]),
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issue\[2\]: missing or non-finite number/,
+    );
+  });
+
+  it("error indices continue across pages from absolute pageOffset", () => {
+    const sh = fakeSh({
+      "gh api repos": (args) => {
+        if (args.some((a) => /(?:^|[&?])page=1(?:&|$)/.test(a))) {
+          return JSON.stringify(
+            Array.from({ length: 100 }, (_, i) => ({
+              number: i + 1,
+              state: "OPEN",
+            })),
+          );
+        }
+        // First entry of page 2 is bad → absolute index 100
+        return JSON.stringify([
+          { state: "OPEN" },
+          { number: 102, state: "OPEN" },
+        ]);
+      },
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issue\[100\]: missing or non-finite number/,
+    );
+  });
 });
 
 describe("#603 CleanupResult terminal vs non-terminal (AC6)", () => {

@@ -13,7 +13,6 @@ import type {
   Backend,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
@@ -82,12 +81,9 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The committed S2 routes to a fresh reviewer; S2 itself is not re-dispatched.
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
-    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
+    // S0 gate / S1 load are NOT re-executed (no re-cut). Snapshot dual court
+    // deleted (#936). #767 may re-fetch issue meta/body for Coder-Rec on resume.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
-    expect(backend.calls).not.toContain(
-      `writeSnapshot(${WORKTREE.branch}, #255)`,
-    );
 
     // The run completes from the resumed point.
     expect(result.status).toBe("success");
@@ -388,6 +384,9 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 });
 describe("#824 durable mechanical redispatch budget", () => {
   it("continues the prior S2 attempt count after a crash instead of granting a fresh budget", async () => {
+    // Seed budget at MAX-1 so resume has exactly one process-root attempt left
+    // (#934 ID-004: budget is 6, not a fresh full budget on re-entry).
+    const priorAttempt = MAX_DISPATCH_ATTEMPTS - 1;
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -399,14 +398,7 @@ describe("#824 durable mechanical redispatch budget", () => {
           step: "mechanical_redispatch_attempt",
           event: "mechanical_redispatch_attempt",
           forStep: "S2",
-          mechanicalRedispatchAttempt: 1,
-        },
-        {
-          ...entry("S2"),
-          step: "mechanical_redispatch_attempt",
-          event: "mechanical_redispatch_attempt",
-          forStep: "S2",
-          mechanicalRedispatchAttempt: 2,
+          mechanicalRedispatchAttempt: priorAttempt,
         },
       ].map((row) => JSON.stringify(row)).join("\n")),
     };
@@ -425,9 +417,9 @@ describe("#824 durable mechanical redispatch budget", () => {
       backend.ledgerWrites.filter(
         (written) => written.event === "mechanical_redispatch_attempt",
       ).map((written) => written.mechanicalRedispatchAttempt),
-    ).toContain(3);
+    ).toContain(MAX_DISPATCH_ATTEMPTS);
     expect(result.stopSummary?.summary).toContain(
-      "after 3 dispatch attempts",
+      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
     );
   });
 

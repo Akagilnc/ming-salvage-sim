@@ -21,7 +21,6 @@ import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -58,14 +57,10 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.ran.push(issueNumber);
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -75,6 +70,10 @@ class ChildBackend implements Backend {
 
 /** A FamilyBackend pre-seeded with a ledger (the prior, crashed run's residue). */
 class SeededFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[];
   constructor(seed: FamilyLedgerEntry[]) {
@@ -135,6 +134,7 @@ describe("spine reconcile — branch ② ancestor-confirmed (no double-merge)", 
     ]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -167,6 +167,7 @@ describe("spine reconcile — branch ② childHead absent (rerun, no error)", ()
     ]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -211,6 +212,7 @@ describe("spine reconcile — append-loop crash idempotency (no double-merge mid
     ]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epic3,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -243,6 +245,7 @@ describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", (
     ]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -282,6 +285,7 @@ describe("spine reconcile — familyHead reflects the reconcile live head on a r
     ]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -326,6 +330,7 @@ describe("spine reconcile — a RED final barrier on a no-new-merge resume recor
       familyBackend,
       singleSliceBackend: childBackend,
       familyBase: "family/291-base",
+      // Production runVerifyCmr — FinalVerifyRedBackend makes final red.
       reconcileGit: new FakeReconcileGit(
         "base2",
         { 10: "c10", 11: "c11" },
@@ -348,6 +353,7 @@ describe("spine reconcile — no reconcileGit (fresh run unchanged)", () => {
     const familyBackend = new SeededFamilyBackend([]);
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: childBackend,

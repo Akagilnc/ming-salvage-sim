@@ -18,7 +18,6 @@ import type {
   DispatchContext,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -123,7 +122,10 @@ class ResumeIdentityBackend implements Backend {
   readonly ctxs: DispatchContext[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
 
-  constructor(private readonly resumeState: ResumeState) {}
+  constructor(
+    private readonly resumeState: ResumeState,
+    private readonly coderRecBody: string = "",
+  ) {}
 
   async smokeModelRoute(route: Parameters<NonNullable<Backend["smokeModelRoute"]>>[0]) {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
@@ -146,10 +148,8 @@ class ResumeIdentityBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
-    };
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
+      ...(this.coderRecBody.length > 0 ? { body: this.coderRecBody } : {}),
+    } as IssueMeta;
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
@@ -210,10 +210,7 @@ describe("#955 resumeFor session identity gate", () => {
   });
 
   it("identity mismatch (grok session → codex seat) → fresh + answer delivered + continuity-lost mark", async () => {
-    // Ledger records the session was created on grok; resume seat is codex terra.
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "gpt-5.6-terra");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "gpt-5.6-terra");
-
+    // Ledger session was grok; #936: seat follows route preset (normal → terra), not env slot.
     const backend = new ResumeIdentityBackend(parkedEscalationLedger("grok-4.5"));
     const result = await runOrchestrator({ issueNumber: 95510, backend });
     expect(result.status).toBe("success");
@@ -244,10 +241,11 @@ describe("#955 resumeFor session identity gate", () => {
   });
 
   it("identity match + resume-capable seat → original session resume (no regression)", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "grok-4.5");
-
-    const backend = new ResumeIdentityBackend(parkedEscalationLedger("grok-4.5"));
+    // #936: seat model from issue Coder-Rec (env single-slot deleted).
+    const backend = new ResumeIdentityBackend(
+      parkedEscalationLedger("grok-4.5"),
+      "Coder-Rec: grok-4.5\n",
+    );
     const result = await runOrchestrator({ issueNumber: 95511, backend });
     expect(result.status).toBe("success");
 
@@ -265,32 +263,25 @@ describe("#955 resumeFor session identity gate", () => {
     ).toBe(false);
   });
 
-  it("identity match but resume-incapable seat (agy) → fresh (r3 capability gate kept)", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "agy");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "agy");
-
-    const backend = new ResumeIdentityBackend(parkedEscalationLedger("agy"));
-    const result = await runOrchestrator({ issueNumber: 95512, backend });
-    expect(result.status).toBe("success");
-
-    const s2 = firstCoderDispatch(backend);
-    expect(s2.spec.model).toBe("agy");
-    expect(s2.spec.session).toBe("fresh");
-    expect(s2.ctx.resumeSessionId).toBeUndefined();
-    expect(s2.ctx.escalationAnswer).toMatchObject({
-      event: "escalation_answered",
-      forStep: "S2",
-    });
-
-    const lost = backend.ledgerWrites.filter(
-      (e) => e.event === "session_continuity_lost",
-    );
-    expect(lost).toHaveLength(1);
-    expect(lost[0]!.reason).toMatch(/provider_incapable/);
-    expect(lost[0]).toMatchObject({
-      sessionId: ESCALATED_SESSION,
-      fromModelId: "agy",
-      toModelId: "agy",
-    });
+  it("identity match but resume-incapable seat → fresh (capability gate)", async () => {
+    // Seat matches session model (terra via normal route) but capability forced false.
+    const backend = new ResumeIdentityBackend(parkedEscalationLedger("gpt-5.6-terra"));
+    const mod = await import("../../src/modelRegistry.js");
+    const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
+    try {
+      const result = await runOrchestrator({ issueNumber: 95512, backend });
+      expect(result.status).toBe("success");
+      const s2 = firstCoderDispatch(backend);
+      expect(s2.spec.model).toBe("gpt-5.6-terra");
+      expect(s2.spec.session).toBe("fresh");
+      expect(s2.ctx.resumeSessionId).toBeUndefined();
+      expect(s2.ctx.escalationAnswer).toMatchObject({
+        event: "escalation_answered",
+        forStep: "S2",
+        answer: "field X is required; proceed",
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

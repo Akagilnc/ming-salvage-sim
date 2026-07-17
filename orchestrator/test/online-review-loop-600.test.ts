@@ -21,7 +21,6 @@ import type {
   DispatchContext,
   FixerResult,
   IssueMeta,
-  IssueSnapshot,
   OnlineReviewLandingSnapshot,
   PersistentLedgerEntry,
   StepOutput,
@@ -2917,7 +2916,9 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(result).toMatchObject({
       kind: "failed",
-      reason: expect.stringContaining("after 3 dispatch attempts"),
+      reason: expect.stringContaining(
+        `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+      ),
     });
   });
 
@@ -4848,6 +4849,10 @@ describe("#600 r5 legacy skeleton gate — family", () => {
 
 describe("#600 r7 family online review — cleanup landing + in-band failures", () => {
   class ReviewLoopFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
     readonly reviewLoopLandings: WorkerLandingPayload[] = [];
     readonly ledger: FamilyLedgerEntry[] = [];
     readFamilyHead?: (familyBase: string) => Promise<string>;
@@ -5406,6 +5411,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   it("#743 online R1: family rebuild accepts the production recordOnlineReviewFixCommitted row shape", async () => {
     // Gemini alleged status-only rows; pin the real writer output and rebuild from it.
     class CaptureFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly appended: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         return { familyHead: "head" };

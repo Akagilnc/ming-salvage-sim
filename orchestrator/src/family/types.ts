@@ -101,6 +101,37 @@ export interface FamilyAdmissionSkippedChild {
 // ─────────────────────────── family ledger ───────────────────────────
 
 /**
+ * Single source of truth for {@link FamilyLedgerEntry.status} (#934 CR R3 S-2).
+ * Type = element of this array; JSONL shape gate builds its Set from the same list.
+ */
+export const FAMILY_LEDGER_STATUS_VALUES = [
+  "merged",
+  "aborted",
+  "shipped",
+  "review_loop_converged",
+  "pr_merged",
+  "post_merge_cleanup",
+  "cmr_reviewed",
+  "cmr_fix_committed",
+  "cmr_passed",
+  "escalated",
+  "child_decision_parked",
+  "escalation_answered",
+  "admission_skipped",
+  "online_review_fix_committed",
+  "online_review_round_retrigger",
+  "worker_dispatched",
+  "route_degraded",
+  /** #919 — judge advanceCoder executed on family coderFix seat. */
+  "coder_advance",
+  /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+  "coder_advance_stay_put",
+] as const;
+
+/** Element type of {@link FAMILY_LEDGER_STATUS_VALUES}. */
+export type FamilyLedgerStatus = (typeof FAMILY_LEDGER_STATUS_VALUES)[number];
+
+/**
  * One append-only family-ledger event (ADR 0022 decision 5).
  *
  * #293 recorded only the minimal `{childIssue, status:"merged"}` per merged
@@ -130,6 +161,8 @@ export interface FamilyLedgerEntry {
   readonly childIssue?: number;
   /**
    * Merge status — the UNBLOCK-PREDICATE field (ADR 0022 decision 6②).
+   * Vocabulary is {@link FAMILY_LEDGER_STATUS_VALUES} (single source; shape gate
+   * reuses the same array). Semantics:
    *   - `"merged"`  — the child's branch is merged into the family base (a live
    *     merge OR a reconcile補账条; both COUNT as merged).
    *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
@@ -149,14 +182,14 @@ export interface FamilyLedgerEntry {
    *     counted as merged (no `childIssue`).
    *   - `"post_merge_cleanup"` — the TERMINAL post-merge cleanup marker (#603).
    *     Written after live verify+act cleanup succeeds. NOT counted as merged.
-  *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
- *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
- *     counted as merged.
- *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
- *     coder-fix worker's independent commit for a CMR finding (#550). NOT counted
- *     as merged.
- *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
- *     CMR pass (#419). NOT counted as merged.
+   *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
+   *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
+   *     counted as merged.
+   *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
+   *     coder-fix worker's independent commit for a CMR finding (#550). NOT counted
+   *     as merged.
+   *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
+   *     CMR pass (#419). NOT counted as merged.
    *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision
    *     escalations are answerable by a later append-only `escalation_answered`
    *     row; failure escalations are terminal until human/manual repair outside
@@ -173,29 +206,13 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
+   *   - `"online_review_fix_committed"` / `"online_review_round_retrigger"` /
+   *     `"worker_dispatched"` / `"route_degraded"` — phase/worker audit markers
+   *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
+   *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
+   *     seat audit (applied vs stay-put).
    */
-  readonly status:
-    | "merged"
-    | "aborted"
-    | "shipped"
-    | "review_loop_converged"
-    | "pr_merged"
-    | "post_merge_cleanup"
-    | "cmr_reviewed"
-    | "cmr_fix_committed"
-    | "cmr_passed"
-    | "escalated"
-    | "child_decision_parked"
-    | "escalation_answered"
-    | "admission_skipped"
-    | "online_review_fix_committed"
-    | "online_review_round_retrigger"
-    | "worker_dispatched"
-    | "route_degraded"
-    /** #919 — judge advanceCoder executed on family coderFix seat. */
-    | "coder_advance"
-    /** #919 — judge advanceCoder unusable; stay on current coderFix. */
-    | "coder_advance_stay_put";
+  readonly status: FamilyLedgerStatus;
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -626,14 +643,11 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
-  // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
-  // does NOT implement them, so the verify-cmr hook degrades to the no-op
-  // `{ok:true, ran:false}` and the spine's existing default path is untouched.
-  // The verify-cmr module ({@link runVerifyCmr}) reaches these off the
-  // `familyBackend` it is handed by the frozen spine input `{phase, familyBase,
-  // familyBackend}`; a RealBackend supplies them (run typecheck+tests in the
-  // family base / dispatch the integrated cmr / open the PR / record the
-  // aborted+escalate events).
+  // Verify is REQUIRED (#939 / #934 ID-011): missing capability is not a success
+  // no-op. CMR/ship and other downstream methods may remain optional for older
+  // fakes; production RealFamilyBackend supplies the full set. The verify-cmr
+  // module ({@link runVerifyCmr}) reaches these off the `familyBackend` handed by
+  // the frozen spine input `{phase, familyBase, familyBackend}`.
 
   /**
    * #296 verify seam (ADR 0022 decision 3④/⑤): run the family verify (typecheck
@@ -641,8 +655,9 @@ export interface FamilyBackend {
    * The verify-cmr hook fails-fast on `{ok:false}` at the wave barrier. Reads the
    * `phase` so a RealBackend can scope the wave verify vs the end-of-run 全量
    * verify. NOT塞进 LLM prompt — a deterministic command run (decision 3⑤).
+   * Required capability (#939): no optional production no-op path.
    */
-  runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
+  runFamilyVerify(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
   /**
    * Legacy per-method integrated-CMR seam retained for older fake/test backends.
    * Production dispatches the CMR container worker through `dispatchWorker`; the
@@ -898,6 +913,11 @@ export interface FamilyRunInput {
    * family clone). In tests it is a zero-container fake.
    */
   readonly singleSliceBackend: Backend;
+  /** Final Coder-Rec route already smoked by the public driver before worksite creation. */
+  readonly admittedRoute?: {
+    readonly route: ResolvedModelRoute;
+    readonly dropped: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
+  };
   /**
    * The local family base branch the merger accumulates onto and each child cuts
    * from (ADR 0022 decision 7). Children are cut from THIS, not `origin/<base>`.
@@ -920,11 +940,10 @@ export interface FamilyRunInput {
   readonly acceptedSuppressionSources?: ReadonlyArray<AcceptedSuppressionSource>;
   /**
    * The verify-cmr hook (ADR 0022 decision 3④/⑤/⑥) — the family verify (per-wave
-   * fail-fast) + end-of-run integrated cmr. Optional: defaults to the #293 no-op
-   * {@link runVerifyCmr} module export. #296 fills the module body OR injects a
-   * real impl here; either way the spine's call sites + fail-fast on `ok===false`
-   * are already wired, so #296 does not rewrite the spine. Injectable so the
-   * spine's fail-fast branch is testable now (the repo's injected-seam idiom).
+   * fail-fast) + end-of-run integrated cmr. Optional: defaults to the real
+   * {@link runVerifyCmr} module export. Injectable only in tests (or rare run
+   * overrides) so the spine's fail-fast branch stays unit-testable without
+   * rewriting call sites.
    */
   readonly verifyCmr?: (input: VerifyCmrInput) => Promise<VerifyCmrResult>;
   /**
@@ -1065,9 +1084,8 @@ export interface FamilyChildResult {
  * The family-run outcome (ADR 0022 decision 3④/⑤/⑥ + #922 terminal real names).
  *
  * - `"success"` — every verify barrier passed AND every epic child is merged into
- *   the family base. Only a fully-closed family run is `"success"` (in #293 the
- *   no-op verify always passes, so N independent children that all merge ⇒
- *   `"success"`).
+ *   the family base. Only a fully-closed family run is `"success"` (N independent
+ *   children that all merge with green barriers ⇒ `"success"`).
  * - Stage failures (#922) — the post-wave final barrier used to mash every stage
  *   death into `"verify_failed"`. Each stage now has its own terminal name, and
  *   `stopSummary.reason` uses the same token:
@@ -1080,8 +1098,8 @@ export interface FamilyChildResult {
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤
- *   "不静默吞"); the caller MUST NOT treat it as fully closed. (#293's happy path
- *   never produces this — all children merge; it guards the honest result.)
+ *   "不静默吞"); the caller MUST NOT treat it as fully closed. (A full-merge
+ *   happy path never produces this — it guards the honest result.)
  *
  * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
  *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
@@ -1107,9 +1125,9 @@ export interface FamilyRunResult {
   /**
    * The family-run outcome. Stage-failure statuses (#922) mean a post-child
    * barrier died at that named stage; the caller MUST NOT treat the run as
-   * shippable. #293's no-op verify always passes, so a complete #293 run is
-   * `"success"`; failure paths are wired + tested (via injected `verifyCmr`
-   * and real `runVerifyCmr`) for #296 / #922.
+   * shippable. A complete run with green barriers is `"success"`; failure paths
+   * are wired + tested (via injected `verifyCmr` in tests and real
+   * `runVerifyCmr` in production) for #296 / #922.
    */
   readonly status: FamilyRunStatus;
   /**

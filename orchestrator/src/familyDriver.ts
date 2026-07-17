@@ -33,29 +33,61 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { shWithClock } from "./externalCall.js";
-import { RealBackend, type RealBackendOptions } from "./realBackend.js";
-import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import {
+  admitCoderRec,
+  admitPlannedRouteSmoke,
+  admitRouteFromEnv,
+  admitRouteSmoke,
+  admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
+  readMetadataWithRetry,
+} from "./admissionPreflight.js";
+import { shWithClock } from "./externalCall.js";
+import { gitExitStatus, isFileNotFound } from "./fsErrors.js";
+import type { ResolvedModelRoute } from "./modelRoutes.js";
+import {
+  RealBackend,
+  type RealBackendOptions,
+  parseBlockedBy,
+  type GhBlockedBy,
+  clonePathFor,
+  repoSlug,
+} from "./realBackend.js";
+import {
+  FAMILY_LEDGER_FILENAME,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "./family/realFamilyBackend.js";
+import {
+  familyEscalationState,
+  isCompleteFamilyEscalation,
+  isValidPostMergeCleanup,
+  mergedSet,
+  parseFamilyLedgerJsonl,
+} from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
 import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
 } from "./family/moduleDeclaration.js";
+import { shouldReclaimFamilyHost } from "./hostReclaim.js";
 import { logDriverStage } from "./stageLog.js";
+import {
+  decisionGateParkStopSummary,
+  infraFailureStopSummary,
+} from "./stopSummary.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
   FamilyBackend,
   FamilyAdmissionSkippedChild,
   FamilyEpic,
+  FamilyLedgerEntry,
   FamilyRunInput,
   FamilyRunResult,
   ReconcileGit,
@@ -68,7 +100,11 @@ import type {
 /** One child excluded from this family run before wave scheduling. */
 export interface SkippedFamilyChild {
   readonly issue: number;
-  readonly reason: "closed" | "not_ready_for_agent" | "parent_issue";
+  readonly reason:
+    | "closed"
+    | "not_ready_for_agent"
+    | "parent_issue"
+    | "open_external_blocker";
   readonly message: string;
 }
 
@@ -77,15 +113,64 @@ export interface SubIssueAdmission {
   readonly skipped: ReadonlyArray<SkippedFamilyChild>;
 }
 
-function subIssueNodes(parsed: unknown): unknown[] {
+/**
+ * Fail-closed sub-issues body decoder (#934 ID-003 / CR S-2).
+ * REST native list OR GraphQL `{subIssues:{nodes:[]}}`. Schema garbage throws —
+ * never soft-empty into family-of-one / vacuous parent-close.
+ * Shared by family admission and post-merge cleanup (single helper).
+ */
+export function decodeSubIssueNodes(parsed: unknown): unknown[] {
   // REST native sub-issues endpoint: `gh api repos/O/R/issues/<epic>/sub_issues`.
   if (Array.isArray(parsed)) return parsed;
   // Older/newer gh GraphQL shape retained for pure parser compatibility.
-  if (parsed === null || typeof parsed !== "object") return [];
-  const sub = (parsed as { subIssues?: unknown }).subIssues;
-  if (sub === null || typeof sub !== "object") return [];
-  const nodes = (sub as { nodes?: unknown }).nodes;
-  return Array.isArray(nodes) ? nodes : [];
+  if (parsed !== null && typeof parsed === "object") {
+    const sub = (parsed as { subIssues?: unknown }).subIssues;
+    if (sub !== null && typeof sub === "object" && !Array.isArray(sub)) {
+      const nodes = (sub as { nodes?: unknown }).nodes;
+      if (Array.isArray(nodes)) return nodes;
+    }
+  }
+  throw new Error(
+    `sub_issues schema error: expected array or {subIssues:{nodes:[]}}, got ${
+      parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
+    }`,
+  );
+}
+
+/**
+ * Fail-closed single sub-issue entry decoder (#934 R6 N2 / ID-003).
+ * Shared by family admission and post-merge cleanup — one object+number court.
+ * `state` is optional here: post-merge cleanup requires it for close decisions;
+ * family admission uses {@link skipReason} soft-state (CLOSED label path).
+ */
+export function decodeSubIssueEntry(
+  node: unknown,
+  index: number,
+): { readonly number: number; readonly state?: string } {
+  if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: expected object entry, got ${
+        node === null ? "null" : Array.isArray(node) ? "array" : typeof node
+      }`,
+    );
+  }
+  const number = (node as { number?: unknown }).number;
+  if (typeof number !== "number" || !Number.isFinite(number)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: missing or non-finite number (got ${
+        number === undefined
+          ? "undefined"
+          : typeof number === "number"
+            ? String(number)
+            : typeof number
+      })`,
+    );
+  }
+  const rawState = (node as { state?: unknown }).state;
+  if (typeof rawState === "string" && rawState.trim().length > 0) {
+    return { number, state: rawState };
+  }
+  return { number };
 }
 
 function labelNames(node: unknown): string[] | undefined {
@@ -136,6 +221,8 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
       return `family admission skipped child #${issue}: missing ready-for-agent label`;
     case "parent_issue":
       return `family admission skipped child #${issue}: issue is a parent issue`;
+    case "open_external_blocker":
+      return `family admission skipped child #${issue}: open external blocker(s)`;
   }
 }
 
@@ -145,18 +232,30 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
  * The production reader uses GitHub's REST native sub-issues endpoint because it
  * carries the metadata needed for the family admission rule: state, labels, and
  * whether the child is itself a parent. A child is runnable when it is open,
- * labelled `ready-for-agent`, and leaf-like. Missing metadata is tolerated and
- * left to the single-slice S0 backstop, preserving the older pure parser behavior
- * for odd/GraphQL payloads.
+ * labelled `ready-for-agent`, and leaf-like. Entry-level schema garbage
+ * (missing/non-finite `number`, non-object nodes) fails closed as deterministic
+ * metadata error — never soft-skips into all-filtered success (#934 ID-003).
+ * Optional label/parent fields remain soft for S0 backstop compatibility.
  */
 export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
-  const nodes = subIssueNodes(parsed);
+  const nodes = decodeSubIssueNodes(parsed);
   const seen = new Set<number>();
   const admitted: number[] = [];
   const skipped: SkippedFamilyChild[] = [];
-  for (const n of nodes) {
-    const num = (n as { number?: unknown })?.number;
-    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
+  const entryErrors: string[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    let num: number;
+    try {
+      num = decodeSubIssueEntry(n, i).number;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      entryErrors.push(
+        msg.replace(/^sub_issues entry schema error:\s*/, ""),
+      );
+      continue;
+    }
+    if (seen.has(num)) continue;
     seen.add(num);
     const reason = skipReason(n);
     if (reason === undefined) {
@@ -164,6 +263,11 @@ export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
     } else {
       skipped.push({ issue: num, reason, message: skipMessage(num, reason) });
     }
+  }
+  if (entryErrors.length > 0) {
+    throw new Error(
+      `sub_issues entry schema error: ${entryErrors.join("; ")}`,
+    );
   }
   return { admitted, skipped };
 }
@@ -208,46 +312,73 @@ export interface OpenExternalBlocker {
   readonly blocker: number;
 }
 
-/** Fail-closed family admission: one or more external blockers are still open. */
-export class FamilyExternalBlockerError extends Error {
-  constructor(readonly openBlockers: ReadonlyArray<OpenExternalBlocker>) {
+/**
+ * #934 ID-002 / root epic OPEN blocker: park the whole family before
+ * clone/smoke/worksite (ID-001 wait-for-external). Distinct from ordinary
+ * per-child external blockers, which only produce a visible filter.
+ *
+ * Optional `diagnostics` carries sibling metadata-read failures collected
+ * before the park decision (ID-002/003: full read + aggregate, no first-error
+ * return). They do not change the park edge — only complete the inventory.
+ */
+export class FamilyRootBlockerError extends Error {
+  constructor(
+    readonly openBlockers: ReadonlyArray<number>,
+    readonly diagnostics: ReadonlyArray<string> = [],
+  ) {
+    const base =
+      `family admission parked: root epic has open blocker(s) ` +
+      openBlockers.map((n) => `#${n}`).join(", ");
     super(
-      `family admission rejected: ${openBlockers.length} external blocker(s) still open — ` +
-        openBlockers.map((b) => `child #${b.child} blocked_by #${b.blocker}`).join("; "),
+      diagnostics.length > 0
+        ? `${base}; metadata diagnostics (${diagnostics.length}): ${diagnostics.join("; ")}`
+        : base,
     );
-    this.name = "FamilyExternalBlockerError";
+    this.name = "FamilyRootBlockerError";
   }
 }
 
 /**
- * Family-admission external-blocker gate (online R1 #1; user 2026-06-22, refines ADR
- * 0022 dec6③). An EXTERNAL `blocked_by` (an issue that is NOT one of this epic's
- * children) is never merged into the family ledger, so the commander's wave scheduler
- * cannot clear it. We do NOT lean on each child's family-mode S0 to reject an open
- * external blocker: dec6③ REWIRED the S0 `blocked_by`-closed check to the
- * ledger-merged口径, so an external open blocker is NOT reliably caught at S0 (and
- * relying on that indirection is fragile). Instead, validate them EXPLICITLY here,
- * up front, against the live `state` GitHub returned: ANY external blocker still open
- * fails-closed the WHOLE family run with the concrete offending list (which child,
- * which external issue) so the rejection is actionable. Closed (satisfied) external
- * blockers drop out, and the scheduler (selectWave) then gates ONLY on intra-family
- * blockers — those are the ones the family base can actually merge. A child's S0 still
- * runs against live GitHub as a backstop if an external blocker re-opens mid-run.
+ * Family-admission external-blocker filter (#934 ID-002 supersedes the older
+ * whole-family reject). An EXTERNAL `blocked_by` is never merged into the family
+ * ledger, so the wave scheduler cannot clear it. Ordinary external blockers only
+ * produce a **visible per-child filter** — runnable siblings continue. Closed
+ * (satisfied) external blockers drop out; the scheduler gates only on intra-family
+ * blockers. A child's S0 remains a mid-run backstop if an external blocker re-opens.
  */
-export function assertExternalBlockersCleared(
+export function filterExternalBlockedChildren(
   childNumbers: ReadonlyArray<number>,
   blockedByByChild: ReadonlyMap<number, ReadonlyArray<GhBlockedBy>>,
-): void {
+): {
+  readonly runnable: ReadonlyArray<number>;
+  readonly skipped: ReadonlyArray<SkippedFamilyChild>;
+  readonly openBlockers: ReadonlyArray<OpenExternalBlocker>;
+} {
   const family = new Set(childNumbers);
+  const runnable: number[] = [];
+  const skipped: SkippedFamilyChild[] = [];
   const openBlockers: OpenExternalBlocker[] = [];
   for (const child of childNumbers) {
+    const childOpen: number[] = [];
     for (const b of blockedByByChild.get(child) ?? []) {
       if (!family.has(b.number) && b.state !== "closed") {
         openBlockers.push({ child, blocker: b.number });
+        childOpen.push(b.number);
       }
     }
+    if (childOpen.length > 0) {
+      skipped.push({
+        issue: child,
+        reason: "open_external_blocker",
+        message:
+          `family admission skipped child #${child}: open external blocker(s) ` +
+          childOpen.map((n) => `#${n}`).join(", "),
+      });
+    } else {
+      runnable.push(child);
+    }
   }
-  if (openBlockers.length > 0) throw new FamilyExternalBlockerError(openBlockers);
+  return { runnable, skipped, openBlockers };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -303,24 +434,41 @@ export function inferVerifyCwd(
 
 /**
  * Discover the clone's top-level subprojects (#4): every immediate child dir that
- * holds a `package.json` (a verifiable Node project) — e.g. `["orchestrator",
+ * holds a package.json *file* (a verifiable Node project) — e.g. `["orchestrator",
  * "web"]`. The root's own package.json (if any) is intentionally NOT included as a
  * subproject token here: a changed file is attributed to `<subproject>/…`, and a
  * root project would match everything; the verify default already covers the root.
- * Best-effort: an unreadable clone dir yields [] (the resolver then returns
- * undefined and verify falls back to the clone root).
+ *
+ * #934 ID-011 / #939: operational readdir / package.json probe errors fail closed
+ * (never soft-skip into "no Node subproject"). Only precise absence (ENOENT) of
+ * package.json omits a directory. package.json must be a file (`isFile`).
  */
-function discoverSubprojects(workingRepo: string): string[] {
+export function discoverSubprojects(workingRepo: string): string[] {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(workingRepo, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (err) {
+    const d = err instanceof Error ? err.message : String(err);
+    // #934 CR: one canonical reason token (no dual-era slash-joined phrases).
+    throw new Error(
+      `family verify: failed to readdir subprojects at "${workingRepo}": ${d}`,
+    );
   }
-  return entries
-    .filter((e) => e.isDirectory() && existsSync(join(workingRepo, e.name, "package.json")))
-    .map((e) => e.name)
-    .sort();
+  const found: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const pkg = join(workingRepo, e.name, "package.json");
+    try {
+      if (statSync(pkg).isFile()) found.push(e.name);
+    } catch (err) {
+      if (isFileNotFound(err)) continue;
+      const d = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `family verify: package.json probe failed at "${pkg}": ${d}`,
+      );
+    }
+  }
+  return found.sort();
 }
 
 /**
@@ -371,33 +519,94 @@ const defaultSh: Sh = (file, args) =>
  * REST (`gh api …/sub_issues`) so family admission can skip non-runnable children
  * before the single-slice S0 gate would abort the whole family run.
  */
-export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
-  const admission = readSubIssueAdmission(epicIssue, repo, sh);
+export function readFamilyEpic(
+  epicIssue: number,
+  repo: string,
+  sh: Sh,
+  issueBodies: Map<number, string> = new Map(),
+): FamilyEpic {
+  // #934 ID-002/003: live metadata errors aggregate — sub-issues throw must not
+  // abort before independently readable root blocked_by (and reachable child deps).
+  const errors: string[] = [];
+  let admission: SubIssueAdmission = { admitted: [], skipped: [] };
+  try {
+    admission = readSubIssueAdmission(epicIssue, repo, sh);
+  } catch (err) {
+    errors.push(
+      `sub_issues #${epicIssue}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
-  for (const child of childNumbers) {
-    const depRaw = sh("gh", [
+
+  // #934 ID-002: read ROOT epic blocked_by, but do NOT first-error return on
+  // OPEN blockers — finish enumerable child metadata first, then park with
+  // the complete inventory (root blocker fact + sibling diagnostics).
+  let openRootBlockers: ReadonlyArray<number> | undefined;
+  try {
+    const rootRaw = sh("gh", [
       "api",
-      `repos/${repo}/issues/${child}/dependencies/blocked_by`,
+      `repos/${repo}/issues/${epicIssue}/dependencies/blocked_by`,
     ]);
-    blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
+    const rootBlockedBy = parseBlockedBy(JSON.parse(rootRaw));
+    const openRoot = rootBlockedBy
+      .filter((b) => b.state !== "closed")
+      .map((b) => b.number);
+    if (openRoot.length > 0) {
+      openRootBlockers = openRoot;
+    }
+  } catch (err) {
+    errors.push(
+      `root #${epicIssue} blocked_by: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  const moduleDeclarations = readFamilyModuleDeclarations(
-    epicIssue,
-    childNumbers,
-    repo,
-    sh,
-  );
-  // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
-  // is still open — runs on the initial admission AND on every resume refetch, so a
-  // re-opened external blocker re-rejects on re-entry.
-  assertExternalBlockersCleared(childNumbers, blockedByByChild);
+
+  for (const child of childNumbers) {
+    try {
+      const depRaw = sh("gh", [
+        "api",
+        `repos/${repo}/issues/${child}/dependencies/blocked_by`,
+      ]);
+      blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
+    } catch (err) {
+      errors.push(`child #${child} blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  // #934 ID-002: ordinary external blockers → visible per-child filter only.
+  const externalFilter = filterExternalBlockedChildren(childNumbers, blockedByByChild);
+  for (const skipped of externalFilter.skipped) {
+    console.warn(skipped.message);
+  }
+  const runnableChildren = [...externalFilter.runnable];
+
+  let moduleDeclarations: ReturnType<typeof readFamilyModuleDeclarations> = {
+    children: new Map(),
+  };
+  try {
+    moduleDeclarations = readFamilyModuleDeclarations(
+      epicIssue,
+      runnableChildren,
+      repo,
+      sh,
+      issueBodies,
+    );
+  } catch (err) {
+    errors.push(`issue bodies: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  // OPEN root blocker parks (ID-001) after the full metadata pass; sibling
+  // read failures ride along as diagnostics, not a first-error short-circuit.
+  if (openRootBlockers !== undefined) {
+    throw new FamilyRootBlockerError(openRootBlockers, errors);
+  }
+  if (errors.length > 0) {
+    throw new Error(`issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`);
+  }
   return buildFamilyEpic(
     epicIssue,
-    childNumbers,
+    runnableChildren,
     blockedByByChild,
     moduleDeclarations,
-    admissionSkippedChildren(admission),
+    [...admissionSkippedChildren(admission), ...externalFilter.skipped],
   );
 }
 
@@ -455,6 +664,19 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
   }
 }
 
+function readIssueBodyCached(
+  issue: number,
+  repo: string,
+  sh: Sh,
+  issueBodies: Map<number, string>,
+): string {
+  const cached = issueBodies.get(issue);
+  if (cached !== undefined) return cached;
+  const body = readIssueBody(issue, repo, sh);
+  issueBodies.set(issue, body);
+  return body;
+}
+
 function readIssueAuthorAssociation(issue: number, repo: string, sh: Sh): string {
   try {
     return sh("gh", [
@@ -482,23 +704,37 @@ function readFamilyModuleDeclarations(
   childNumbers: ReadonlyArray<number>,
   repo: string,
   sh: Sh,
+  issueBodies: Map<number, string> = new Map(),
 ): {
   readonly family?: SourcedModuleDeclaration;
   readonly children: ReadonlyMap<number, SourcedModuleDeclaration>;
 } {
-  const family = sourcedModuleDeclaration(
-    parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
-    "family_issue",
-    epicIssue,
-  );
+  const errors: string[] = [];
+  let family: SourcedModuleDeclaration | undefined;
+  try {
+    family = sourcedModuleDeclaration(
+      parseModuleDeclaration(readIssueBodyCached(epicIssue, repo, sh, issueBodies)),
+      "family_issue",
+      epicIssue,
+    );
+  } catch (err) {
+    errors.push(`issue #${epicIssue}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const children = new Map<number, SourcedModuleDeclaration>();
   for (const child of childNumbers) {
-    const declaration = sourcedModuleDeclaration(
-      parseModuleDeclaration(readIssueBody(child, repo, sh)),
-      "child_issue",
-      child,
-    );
-    if (declaration !== undefined) children.set(child, declaration);
+    try {
+      const declaration = sourcedModuleDeclaration(
+        parseModuleDeclaration(readIssueBodyCached(child, repo, sh, issueBodies)),
+        "child_issue",
+        child,
+      );
+      if (declaration !== undefined) children.set(child, declaration);
+    } catch (err) {
+      errors.push(`issue #${child}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`issue body aggregation failed: ${errors.join("; ")}`);
   }
   return { ...(family !== undefined ? { family } : {}), children };
 }
@@ -515,7 +751,7 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
       "api",
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
-    const nodes = subIssueNodes(JSON.parse(subRaw));
+    const nodes = decodeSubIssueNodes(JSON.parse(subRaw));
     allSubIssueNodes.push(...nodes);
     if (nodes.length < 100) break;
   }
@@ -523,15 +759,8 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
   for (const skipped of admission.skipped) {
     console.warn(skipped.message);
   }
-  const childNumbers = [...admission.admitted];
   if (allSubIssueNodes.length === 0) {
     return { admitted: [epicIssue], skipped: [] };
-  }
-  if (childNumbers.length === 0) {
-    throw new Error(
-      `family admission rejected: epic #${epicIssue} has no runnable child issues ` +
-        `(all native children were skipped) — nothing to orchestrate`,
-    );
   }
   return admission;
 }
@@ -615,7 +844,9 @@ export interface FamilyDriverOptions {
    * passes the complete resolved options so tests can exercise the production
    * assembly without starting a container.
    */
-  readonly realBackendFactory?: (options: RealBackendOptions) => RealBackend;
+  readonly realBackendFactory?: (
+    options: RealBackendOptions,
+  ) => Backend & { workingRepoPath(): string };
   /**
    * Override construction of the production family backend. The driver passes
    * the complete resolved options so tests can exercise the production assembly
@@ -624,6 +855,318 @@ export interface FamilyDriverOptions {
   readonly realFamilyBackendFactory?: (
     options: RealFamilyBackendOptions,
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
+}
+
+/**
+ * Family Scene Recovery (#934 ID-005 / #936): read resident durable family
+ * truth before admission/network/worksite. Typed outcomes:
+ *   - fresh: neither ledger nor worksite residue → continue productive path
+ *   - resident: parseable ledger + worksite, OR terminal-replayable ledger alone
+ *   - corrupted: partial residue, nonterminal ledger-without-worksite, or
+ *     unreadable/unparseable ledger (preserve, fail loud)
+ */
+export type FamilySceneDiscovery =
+  | { readonly kind: "fresh" }
+  | { readonly kind: "resident"; readonly ledger: ReadonlyArray<FamilyLedgerEntry> }
+  | { readonly kind: "corrupted"; readonly reason: string };
+
+export interface FamilySceneDiscoveryOptions {
+  /** Deterministic family clone path (ADR 0024); presence of `.git` is worksite residue. */
+  readonly clonePath?: string;
+}
+
+/**
+ * Whether a parseable family ledger can terminal-replay without worksite
+ * residue (completed cleanup, or unresolved park/fail escalation). Nonterminal
+ * mid-run / answered-decision / incomplete-escalation ledgers need worksite
+ * (or are corrupted) and must not soft-resume as terminal without worksite.
+ */
+function isFamilyLedgerTerminalWithoutWorksite(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  if (shouldReclaimFamilyHost(ledger)) return true;
+  const prior = familyEscalationState(ledger);
+  if (prior === undefined) return false;
+  // Incomplete escalated rows are durable damage, not terminal park/fail truth.
+  if (!isCompleteFamilyEscalation(prior.escalation)) return false;
+  // Answered decision reopens productive work — not terminal without worksite.
+  if (prior.escalation.escalationKind === "decision" && prior.answer !== undefined) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Fail-closed path probe (#934 ID-005 / ID-011 pattern): precise ENOENT = absent;
+ * any other FS operational error is damage, never soft-absence.
+ */
+function probePathPresent(
+  path: string,
+): { readonly present: true } | { readonly present: false } | { readonly error: string } {
+  try {
+    statSync(path);
+    return { present: true };
+  } catch (err) {
+    if (isFileNotFound(err)) return { present: false };
+    return {
+      error: `${path}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * Discover resident family durable truth — zero GitHub, zero smoke.
+ * Typed fresh only when BOTH ledger and worksite residue are absent (ID-005).
+ * Worksite residue = family-base start-head file and/or resident clone `.git`.
+ * Ledger without worksite is only legal when terminal-replayable; nonterminal
+ * ledger-without-worksite is corrupted (must not recreate worksite over lineage).
+ */
+export function discoverFamilyResidentScene(
+  ledgerDir: string,
+  opts: FamilySceneDiscoveryOptions = {},
+): FamilySceneDiscovery {
+  const ledgerPath = join(ledgerDir, FAMILY_LEDGER_FILENAME);
+  const startHeadPath = join(ledgerDir, FAMILY_BASE_START_HEAD_FILENAME);
+  const ledgerProbe = probePathPresent(ledgerPath);
+  if ("error" in ledgerProbe) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger path probe failed (operational FS error, not absence): ${ledgerProbe.error}`,
+    };
+  }
+  const startHeadProbe = probePathPresent(startHeadPath);
+  if ("error" in startHeadProbe) {
+    return {
+      kind: "corrupted",
+      reason: `resident family start-head path probe failed (operational FS error, not absence): ${startHeadProbe.error}`,
+    };
+  }
+  let hasClone = false;
+  if (opts.clonePath !== undefined) {
+    const cloneGitProbe = probePathPresent(join(opts.clonePath, ".git"));
+    if ("error" in cloneGitProbe) {
+      return {
+        kind: "corrupted",
+        reason: `resident family clone path probe failed (operational FS error, not absence): ${cloneGitProbe.error}`,
+      };
+    }
+    hasClone = cloneGitProbe.present;
+  }
+  const hasLedger = ledgerProbe.present;
+  const hasStartHead = startHeadProbe.present;
+  const hasWorksiteResidue = hasStartHead || hasClone;
+
+  if (!hasLedger && !hasWorksiteResidue) return { kind: "fresh" };
+  if (!hasLedger && hasWorksiteResidue) {
+    const cloneHint =
+      opts.clonePath !== undefined ? `, clone=${opts.clonePath}` : "";
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family worksite exists without readable ledger at ${ledgerDir}` +
+        `${cloneHint}; refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+    };
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(ledgerPath, "utf8");
+  } catch (err) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger unreadable at ${ledgerPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+  let ledger: FamilyLedgerEntry[];
+  try {
+    // #934 S-3: per-line shape gate (not bare JSON.parse cast).
+    ledger = parseFamilyLedgerJsonl(raw);
+  } catch (err) {
+    return {
+      kind: "corrupted",
+      reason: `resident family ledger corrupt at ${ledgerPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+
+  // Incomplete escalated rows are never terminal durable truth (#934 ID-005).
+  const priorEscalation = familyEscalationState(ledger);
+  if (
+    priorEscalation !== undefined &&
+    !isCompleteFamilyEscalation(priorEscalation.escalation)
+  ) {
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family ledger has incomplete status:escalated row ` +
+        `(missing event:escalated and/or decision|failure kind) at ${ledgerDir}; ` +
+        `refusing terminal replay of damaged park state (#934 ID-005)`,
+    };
+  }
+
+  if (!hasWorksiteResidue && !isFamilyLedgerTerminalWithoutWorksite(ledger)) {
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family ledger exists without worksite residue at ${ledgerDir}; ` +
+        `nonterminal ledger-without-worksite cannot safely resume ` +
+        `(#936 / #934 ID-005)`,
+    };
+  }
+  return { kind: "resident", ledger };
+}
+
+/**
+ * Rebuild production-admission skip audit from durable ledger rows (#934 ID-005 /
+ * online CR C1). Terminal replay must not drop `admission_skipped` inventory that
+ * the original run exposed on `FamilyRunResult.admissionSkipped`.
+ */
+export function admissionSkippedFromLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): ReadonlyArray<FamilyAdmissionSkippedChild> {
+  const out: FamilyAdmissionSkippedChild[] = [];
+  const seen = new Set<number>();
+  for (const entry of ledger) {
+    if (entry.status !== "admission_skipped" || entry.event !== "admission_skipped") {
+      continue;
+    }
+    if (typeof entry.childIssue !== "number" || !Number.isFinite(entry.childIssue)) {
+      continue;
+    }
+    if (seen.has(entry.childIssue)) continue;
+    seen.add(entry.childIssue);
+    const reason =
+      typeof entry.reason === "string" && entry.reason.trim().length > 0
+        ? entry.reason
+        : "admission_skipped";
+    const message =
+      typeof entry.message === "string" && entry.message.trim().length > 0
+        ? entry.message
+        : reason;
+    out.push({ issue: entry.childIssue, reason, message });
+  }
+  return out;
+}
+
+/**
+ * Current-schema terminal replay for a resident family ledger (ID-005).
+ * Returns a FamilyRunResult when the durable scene is already terminal
+ * (completed cleanup, or unresolved escalation park/fail). Non-terminal
+ * resident state returns undefined so admission + spine resume continue.
+ */
+export function planFamilyTerminalReplay(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  familyBase: string,
+): FamilyRunResult | undefined {
+  if (shouldReclaimFamilyHost(ledger)) {
+    let familyHead: string | undefined;
+    for (let i = ledger.length - 1; i >= 0; i--) {
+      const entry = ledger[i]!;
+      if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
+        familyHead = entry.familyHeadAfter;
+        break;
+      }
+    }
+    const admissionSkipped = admissionSkippedFromLedger(ledger);
+    const children = [
+      ...[...mergedSet(ledger)].map((issue) => ({
+        issue,
+        status: "already_done" as const,
+      })),
+      // Codex C1: skipped children are not in mergedSet — surface them as
+      // `"skipped"` so the replay accounts for every epic child.
+      ...admissionSkipped.map((s) => ({
+        issue: s.issue,
+        status: "skipped" as const,
+      })),
+    ];
+    const headsMeta =
+      familyHead !== undefined
+        ? {
+            heads: {
+              actualFamilyHead: familyHead,
+              sources: {
+                actualFamilyHead: "post_merge_cleanup ledger row",
+              },
+            },
+          }
+        : {};
+    const metadata = {
+      ...headsMeta,
+      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+    };
+    return {
+      status: "success",
+      familyBase,
+      ...(familyHead !== undefined ? { familyHead } : {}),
+      stopSummary: {
+        reason: "already_done",
+        summary:
+          "family durable terminal replay: post_merge_cleanup already completed",
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      },
+      children,
+      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+    };
+  }
+
+  const prior = familyEscalationState(ledger);
+  if (prior === undefined) return undefined;
+  const { escalation, answer } = prior;
+  // Incomplete escalated rows are durable damage — never terminal-replay as park.
+  if (!isCompleteFamilyEscalation(escalation)) return undefined;
+  if (escalation.escalationKind === "decision" && answer !== undefined) {
+    // Answered decision → spine must resume productive work (not terminal).
+    return undefined;
+  }
+  const reason =
+    typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+      ? escalation.reason
+      : "family escalation is not answered";
+  const diagnosis =
+    escalation.escalationKind === "failure"
+      ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+      : "Prior family decision escalation has no later valid escalation_answered ledger event.";
+  const familyHead =
+    typeof escalation.familyHeadAfter === "string" &&
+    escalation.familyHeadAfter.trim().length > 0
+      ? escalation.familyHeadAfter
+      : undefined;
+  const children = [...mergedSet(ledger)].map((issue) => ({
+    issue,
+    status: "already_done" as const,
+  }));
+  const decisionGatePark = escalation.escalationKind === "decision";
+  const heads =
+    familyHead !== undefined
+      ? {
+          actualFamilyHead: familyHead,
+          sources: { actualFamilyHead: "family escalated ledger row" },
+        }
+      : undefined;
+  return {
+    status: "escalated",
+    familyBase,
+    ...(familyHead !== undefined ? { familyHead } : {}),
+    escalation: { reason, diagnosis },
+    stopSummary: decisionGatePark
+      ? decisionGateParkStopSummary({
+          summary: reason,
+          repairHint:
+            "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
+          ...(heads !== undefined ? { heads } : {}),
+        })
+      : infraFailureStopSummary({
+          summary: reason,
+          repairHint:
+            "inspect the family ledger escalation entry and repair before rerun",
+          ...(heads !== undefined ? { heads } : {}),
+        }),
+    children,
+  };
 }
 
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
@@ -653,18 +1196,226 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
+  const metadataSh: Sh = (file, args) =>
+    readMetadataWithRetry(() => sh(file, args));
   const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
 
+  // #936 / #934 ID-005: Scene Recovery FIRST — resident family durable truth
+  // before route admission, GitHub metadata, smoke, or clone/worksite. Terminal
+  // completed/failed replay with zero external calls; corrupted residue fails
+  // loud and preserves the scene. Typed fresh only when ledger AND worksite
+  // residue (clone / start-head) are both absent.
+  logDriverStage("recovery", `family scene epic #${options.epicIssue}`);
+  const home = options.home ?? homedir();
+  const familyClonePath = clonePathFor(
+    home,
+    repoSlug(options.sourceRepo, options.remote),
+    options.epicIssue,
+  );
+  const familyScene = discoverFamilyResidentScene(options.ledgerDir, {
+    clonePath: familyClonePath,
+  });
+  if (familyScene.kind === "corrupted") {
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: {
+        reason: "resume state invalid",
+        diagnosis: familyScene.reason,
+      },
+      stopSummary: infraFailureStopSummary({
+        summary: familyScene.reason,
+        repairHint:
+          "repair or clear the resident family ledger/worksite before re-entry",
+      }),
+      children: [],
+    };
+  }
+  if (familyScene.kind === "resident") {
+    const terminal = planFamilyTerminalReplay(
+      familyScene.ledger,
+      options.familyBase,
+    );
+    if (terminal !== undefined) return terminal;
+  }
+
+  // #936 / #934 ID-002: route Admission/Preflight BEFORE any GitHub metadata
+  // read or family clone/worksite creation. Tight/unknown route fails closed
+  // with zero network and zero worksite side effects.
+  logDriverStage("admission", `route preflight epic #${options.epicIssue}`);
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
+    const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: {
+        reason: admitted.escalation.reason,
+        diagnosis,
+      },
+      stopSummary: infraFailureStopSummary({
+        summary: `${admitted.escalation.reason}: ${diagnosis}`,
+        repairHint:
+          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
+      }),
+      children: [],
+    };
+  }
+
   // 1. Read the already-cut children from live GitHub (the explicit dependency
-  //    edges a `to-issues` step wrote — decision 1, no LLM inference).
+  //    edges a `to-issues` step wrote — decision 1, no LLM inference). Live
+  //    metadata is part of Admission after route preflight (ID-002/003).
   logDriverStage("admission", `epic #${options.epicIssue}`);
-  const epic = readFamilyEpic(options.epicIssue, options.repo, sh);
+  let epic: FamilyEpic;
+  const issueBodies = new Map<number, string>();
+  try {
+    epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh, issueBodies);
+  } catch (err) {
+    if (err instanceof FamilyRootBlockerError) {
+      const diagnosis =
+        `root epic #${options.epicIssue} is blocked by open upstream issue(s): ` +
+        err.openBlockers.map((n) => `#${n}`).join(", ");
+      return {
+        status: "escalated",
+        familyBase: options.familyBase,
+        escalation: { reason: err.message, diagnosis },
+        stopSummary: decisionGateParkStopSummary({
+          summary: err.message,
+          repairHint:
+            "close or unblock the root epic blocked_by dependencies, then re-feed",
+        }),
+        children: [],
+      };
+    }
+    const diagnosis = err instanceof Error ? err.message : String(err);
+    // #934 ID-003: GitHub auth/login needs external human login — zero retry
+    // already (durable class) + typed decision gate; not infra_failure /
+    // issue_metadata_unavailable (deterministic bad data / exhausted durable).
+    if (isGithubAuthFailure(err)) {
+      return {
+        status: "escalated",
+        familyBase: options.familyBase,
+        escalation: {
+          reason: "GitHub authentication required",
+          diagnosis,
+        },
+        stopSummary: decisionGateParkStopSummary({
+          summary: `GitHub authentication required: ${diagnosis}`,
+          repairHint:
+            "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+        }),
+        children: [],
+      };
+    }
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: "issue metadata unavailable", diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: diagnosis,
+        repairHint: "repair GitHub metadata access and rerun",
+      }),
+      children: [],
+    };
+  }
+  // #934 ID-002 / ID-003: all-filtered is unconditional completed/0 with full
+  // skip inventory. Parent is not a planned runnable slice on this path — do
+  // not gate success on parent Coder-Rec validity or worksite creation.
+  if (epic.children.length === 0) {
+    return {
+      status: "success",
+      familyBase: options.familyBase,
+      stopSummary: {
+        reason: "already_done",
+        summary: "family admission skipped every native child; no worksite was created",
+        metadata: { admissionSkipped: epic.admissionSkipped ?? [] },
+      },
+      children: [],
+      ...(epic.admissionSkipped !== undefined
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  }
+
+  // #934 ID-003: parent + every planned child Coder-Rec aggregated once.
+  // Parent failure must not short-circuit the child pass — decide only after
+  // the full planned-issue inventory is collected.
+  const coderRecErrors: string[] = [];
+  const plannedRoutes: ResolvedModelRoute[] = [];
+  const parentCoderRec = admitCoderRec(
+    admitted.route,
+    issueBodies.get(options.epicIssue),
+  );
+  if (parentCoderRec.kind === "stop") {
+    coderRecErrors.push(
+      `issue #${options.epicIssue}: ${parentCoderRec.escalation.diagnosis}`,
+    );
+  } else {
+    plannedRoutes.push(parentCoderRec.route);
+  }
+
+  for (const child of epic.children) {
+    try {
+      const body = readIssueBodyCached(
+        child.issue,
+        options.repo,
+        metadataSh,
+        issueBodies,
+      );
+      const childAdmission = admitCoderRec(admitted.route, body);
+      if (childAdmission.kind === "stop") {
+        coderRecErrors.push(
+          `issue #${child.issue}: ${childAdmission.escalation.diagnosis}`,
+        );
+      } else {
+        plannedRoutes.push(childAdmission.route);
+      }
+    } catch (err) {
+      coderRecErrors.push(
+        `issue #${child.issue}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (coderRecErrors.length > 0) {
+    const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: "Coder-Rec admission failure", diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: diagnosis,
+        repairHint: "repair every listed owner-authored Coder-Rec before rerun",
+      }),
+      children: [],
+      ...(epic.admissionSkipped !== undefined
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  }
+  // All planned issues admitted — parent is ready (errors would have returned).
+  if (parentCoderRec.kind !== "ready") {
+    // Unreachable: empty errors + parent stop is contradictory, but keep the
+    // exhaustiveness net for the type checker.
+    const diagnosis = parentCoderRec.escalation.diagnosis;
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
+        repairHint: "repair the owner-authored Coder-Rec before rerun",
+      }),
+      children: [],
+    };
+  }
+  const coderRec = parentCoderRec;
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
   //    git, no container) — that clone is the family clone every git op anchors on.
   //    `familyBase` makes a child cut from the LOCAL family base (decision 7).
+  //    Only reached after route admission succeeds.
   const realBackendOptions: RealBackendOptions = {
     codexFast,
     sourceRepo: options.sourceRepo,
@@ -679,6 +1430,15 @@ export async function runFamilyDriver(
   };
   const realSingleSlice =
     options.realBackendFactory?.(realBackendOptions) ?? new RealBackend(realBackendOptions);
+  logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
+  let smoke:
+    | Extract<Awaited<ReturnType<typeof admitRouteSmoke>>, { readonly kind: "ready" }>
+    | undefined;
+  if (options.singleSliceBackendFactory === undefined) {
+    const result = await admitPlannedRouteSmoke(realSingleSlice, plannedRoutes);
+    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    smoke = result;
+  }
   const workingRepo = realSingleSlice.workingRepoPath();
 
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
@@ -702,6 +1462,12 @@ export async function runFamilyDriver(
     options.singleSliceBackendFactory !== undefined
       ? options.singleSliceBackendFactory(workingRepo)
       : realSingleSlice;
+  if (smoke === undefined) {
+    logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
+    const result = await admitPlannedRouteSmoke(singleSliceBackend, plannedRoutes);
+    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    smoke = result;
+  }
 
   // 5. The family-LEVEL seam (real merge + ledger + verify + reconcile + the
   //    container cmr WORKER via `dispatchWorker`, #335), anchored on the SAME
@@ -751,6 +1517,7 @@ export async function runFamilyDriver(
     epic,
     familyBackend,
     singleSliceBackend,
+    admittedRoute: { route: smoke.route, dropped: smoke.dropped },
     familyBase: options.familyBase,
     // The crash-window reconcile resume seam (decision 5): on a re-entry the spine
     // compares the ledger末条 head to the live family-base HEAD and补账/escalates.
@@ -759,10 +1526,26 @@ export async function runFamilyDriver(
     // dependency graph from LIVE GitHub, not the cached epic.
     refetchEpic: async () => {
       logDriverStage("admission", `refetch epic #${options.epicIssue}`);
-      return readFamilyEpic(options.epicIssue, options.repo, sh);
+      return readFamilyEpic(options.epicIssue, options.repo, metadataSh);
     },
   };
   return runFamily(input);
+}
+
+function routeSmokeFailureResult(
+  options: Pick<FamilyDriverOptions, "familyBase">,
+  escalation: { readonly reason: string; readonly diagnosis: string },
+): FamilyRunResult {
+  return {
+    status: "escalated",
+    familyBase: options.familyBase,
+    escalation,
+    stopSummary: infraFailureStopSummary({
+      summary: escalation.diagnosis,
+      repairHint: "repair the selected model×pipe smoke before rerun",
+    }),
+    children: [],
+  };
 }
 
 /**
@@ -851,13 +1634,31 @@ export function cutFamilyBase(
     }
     return persisted;
   }
-  // Fresh cut: refresh origin/<base>, then branch the local family base from it.
-  // Best-effort fetch (an offline / local-only source must not block the cut).
+  // Fresh cut: a configured origin makes fetch authoritative. Only a clone with
+  // no origin is local-only; a failed configured remote must never select stale
+  // local state (#934 ID-009 / ID-015 precise Git predicate).
+  let hasRemote = false;
   try {
+    git("remote", "get-url", "origin");
+    hasRemote = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Precise missing-origin only (git: "fatal: No such remote 'origin'").
+    // Any other get-url failure is operational — fail closed, never stale local.
+    if (/no such remote/i.test(msg)) {
+      hasRemote = false;
+    } else {
+      throw new Error(
+        `cutFamilyBase: git remote get-url origin failed (not a precise ` +
+          `missing-origin); refusing stale local base fallback (#934 ID-009). ` +
+          `(${msg})`,
+      );
+    }
+  }
+  if (hasRemote) {
     git("fetch", "origin", base);
     git("branch", familyBase, `origin/${base}`);
-  } catch {
-    // No remote <base> (a local-only source) ⇒ cut from the local <base>.
+  } else {
     git("branch", familyBase, base);
   }
   const startHead = git("rev-parse", familyBase);
@@ -867,12 +1668,24 @@ export function cutFamilyBase(
   return startHead;
 }
 
-/** Does a local branch exist on the clone? (`-q`: no stderr noise when absent.) */
+/**
+ * Does a local branch exist on the clone? (`-q`: no stderr noise when absent.)
+ *
+ * #934 ID-015 / ID-009: precise missing-ref only (`git rev-parse --verify` exit 1)
+ * → false. Any other failure (exit 128 / spawn / broken repo) fails closed — never
+ * soft as "absent" (that would re-cut over a live base).
+ */
 function branchExists(workingRepo: string, branch: string, sh: Sh): boolean {
   try {
     sh("git", ["-C", workingRepo, "rev-parse", "-q", "--verify", `refs/heads/${branch}`]);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (gitExitStatus(err) === 1) return false;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `cutFamilyBase: git rev-parse --verify refs/heads/${branch} failed ` +
+        `(not a precise missing-ref/exit 1); refusing to treat the branch as ` +
+        `absent (#934 ID-015/ID-009). (${msg})`,
+    );
   }
 }

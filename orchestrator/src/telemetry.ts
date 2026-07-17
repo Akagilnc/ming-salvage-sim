@@ -39,9 +39,6 @@ import { dirname, join } from "node:path";
 
 import ts from "typescript";
 
-import {
-  resolveCoderRecOrder,
-} from "./coderRoster.js";
 import { execFileAsyncWithTimeout } from "./externalCall.js";
 import {
   modelFamilyForSlug,
@@ -52,10 +49,6 @@ import {
   isAgentIdleTimeoutError,
   isQuotaWaitForResetError,
 } from "./quotaProbe.js";
-import {
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-} from "./relayDispatch.js";
 import type {
   DispatchContext,
   Finding,
@@ -366,8 +359,6 @@ export interface TelemetryCoderRecProvenance {
   readonly selected: string | null;
   /** True when selected is not the head of the order. */
   readonly wasFallback: boolean | null;
-  /** True when ORCHESTRATOR_CODER_MODEL env forced the coder. */
-  readonly envOverride: boolean | null;
 }
 
 export interface TelemetryModelStamp {
@@ -926,22 +917,7 @@ export function classifyWorkerTerminal(
       sessionId: null,
     };
   }
-  if (isSelfReportedRelayError(err)) {
-    return {
-      terminal: "thrown",
-      errorCategory: "relay-out",
-      errorMessage: msg,
-      sessionId: null,
-    };
-  }
-  if (isHangWithLivePoolError(err)) {
-    return {
-      terminal: "thrown",
-      errorCategory: "hang-idle",
-      errorMessage: msg,
-      sessionId: null,
-    };
-  }
+  // #937: HangWithLivePoolError / SelfReportedRelayError constructors deleted.
   // Sandcastle AgentIdleTimeoutError — rethrown by realBackend.runAgentSandbox
   // with the fixed text "Agent idle for N seconds…". Match by tag/name/message
   // (same detector as #683) so real idle does not fall through to unclassified.
@@ -974,13 +950,16 @@ export function mentionsHttp429(reasonLower: string): boolean {
 /**
  * Map a free-text failure reason onto a telemetry category.
  *
- * Patterns below are taken from the actual throw/return sites (not invented):
+ * Patterns below are taken from live throw/return sites unless noted historical:
  * - missing sidecar / historical "did not fire its completion signal" logs
- * - HangWithLivePoolError — "hang with live pool"
- * - dispatchWorker idle monitor — "monitored worker idle hang"
+ * - live Sandcastle AgentIdleTimeoutError — "Agent idle for N seconds…"
+ * - historical idle-monitor wording — "idle hang" / "worker idle" (clustering only)
  * - QuotaWaitForResetError — "quota wait for reset"
- * - SelfReportedRelayError — "self-reported blocked" / "phase_complete:"
+ * - SelfReportedRelayError (deleted #937) — historical "self-reported blocked" /
+ *   "phase_complete:" clustering only
  * - signal-kill stamp — "killed by signal" / SIGTERM / SIGKILL
+ *
+ * #937 deleted HangWithLivePoolError — its "hang with live pool" arm is gone.
  *
  * Anything unmatched → `"unclassified"` (raw message kept on the collect row).
  */
@@ -1011,16 +990,16 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     return "429-quota";
   }
 
-  // ── hang-idle (HangWithLivePoolError + monitored idle hang + Sandcastle idle) ─
-  // realBackend rethrows AgentIdleTimeoutError as:
+  // ── hang-idle ────────────────────────────────────────────────────────────
+  // Live: realBackend rethrows AgentIdleTimeoutError as
   //   "Agent idle for 600 seconds — no output received. …"
   // (#683 / quotaProbe isAgentIdleTimeoutError message shape).
+  // Historical clustering only: "idle hang" / "worker idle" / "hang-idle"
+  // (pre-#937 monitor wording; HangWithLivePoolError arm deleted).
   if (
     lower.includes("idle hang") ||
     lower.includes("hang-idle") ||
     lower.includes("worker idle") ||
-    lower.includes("monitored worker idle hang") ||
-    lower.includes("hang with live pool") ||
     /agent idle for \d+/.test(lower)
   ) {
     return "hang-idle";
@@ -1793,23 +1772,12 @@ function coderRecProvenance(
   spec: WorkerSpec,
   ctx: DispatchContext,
 ): TelemetryCoderRecProvenance | null {
-  const body = ctx.issueSnapshot?.body;
-  const envRaw = process.env.ORCHESTRATOR_CODER_MODEL?.trim();
-  const envOverride = envRaw !== undefined && envRaw.length > 0;
+  // #936: the snapshot court is deleted; live issue Coder-Rec is not copied into
+  // dispatch telemetry.
   let order: readonly string[] | null = null;
   let primarySlug: string | null = null;
-  if (body !== undefined && body.length > 0) {
-    try {
-      const entries = resolveCoderRecOrder(body);
-      order = entries.map((e) => e.id);
-      primarySlug = entries[0]?.slug ?? null;
-    } catch {
-      order = null;
-      primarySlug = null;
-    }
-  }
-  // Non-coder legs with no Coder-Rec body and no env override: nothing to stamp.
-  if (order === null && !envOverride && spec.kind !== "coder") {
+  // Non-coder legs with no Coder-Rec body: nothing to stamp.
+  if (order === null && spec.kind !== "coder") {
     return null;
   }
   const selected = spec.model;
@@ -1822,12 +1790,10 @@ function coderRecProvenance(
     order,
     selected,
     wasFallback,
-    envOverride,
   };
 }
 
 function issueFromContext(ctx: DispatchContext): number | null {
-  if (ctx.issueSnapshot?.number !== undefined) return ctx.issueSnapshot.number;
   if (ctx.familyIssue !== undefined) return ctx.familyIssue;
   if (ctx.stateDir !== undefined) {
     const m = /(?:^|\/)\.ledger-(\d+)\/?$/.exec(ctx.stateDir);

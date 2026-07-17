@@ -41,6 +41,7 @@
  */
 
 import { shWithClock } from "../externalCall.js";
+import { gitExitStatus, isFileNotFound } from "../fsErrors.js";
 import {
   appendFileSync,
   existsSync,
@@ -132,19 +133,10 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type AgentSandboxRunOptions,
-  type QuotaProbeRunContext,
   SANDBOX_FIX_FOCUS_PATH_ENV,
   appendHomeEnvMount,
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
-import {
-  resolveSandboxIdleAfterQuotaProbe,
-  runPoolProbe,
-  withIdleQuotaProbeDisposition,
-  type HandleIdleThresholdResult,
-  type QuotaPoolId,
-  type QuotaProbeResult,
-} from "../quotaProbe.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
 import {
   FIX_FOCUS_LANDING_FILE,
@@ -192,7 +184,7 @@ import {
 } from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
-import { recordFamilyEscalated } from "./ledger.js";
+import { parseFamilyLedgerJsonl, recordFamilyEscalated } from "./ledger.js";
 import { shipOutcomeFromResult } from "../shipOutcome.js";
 import {
   configureTelemetryFromWorkerImage,
@@ -524,6 +516,8 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
+  /** #934 ID-004 / #937: SO maxRetries from provider resumability. */
+
   protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
     // Effort comes from the registry row for `spec.model` only (#916: no
     // role/soul hard override of reasoning effort at dispatch).
@@ -593,11 +587,8 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const ledger = raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyLedgerEntry);
-    return ledger;
+    // #934 S-3: per-line shape gate (not bare JSON.parse cast).
+    return parseFamilyLedgerJsonl(raw);
   }
 
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
@@ -619,10 +610,9 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+    // #934: per-line shape gate (not bare JSON.parse cast). Invalid JSON or
+    // off-shape object fails closed — never silent-as-typed cargo.
+    return parseLegacyEscalationJsonl(raw);
   }
 
   private legacyEscalationLedgerEntries(): ReadonlyArray<FamilyLedgerEntry> {
@@ -972,14 +962,6 @@ export class RealFamilyBackend implements FamilyBackend {
               MERGER_RECEIPT_TAG,
               resumeCapableForSlug(model),
             ),
-            // #909: same quota-probe context as single-slice runAgentSandbox.
-            // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
-            quotaProbe: {
-              modelRef: model,
-              step: "S1",
-              worktreePath: this.opts.workingRepo,
-              issueNumber: req.childIssue,
-            },
           });
           // Output.object was attached: absent typed signal → #598, not cargo.
           const typed = requireTypedTrafficSignal(
@@ -1193,29 +1175,18 @@ export class RealFamilyBackend implements FamilyBackend {
       // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
-    // #3 (dogfood death) + #372 P2: ALWAYS install deps before running the
-    // project's verify scripts. Freshness by construction (npm ci is idempotent
-    // and lockfile-exact). Do NOT condition on node_modules presence or any
-    // manifest/mtime detection — #372 ratified "freshness by construction, never
-    // by detection". A later wave inside the family clone can mutate
-    // package.json/package-lock.json; the launcher unconditional rebuild only
-    // covers the *orchestrator* dist/image, not the family clone's project deps.
-    // Therefore verify path must unconditionally ensure the cwd's deps.
-    await this.installDeps(cwd);
-    // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
-    // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
-    // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
-    // test throws `document is not defined` and verify fails a perfectly good
-    // project. (The orchestrator's own scripts HAPPENED to match `npx tsc`/`vitest`,
-    // which is why this only surfaced on a foreign project — web/.) Run the declared
-    // `typecheck` (when present) + `test` scripts so each project's real flags/config
-    // (jsdom, tsc -b, …) are honoured.
+    // #934 ID-011: scripts first (op-error throws); empty verifiable set skips.
     const scripts = this.packageScripts(cwd);
-    // Type-check via the project's OWN command. R1 T3 (codex): web/ has NO `typecheck`
-    // script — its TS check lives in `build` (`tsc -b && vite build`, exactly what the
-    // game CI runs). Skipping it let a web change with TS/build errors pass verify as
-    // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
-    // real type-checking build) > nothing. So types are NEVER silently skipped.
+    if (
+      !scripts.includes("typecheck") &&
+      !scripts.includes("build") &&
+      !scripts.includes("test")
+    ) {
+      return;
+    }
+    // #3/#372: always install before scripts (freshness by construction).
+    await this.installDeps(cwd);
+    // #5: project's own scripts (not hardcoded npx). typecheck > build > none.
     if (scripts.includes("typecheck")) {
       this.runObservedVerification(
         _request,
@@ -1293,31 +1264,52 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The script names declared in `cwd`'s package.json (`scripts` keys), so
-   * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
-   * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
-   * branches without a real FS. Returns [] on any read/parse failure (a non-Node
-   * dir verifies nothing — installDeps would have failed earlier for a Node project
-   * lacking a lockfile or package context).
-   */
-  /**
-   * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
-   * for non-Node diffs. `protected` so a unit test drives the skip branch without a
-   * real FS.
+   * True iff package.json is a file (R1 T2 verify-skip guard). ENOENT→false;
+   * other probe errors throw (#934 ID-011 / #939) — never soft-skip as non-Node.
+   * `protected` so a unit test drives the skip branch without a real FS.
    */
   protected isNodeProject(cwd: string): boolean {
-    return existsSync(join(cwd, "package.json"));
+    const path = join(cwd, "package.json");
+    try {
+      return statSync(path).isFile();
+    } catch (err) {
+      if (isFileNotFound(err)) return false;
+      const d = err instanceof Error ? err.message : String(err);
+      // #934 CR: one canonical reason token (no dual-era parenthetical).
+      throw new Error(
+        `family verify: package.json probe failed at "${path}": ${d}`,
+      );
+    }
   }
 
+  /**
+   * Script names from package.json. Read/parse/shape op-errors throw (#934 ID-011).
+   * Only a successful valid object may return [] (legal empty skip).
+   */
   protected packageScripts(cwd: string): readonly string[] {
+    const path = join(cwd, "package.json");
+    const detail = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    let raw: string;
     try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
-      return Object.keys(pkg.scripts ?? {});
-    } catch {
-      return [];
+      raw = readFileSync(path, "utf8");
+    } catch (err) {
+      throw new Error(`family verify: failed to read package.json at "${path}": ${detail(err)}`);
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`family verify: failed to parse package.json at "${path}": ${detail(err)}`);
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`family verify: package.json at "${path}" must be a JSON object`);
+    }
+    const scripts = (parsed as { scripts?: unknown }).scripts;
+    if (scripts === undefined) return [];
+    if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+      throw new Error(`family verify: package.json "scripts" at "${path}" must be an object`);
+    }
+    return Object.keys(scripts as Record<string, unknown>);
   }
 
   /**
@@ -1731,8 +1723,6 @@ export class RealFamilyBackend implements FamilyBackend {
               judgeStationReceiptSchema(),
               this.resumeCapableForSpec(spec, ctx),
             ),
-            // #909: shared sandbox quota-probe (billing pool when relayed).
-            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
         } catch (err) {
           // #899: typed traffic-signal exhaust exits non-zero for #598; do not
@@ -1780,74 +1770,18 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Production family agent-sandbox entry (#909). Same shared idle → quota-probe
-   * disposition as single-slice {@link RealBackend.runAgentSandbox} via
-   * {@link withIdleQuotaProbeDisposition} — 429 parks (QuotaWaitForResetError),
-   * probe-ok/network rethrows idle (fail-safe hang). Do not re-clone the catch.
+   * Production family agent-sandbox entry (#937 / #934 ID-007). Same as
+   * single-slice {@link RealBackend.runAgentSandbox}: Sandcastle only — silence
+   * must not trigger quota probe/park/kill/relay. Explicit typed 429/capacity
+   * enter park/relay via live constructors elsewhere.
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe, ...scOptions } = options;
-    return withIdleQuotaProbeDisposition({
-      quotaProbe,
-      run: () => this.invokeSandcastleRun(scOptions),
-      resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
-    });
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return this.invokeSandcastleRun(options);
   }
 
-  /**
-   * #683/#909 idle disposition — same handleIdleThreshold composition as
-   * single-slice; durable park ledger is owned by the runner, not here.
-   */
-  protected async resolveIdleAfterQuotaProbe(
-    ctx: QuotaProbeRunContext,
-  ): Promise<HandleIdleThresholdResult> {
-    return resolveSandboxIdleAfterQuotaProbe({
-      modelRef: ctx.modelRef,
-      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      workerPid:
-        ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
-      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
-      now: () => this.idleNow(),
-    });
-  }
-
-  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
-  protected idleNow(): Date {
-    return new Date();
-  }
-
-  /**
-   * Pool probe used after idle threshold (#683/#909). Default = real
-   * {@link runPoolProbe}; tests stub three outcomes.
-   */
-  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
-    return runPoolProbe(pool);
-  }
-
-  /**
-   * Build the #909 quotaProbe context for a family productive worker.
-   * Prefer active billing pool (relay) when present — same rule as single-slice
-   * {@link RealBackend.handleMonitoredWorkerIdle}.
-   */
-  protected familyQuotaProbeContext(
-    spec: WorkerSpec,
-    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
-  ): QuotaProbeRunContext {
-    const modelRef =
-      ctx !== undefined && isBillingPoolDispatchId(ctx.billingPool)
-        ? ctx.billingPool
-        : spec.model;
-    return {
-      modelRef,
-      step: spec.id,
-      worktreePath: this.opts.workingRepo,
-      ...(ctx?.familyIssue !== undefined
-        ? { issueNumber: ctx.familyIssue }
-        : {}),
-    };
-  }
 
   // ─────────────────────────── family coder-fix ───────────────────────────
 
@@ -1925,8 +1859,6 @@ export class RealFamilyBackend implements FamilyBackend {
               CODER_RECEIPT_TAG,
               this.resumeCapableForSpec(spec, ctx),
             ),
-            // #909: shared sandbox quota-probe.
-            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -2255,8 +2187,6 @@ export class RealFamilyBackend implements FamilyBackend {
             ONLINE_REVIEW_RECEIPT_TAG,
             this.resumeCapableForSpec(spec, ctx),
           ),
-          // #909: shared sandbox quota-probe.
-          quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2980,7 +2910,6 @@ export class RealFamilyBackend implements FamilyBackend {
         SHIP_RECEIPT_TAG,
         this.resumeCapableForSpec(spec, ctx),
       ),
-      quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }
 
@@ -3990,20 +3919,6 @@ function classifyMergerOutcomePayload(
   return { resolved: false, reason: "merger did not resolve" };
 }
 
-/**
- * Is this read error a "file does not exist yet" (ENOENT)? Used to keep the
- * ledger/escalation reads fail-CLOSED: only a missing file maps to an empty set;
- * any other read failure (EACCES / EISDIR / IO / corruption) must rethrow so an
- * unreadable-but-present durable file is never silently read as empty (codex R2).
- */
-function isFileNotFound(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === "object" &&
-    (err as { code?: unknown }).code === "ENOENT"
-  );
-}
-
 /** A one-line human-readable summary of a failed verify command (phase + error). */
 function summarizeError(phase: "wave" | "final", err: unknown): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
@@ -4036,15 +3951,64 @@ function decodeChildOutput(v: unknown): string {
 }
 
 /**
- * The process exit status carried by an `execFileSync` throw (`err.status`), or
- * `undefined` if the error is not an exit-code failure (e.g. ENOENT spawning git).
- * Lets a git predicate tell a LEGIT non-zero (`merge-base --is-ancestor` exits 1 for
- * "not an ancestor") from an OPERATIONAL failure (exit 128: bad object / broken repo)
- * that must propagate rather than read as a false predicate (online R1 CodeRabbit).
+ * Parse legacy family-escalations.jsonl fail-closed: every non-empty line must
+ * JSON.parse AND pass {@link isLegacyEscalationRecordShape}. Blank lines ok.
  */
-function gitExitStatus(err: unknown): number | undefined {
-  const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" ? status : undefined;
+function parseLegacyEscalationJsonl(raw: string): FamilyEscalationRecord[] {
+  const records: FamilyEscalationRecord[] = [];
+  let lineNo = 0;
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    lineNo += 1;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not valid JSON — ` +
+          `refusing to read a partially-readable escalation log (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isLegacyEscalationRecordShape(parsed)) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not a valid ` +
+          `FamilyEscalationRecord shape (must be an object with string reason) — ` +
+          `refusing silent cast (fail closed).`,
+      );
+    }
+    records.push(parsed);
+  }
+  return records;
+}
+
+/**
+ * Minimum shape for a legacy escalation stuck-point row. `reason` is the only
+ * required field; optional known fields are type-checked when present. Extra
+ * migration keys (e.g. `ts`) are tolerated on a valid object.
+ */
+function isLegacyEscalationRecordShape(v: unknown): v is FamilyEscalationRecord {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.reason !== "string" || o.reason.trim().length === 0) return false;
+  if (
+    o.escalationKind !== undefined &&
+    o.escalationKind !== "decision" &&
+    o.escalationKind !== "failure"
+  ) {
+    return false;
+  }
+  if (o.familyHeadAfter !== undefined && typeof o.familyHeadAfter !== "string") {
+    return false;
+  }
+  if (o.phase !== undefined && o.phase !== "wave" && o.phase !== "final") {
+    return false;
+  }
+  if (o.diagnosis !== undefined && typeof o.diagnosis !== "string") {
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

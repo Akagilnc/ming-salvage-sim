@@ -26,7 +26,6 @@ import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   RunInput,
   StepOutput,
@@ -68,13 +67,9 @@ class RecordingChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -84,6 +79,10 @@ class RecordingChildBackend implements Backend {
 
 /** A FamilyBackend recording merge order + the append-only ledger. */
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly mergeOrder: number[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -162,6 +161,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
   it("a landed merge with no merger report still records the child and continues the wave", async () => {
     const familyBackend = new LandedWithoutMergerReportBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
         issue: 291,
         children: [
@@ -183,6 +183,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
   it("parks and escalates an unresolved merger step after its bound without starting the next child", async () => {
     const familyBackend = new PersistentlyConflictedFamilyBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
         issue: 291,
         children: [
@@ -220,6 +221,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
   it("durably parks a structured merger decision without retrying it", async () => {
     const familyBackend = new DecisionEscalatingMergerBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }, { issue: 11, blockedBy: [] }] },
       familyBackend,
       singleSliceBackend: new RecordingChildBackend(),
@@ -255,6 +257,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -289,6 +292,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       ],
     };
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend: fb,
       singleSliceBackend: new RecordingChildBackend(),
@@ -330,6 +334,7 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -368,6 +373,7 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
       children: [{ issue: 10, blockedBy: [] }],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,

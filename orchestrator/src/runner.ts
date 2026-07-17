@@ -66,10 +66,9 @@ import {
 import {
   parkOrRelayQuotaWall,
   parkQuotaWaitForReset,
+  persistRelayBatonHandoff,
 } from "./quotaParkRelay.js";
 import {
-  applyCoderRecToRoute,
-  applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
@@ -80,6 +79,15 @@ import {
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import {
+  admitCoderRec,
+  admitRelayBaton,
+  admitRouteFromEnv,
+  admitTightRoute,
+  admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
+} from "./admissionPreflight.js";
+import { discoverResidentScene } from "./sceneAction.js";
 import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
 import {
   resolveCoderRecOrder,
@@ -98,14 +106,10 @@ import {
 } from "./quotaPoolTable.js";
 import {
   canRelayHandoff,
-  isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
-  tryStageRelayFocusFile,
+  renderEphemeralRelayBrief,
   isCapacityRelayError,
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-  RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import { existsSync } from "node:fs";
@@ -119,7 +123,7 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-  mintJudgeEscalate,
+
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
@@ -152,7 +156,6 @@ import type {
   FindingRepairScope,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -241,9 +244,15 @@ async function hashPrompt(
     let content: string | undefined;
     try {
       content = await backend.readPromptContent(promptFile);
-    } catch {
+    } catch (err) {
       // A prompt-resolution fault must NOT abort ledgering — fall back to the
       // name hash so the step is still recorded (the resume truth survives).
+      // #934 ID-015: name-prefix fallback AND warn (not silent).
+      console.warn(
+        `[orchestrator] optional prompt content read failed (name-hash fallback): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       content = undefined;
     }
     if (content !== undefined) {
@@ -261,8 +270,8 @@ async function hashPrompt(
  * #256 (DONE): the caller (`emitLedger`) now supplies the TRUE values it
  * receives from the seam extension / optional Backend helpers — `sessionId` is
  * the real per-step sandbox session id for agent steps (run-level UUID fallback
- * otherwise), `branchHEAD` the real `git rev-parse HEAD` SHA (branch-name
- * fallback otherwise), `prompt_hash` the content hash (name-hash fallback). This
+ * otherwise), `branchHEAD` is the optional real `git rev-parse HEAD` SHA, and
+ * `prompt_hash` uses the documented content/name fallback. This
  * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
@@ -271,7 +280,7 @@ function buildPersistentEntry(opts: {
   runId: string;
   sessionId: string;
   prompt_hash: string;
-  branchHEAD: string;
+  branchHEAD?: string;
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
@@ -294,8 +303,8 @@ function buildPersistentEntry(opts: {
     runId: opts.runId,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
-    branchHEAD: opts.branchHEAD,
     ts: opts.ts,
+    ...(opts.branchHEAD !== undefined ? { branchHEAD: opts.branchHEAD } : {}),
   };
   // Only add output if defined — keeps the runner-action shape clean.
   if (opts.output !== undefined) {
@@ -1149,14 +1158,13 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
  * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
- * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
- * with single-slot overrides (see {@link coderModel}); no image rebuild, no
+ * Swapping models = select ORCHESTRATOR_ROUTE or use owner-authored Coder-Rec;
+ * no image rebuild or
  * structural StepSpec change (PRD #244 Implementation Decisions + ADR 0031).
  */
 
 /**
- * The S2 coder worker's model slug, selected by the active route and optionally
- * overridden via `ORCHESTRATOR_CODER_MODEL`. The slug is resolved to the baked CLI
+ * The S2 coder worker's model slug, selected by the active route. The slug is resolved to the baked CLI
  * by agentForSlug; invalid route names / slugs fail closed before dispatch.
  */
 export function coderModel(env: ModelRouteEnv = process.env): string {
@@ -1180,8 +1188,7 @@ export function stepSpecsForRoute(
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
       // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
-      // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
-      // alone — no image rebuild, no StepSpec shape change.
+      // agentForSlug (realBackend); no image rebuild or StepSpec shape change.
       model: route.slots.coder,
       // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
       // clean exit + legal sidecar / typed envelope is completion.
@@ -1334,14 +1341,6 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   });
 }
 
-function untrustedExecutableInstructionSummary(
-  _snapshot: IssueSnapshot,
-): StopSummary | undefined {
-  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
-  // structured IssueSnapshot.agentBrief field is executable runner input.
-  return undefined;
-}
-
 /**
  * Decision-kind escalate park stop summary.
  * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
@@ -1355,13 +1354,13 @@ function stopSummaryForEscalation(escalation: Escalation): StopSummary {
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
-  const reason =
-    `${escalation.reason}: ${escalation.diagnosis}; ` +
-    `route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ` +
-    `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`;
+  const reason = admissionRouteFailureDiagnosis(
+    `${escalation.reason}: ${escalation.diagnosis}`,
+  );
   return infraFailureStopSummary({
     summary: reason,
-    repairHint: "fix the active model route or route env overrides before dispatching workers",
+    repairHint:
+      "fix ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before dispatching workers",
   });
 }
 
@@ -1379,15 +1378,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
     input.now !== undefined ? input.now() : new Date();
-  let modelRoute: ResolvedModelRoute;
-  try {
-    modelRoute = resolveActiveModelRoute();
-  } catch (err) {
-    const reason =
-      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = stopSummaryForStartupRouteFailure({
-      reason: "startup route failure",
-      diagnosis: `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+
+  // #936 / #934 ID-005: Scene Recovery first — resident discovery before
+  // admission network work when a durable scene may already exist.
+  const scene = await discoverResidentScene(backend, issueNumber);
+  if (scene.kind === "corrupted") {
+    const reason = scene.reason;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
     return {
       status: "error",
@@ -1396,33 +1395,80 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
     };
   }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
+
+  // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
+  // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
+  // finished success/error/unanswered-escalate terminal (zero meta/smoke).
+  // Skip early short-circuit when a repairIntent is present — that path must
+  // still durable-write the intent (and surface write failures) before planResume.
+  if (scene.kind === "resident" && input.repairIntent === undefined) {
+    const earlyPlan = planResume(scene.state.ledger);
+    if (earlyPlan.terminalStatus !== undefined) {
+      const worktree = scene.state.worktree;
+      const ledger = earlyPlan.priorLedger;
+      if (earlyPlan.terminalStatus === "error") {
+        const reason =
+          "prior run terminated with an error handoff (re-fed after completion)";
+        const errorPackage: ErrorPackage = {
+          failedStep: lastAgentStep(ledger) ?? "S8",
+          reason,
+          branchHead: worktree.branch,
+        };
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          stopSummary,
+        };
+      }
+      const stopSummary: StopSummary =
+        earlyPlan.terminalStatus === "success"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a success handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
+      return {
+        status: earlyPlan.terminalStatus,
+        branch: earlyPlan.terminalStatus === "success" ? worktree.branch : undefined,
+        stepLedger: ledger,
+        stopSummary,
+      };
+    }
+  }
+
+  // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
+  // No env slot overrides, no interactive continue. Non-terminal resume still
+  // needs a lineup for dispatch.
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
+    const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
+    const isTight = admitted.escalation.reason === "tight route violation";
     return {
-      status: "escalate",
+      status: isTight ? "escalate" : "error",
       errorPackage: {
         failedStep: "S0",
-        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+        reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
     };
   }
   console.info(
-    `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
+    `[orchestrator] model route lineup\n${printableRouteLineup(admitted.route)}`,
   );
   // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
   // coder (+ coderFix) slot at S0 (first seat stay-put; #926 owns advanceCoder).
-  modelRoute = routePolicy.route;
+  let modelRoute: ResolvedModelRoute = admitted.route;
   let stepSpecs = stepSpecsForRoute(modelRoute);
-  /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
+  /** Issue body used for Coder-Rec parse (S0 meta.body). */
   let coderRecIssueBody: string | undefined;
-  /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
-  let coderRecEnvSkipped = false;
   let routeSmokeChecked = false;
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
@@ -1446,9 +1492,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * relay stickiness still wins when set (capacity crisis overrides quality advance).
    */
   let stickyJudgeAdvanceCoderSlug: string | undefined;
-  /** #686 — last written relay focus path (forwarded on next dispatch). */
-  let activeRelayFocusPath: string | undefined;
-  /** The only step allowed to consume the current relay pool and focus baton. */
+  /** #937 — last ephemeral relay brief (forwarded on next same-step dispatch). */
+  let activeRelayBrief: string | undefined;
+  /** The only step allowed to consume the current relay pool + ephemeral brief. */
   let activeRelayStep: StepId | undefined;
   // #924: coder persistent session across S2 → S5 rounds (declared early so
   // relay / first-seat Coder-Rec model changes can invalidate it).
@@ -1460,15 +1506,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   /**
    * Hold a sticky coder seat against Coder-Rec snap-back: rewrite coder
-   * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
-   * when the runnable model actually changed.
+   * (+coderFix), re-admit tight policy (#934 ID-002 / R7 F3), refresh stepSpecs,
+   * invalidate smoke, and retire the session when the runnable model changed.
    */
   const holdCoderSticky = (
     slug: string,
-    opts?: { readonly preserveCoderFix?: boolean },
-  ): void => {
-    if (modelRoute.slots.coder === slug) return;
-    modelRoute = withCoderSlot(modelRoute, slug, opts);
+  ): { kind: "stop"; escalation: Escalation } | undefined => {
+    if (modelRoute.slots.coder === slug) return undefined;
+    const admitted = admitTightRoute(withCoderSlot(modelRoute, slug));
+    if (admitted.kind === "stop") return admitted;
+    modelRoute = admitted.route;
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     if (
@@ -1479,16 +1526,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderSessionId = undefined;
       coderSessionModel = undefined;
     }
+    return undefined;
   };
 
   /**
-   * #926 — single bookkeeping write path for advance / stay-put markers.
-   * Disk write is fail-open: in-memory ledger already carries the event.
+   * #926 / #934 ID-005 — single bookkeeping write path for advance / stay-put
+   * markers. Post-worksite route/step truth is required durable: writeLedger
+   * failure surfaces as `record_persist_failed` (not ID-015 telemetry fail-open).
+   * Matches the coder_advance_stay_put audit fail-closed path.
    */
   const persistAdvanceBookkeeping = async (
     marker: LedgerEntry,
     forStep: "S3" | "S6",
-    failOpenLabel: string,
+    label: string,
   ): Promise<void> => {
     ledger.push(marker);
     if (stateDir === undefined) return;
@@ -1504,8 +1554,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stateDir,
       );
     } catch (err) {
-      console.warn(
-        `[orchestrator] #926 ${failOpenLabel} ledger write failed (fail-open): ${
+      throw new Error(
+        `record_persist_failed: coder_advance (${label}): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -1514,21 +1564,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
   const applyCoderRecSelection = async (): Promise<
-    ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined
+    | { kind: "stop"; escalation: Escalation }
+    | undefined
   > => {
-    if (coderRecEnvSkipped) return undefined;
     // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
-    // round-threshold quality advance. Do NOT set coderRecEnvSkipped.
+    // round-threshold quality advance. #934 R7 F3: re-admit tight after hold.
     if (stickyRelayCoderSlug !== undefined) {
-      holdCoderSticky(stickyRelayCoderSlug);
-      return undefined;
+      return holdCoderSticky(stickyRelayCoderSlug);
     }
     if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
-        modelRoute = {
-          ...modelRoute,
-          slots: { ...modelRoute.slots, coderFix: stickyRelayCoderFixSlug },
-        };
+        // Single apply+admit court (same as live relay baton).
+        const admitted = admitRelayBaton(
+          modelRoute,
+          { slug: stickyRelayCoderFixSlug },
+          "S5",
+        );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
         if (
@@ -1544,30 +1597,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
     if (stickyJudgeAdvanceCoderSlug !== undefined) {
-      holdCoderSticky(stickyJudgeAdvanceCoderSlug);
-      return undefined;
+      return holdCoderSticky(stickyJudgeAdvanceCoderSlug);
     }
-    let applied: ReturnType<typeof applyCoderRecToRoute>;
-    try {
-      applied = applyCoderRecToRoute(modelRoute, coderRecIssueBody);
-    } catch (err) {
-      // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
-      // (same family as route smoke failure): escalate, zero dispatch.
-      const diagnosis = err instanceof Error ? err.message : String(err);
-      return {
-        kind: "stop",
-        escalation: {
-          reason: "Coder-Rec admission failure",
-          diagnosis,
-        },
-      };
+    // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
+    const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
+    if (admittedRec.kind === "stop") {
+      return { kind: "stop", escalation: admittedRec.escalation };
     }
-    if (applied.skippedForEnvOverride) {
-      coderRecEnvSkipped = true;
-      return undefined;
-    }
-    if (applied.route === modelRoute) return undefined;
-    modelRoute = applied.route;
+    if (admittedRec.route === modelRoute) return undefined;
+    modelRoute = admittedRec.route;
     // #686 P1: a coder-slot change must not inherit the prior resource-relay
     // pool — reselect from the new model's dispatch binding.
     currentBillingPool = billingPoolFromQuotaPool(
@@ -1587,15 +1625,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
     // before its first dispatch (top-of-loop OR the S2/S5 re-apply path).
     routeSmokeChecked = false;
-    if (applied.entry !== undefined) {
-      console.info(
-        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})`,
-      );
-    }
-    return applyRuntimeTightRoutePolicy(modelRoute, {
-      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-      warn: (message) => console.warn(`[orchestrator] ${message}`),
-    });
+    console.info(
+      `[orchestrator] Coder-Rec applied → coder=${modelRoute.slots.coder}`,
+    );
+    return undefined;
   };
 
   const stopForCoderRecTightRoutePolicy = async (escalation: {
@@ -1695,16 +1728,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     forStep: "S3" | "S6",
   ): Promise<void> => {
     const currentSlug = modelRoute.slots.coder;
-    const preserveCoderFix =
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
-
     const effect = await executeAdvanceCoderSuggestion({
       suggestion,
       currentSlug,
       route: modelRoute,
-      applySlug: (route, slug) =>
-        withCoderSlot(route, slug, { preserveCoderFix }),
+      applySlug: (route, slug) => withCoderSlot(route, slug),
       probe: probeRouteSmoke,
     });
 
@@ -1756,36 +1784,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     );
   };
 
-  /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
-  const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
-    currentBillingPool = baton.pool;
-    activeRelayStep = wallStep ?? "S2";
-    const relaySlot = relaySlotForSingleSliceWallStep(wallStep ?? "S2");
-    const slots = { ...modelRoute.slots };
-    if (relaySlot === "verify") {
-      // #923: S3/S6 judge openings share the verify slot.
-      slots.verify = baton.slug;
-    } else if (relaySlot === "coderFix") {
-      slots.coderFix = baton.slug;
-      stickyRelayCoderFixSlug = baton.slug;
-    } else {
-      // S2/default — coder (+ coderFix) slot; sticky for resource relay only.
-      modelRoute = withCoderSlot(modelRoute, baton.slug);
-      stickyRelayCoderSlug = baton.slug;
-      stepSpecs = stepSpecsForRoute(modelRoute);
-      routeSmokeChecked = false;
-      console.info(
-        `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
-      );
-      return;
+  /**
+   * #686 / #934 R6 F1–F2 — apply a relay baton via the pure helper
+   * ({@link applyRelayBatonToRoute} / {@link admitRelayBaton}) so every slot
+   * recomputes tightFamilyViolations, then re-satisfy the same tight gate as
+   * admission. Hand-editing slots is deleted (verify/coderFix used to skip the
+   * pure path and leave violations stale).
+   */
+  const applyRelayBaton = (
+    baton: NextRelayBaton,
+    wallStep?: StepId,
+  ):
+    | { readonly kind: "ready" }
+    | { readonly kind: "stop"; readonly escalation: Escalation } => {
+    const step = wallStep ?? "S2";
+    const admitted = admitRelayBaton(modelRoute, baton, step);
+    if (admitted.kind === "stop") {
+      return admitted;
     }
-    modelRoute = { ...modelRoute, slots };
+    currentBillingPool = baton.pool;
+    activeRelayStep = step;
+    modelRoute = admitted.route;
+    const relaySlot = relaySlotForSingleSliceWallStep(step);
+    if (relaySlot === "coderFix") {
+      stickyRelayCoderFixSlug = baton.slug;
+    } else if (relaySlot === "coder") {
+      stickyRelayCoderSlug = baton.slug;
+    }
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     console.info(
       `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}` +
         (wallStep !== undefined ? ` (slot for ${wallStep})` : ""),
     );
+    return { kind: "ready" };
   };
 
   // #686 P1: count the chain from the FULL ledger (resume history + in-memory),
@@ -1934,8 +1966,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
     activeRelayStep === dispatchStep ? currentBillingPool : undefined;
-  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
-    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const relayBriefForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayBrief : undefined;
   const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
     if (
       activeRelayStep !== completedStep ||
@@ -1943,7 +1975,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       escalateOf(completed) !== undefined
     ) return;
     currentBillingPool = undefined;
-    activeRelayFocusPath = undefined;
+    activeRelayBrief = undefined;
     activeRelayStep = undefined;
   };
 
@@ -1963,6 +1995,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOutput: StepOutput | undefined;
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  /**
+   * #926 / #937 / #934 ID-008: consecutive review/fix no-baton stay-puts.
+   * First stay-put is non-terminal (return to judge / preserve findings); a
+   * second consecutive typed-429 wall with no baton parks for external reset
+   * (ID-001) — never invents S8 error solely from candidate exhaustion.
+   */
+  let consecutiveReviewFixStayPuts = 0;
   /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
   let pendingBlockingFindingCount = 0;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
@@ -1994,27 +2033,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const runId = mintRunId();
 
   /**
-   * Resolve the ledger's `branchHEAD` value (#256).
+   * Resolve the ledger's `branchHEAD` value (#256 / #934 ID-015).
    *
    * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
-   * optional `backend.worktreeHead`. Fallback (no worktree yet / no
-   * `worktreeHead` on the Backend / it returns undefined / it throws): the
-   * branch NAME, as in v0.1 — a ledger I/O helper must never abort the run on a
-   * git read fault.
+   * optional `backend.worktreeHead`. When that optional read fails or returns
+   * empty → warning + omit, never silent branch-name fallback.
    */
-  async function resolveBranchHEAD(): Promise<string> {
-    if (worktree === undefined) return "";
-    if (backend.worktreeHead !== undefined) {
-      try {
-        const sha = await backend.worktreeHead(worktree);
-        if (sha !== undefined && sha.length > 0) {
-          return sha;
-        }
-      } catch {
-        // fall through to the branch-name fallback
+  async function resolveBranchHEAD(): Promise<string | undefined> {
+    if (worktree === undefined || backend.worktreeHead === undefined) return undefined;
+    try {
+      const sha = await backend.worktreeHead(worktree);
+      if (sha !== undefined && sha.length > 0) {
+        return sha;
       }
+      console.warn(
+        "[orchestrator] optional branchHEAD read returned empty (omit)",
+      );
+      return undefined;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] optional branchHEAD read failed (omit): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
     }
-    return worktree.branch;
   }
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
@@ -2180,8 +2223,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         escalationKind,
         stopSummary,
       );
-    } catch {
-      // Swallow: error termination must not be derailed by a ledger I/O fault.
+    } catch (err) {
+      // ID-005: secondary terminal-write failure must not mask the primary
+      // fate, but must still land in stderr/diagnostics (not empty-catch).
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[orchestrator] persistBestEffort writeLedger(${s}) failed: ${msg}`,
+      );
     }
   }
 
@@ -2198,13 +2246,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * persistence is inherently impossible (the resume contract needs a worktree
    * sibling dir). This covers BOTH:
    *   - S0 fetchIssueMeta throw, AND
-   *   - S1 PRE-worktree throws: fetchIssueSnapshot / prepareWorktree (which run
+   *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
-   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (writeSnapshot,
-   * which runs after stateDir is fixed) and later steps persist their error
-   * termination. So this contract does NOT promise "every S1 throw is persisted"
-   * — only post-worktree ones.
+   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (after
+   * stateDir is fixed) and later steps persist their error termination.
+   * So this contract does NOT promise "every S1 throw is persisted" — only
+   * post-worktree ones.
    */
   async function errorTermination(
     failedStep: SliceStepId,
@@ -2370,27 +2418,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── #255: idempotent resume ───────────────────────────────────────────────
-  // Before anything else, check whether this issue has resume residue (an
-  // existing resident worktree + persisted ledger from a crash or an escalate).
+  // ── #255 / #936: idempotent resume from Scene Action discovery ───────────
+  // discoverResidentScene already ran at ignition (ID-005 Recovery first).
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
-  // (resume truth), reuse the worktree, clean uncommitted residue, and continue
-  // from the recorded breakpoint — no re-cut from S0, no re-running done steps.
-  //
-  // findResumeState is consulted FIRST: a resumed run already passed the S0
-  // gate on its first pass, so it must not re-gate. A backend transport failure
-  // here becomes an error handoff (consistent with #252), via errorTermination
-  // (base integ-cmr): no worktree exists yet, so — like the S0 fetch path —
-  // nothing is persistable, but the in-memory S8 + S8(error) result are still
-  // recorded so the caller gets a clean error package rather than a raw reject.
-  let resumeState: ResumeState | undefined;
-  try {
-    // #884: reconcile = resume-residue / ledger discovery before productive work.
-    logDriverStage("reconcile", `issue #${issueNumber}`);
-    resumeState = await backend.findResumeState(issueNumber);
-  } catch (err) {
-    return await errorTermination("S0", err);
-  }
+  // (resume truth), reuse the worktree, and continue from the recorded
+  // breakpoint — no re-cut from S0, no re-running done steps.
+  logDriverStage("reconcile", `issue #${issueNumber}`);
+  let resumeState: ResumeState | undefined =
+    scene.kind === "resident" ? scene.state : undefined;
   const recordedRouteDegradations = new Set(
     (resumeState?.ledger ?? [])
       .filter((entry) => entry.event === "route_degraded")
@@ -2554,8 +2589,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
-    // in-flight CLI monitor handle from the persisted ledger so hang judge/kill
-    // can resume without global process-name matching.
+    // in-flight CLI monitor handle from the persisted ledger so observation +
+    // exact-handle adoption/terminate can resume without global process-name
+    // matching.
     resumeMonitorHandle = (() => {
       for (let i = resumeLedger.length - 1; i >= 0; i--) {
         const candidate = resumeLedger[i]!;
@@ -2697,7 +2733,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
     // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
-    // commits + `.relay-focus.md` are the payload. Relay state is read from the
+    // commits + baton state are the payload. Relay state is read from the
     // FULL resume ledger preserves every relay marker.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
@@ -2726,31 +2762,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (first seat only — ADR 0132 deleted S6-count rotation) before the first
     // dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute sees
     // undefined body → skippedForMissingMarking → silent preset revert.
-    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
-    // then snapshot) — never errorTerminate / poison the resume terminal state.
+    // #936: Coder-Rec body comes from live meta only — snapshot dual court deleted.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely — never
+    // errorTerminate / poison the resume terminal state.
+    // #934 N1: meta throw ≠ successful empty body (legal no-marking → preset).
+    let resumeCoderRecMetaFailed = false;
     try {
       const meta = await backend.fetchIssueMeta(issueNumber);
       if (typeof meta.body === "string" && meta.body.length > 0) {
         coderRecIssueBody = meta.body;
       }
     } catch {
-      // fall through to snapshot
-    }
-    if (
-      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
-    ) {
-      try {
-        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        if (snapshot.body.length > 0) {
-          coderRecIssueBody = snapshot.body;
-        }
-      } catch {
-        // fall through — continue with route preset
-      }
+      resumeCoderRecMetaFailed = true;
     }
     if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
       console.info(
-        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+        resumeCoderRecMetaFailed
+          ? "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset"
+          : "[orchestrator] Coder-Rec resume: no Coder-Rec marking in issue body; continuing with route preset",
       );
     }
     const coderRecPolicy = await applyCoderRecSelection();
@@ -2760,13 +2789,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #926 — rebuild judge-advanced sticky seat from the latest successful
     // coder_advance row (before resource-relay, which still wins when present).
+    // #934 R7 F3: re-admit tight after sticky re-hold.
     for (let i = resumeLedger.length - 1; i >= 0; i--) {
       const row = resumeLedger[i]!;
       if (row.event === "coder_advance" && typeof row.toModelId === "string") {
         const advanced = lookupCoderRosterEntry(row.toModelId);
         const slug = advanced?.slug ?? row.toModelId;
         stickyJudgeAdvanceCoderSlug = slug;
-        holdCoderSticky(slug);
+        const held = holdCoderSticky(slug);
+        if (held?.kind === "stop") {
+          return await stopForCoderRecTightRoutePolicy(held.escalation);
+        }
         break;
       }
     }
@@ -2783,7 +2816,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // recorded baton before re-entering the interrupted step.
     if (relayResume !== undefined) {
       const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
-      applyRelayBaton(
+      const applied = applyRelayBaton(
         {
           modelId: relayResume.toModelId,
           slug: batonEntry?.slug ?? relayResume.toModelId,
@@ -2791,10 +2824,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
-      if (worktree.path !== undefined) {
-        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
-        if (existsSync(focus)) activeRelayFocusPath = focus;
+      if (applied.kind === "stop") {
+        return await stopForCoderRecTightRoutePolicy(applied.escalation);
       }
+      activeRelayBrief = renderEphemeralRelayBrief(relayResume);
     }
   }
 
@@ -2817,7 +2850,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let stepSessionId: string | undefined;
     // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
     // when the worker was spawned as a host-side CLI process. Persisted on the
-    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    // ledger so resume can rebuild the monitor handle for log last-activity without global pgrep.
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
     let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
@@ -2850,6 +2883,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           logDriverStage("admission", `issue #${issueNumber}`);
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
+          // #934 ID-003: GitHub auth needs external human login → typed decision
+          // gate (same class as family admission), not infra errorTermination.
+          if (isGithubAuthFailure(err)) {
+            const diagnosis = err instanceof Error ? err.message : String(err);
+            return await escalateTermination(
+              "S0",
+              {
+                reason: "GitHub authentication required",
+                diagnosis,
+              },
+              undefined,
+              "decision",
+              undefined,
+              decisionGateParkStopSummary({
+                summary: `GitHub authentication required: ${diagnosis}`,
+                repairHint:
+                  "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+              }),
+            );
+          }
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
           // the resume contract needs a worktree's sibling dir). errorTermination
           // records the in-memory S8 and persists only if stateDir is resolved.
@@ -2922,21 +2975,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S1": {
-        // S1 load_context — runner action: full snapshot → resident worktree
-        // (base=`sliceBase`: family base in production) → write snapshot in.
+        // S1 load_context — prepare resident worktree (base=`sliceBase`).
+        // #936 / #934 ID-002: snapshot dual court deleted — workers live-fetch
+        // issue truth; ledger is the only durable court after worksite exists.
         //
-        // integ-cmr base r2 (C): the first two S1 sub-steps run BEFORE the
-        // worktree exists, so there is no sibling stateDir yet — their error
-        // terminations are UNPERSISTABLE (same special case as S0 fetch). Only
-        // writeSnapshot below (after deriveStateDir) persists. This contract
-        // does NOT claim "every S1 throw is persisted".
-        let snapshot: IssueSnapshot;
-        try {
-          snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
-          return await errorTermination("S1", err);
-        }
+        // integ-cmr base r2 (C): prepareWorktree runs BEFORE the worktree
+        // exists, so there is no sibling stateDir yet — its error termination
+        // is UNPERSISTABLE (same special case as S0 fetch).
         try {
           worktree = await backend.prepareWorktree(issueNumber, sliceBase);
         } catch (err) {
@@ -2944,35 +2989,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination("S1", err);
         }
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
-        // soon as the worktree exists — BEFORE writeSnapshot — so that even a
-        // writeSnapshot failure can persist its error termination to the ledger
-        // (#3: error paths must persist, not vanish on resume).
+        // soon as the worktree exists so later error terminations persist.
         stateDir = deriveStateDir(worktree.path, issueNumber);
-        const sourceAuthFailure = untrustedExecutableInstructionSummary(snapshot);
-        if (sourceAuthFailure !== undefined) {
-          return await errorTermination(
-            "S1",
-            new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
-            { stopSummary: sourceAuthFailure },
-          );
-        }
-        try {
-          await backend.writeSnapshot(worktree, snapshot);
-        } catch (err) {
-          return await errorTermination("S1", err);
-        }
-        // #767: if S0 lacked a body (lightweight fake / older meta), take it
-        // from the S1 snapshot and apply Coder-Rec before S2.
-        if (
-          (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) &&
-          snapshot.body.length > 0
-        ) {
-          coderRecIssueBody = snapshot.body;
-          const coderRecPolicy = await applyCoderRecSelection();
-          if (coderRecPolicy?.kind === "stop") {
-            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
-          }
-        }
         break;
       }
 
@@ -3025,6 +3043,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         let commitTelemetryWorker:
           | { readonly stepId: string; readonly modelSlug: string }
           | undefined;
+        /** Set when catch applies #926 stay-put and breaks to topology. */
+        let reviewFixStayPutRouted = false;
         try {
           // Dispatch-bound (slug, pool) — same binding stepSpecToWorkerSpec uses.
           // #955: resume admission must ask provider capability, not only slug match.
@@ -3140,7 +3160,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   modelSlug: workerSpec.model,
                 };
               }
-              const focusPath = relayFocusForDispatch(step);
+              const relayBrief = relayBriefForDispatch(step);
               const priorJudgeVerdicts = isJudgeSeat({ step })
                 ? priorJudgeVerdictRowsFromLedger(ledger)
                 : undefined;
@@ -3156,7 +3176,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(billingPool !== undefined
                   ? { billingPool }
                   : {}),
-                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                ...(relayBrief !== undefined ? { relayBrief } : {}),
                 // #925: prior judge verdict rows for session-loss recovery /
                 // trajectory (runner never synthesises a narrative summary).
                 ...(priorJudgeVerdicts !== undefined &&
@@ -3224,11 +3244,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //  - JUDGE (S3/S6): typed status tri-state is the sole routing
               //    signal; SOE exhaust does NOT feed empty cargo to the fixer (#899).
               //
-              // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
-              // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
-              // Uncommitted work + partial commits are the payload; reading/comparing
-              // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
-              // optional hook for non-runner callers; this site intentionally omits it.)
+              // #661 / #937: process-level retry CONTINUES on the current scene —
+              // no Git reset/checkout/clean. Uncommitted work is the payload.
               //
               // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
@@ -3257,13 +3274,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     {
                       onMonitorHandleSpawned: async (handle) => {
                         stepMonitorHandle = handle;
-                        try {
-                          if (isValidStepId(s.id)) {
-                            await persistMonitorHandleAtSpawn(s.id, handle);
-                          }
-                        } catch {
-                          // Best-effort: spawn-time ledger write must not abort
-                          // the worker; post-step emitLedger still records it.
+                        // #934 ID-006 / #937: adoption/persist failure must
+                        // terminate the exact ChildProcess — rethrow so
+                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
+                        if (isValidStepId(s.id)) {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
                         }
                       },
                     },
@@ -3287,109 +3302,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 },
                 durableRetryOpts,
               );
-              if (result.kind === "completed") completeMechanicalRetryInvocation(step);
+              if (result.kind === "completed") {
+                completeMechanicalRetryInvocation(step);
+                // Successful productive dispatch breaks the stay-put streak.
+                consecutiveReviewFixStayPuts = 0;
+              }
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
             if (unwrapped === undefined) {
-              // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
-              // hand off when a live baton exists; durable abort only when none.
-              if (
-                expectedKind === "coder" &&
-                isRelayCandidateExhaustion(reason) &&
-                canRelayInProcess()
-              ) {
-                const currentPool =
-                  currentBillingPool ??
-                  billingPoolFromQuotaPool(
-                    poolForModelRef(modelRoute.slots.coder),
-                  );
-                // Mark the wall-hit pool dead/limited so 换马甲 does not
-                // re-select the same model on a "different" pool forever when
-                // poolForModelRef disagrees with the baton's billing pool.
-                const pools = resolveRelayPools(currentPool, undefined).map(
-                  (p) =>
-                    p.id === currentPool
-                      ? { ...p, status: "dead" as const }
-                      : p,
-                );
-                const handoff = await applyResourceFailureHandoff({
-                  trigger: "mechanical_retry_exhausted",
-                  state_summary:
-                    reason ??
-                    `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
-                  reason: reason ?? "mechanical retry exhausted",
-                  currentModelId: modelIdForWallStep(step),
-                  currentPool,
-                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                  pools,
-                  now: relayNow(),
-                  step,
-                });
-                if (handoff.kind === "relay" && handoff.ledgerEntry) {
-                  const entry = handoff.ledgerEntry;
-                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
-                  if (!staged.ok) {
-                    return await errorTermination(
-                      step,
-                      new Error(staged.reason),
-                    );
-                  }
-                  const marker: LedgerEntry = {
-                    step: isValidStepId(entry.step) ? entry.step : step,
-                    event: "relay_baton_handoff",
-                    trigger: entry.trigger,
-                    state_summary: entry.state_summary,
-                    ...(entry.remaining !== undefined
-                      ? { remaining: entry.remaining }
-                      : {}),
-                    ...(entry.reason !== undefined
-                      ? { reason: entry.reason }
-                      : {}),
-                    fromModelId: entry.fromModelId,
-                    fromPool: entry.fromPool,
-                    toModelId: entry.toModelId,
-                    toPool: entry.toPool,
-                    ts: entry.ts,
-                  };
-                  if (stateDir !== undefined) {
-                    try {
-                      await backend.writeLedger(
-                        {
-                          ...marker,
-                          sessionId,
-                          prompt_hash: await hashPrompt(
-                            undefined,
-                            step,
-                            backend,
-                          ),
-                          branchHEAD: await resolveBranchHEAD(),
-                          ts: entry.ts,
-                        },
-                        stateDir,
-                      );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(
-                        step,
-                        new Error(
-                          `relay handoff ledger write failed after mechanical retry exhaustion`,
-                        ),
-                      );
-                    }
-                  }
-                  try {
-                    staged.focus.commit();
-                  } catch (focusErr) {
-                    return await errorTermination(step, focusErr);
-                  }
-                  ledger.push(marker);
-                  activeRelayFocusPath = staged.focus.path;
-                  completeMechanicalRetryInvocation(step);
-                  applyRelayBaton(handoff.nextBaton, step);
-                  continue orchestratorStepLoop;
-                }
-              }
+              // #934 ID-004 / #937: process-root exhaustion is the phase's
+              // canonical failed edge — never a baton relay / park from silence.
               const exhaustionReason =
                 reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
               return await escalateTermination(
@@ -3429,52 +3352,162 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            const escalation: Escalation = {
-              reason: `${step} worker raised a decision gate`,
-              diagnosis: err.tag.state_summary,
+          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
+          // with the fourth fate channel. Decision gates arrive via typed station
+          // escalate; hang no longer invents host kill+relay from silence.
+          // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
+          // with a live baton (ephemeral brief, apply next baton, re-enter).
+          //
+          // #934 ID-008 / #926 / #937: review/fix (S3/S5/S6) no-candidate is
+          // one stay-put seam — durable audit, keep owning coder, never invent
+          // terminal solely from candidate exhaustion, no fabricated judge paper,
+          // no clearing live findings. Topology returns to the persistent judge
+          // (S5→S6) or re-enters the fix desk with preserved findings (S3/S6→S5).
+          // After a full return-to-judge cycle still no baton: park for external
+          // quota reset when the wall is typed 429 (ID-001 park), never S8 error.
+          const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
+          const applyReviewFixStayPut = async (
+            stayReason: string,
+            stateSummary: string,
+            parkErr?: QuotaWaitForResetError,
+          ): Promise<"break" | RunResult> => {
+            const stayModel = modelIdForWallStep(step);
+            const stayTs = new Date().toISOString();
+            const stayEntry = {
+              step,
+              event: "coder_advance_stay_put" as const,
+              reason: stayReason,
+              fromModelId: stayModel,
+              toModelId: stayModel,
+              state_summary: stateSummary,
+              ts: stayTs,
             };
-            // #919 CR U1 + residual R1 / S2/R8: single-slice agent seats are only
-            // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
-            // T2 kind:"judge" escalate on the judge seat; never residual
-            // open-count kind:"reviewer" paper (deleted dead arm).
-            const seatIsJudge = isJudgeSeat({ step });
-            let decisionOutput: StepOutput;
-            if (expectedKind === "coder") {
-              decisionOutput = {
+            ledger.push(stayEntry);
+            // #926 / #934 ID-015: stay-put audit is required durable truth — not
+            // fail-open. writeLedger failure surfaces as typed failed.
+            if (stateDir !== undefined) {
+              try {
+                await backend.writeLedger(
+                  {
+                    ...stayEntry,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, step, backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: stayTs,
+                  },
+                  stateDir,
+                );
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `record_persist_failed: coder_advance_stay_put audit: ${
+                      writeErr instanceof Error
+                        ? writeErr.message
+                        : String(writeErr)
+                    }`,
+                  ),
+                );
+              }
+            }
+            consecutiveReviewFixStayPuts += 1;
+            // Second consecutive no-baton wall after return-to-judge: wait for
+            // external quota reset (ID-001 park) — never invent terminal from
+            // candidate exhaustion (#926 / ID-008).
+            if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err: parkErr,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
+            }
+            if (step === "S5") {
+              // #926: return result to persistent judge (S5→S6). Noop fix
+              // receipt — live findings stay in pending* for S6.
+              output = {
                 kind: "coder",
                 committed: false,
                 commitsAdded: 0,
-                escalate: escalation,
               };
-            } else if (seatIsJudge) {
-              decisionOutput = mintJudgeEscalate(escalation);
-            } else {
-              // Exhaustive: topology has no third agent seat kind.
-              throw new Error(
-                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
-              );
+              lastOutput = output;
+              reviewFixStayPutRouted = true;
+              return "break";
             }
-            return await escalateTermination(
-              step,
-              escalation,
-              err.sessionId,
-              "decision",
-              decisionOutput,
-              decisionGateParkStopSummary({
-                summary: `${step} worker raised a decision gate: ${err.tag.state_summary}`,
-                repairHint:
-                  "answer the decision gate, then re-feed to resume the parked worker step",
-              }),
-            );
-          }
-          // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (write handoff + focus, apply next baton, re-enter).
+            // S3/S6: never invent empty judge paper; never clear live findings.
+            // Prefer prior continue paper so route → S5 with the same open set;
+            // otherwise leave output undefined → unusable → S5 topology.
+            if (
+              lastOutput?.kind === "judge" &&
+              lastOutput.status === "continue" &&
+              pendingBlockingFindingCount > 0
+            ) {
+              output = lastOutput;
+            } else {
+              output = undefined;
+            }
+            // pendingBlockingFindings intentionally untouched.
+            reviewFixStayPutRouted = true;
+            return "break";
+          };
+
           if (isQuotaWaitForResetError(err)) {
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
-              return await parkQuotaWaitForReset({
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: no live baton`,
+                  err.message,
+                  err,
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
+            }
+            // parkOrRelayQuotaWall may throw on required ledger writes; surface
+            // via errorTermination so runOrchestrator returns S8, not rejects.
+            let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+            try {
+              outcome = await parkOrRelayQuotaWall({
                 step,
                 err,
                 ledger,
@@ -3484,72 +3517,74 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 resolveBranchHEAD,
                 hashPrompt: (promptFile, s) =>
                   hashPrompt(promptFile, s, backend),
-              });
-            }
-            const outcome = await parkOrRelayQuotaWall({
-              step,
-              err,
-              ledger,
-              stateDir,
-              sessionId,
-              backend,
-              resolveBranchHEAD,
-              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
-              worktreePath: worktree?.path,
-              currentModelId: modelIdForWallStep(step),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              // #909 production live path: route-smoke knownLive for quota walls.
-              pools: resolveRelayPools(
+                worktreePath: worktree?.path,
+                currentModelId: modelIdForWallStep(step),
                 currentPool,
-                err.disposition.resetAt,
-                true,
-              ),
-              now: relayNow(),
-            });
-            if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
+                rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                // #909 production live path: route-smoke knownLive for quota walls.
+                pools: resolveRelayPools(
+                  currentPool,
+                  err.disposition.resetAt,
+                  true,
+                ),
+                now: relayNow(),
+              });
+            } catch (writeErr) {
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
             }
-            applyRelayBaton(outcome.nextBaton, step);
+            if (outcome.kind === "park") {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: park/no baton`,
+                  err.message,
+                  err,
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              return outcome.result;
+            }
+            if (outcome.relayBrief !== undefined) {
+              activeRelayBrief = outcome.relayBrief;
+            }
+            {
+              const applied = applyRelayBaton(outcome.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
             continue orchestratorStepLoop;
           }
-          // #686/#787: resource failures relay without retry; capacity keeps its
-          // pool live so the capacity selector can change checkpoints in-pool.
-          // (never mechanical-retry / never reset).
-          if (
-            (isHangWithLivePoolError(err) ||
-              isSelfReportedRelayError(err) ||
-              isCapacityRelayError(err)) &&
-            canRelayInProcess()
-          ) {
+          // #686/#787/#937: capacity resource failure relays without retry
+          // (never mechanical-retry / never reset). Hang/self-report free-log
+          // constructors deleted with ID-006/007.
+          // #934 ID-008: review/fix no-candidate is stay-put even when the
+          // handoff chain is exhausted (canRelayInProcess false) — never invent
+          // terminal solely from capacity candidate exhaustion.
+          if (isCapacityRelayError(err)) {
+            if (!canRelayInProcess()) {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              return await errorTermination(step, err);
+            }
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
-              ...(isHangWithLivePoolError(err)
-                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
-                : {}),
-              capacity: isCapacityRelayError(err),
+              capacity: true,
             });
-            const trigger = isCapacityRelayError(err)
-              ? ("capacity" as const)
-              : isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : isCapacityRelayError(err)
-                ? "model checkpoint at capacity; drift preserved"
-                : "worker hang with live pool; pid tree killed; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
             const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
+              trigger: "capacity",
+              state_summary: "model checkpoint at capacity; drift preserved",
               reason: err instanceof Error ? err.message : String(err),
               currentModelId: modelIdForWallStep(step),
               currentPool,
@@ -3558,58 +3593,50 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
               step,
             });
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination(
-                  step,
-                  new Error(staged.reason),
+            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
                 );
+                if (stay !== "break") return stay;
+                break;
               }
-              const marker: LedgerEntry = {
-                step: isValidStepId(entry.step) ? entry.step : step,
-                event: "relay_baton_handoff",
-                trigger: entry.trigger,
-                state_summary: entry.state_summary,
-                ...(entry.remaining !== undefined
-                  ? { remaining: entry.remaining }
-                  : {}),
-                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-                fromModelId: entry.fromModelId,
-                fromPool: entry.fromPool,
-                toModelId: entry.toModelId,
-                toPool: entry.toPool,
-                ts: entry.ts,
-              };
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger(
-                    {
-                      ...marker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(undefined, step, backend),
-                      branchHEAD: await resolveBranchHEAD(),
-                      ts: entry.ts,
-                    },
-                    stateDir,
-                  );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(step, err);
-                }
-              }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination(step, focusErr);
-              }
-              ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
-              completeMechanicalRetryInvocation(step);
-              applyRelayBaton(handoff.nextBaton, step);
-              continue orchestratorStepLoop;
+              return await errorTermination(step, err);
             }
+            const entry = handoff.ledgerEntry;
+            // #934 S2: single durable court (shared with quota-wall relay).
+            try {
+              await persistRelayBatonHandoff({
+                entry,
+                step,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+                persistClass: "capacity",
+              });
+            } catch (writeErr) {
+              // Surface write failure class via errorTermination (not throw out).
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
+            }
+            activeRelayBrief = renderEphemeralRelayBrief(entry);
+            completeMechanicalRetryInvocation(step);
+            {
+              const applied = applyRelayBaton(handoff.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
+            continue orchestratorStepLoop;
           }
           return await errorTermination(step, err);
         }
@@ -3619,6 +3646,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const coderHeadAfterStep = expectedKind === "coder"
           ? gitHead(worktree)
           : undefined;
+
+        // #926 stay-put already set topology outputs and preserved live findings —
+        // skip worker-output projection so we do not clear the open set.
+        if (reviewFixStayPutRouted) {
+          if (output !== undefined) lastOutput = output;
+          break;
+        }
 
         // #786: host-git commit observations are strictly sidecar-only.
         // A failed read/write cannot affect the step's ledger or route decision.
@@ -3820,7 +3854,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
-      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
+      // #684: pass the monitor handle so resume can rebuild log last-activity observation.
       await emitLedger(
         step,
         output,
@@ -3850,14 +3884,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #926: after a judge continue row is durably recorded, execute optional
     // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
     // #919 R1: sole isJudgeSeat membership (no redundant S3||S6 string OR).
+    // #934 ID-005: advance/stay-put ledger write is required durable truth —
+    // persist failure must error-terminate, not continue with lost route truth.
     if (
       isJudgeSeat({ step }) &&
       output?.kind === "judge" &&
       output.status === "continue" &&
       typeof output.advanceCoder === "string"
     ) {
-      // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
-      await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+      try {
+        // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
+        await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+      } catch (err) {
+        return await errorTermination(
+          step,
+          err instanceof Error ? err : new Error(String(err)),
+          { recordInMemory: false, output },
+        );
+      }
     }
 
     // A relay baton is a step-local override. Once its relayed step has

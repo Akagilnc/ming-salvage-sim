@@ -134,8 +134,8 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
   },
   // #861 owner order (2026-07-12): a high-effort sol row so the family CMR
-  // coder-fix slot can run sol@high via ORCHESTRATOR_CODER_FIX_MODEL without
-  // touching the medium default the reviewer/verify slots pin.
+  // coder-fix routes can run sol@high without touching the medium default the
+  // reviewer/verify slots pin.
   "gpt-5.6-sol-high": {
     provider: "codex",
     model: "gpt-5.6-sol",
@@ -320,7 +320,7 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   throw new Error(
     `unknown cmr review leg slug "${slug}". Add a runnable worker model to ` +
       `MODEL_SLUG_REGISTRY, or explicitly register a non-worker CMR leg before ` +
-      `using it in ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS.`,
+      `selecting it in a route preset.`,
   );
 }
 

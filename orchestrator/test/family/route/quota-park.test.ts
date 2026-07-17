@@ -3,7 +3,7 @@
  *
  * Authoritative:
  *   换棒路径存在至少一个可达的活棒，且超 T 时系统真的换到该棒接续
- *   （下一棒 dispatch 用新 model/pool），不是只写 `.relay-focus.md` 后 escalate。
+ *   （下一棒 dispatch 用新 model/pool），不是只写 ephemeral baton brief 后 escalate。
  *
  * Nails (load-bearing — nop apply must RED):
  *   - 2nd barrier dispatch uses baton on REAL consume slots
@@ -24,7 +24,8 @@ import {
 } from "../../../src/family/dispatchFamilyWorker.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { DEFAULT_PARK_THRESHOLD_MS } from "../../../src/quotaPoolTable.js";
-import { RELAY_FOCUS_FILENAME } from "../../../src/relayDispatch.js";
+/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
+const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 import { CoderRecError } from "../../../src/coderRoster.js";
 import {
   applyRelayBatonToRoute,
@@ -35,7 +36,6 @@ import {
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -106,22 +106,12 @@ class ChildBackend implements Backend {
       body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    if (this.failSnapshot) throw new Error("snapshot read failed (test)");
-    return {
-      number: issueNumber,
-      body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
-      comments: [],
-      agentBrief: "## Agent Brief",
-    };
-  }
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -130,6 +120,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly workingRepo: string;
@@ -180,7 +174,6 @@ function quotaWaitError(opts: {
       reason: "quota limited (429); wait for reset",
     },
     applied: {
-      killed: false,
       ledgerEntry: {
         event: "quota_wait_for_reset",
         pool,
@@ -191,8 +184,7 @@ function quotaWaitError(opts: {
         ts: "2026-07-14T12:00:00.000Z",
       },
     },
-    pool,
-    probe: { kind: "quota_limited", resetAt: opts.resetAt, detail: "429" },
+    pool
   });
   // Default S3 walls to completeness so existing baton nails keep a single slot.
   if (opts.cmrPass !== undefined) {
@@ -254,6 +246,37 @@ function allDeadRelayPools(resetAt: Date) {
       ? p
       : { ...p, status: "dead" as const },
   );
+}
+
+
+/** #936: staff cmrCompleteness/Correctness with grok via custom preset (no slot env). */
+function stubGrokCmrPreset(): void {
+  const dir = mkdtempSync(join(tmpdir(), "quota-park-preset-"));
+  const path = join(dir, "route-presets.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      "grok-cmr": {
+        slots: {
+          coder: "gpt-5.6-terra",
+          coderFix: "gpt-5.6-terra",
+          ship: "sonnet",
+          merger: "sonnet",
+          cmrCompleteness: "grok-4.5",
+          cmrCorrectness: "grok-4.5",
+          verify: "gpt-5.6-sol",
+          fixer: "sonnet",
+          cleanup: "sonnet",
+          docRelease: "sonnet",
+        },
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    }),
+  );
+  vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+  vi.stubEnv("ORCHESTRATOR_ROUTE", "grok-cmr");
 }
 
 describe("#909 family runner consumes QuotaWait park/relay at verify boundary", () => {
@@ -330,8 +353,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     // Wall model must sit on the limited pool (grok), otherwise selectNextRelayBaton
     // picks same-model 换马甲 (sol→codex) and the consumed slug never changes —
     // hollow relative to "baton model on REAL slot".
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -398,12 +420,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalBillingPools[0]).toBeUndefined();
     expect(finalBillingPools[1]).toBe("codex-5h");
 
-    // Focus still staged for worker brief continuity.
-    const focusPath = join(worktree, RELAY_FOCUS_FILENAME);
-    expect(existsSync(focusPath)).toBe(true);
-    const focus = readFileSync(focusPath, "utf8");
-    expect(focus).toMatch(/terra@med|gpt-5\.6-terra/i);
-    expect(focus).toMatch(/codex-5h/i);
+    // #937: no worktree focus file; baton continuity is ledger + route rewrite.
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
 
     const relayAudit = familyBackend.ledger.filter(
       (e) =>
@@ -466,8 +484,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("POSITIVE production path: route smoke yields live baton without relayPools injection", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     // Beyond T on grok-build; route smoke marks codex models live → baton terra.
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
@@ -507,12 +524,11 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalRoutes[0]?.slots.cmrCompleteness).not.toBe(
       finalRoutes[1]?.slots.cmrCompleteness,
     );
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(true);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 
   it("LOAD-BEARING: identity applyRelayBaton → positive consumed-slot nail fails", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -560,8 +576,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("F2: after cmr wall relay, ship slot keeps natural pool (no sticky codex-5h on sonnet)", async () => {
-    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    stubGrokCmrPreset();
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -880,14 +895,12 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     const bare = new QuotaWaitForResetError({
       disposition: errNoStep.disposition,
       applied: {
-        killed: false,
         ledgerEntry: {
           ...errNoStep.applied.ledgerEntry!,
           step: undefined as unknown as "S3",
         },
       },
-      pool: errNoStep.pool,
-      probe: { kind: "quota_limited", resetAt, detail: "429" },
+      pool: errNoStep.pool
     });
     expect(
       familyWallStepFromQuotaWait({ err: bare, phase: "online_review" }),
@@ -971,6 +984,96 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.status).toBe("escalated");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+  });
+
+  it("public family: tight-violating relay baton escalates with zero further productive dispatch (ID-002 / R7 F4)", async () => {
+    // claude-tight forbids claude family. Final CMR wall on sol beyond T with
+    // only sonnet live → baton re-admit stops; no second barrier dispatch.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    const childBackend = new ChildBackend({
+      epicBody: "Coder-Rec: grok-4.5 → sol@med → sonnet-5",
+    });
+
+    let finalCalls = 0;
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/934-tight",
+      now: () => now,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "cursor",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [] as string[],
+        },
+        {
+          id: "zai",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [] as string[],
+        },
+        {
+          id: "codex-5h",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [
+            "terra@med",
+            "luna@med",
+            "sol@med",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+          ],
+        },
+        {
+          id: "claude",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["sonnet-5", "sonnet", "haiku-4.5", "haiku"],
+        },
+      ],
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          finalCalls += 1;
+          // Wall on completeness (sol on claude-tight). QuotaPoolId is grok/zai only;
+          // pool id only drives park/relay table currentPool, not the wall model.
+          throw quotaWaitError({
+            resetAt,
+            pool: "grok",
+            step: "S3",
+            cmrPass: "completeness",
+          });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(1);
+    expect(result.status).toBe("escalated");
+    expect(
+      `${result.stopSummary.summary} ${result.escalation?.diagnosis ?? ""} ${result.escalation?.reason ?? ""}`,
+    ).toMatch(/tight route violation|relay baton admission/i);
+    // OUT #942: keep infra_failure stopSummary.reason until public ABI cutover.
+    expect(result.stopSummary.reason).toBe("infra_failure");
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 

@@ -15,6 +15,7 @@ import type { FamilyBackend, MergeRequest, ReconcileGit } from "../../src/family
 import type { Backend } from "../../src/types.js";
 import type { RealBackendOptions } from "../../src/realBackend.js";
 import type { RealFamilyBackendOptions } from "../../src/family/realFamilyBackend.js";
+import type { ResolvedModelRoute } from "../../src/modelRoutes.js";
 
 const OFF_STATE_CONFIG_TOML =
   'sandbox_mode = "danger-full-access"\napproval_policy = "never"\n';
@@ -56,6 +57,10 @@ function makeEpicSh(): Sh {
 
 function fakeBackend(sourceRepo: string): Backend {
   return {
+    smokeModelRoute: async (route: ResolvedModelRoute) => {
+      const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    },
     workingRepoPath: () => sourceRepo,
     findResumeState: async () => undefined,
     resumeSession: async () => ({ kind: "judge", status: "converged" }),
@@ -66,18 +71,11 @@ function fakeBackend(sourceRepo: string): Backend {
       isClosed: false,
       openBlockedBy: [],
     }),
-    fetchIssueSnapshot: async (issueNumber: number) => ({
-      number: issueNumber,
-      body: "",
-      comments: [],
-      agentBrief: "",
-    }),
     prepareWorktree: async (_issueNumber: number, base: string) => ({
       branch: "feat/fake-760",
       base,
       path: sourceRepo,
     }),
-    writeSnapshot: async () => {},
     runStep: async (spec: { role: string }) =>
       spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
@@ -89,6 +87,8 @@ function fakeBackend(sourceRepo: string): Backend {
 function fakeFamilyBackend(): FamilyBackend & { reconcileGit(): ReconcileGit } {
   const ledger: unknown[] = [];
   return {
+    // #939: required verify capability (type-level); green no-op for assembly probe.
+    runFamilyVerify: async () => ({ ok: true as const }),
     mergeChildIntoFamilyBase: async (_request: MergeRequest) => ({
       conflicted: false,
       familyHead: "head-after-merge",

@@ -23,7 +23,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -79,18 +78,9 @@ class ScriptedReviewBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement",
-    };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.dispatched.push(`${spec.id}:${spec.role}`);
     if ((spec.role === "reviewer" || spec.role === "verify")) {

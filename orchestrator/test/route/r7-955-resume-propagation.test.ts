@@ -18,14 +18,12 @@ import {
   resumeCapableForSlug,
   resolveModelSlugForPool,
 } from "../../src/modelRegistry.js";
-import { SelfReportedRelayError } from "../../src/relayDispatch.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   DispatchContext,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -253,7 +251,10 @@ class RebuildBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
 
-  constructor(private readonly resumeState: ResumeState) {}
+  constructor(
+    private readonly resumeState: ResumeState,
+    private readonly coderRecBody: string = "Coder-Rec: grok-4.5\n",
+  ) {}
 
   async smokeModelRoute(route: Parameters<NonNullable<Backend["smokeModelRoute"]>>[0]) {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
@@ -276,10 +277,8 @@ class RebuildBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
+      body: this.coderRecBody,
     };
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
@@ -324,10 +323,6 @@ describe("#955 r7 session rebuild ignores event audit rows", () => {
   });
 
   it("ledger tail session_continuity_lost must not become coder resumeSessionId", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "gpt-5.6-sol");
-
     const backend = new RebuildBackend(rebuildPoisonLedger());
     const result = await runOrchestrator({ issueNumber: 95572, backend });
     expect(result.status).toBe("success");
@@ -355,6 +350,7 @@ const STUCK = {
 } satisfies Escalation;
 
 class DecisionGateBackend implements Backend {
+  constructor(private readonly coderRecBody: string = "Coder-Rec: grok-4.5\n") {}
   readonly ledger: PersistentLedgerEntry[] = [];
 
   async smokeModelRoute(route: Parameters<NonNullable<Backend["smokeModelRoute"]>>[0]) {
@@ -377,10 +373,8 @@ class DecisionGateBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
+      body: this.coderRecBody,
     };
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return {
@@ -399,12 +393,18 @@ class DecisionGateBackend implements Backend {
     _ctx: DispatchContext,
   ): Promise<WorkerResult> {
     if (spec.id === "S2") {
-      // Hits escalateTermination (not the main-path route→handoff escalate).
-      throw new SelfReportedRelayError(
-        { kind: "decision_gate", state_summary: STUCK.diagnosis },
-        "S2",
-        "sess-escalated-s2",
-      );
+      // #937: free-log SelfReportedRelayError deleted. Typed coder escalate
+      // still stamps modelSlug + sessionId via escalate handoff path.
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          escalate: STUCK,
+        },
+        sessionId: "sess-escalated-s2",
+      };
     }
     return {
       kind: "completed",
@@ -419,9 +419,6 @@ describe("#955 r7 escalateTermination stamps modelSlug", () => {
   });
 
   it("decision_gate escalate agent row carries seat modelSlug on stepLedger + disk", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "grok-4.5");
-
     const backend = new DecisionGateBackend();
     const result = await runOrchestrator({ issueNumber: 95573, backend });
     expect(result.status).toBe("escalate");

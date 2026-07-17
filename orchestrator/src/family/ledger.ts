@@ -30,10 +30,11 @@ import {
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type {
-  FamilyBackend,
-  FamilyLedgerEntry,
-  IntegratedCmrPass,
+import {
+  FAMILY_LEDGER_STATUS_VALUES,
+  type FamilyBackend,
+  type FamilyLedgerEntry,
+  type IntegratedCmrPass,
 } from "./types.js";
 
 /**
@@ -763,6 +764,20 @@ function latestValidFamilyAnswerAfter(
   return undefined;
 }
 
+/**
+ * Complete durable family escalation shape for terminal replay / ledger-without-worksite
+ * (#934 ID-005). Incomplete `status:"escalated"` rows (missing `event:"escalated"` or
+ * decision/failure kind) still surface via {@link familyEscalationState} so mid-run
+ * pause stays fail-closed, but they are NOT terminal durable truth.
+ */
+export function isCompleteFamilyEscalation(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "escalated" &&
+    entry.event === "escalated" &&
+    (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+  );
+}
+
 /** Latest family escalation and the later valid answer row that reopens it (#439). */
 export function familyEscalationState(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -777,6 +792,8 @@ export function familyEscalationState(
     if (isValidFamilyShipped(entry)) return undefined;
     if (isValidReviewLoopConverged(entry)) return undefined;
     if (entry.status !== "escalated") continue;
+    // Incomplete escalated rows still pause mid-run (do not disappear) but are
+    // not terminal-replayable — see isCompleteFamilyEscalation / scene recovery.
     if (entry.event !== "escalated") return { escalation: entry };
     const answer =
       entry.escalationKind === "decision"
@@ -1450,4 +1467,72 @@ export function mergedSet(
     if (isMergedAccountingEntry(e)) out.add(e.childIssue!);
   }
   return out;
+}
+
+/**
+ * Known {@link FamilyLedgerEntry.status} values. Shape gate for JSONL parse —
+ * a line that JSON.parses as `null` / `{}` / bad status must fail closed the
+ * same way as an unparseable line (#934 S-3; mirror single-slice isLedgerEntryShape).
+ * Built from {@link FAMILY_LEDGER_STATUS_VALUES} — no hand-synced twin list.
+ */
+export const FAMILY_LEDGER_STATUSES: ReadonlySet<string> = new Set(
+  FAMILY_LEDGER_STATUS_VALUES,
+);
+
+/**
+ * Per-line structural gate for family-ledger.jsonl (#934 S-3).
+ * Thin `{childIssue, status:"merged"}` remains valid; null/primitive/array/{}
+ * and unknown status values are not.
+ */
+export function isFamilyLedgerEntryShape(
+  value: unknown,
+): value is FamilyLedgerEntry {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const status = (value as { status?: unknown }).status;
+  if (typeof status !== "string" || !FAMILY_LEDGER_STATUSES.has(status)) {
+    return false;
+  }
+  const childIssue = (value as { childIssue?: unknown }).childIssue;
+  if (
+    childIssue !== undefined &&
+    (typeof childIssue !== "number" ||
+      !Number.isSafeInteger(childIssue) ||
+      childIssue <= 0)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Parse family-ledger.jsonl fail-closed: every non-empty line must JSON.parse
+ * AND pass {@link isFamilyLedgerEntryShape}. Blank lines tolerated.
+ */
+export function parseFamilyLedgerJsonl(raw: string): FamilyLedgerEntry[] {
+  const entries: FamilyLedgerEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `corrupt family ledger: a non-empty family-ledger.jsonl line failed to parse — ` +
+          `refusing to resume on a partially-readable ledger (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isFamilyLedgerEntryShape(parsed)) {
+      throw new Error(
+        "corrupt family ledger: a family-ledger.jsonl line parsed but is not a " +
+          "valid FamilyLedgerEntry (must be an object with a known status) — " +
+          "refusing to resume on a malformed ledger (fail closed).",
+      );
+    }
+    entries.push(parsed);
+  }
+  return entries;
 }
