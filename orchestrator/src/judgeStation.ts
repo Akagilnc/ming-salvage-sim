@@ -357,16 +357,93 @@ export function judgeResultFromVerdict(
       diagnosis: verdict.diagnosis,
     });
   }
-  // continue
+  // continue — ADR 0138: fixPacketBody is traffic on the envelope; cargo may
+  // still ride findings siblings but is never the coder-fix packet path.
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: verdict.findingDispositions,
+    fixPacketBody: verdict.fixPacketBody,
     ...(verdict.advanceCoder !== undefined
       ? { advanceCoder: verdict.advanceCoder }
       : {}),
     ...(findingsCargo !== undefined ? { findings: findingsCargo } : {}),
   };
+}
+
+/**
+ * ADR 0138 — sole coder-fix packet body path: judge continue `fixPacketBody`,
+ * verbatim. Missing / empty is loud failure; never fall back to bare findings.
+ *
+ * Runner topology may still read disposition identity keys as thin control
+ * envelope; this helper never reads findings cargo for packet content.
+ */
+export function requireFixPacketBody(output: {
+  readonly status?: string;
+  readonly fixPacketBody?: unknown;
+}): string {
+  if (output.status !== "continue") {
+    throw new Error(
+      "fixPacketBody is only authorized on judge status:continue (ADR 0138)",
+    );
+  }
+  if (typeof output.fixPacketBody !== "string") {
+    throw new Error(
+      "judge continue missing fixPacketBody (ADR 0138; no bare-findings fallback)",
+    );
+  }
+  // Verbatim transport: do not rewrite whitespace. Empty / whitespace-only is
+  // contract drift (same fail-loud class as empty live set).
+  if (
+    output.fixPacketBody.length === 0 ||
+    output.fixPacketBody.trim().length === 0
+  ) {
+    throw new Error(
+      "judge continue fixPacketBody is empty (ADR 0138; no bare-findings fallback)",
+    );
+  }
+  return output.fixPacketBody;
+}
+
+/**
+ * ADR 0138 / #978 — single helper for coder-fix landing writers (single-slice
+ * `dispatchWorker` + family `writeFamilyFixFindingsFile`).
+ *
+ * - Present non-empty body → return **verbatim** (no trim rewrite).
+ * - Open set present (keys length > 0 or count > 0) without usable body and
+ *   `requireBodyWhenOpen` (default true for coder-fix) → fail loud (no
+ *   soft-omit second channel).
+ * - No open set / keys-only re-adjudicate (`requireBodyWhenOpen: false`) /
+ *   raw-artifacts-only → `undefined` (not a fixer content packet).
+ */
+export function materializeLandingFixPacketBody(input: {
+  readonly fixPacketBody?: unknown;
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  readonly blockingFindingCount?: number;
+  /**
+   * Coder-fix content landings default true. S6 judge re-adjudicate landings
+   * that carry identity keys without a fix packet set this false.
+   */
+  readonly requireBodyWhenOpen?: boolean;
+}): string | undefined {
+  const keysLen = input.blockingFindingIdentityKeys?.length ?? 0;
+  const count = input.blockingFindingCount ?? 0;
+  const hasOpenSet = keysLen > 0 || count > 0;
+  const requireBody = input.requireBodyWhenOpen !== false;
+  const raw =
+    typeof input.fixPacketBody === "string" ? input.fixPacketBody : undefined;
+  const usable =
+    raw !== undefined && raw.length > 0 && raw.trim().length > 0
+      ? raw
+      : undefined;
+  if (usable !== undefined) return usable;
+  if (hasOpenSet && requireBody) {
+    throw new Error(
+      "coder-fix landing missing non-empty fixPacketBody with live open set " +
+        "(ADR 0138; no bare-findings fallback / no soft-omit)",
+    );
+  }
+  return undefined;
 }
 
 /** Convenience: build a continue verdict table from live finding rows. */
@@ -436,12 +513,26 @@ export function judgeContinueFromOpenCount(
     return undefined;
   }
   const cargo = [...findings];
+  // Residual historical paper only — still must carry ADR 0138 packet body so
+  // resume cannot fall back to bare-findings packing on the coder-fix edge.
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
     findings: cargo,
+    fixPacketBody: residualFixPacketBodyFromFindings(cargo, findingsCount),
   };
+}
+
+/**
+ * Residual-only synthetic packet body when historical paper lacks authored text.
+ * ADR 0131: do not read severity/action/prose from findings cargo — count only.
+ */
+function residualFixPacketBodyFromFindings(
+  _findings: ReadonlyArray<Finding>,
+  findingsCount: number,
+): string {
+  return `[residual] open-count continue with ${findingsCount} live finding(s)`;
 }
 
 /**
@@ -475,18 +566,24 @@ export function projectResidualReviewerToJudge(residual: {
 
 /**
  * Live-path projection of a judge `continue` verdict into the S5 open set
- * (terminals → store flips; live keys only). Shared by the in-process continue
- * edge and crash/resume ledger rebuild (F2).
+ * (terminals → store flips; live keys only) plus optional ADR 0138 packet body.
+ * Shared by the in-process continue edge and crash/resume ledger rebuild (F2).
+ *
+ * Packet content for coder-fix is {@link fixPacketBody} only — callers must
+ * {@link requireFixPacketBody} (or the non-empty field here) before dispatch;
+ * `blocking` findings cargo is residual/telemetry and is **not** the packet path.
  */
 export function projectJudgeContinueBlocking(output: {
   readonly status: string;
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   readonly findings?: ReadonlyArray<Finding>;
+  readonly fixPacketBody?: string;
 }): {
   readonly blocking: Finding[];
   readonly blockingIdentityKeys: string[];
   readonly blockingFindingCount: number;
   readonly terminalDispositions: FindingDisposition[];
+  readonly fixPacketBody?: string;
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
@@ -494,11 +591,14 @@ export function projectJudgeContinueBlocking(output: {
   const cargo = output.findings ?? [];
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
+  const rawBody =
+    typeof output.fixPacketBody === "string" ? output.fixPacketBody : undefined;
   return {
     blocking,
     blockingIdentityKeys,
     blockingFindingCount: blockingIdentityKeys.length,
     terminalDispositions: terminals,
+    ...(rawBody !== undefined ? { fixPacketBody: rawBody } : {}),
   };
 }
 
@@ -565,6 +665,8 @@ export type FamilyJudgeClosure =
       readonly blockingIdentityKeys: string[];
       readonly blockingFindingCount: number;
       readonly terminalDispositions: FindingDisposition[];
+      /** ADR 0138: judge-authored packet body (required before coder-fix). */
+      readonly fixPacketBody?: string;
     }
   | {
       readonly action: "escalate";
@@ -595,6 +697,7 @@ export function closeFamilyCourtFromJudgeOutput(
     readonly status?: unknown;
     readonly findingDispositions?: unknown;
     readonly findings?: unknown;
+    readonly fixPacketBody?: unknown;
     readonly reason?: unknown;
     readonly diagnosis?: unknown;
     readonly escalate?: unknown;
@@ -611,10 +714,13 @@ export function closeFamilyCourtFromJudgeOutput(
       const findings = Array.isArray(rec.findings)
         ? (rec.findings as ReadonlyArray<Finding>)
         : undefined;
+      const fixPacketBody =
+        typeof rec.fixPacketBody === "string" ? rec.fixPacketBody : undefined;
       const projected = projectJudgeContinueBlocking({
         status: "continue",
         findingDispositions: dispositions,
         findings,
+        ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
       });
       // #952: 0 live + non-empty terminal flips = court closed (like converged).
       // True empty continue stays `continue` with empty open set for the M1 gate.
@@ -627,6 +733,11 @@ export function closeFamilyCourtFromJudgeOutput(
         blockingIdentityKeys: projected?.blockingIdentityKeys ?? [],
         blockingFindingCount: projected?.blockingFindingCount ?? 0,
         terminalDispositions: projected?.terminalDispositions ?? [],
+        ...(projected?.fixPacketBody !== undefined
+          ? { fixPacketBody: projected.fixPacketBody }
+          : fixPacketBody !== undefined
+            ? { fixPacketBody }
+            : {}),
       };
     }
     if (status === "escalate") {

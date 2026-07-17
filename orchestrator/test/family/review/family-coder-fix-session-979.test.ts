@@ -660,6 +660,7 @@ describe("#979 production runFamilyCoderFixWorker Sandcastle resume", () => {
 
       public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
         return this.runFamilyCoderFixWorker(workerSpec, ctx, {
+          fixPacketBody: "live: k (979 resume explicit fixPacketBody)",
           blockingFindings: [FINDING_R1],
         });
       }
@@ -737,6 +738,7 @@ describe("#979 production runFamilyCoderFixWorker Sandcastle resume", () => {
 
       public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
         return this.runFamilyCoderFixWorker(workerSpec, ctx, {
+          fixPacketBody: "live: k (979 fresh-after-loss explicit fixPacketBody)",
           blockingFindings: [FINDING_R1],
         });
       }

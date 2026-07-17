@@ -174,6 +174,21 @@ function asRecord(raw: unknown): ContractResult<Record<string, unknown>> {
 
 const nonEmptyString = z.string().trim().min(1);
 
+/**
+ * ADR 0138 / #978 — non-transforming non-empty string for `fixPacketBody`.
+ * Rejects empty / all-whitespace without rewriting content (no `.trim()`
+ * transform). Verbatim transport requires byte-stable round-trip.
+ */
+const nonEmptyStringVerbatim = z.string().superRefine((value, ctx) => {
+  if (value.length === 0 || value.trim().length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "fixPacketBody must be non-empty (whitespace-only rejected; content not trimmed)",
+    });
+  }
+});
+
 /** Optional cargo pointer: absent/undefined ok; empty string rejected. */
 const cargoPointerSchema = nonEmptyString.optional();
 
@@ -411,12 +426,16 @@ export interface JudgeVerdictConverged extends JudgeEnvelopeBase {
  * Continue the fix loop. May carry:
  * - `findingDispositions` — terminal rows (`refute`→store `refuted`,
  *   `suppress`→store `suppressed`) plus `live` rows for the fixer open set
+ * - `fixPacketBody` — ADR 0138 judge-authored fix packet body (判词正文);
+ *   runner's sole coder-fix packet content path (verbatim transport)
  * - `advanceCoder` — suggestion to switch coder roster entry (runner still
  *   owns the stay-put fallback when the target is unusable — #926)
  */
 export interface JudgeVerdictContinue extends JudgeEnvelopeBase {
   readonly status: "continue";
   readonly findingDispositions: readonly JudgeFindingDisposition[];
+  /** ADR 0138: judge-authored coder-fix packet body; non-empty required. */
+  readonly fixPacketBody: string;
   readonly advanceCoder?: string;
 }
 
@@ -450,6 +469,10 @@ const judgeContinueFields = {
   station: z.literal("judge"),
   status: z.literal("continue"),
   findingDispositions: z.array(findingDispositionSchema),
+  // ADR 0138 / #978: 判词即包 — required non-empty traffic field; runner
+  // transports verbatim and never packs bare findings as a second path.
+  // Verbatim schema: do not trim/rewrite whitespace (P1).
+  fixPacketBody: nonEmptyStringVerbatim,
   advanceCoder: nonEmptyString.optional(),
   cargoPointer: cargoPointerSchema,
 } as const;

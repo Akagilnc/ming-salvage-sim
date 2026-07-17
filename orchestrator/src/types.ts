@@ -388,9 +388,18 @@ export interface JudgeResult {
   readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  /**
+   * ADR 0138 / #978: judge-authored coder-fix packet body (判词正文).
+   * Required on continue for the sole fixer-packet content path; runner
+   * transports verbatim and never packs bare finding rows as a substitute.
+   */
+  readonly fixPacketBody?: string;
   /** Optional continue suggestion to switch coder roster entry (#926 executes). */
   readonly advanceCoder?: string;
-  /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
+  /**
+   * Opaque findings cargo (identity / telemetry). Not the coder-fix packet
+   * content path after ADR 0138 — that is {@link fixPacketBody} only.
+   */
   readonly findings?: ReadonlyArray<Finding>;
   /** Escalate doorbell cargo (also mirrored on {@link escalate}). */
   readonly reason?: string;
@@ -875,15 +884,21 @@ export interface OnlineReviewLandingSnapshot {
 
 export interface WorkerLandingPayload {
   /**
-   * S5 / family coder-fix worker only: the blocking reviewer findings (full
-   * content) selected from the current full-diff review. The dispatch seam writes
-   * them to the landing file; the runner does not read them.
+   * ADR 0138 / #978: sole coder-fix packet body — judge continue
+   * `fixPacketBody` transported verbatim. Missing/empty is fail-loud at the
+   * continue edge; runner never synthesises this from bare finding rows.
+   */
+  readonly fixPacketBody?: string;
+  /**
+   * @deprecated ADR 0138 — bare finding packing path deleted. Residual
+   * fixtures may still set this; production coder-fix landing does not
+   * write it. Prefer {@link fixPacketBody}.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
   /**
    * S5 only: opaque human/coordinator finding scope from continue_fixing /
-   * repair intent. Runner transports only — never filters blockingFindings by
-   * scope (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
+   * repair intent. Runner transports only — never filters by content
+   * (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
    */
   readonly findingScope?: FindingRepairScope;
   /**

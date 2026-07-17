@@ -60,6 +60,7 @@ use `continue`.
       "groundTicket": 949
     }
   ],
+  "fixPacketBody": "<judge-authored fix packet body — verbatim to fixer>",
   "advanceCoder": "<optional roster suggestion>",
   "findings": []
 }
@@ -75,8 +76,14 @@ use `continue`.
   `ownerRecordPointer` (non-empty string). Do **not** invent a `reason` field
   on suppress rows. Suppressed keys are archived terminals — they are **not**
   sent to the fixer (only `live` enters S5).
+- **`fixPacketBody` is required on continue** (ADR 0138 / #978): the
+  judge-authored coder-fix packet body. Runner transports it **verbatim** as
+  the sole packet content path — never packs bare `findings` rows. First round
+  may be thin (finding + authority anchors + boundary); with history, synthesize
+  (history table, direction pin, demolition list). Missing/empty fails loud.
 - `advanceCoder` is an optional suggestion; runner stay-put policy is #926.
-- `findings` cargo carries full finding rows for the fixer (opaque to topology).
+- `findings` cargo is optional opaque siblings (identity/telemetry only after
+  ADR 0138 — not the fixer packet path).
 
 ### Escalate (decision-kind park — not a new channel, not a terminal kill)
 

@@ -105,6 +105,7 @@ import {
   closeFamilyCourtFromJudgeOutput,
   familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
+  requireFixPacketBody,
 } from "../judgeStation.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import {
@@ -591,7 +592,8 @@ async function runCmrCoderFix(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
   readonly runId?: string;
-  readonly blockingFindings: readonly Finding[];
+  /** ADR 0138: sole coder-fix packet body (verbatim judge text). */
+  readonly fixPacketBody: string;
   readonly blockingFindingCount?: number;
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
@@ -610,7 +612,7 @@ async function runCmrCoderFix(input: {
     familyBackend,
     familyBase,
     runId,
-    blockingFindings,
+    fixPacketBody,
     blockingFindingCount,
     blockingFindingIdentityKeys,
     rawReviewerArtifacts,
@@ -666,14 +668,14 @@ async function runCmrCoderFix(input: {
       // #979: thread prior same-chain fixer session when resume-capable.
       ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
       // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
-      // rich finding content travels in the separate landing payload below.
+      // ADR 0138 packet body travels in the separate landing payload below.
       blockingFindingIdentityKeys,
       ...(blockingFindingCount !== undefined ? { blockingFindingCount } : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
     },
     {
-      blockingFindings,
+      fixPacketBody,
       ...(rawReviewerArtifacts !== undefined ? { rawReviewerArtifacts } : {}),
     },
   );
@@ -2079,6 +2081,43 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
+  // ADR 0138 / #978: packet body required before family coder-fix — never pack
+  // bare findings as a second content channel.
+  let fixPacketBody: string;
+  try {
+    fixPacketBody = requireFixPacketBody({
+      status: "continue",
+      fixPacketBody: closure.fixPacketBody,
+    });
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? err.message
+        : "family judge continue missing fixPacketBody (ADR 0138)";
+    const stopSummary: StopSummary = stageFailureStopSummary({
+      status: "cmr_failed",
+      summary: reason,
+      repairHint:
+        "family judge status:continue must author non-empty fixPacketBody; " +
+        "runner transports it verbatim and will not pack bare findings",
+    });
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys,
+        stopSummary,
+      }),
+    );
+    return {
+      result: stageGate("cmr_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
+    };
+  }
+
   const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
   const stopSummary: StopSummary = stageFailureStopSummary({
       status: "cmr_failed",
@@ -2173,7 +2212,7 @@ async function runIntegratedCmrPass(input: {
       familyBackend,
       familyBase,
       ...(runId !== undefined ? { runId } : {}),
-      blockingFindings,
+      fixPacketBody,
       blockingFindingCount,
       blockingFindingIdentityKeys,
       rawReviewerArtifacts: reviewerArtifactPointers(
