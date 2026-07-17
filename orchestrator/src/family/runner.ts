@@ -1891,8 +1891,9 @@ export async function runFamily(
   //     merged ledger (a blocker never merged / a fail-fast wave aborted before
   //     it ran) is `"skipped"`.
   //   - `status` is a stage-named failure (#922) when a barrier was red
-  //     (most urgent among non-escalated outcomes). Otherwise the run is
-  //     `"success"` iff EVERY child is merged, else `"incomplete"`.
+  //     (most urgent among non-escalated outcomes). Otherwise public ABI
+  //     (#942) is `"completed"` iff EVERY child is merged, else `"failed"`
+  //     (partial / unmerged children) — never legacy `"success"` / `"incomplete"`.
   //
   // Happy path (all independent children merge, every barrier green) is always
   // `"completed"`; child-failure / stage-failure / ledger-merged branches guard
@@ -2713,10 +2714,11 @@ export async function runFamily(
   // for a COMPLETE family base ────────────────────────────────────────────────
   // A child can leave the wave loop UNMERGED without throwing (its single-slice run
   // returned "failed", or it stayed blocked) — finalize() then marks the run
-  // "incomplete". Running the final barrier (全量 verify → integrated cmr → 止于-PR)
+  // public `"failed"` (#942 completed|parked|failed; not legacy incomplete).
+  // Running the final barrier (全量 verify → integrated cmr → 止于-PR)
   // on that PARTIAL base would open a family PR missing slices, even though the
   // returned status is not shippable. So gate it: if not EVERY epic child is
-  // ledger-merged, skip the barrier and finalize() honestly returns "incomplete"
+  // ledger-merged, skip the barrier and finalize() honestly returns public failed
   // with NO verify / cmr / PR (decision 3⑤ 不静默吞 + decision 4 止于-PR only when whole).
   const mergedNow = await currentMerged(familyBackend);
   if (!epic.children.every((c) => mergedNow.has(c.issue))) {
@@ -3240,7 +3242,7 @@ export async function runFamily(
     });
   }
 
-  // Every barrier passed. finalize() derives "success" only if EVERY child
-  // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
+  // Every barrier passed. finalize() derives public `"completed"` only if EVERY
+  // child merged, else `"failed"` (a child failed / stayed blocked — not shippable).
   return await finalize({ barrierLedgerStartIndex: preFinalLedgerLength });
 }

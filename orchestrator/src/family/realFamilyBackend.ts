@@ -758,10 +758,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
     // plain crash re-throws.
-    // #964: single AgentError court lives at sc.run inside {@link runMergerAgent}
-    // (structured non-resolve + reason). No outer dual conversion here — AgentError
-    // never escapes that seat, so throw→retryProcessCrash is skipped for the whole
-    // AgentError class (not only auth).
+    // #964: merger seat court at sc.run inside {@link runMergerAgent}
+    // (structured non-resolve + reason). Generic workers share the same
+    // AgentError recognition via {@link workerResultFromAgentError} on the
+    // free-function dispatch / process-root seams. No outer dual conversion
+    // here — AgentError never escapes this seat, so throw→retryProcessCrash
+    // is skipped for the whole AgentError class (not only auth).
     const outcome = await retryProcessCrash(async () => {
       // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
       // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the

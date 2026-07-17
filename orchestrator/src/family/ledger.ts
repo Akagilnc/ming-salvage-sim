@@ -898,10 +898,12 @@ export function familyEscalationState(
 }
 
 /**
- * Barrier phase for CMR pass-admission / fix-chain reachability.
+ * Barrier phase for CMR pass-admission / fix-chain reachability / ledger rows.
  * Missing or non-checkpoint phases normalize to `"final"` (legacy rows).
+ * Sole normalizer for `correctness_checkpoint | final` (#982 / SHARED #19) —
+ * verifyCmr and ledger share this export (do not fork a twin helper).
  */
-function cmrBarrierPhaseOf(
+export function cmrBarrierPhaseOf(
   phase: string | undefined,
 ): "final" | "correctness_checkpoint" {
   return phase === "correctness_checkpoint"

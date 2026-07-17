@@ -5,9 +5,14 @@
  *
  * Classification is by tagged name / `_tag` only — never free-log keyword parse
  * (voided #964 signature tripwire; grokAgent stream contract ignores non-JSON).
+ *
+ * Single court for ALL Worker Invocation seats (merger + generic workers): convert
+ * AgentError → Action-typed failure. Do not fork parallel converters per role.
  */
 
 import { walkErrorChain } from "./receiptRecovery.js";
+import { runnerSynthesizedFailureEscalation } from "./runnerEscalation.js";
+import type { WorkerResult } from "./types.js";
 
 function nodeLooksLikeAgentError(node: unknown): boolean {
   if (node === null || typeof node !== "object") return false;
@@ -50,4 +55,31 @@ export function formatSandcastleAgentError(err: unknown): string {
     }
   }
   return lastAgentMessage ?? lastAnyMessage ?? String(err);
+}
+
+/**
+ * #964 Worker Invocation court — map AgentError to Action-typed failure.
+ *
+ * Uses host-synthesized escalated (same class as missing-auth preflight) so:
+ * - mechanical process-root redispatch does NOT re-burn dead credentials
+ * - owning Action / verifyCmr treat it as synthesized failure (not decision gate)
+ * - no new public cause token
+ *
+ * Returns `undefined` when `err` is not an AgentError (caller rethrows / handles).
+ */
+export function workerResultFromAgentError(
+  err: unknown,
+  seat: string,
+): Extract<WorkerResult, { kind: "escalated" }> | undefined {
+  if (!isSandcastleAgentError(err)) return undefined;
+  const detail = formatSandcastleAgentError(err);
+  return {
+    kind: "escalated",
+    escalation: runnerSynthesizedFailureEscalation({
+      reason: `${seat} agent invocation failed: ${detail}`,
+      diagnosis:
+        "Sandcastle AgentError at Worker Invocation (e.g. mid-run provider auth death); " +
+        "owning Action forms typed failure — no process-root redispatch of the same dead credentials",
+    }),
+  };
 }

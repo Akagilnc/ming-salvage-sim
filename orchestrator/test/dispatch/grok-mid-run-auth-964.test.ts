@@ -12,6 +12,9 @@
  *      FiberFailure
  *   5. public ABI — no new cause token like auth_expired
  *   6. route-smoke bare-ping shape — startup auth probe not rewritten
+ *   7. Generic Worker Invocation (non-merger): dispatchFamilyWorker / dispatchWorker /
+ *      withMechanicalRetry convert AgentError → host-synthesized escalated typed failure
+ *      (always-on CI court; live CLI probe may soft-skip)
  *
  * Authority: #964 AC + voided owner comment (native fail-fast only; no log parse /
  * monitor kill / run fuse / auth_expired public cause). Pin 0.2.102 is the production
@@ -25,7 +28,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
+import {
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../../src/dispatchRetry.js";
+import { dispatchWorker } from "../../src/dispatchWorker.js";
+import {
+  dispatchFamilyWorker,
+  familyCoderFixWorkerSpec,
+} from "../../src/family/dispatchFamilyWorker.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 import { mergeChild } from "../../src/family/merger.js";
 import {
@@ -34,13 +45,29 @@ import {
 } from "../../src/family/realFamilyBackend.js";
 import type {
   ConflictResolveRequest,
+  FamilyBackend,
   MergeRequest,
   MergeResult,
 } from "../../src/family/types.js";
 import { grokAgent } from "../../src/grokAgent.js";
+import {
+  resolveRouteModels,
+  routeSmokeEntries,
+  type ResolvedModelRoute,
+} from "../../src/modelRoutes.js";
 import { PUBLIC_FAILED_CAUSES } from "../../src/publicResult.js";
 import { barePingArgv } from "../../src/realBackend.js";
-import { isSandcastleAgentError } from "../../src/sandcastleAgentError.js";
+import { isRunnerSynthesizedFailureEscalation } from "../../src/runnerEscalation.js";
+import {
+  isSandcastleAgentError,
+  workerResultFromAgentError,
+} from "../../src/sandcastleAgentError.js";
+import type {
+  Backend,
+  DispatchContext,
+  WorkerResult,
+  WorkerSpec,
+} from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const orchestratorRoot = join(here, "..", "..");
@@ -461,5 +488,144 @@ describe("#964 AgentError → Action typed failure (merger worker entry)", () =>
     expect(result.escalation).toBeUndefined();
     expect(result.conflictResolvedByLlm).toBeUndefined();
     expect(result.reason).toMatch(/Not signed in|invocation failed/i);
+  });
+});
+
+function smokedRoute(): ResolvedModelRoute {
+  const base = resolveRouteModels("normal", {});
+  const smoke = Object.fromEntries(
+    routeSmokeEntries(base).map((entry) => [
+      entry.key,
+      {
+        state: "passed" as const,
+        at: new Date().toISOString(),
+        cliVersion: `cli-${entry.slug}`,
+      },
+    ]),
+  );
+  return resolveRouteModels("normal", {}, {}, smoke);
+}
+
+function midRunAgentError(): Error {
+  return Object.assign(
+    new Error(
+      "grok exited with code 1:\n\nError: Not signed in. To authenticate without a browser, run:\n  grok login --device-code",
+    ),
+    { name: "AgentError", _tag: "AgentError" },
+  );
+}
+
+/** Non-merger family seat: runAgentSandbox throws mid-run AgentError (coder-fix path). */
+class CoderAgentErrorFamilyBackend extends AgentErrorSandboxBackend {
+  protected override mountShipAuth() {
+    return {
+      claudeToken: "tok",
+      grokAuthDir: mkDir("964-coder-grok-auth-"),
+    };
+  }
+}
+
+describe("#964 AgentError → Action typed failure (generic Worker Invocation)", () => {
+  it("workerResultFromAgentError maps AgentError to host-synthesized escalated (single court)", () => {
+    const result = workerResultFromAgentError(
+      fiberAgentError("Not signed in"),
+      "coder",
+    );
+    expect(result).toBeDefined();
+    expect(result!.kind).toBe("escalated");
+    if (result!.kind !== "escalated") throw new Error("expected escalated");
+    expect(isRunnerSynthesizedFailureEscalation(result!.escalation)).toBe(true);
+    expect(result!.escalation.reason).toMatch(
+      /coder agent invocation failed|Not signed in/i,
+    );
+    expect(workerResultFromAgentError(new Error("plain crash"), "coder")).toBe(
+      undefined,
+    );
+  });
+
+  it("dispatchFamilyWorker converts AgentError on non-merger coder seat (no uncaught throw)", async () => {
+    // Real free-function Worker Invocation seam (production path for family seats).
+    const route = smokedRoute();
+    const be = new CoderAgentErrorFamilyBackend(baseOpts(makeRepo()));
+    const result = await dispatchFamilyWorker(
+      be,
+      familyCoderFixWorkerSpec(route),
+      { familyBase: "family/964-base", modelRoute: route },
+    );
+    expect(result.kind).toBe("escalated");
+    if (result.kind !== "escalated") throw new Error("expected escalated");
+    expect(isRunnerSynthesizedFailureEscalation(result.escalation)).toBe(true);
+    expect(result.escalation.reason).toMatch(
+      /agent invocation failed|Not signed in/i,
+    );
+  });
+
+  it("withMechanicalRetry does not re-dispatch AgentError (dead credentials once)", async () => {
+    const route = smokedRoute();
+    const spec = familyCoderFixWorkerSpec(route);
+    let attempts = 0;
+    const result = await withMechanicalRetry(
+      spec,
+      { familyBase: "family/964-base", modelRoute: route },
+      async () => {
+        attempts += 1;
+        throw midRunAgentError();
+      },
+    );
+    expect(attempts).toBe(1);
+    expect(result.kind).toBe("escalated");
+    if (result.kind !== "escalated") throw new Error("expected escalated");
+    expect(isRunnerSynthesizedFailureEscalation(result.escalation)).toBe(true);
+    expect(result.escalation.reason).toMatch(/agent invocation failed|Not signed in/i);
+  });
+
+  it("dispatchWorker (single-slice seam) converts AgentError to typed failure (no throw)", async () => {
+    const route = smokedRoute();
+    const throwsAgent: Backend = {
+      async dispatchWorker(
+        _spec: WorkerSpec,
+        _ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        throw midRunAgentError();
+      },
+    } as Backend;
+    const spec: WorkerSpec = {
+      id: "S2",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      promptFile: "coder.md",
+      maxIter: 1,
+      model: "gpt-5.6-terra",
+      soul: "coder",
+      toolchain: [],
+    };
+    const result = await dispatchWorker(throwsAgent, spec, {
+      modelRoute: route,
+    });
+    expect(result.kind).toBe("escalated");
+    if (result.kind !== "escalated") throw new Error("expected escalated");
+    expect(isRunnerSynthesizedFailureEscalation(result.escalation)).toBe(true);
+    expect(result.escalation.reason).toMatch(/coder agent invocation failed|Not signed in/i);
+  });
+
+  it("FamilyBackend method throw is converted at free-function court (cmr-class seat)", async () => {
+    // Prove free-function court, not merger-only: any family dispatchWorker throw.
+    const route = smokedRoute();
+    const be = {
+      async dispatchWorker(): Promise<WorkerResult> {
+        throw fiberAgentError("Not signed in");
+      },
+    } as unknown as FamilyBackend;
+    const result = await dispatchFamilyWorker(
+      be,
+      { ...familyCoderFixWorkerSpec(route), kind: "cmr", role: "verify", soul: "verify" },
+      { familyBase: "family/964-base", modelRoute: route },
+    );
+    expect(result.kind).toBe("escalated");
+    if (result.kind !== "escalated") throw new Error("expected escalated");
+    expect(isRunnerSynthesizedFailureEscalation(result.escalation)).toBe(true);
   });
 });

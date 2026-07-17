@@ -118,6 +118,7 @@ import {
   type TelemetryReviewRoundRecord,
 } from "../telemetry.js";
 import {
+  cmrBarrierPhaseOf,
   cmrPassAlreadyPassed,
   mechanicalRedispatchAttemptsFromFamilyLedger,
   recordAborted as recordDurableAbort,
@@ -636,7 +637,7 @@ async function runCmrCoderFix(input: {
     priorCmrFindingIdentityKeysByPass,
     ledgerPhase: ledgerPhaseInput = "final",
   } = input;
-  const ledgerPhase = cmrLedgerPhase(ledgerPhaseInput);
+  const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
     blockingFindingIdentityKeys.join(", ");
@@ -1618,15 +1619,6 @@ function reviewerArtifactPointers(
   };
 }
 
-/** Ledger phase for CMR audit rows (#961: checkpoint vs final court). */
-function cmrLedgerPhase(
-  phase: VerifyCmrPhase | undefined,
-): "final" | "correctness_checkpoint" {
-  return phase === "correctness_checkpoint"
-    ? "correctness_checkpoint"
-    : "final";
-}
-
 async function runIntegratedCmrPass(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1675,7 +1667,7 @@ async function runIntegratedCmrPass(input: {
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
   } = input;
-  const ledgerPhase = cmrLedgerPhase(ledgerPhaseInput);
+  const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
     familyBackend,
