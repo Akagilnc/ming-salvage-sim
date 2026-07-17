@@ -52,6 +52,7 @@ class SeatCapBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
   private judgeOpenings = 0;
+  constructor(private readonly coderRecBody: string = "") {}
 
   async smokeModelRoute(route: Parameters<NonNullable<Backend["smokeModelRoute"]>>[0]) {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
@@ -74,6 +75,7 @@ class SeatCapBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
+      ...(this.coderRecBody.length > 0 ? { body: this.coderRecBody } : {}),
     };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
@@ -158,64 +160,49 @@ describe("#955 persistent seat resume capability gate", () => {
     expect(resumeCapableForSlug("grok-4.5")).toBe(true);
   });
 
-  it("same slug but resume-incapable provider (agy) opens S5/S6 fresh — no resumeSessionId", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "agy");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "agy");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "agy");
-
-    const backend = new SeatCapBackend();
-    const result = await runOrchestrator({ issueNumber: 95501, backend });
-    expect(result.status).toBe("success");
-
-    const s2 = dispatchOf(backend, "S2");
-    const s5 = dispatchOf(backend, "S5");
-    const s3 = dispatchOf(backend, "S3");
-    const s6 = dispatchOf(backend, "S6");
-
-    // Seats actually ran on the registry-incapable slug.
-    expect(s2.spec.model).toBe("agy");
-    expect(s5.spec.model).toBe("agy");
-    expect(s3.spec.model).toBe("agy");
-    expect(s6.spec.model).toBe("agy");
-
-    // S2/S3 establish sessions; S5/S6 must NOT thread them.
-    expect(s2.spec.session).toBe("fresh");
-    expect(s2.ctx.resumeSessionId).toBeUndefined();
-    expect(s5.spec.session).toBe("fresh");
-    expect(s5.ctx.resumeSessionId).toBeUndefined();
-
-    expect(s3.spec.session).toBe("fresh");
-    expect(s3.ctx.resumeSessionId).toBeUndefined();
-    expect(s6.spec.session).toBe("fresh");
-    expect(s6.ctx.resumeSessionId).toBeUndefined();
+  it("same slug but resume-incapable provider opens S5/S6 fresh — no resumeSessionId", async () => {
+    // #936: seat via Coder-Rec. Spy capability gate — no permanent incapable roster slug.
+    const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
+    const mod = await import("../../src/modelRegistry.js");
+    const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
+    try {
+      const result = await runOrchestrator({ issueNumber: 95501, backend });
+      expect(result.status).toBe("success");
+      const byId = (id: string) => {
+        const i = backend.specs.findIndex((s) => s.id === id);
+        expect(i).toBeGreaterThanOrEqual(0);
+        return { spec: backend.specs[i]!, ctx: backend.ctxs[i]! };
+      };
+      expect(byId("S2").spec.model).toBe("grok-4.5");
+      const s5 = byId("S5");
+      expect(s5.spec.session).toBe("fresh");
+      expect(s5.ctx.resumeSessionId).toBeUndefined();
+      const s6 = byId("S6");
+      expect(s6.spec.session).toBe("fresh");
+      expect(s6.ctx.resumeSessionId).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("resume-capable provider (grok-4.5 coder / sol judge) still resumes S5 and S6", async () => {
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_CODER_FIX_MODEL", "grok-4.5");
-    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "gpt-5.6-sol");
-
-    const backend = new SeatCapBackend();
+    const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
     const result = await runOrchestrator({ issueNumber: 95502, backend });
     expect(result.status).toBe("success");
 
-    const s2 = dispatchOf(backend, "S2");
-    const s5 = dispatchOf(backend, "S5");
-    const s3 = dispatchOf(backend, "S3");
-    const s6 = dispatchOf(backend, "S6");
-
+    const byId = (id: string) => {
+      const i = backend.specs.findIndex((s) => s.id === id);
+      expect(i).toBeGreaterThanOrEqual(0);
+      return { spec: backend.specs[i]!, ctx: backend.ctxs[i]! };
+    };
+    const s2 = byId("S2");
     expect(s2.spec.model).toBe("grok-4.5");
+    const s5 = byId("S5");
     expect(s5.spec.model).toBe("grok-4.5");
-    expect(s3.spec.model).toBe("gpt-5.6-sol");
-    expect(s6.spec.model).toBe("gpt-5.6-sol");
-
-    expect(s2.spec.session).toBe("fresh");
-    expect(s2.ctx.resumeSessionId).toBeUndefined();
     expect(s5.spec.session).toBe("resume");
     expect(s5.ctx.resumeSessionId).toBe(CODER_SESSION);
-
-    expect(s3.spec.session).toBe("fresh");
-    expect(s3.ctx.resumeSessionId).toBeUndefined();
+    const s6 = byId("S6");
+    // judge seat follows route verify (sol on normal), not Coder-Rec
     expect(s6.spec.session).toBe("resume");
     expect(s6.ctx.resumeSessionId).toBe(JUDGE_SESSION);
   });

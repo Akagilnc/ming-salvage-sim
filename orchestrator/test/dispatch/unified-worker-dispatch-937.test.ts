@@ -45,7 +45,6 @@ import {
 const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 import {
   RECEIPT_MAX_RETRIES,
-  receiptMaxRetriesForProvider,
   workerReceiptOutput,
   coderReceiptOutput,
 } from "../../src/receiptRecovery.js";
@@ -156,12 +155,11 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(result.kind).toBe("completed");
   });
 
-  it("POSITIVE: production attach expression maps grok→0 and codex→RECEIPT_MAX_RETRIES", async () => {
-    // Production attach (realBackend.outputFor / family receiptMaxRetriesFor):
-    //   provider = resolveModelSlugForPool(model, pool).provider
-    //   maxRetries = receiptMaxRetriesForProvider(provider)
-    //   coderReceiptOutput(schema, tag, maxRetries)
-    const { resolveModelSlugForPool } = await import("../../src/modelRegistry.js");
+  it("POSITIVE: production attach expression maps resumeCapable→maxRetries (ID-004/#955)", async () => {
+    // Production attach (realBackend.outputFor / family resumeCapableForSpec):
+    //   resumeCapable = resumeCapableForSlug(model, pool)
+    //   workerReceiptOutput(..., resumeCapable) → maxRetries 0|RECEIPT_MAX_RETRIES
+    const { resumeCapableForSlug } = await import("../../src/modelRegistry.js");
     const { readFileSync: readSrc } = await import("node:fs");
     const realBackendSrc = readSrc(
       join(import.meta.dirname, "../../src/realBackend.ts"),
@@ -171,28 +169,38 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
       join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
       "utf8",
     );
-    // Production sites must call the provider→maxRetries seam (not hardcode 2).
-    expect(realBackendSrc).toMatch(/receiptMaxRetriesForProvider\(provider\)/);
-    expect(realBackendSrc).toMatch(/coderReceiptOutput\([\s\S]*maxRetries/);
-    expect(familySrc).toMatch(/receiptMaxRetriesFor\(/);
-    expect(familySrc).toMatch(/coderReceiptOutput\([\s\S]*this\.receiptMaxRetriesFor/);
+    const recoverySrc = readSrc(
+      join(import.meta.dirname, "../../src/receiptRecovery.ts"),
+      "utf8",
+    );
+    expect(realBackendSrc).toMatch(/resumeCapableForSlug\(/);
+    expect(realBackendSrc).toMatch(/coderReceiptOutput\([\s\S]*resumeCapable/);
+    expect(familySrc).toMatch(/resumeCapableForSpec\(/);
+    expect(familySrc).toMatch(/coderReceiptOutput\([\s\S]*this\.resumeCapableForSpec/);
+    expect(recoverySrc).toMatch(
+      /maxRetries:\s*resumeCapable\s*\?\s*RECEIPT_MAX_RETRIES\s*:\s*0/,
+    );
 
     const attachFor = (model: string) => {
-      const provider = resolveModelSlugForPool(model).provider;
-      const maxRetries = receiptMaxRetriesForProvider(provider);
+      const resumeCapable = resumeCapableForSlug(model);
       return coderReceiptOutput(
         coderStationReceiptSchema(),
         "coder",
-        maxRetries,
+        resumeCapable,
       );
     };
-    expect(attachFor("grok-4.5")).toMatchObject({ tag: "coder", maxRetries: 0 });
+    // #955: grok is resume-capable (sessionStorage) → SO maxRetries = RECEIPT_MAX_RETRIES
+    expect(attachFor("grok-4.5")).toMatchObject({
+      tag: "coder",
+      maxRetries: RECEIPT_MAX_RETRIES,
+    });
     expect(attachFor("gpt-5.6-terra")).toMatchObject({
       tag: "coder",
       maxRetries: RECEIPT_MAX_RETRIES,
     });
-    // NEGATIVE: unknown/non-resumable custom provider stays at 0
-    expect(receiptMaxRetriesForProvider("agy")).toBe(0);
+    // Incapable provider (agy, no sessionStorage) → maxRetries 0
+    expect(attachFor("agy")).toMatchObject({ tag: "coder", maxRetries: 0 });
+    expect(resumeCapableForSlug("agy")).toBe(false);
   });
 
   it("NEGATIVE: QuotaWaitForResetError does not burn onAttempt durable budget", async () => {
