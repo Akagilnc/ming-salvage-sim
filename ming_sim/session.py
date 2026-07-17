@@ -1000,10 +1000,12 @@ class GameSession:
                             order_id = 0
                         payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
                         if action and order_id:
-                            # Defense-in-depth: tools should already pin; re-attach if missing.
-                            payload = self.db.attach_secret_oral_pin(
-                                character.name, int(self.state.turn), payload,
-                            )
+                            # Pin only when non-create carries new oral body (更新).
+                            # 催办/记进展/提交核议 must not auto-pin pure-public held.
+                            if action == "更新":
+                                payload = self.db.attach_secret_oral_pin(
+                                    character.name, int(self.state.turn), payload,
+                                )
                             result.pending_action_id = self.db.stage_pending_action(
                                 self.state.turn, kind="secret_order", action=action,
                                 minister_name=character.name, target_id=order_id,
@@ -1343,7 +1345,8 @@ class GameSession:
                     target_active = str(target.get("status") or "active") == "active"
                     if target_active and sa == "更新":
                         # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
-                        # #976：extract 非新建须钉 held 口谕 pin，commit 才能 withhold。
+                        # #976：仅「更新」有新口谕正文 → 钉 held pin → commit withhold。
+                        # 催办/记进展/提交核议无新正文，不 pin（纯公开 held 不得吞）。
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="更新",
                             minister_name=minister_name, target_id=oid,
@@ -1365,30 +1368,22 @@ class GameSession:
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="催办",
                             minister_name=minister_name, target_id=oid,
-                            payload=self.db.attach_secret_oral_pin(
-                                minister_name, int(self.state.turn), {
-                                    "deadline_months": rush_deadline,
-                                    "reason": player_message[:80],
-                                },
-                            ),
+                            payload={
+                                "deadline_months": rush_deadline,
+                                "reason": player_message[:80],
+                            },
                         )
                     elif target_active and sa == "提交核议":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
                             minister_name=minister_name, target_id=oid,
-                            payload=self.db.attach_secret_oral_pin(
-                                minister_name, int(self.state.turn),
-                                {"claim": reply[:200]},
-                            ),
+                            payload={"claim": reply[:200]},
                         )
                     elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="记进展",
                             minister_name=minister_name, target_id=oid,
-                            payload=self.db.attach_secret_oral_pin(
-                                minister_name, int(self.state.turn),
-                                {"note": reply[:200]},
-                            ),
+                            payload={"note": reply[:200]},
                         )
                     # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
                     # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见

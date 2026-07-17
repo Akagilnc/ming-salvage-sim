@@ -1259,10 +1259,11 @@ def test_976_non_create_pure_public_not_auto_pinned_as_secret_origin(game):
             assert public_q in text, f"{action}: pure public not remembered after project"
 
 
-def test_976_production_tools_non_create_pins_latest_held_oral(game):
-    """生产 tools 非新建：payload 须钉当前 speaker 最新 held user（有口谕时）。
+def test_976_production_tools_non_create_no_pure_public_auto_pin(game):
+    """生产 tools 非新建（催办/记进展/提交核议）不得 auto-pin held。
 
-    底层 commit 已消费显式 pin；tools 不写 pin = 生产口谕永远进不了 withhold。
+    tools 无「更新」动作；新口谕改旨走 extract「更新」才钉 pin。
+    纯公开问话 + 催办 不得把 held 钉成密令血缘 → withheld 吞 S3 参与即知。
     修类：记进展 / 催办 / 提交核议。
     """
     import json as _json
@@ -1270,11 +1271,8 @@ def test_976_production_tools_non_create_pins_latest_held_oral(game):
     from ming_sim.tools import build_minister_tools
 
     db, state, content = game
-    speaker, assignee = _active_ministers(db, content)[:2]
-    secret_q = (
-        "着尔扩查国丈典当与内库往来账目，皆须暗中簿记，"
-        "不得走漏半句，亦不可经司礼监转呈。"
-    )
+    assignee = _active_ministers(db, content)[0]
+    public_q = "近来京营操练如何？先催办前令。"
 
     cases = (
         ("progress", {"progress": "已密访东城典当三处。"}, "记进展"),
@@ -1282,8 +1280,6 @@ def test_976_production_tools_non_create_pins_latest_held_oral(game):
         ("submit", {"claim": "国丈田宅已暗记在册，请核。"}, "提交核议"),
     )
     for tool_action, kwargs, expected_sa in cases:
-        # tools 仅承办人可操作；生产路径 held 口谕也挂在召对对象名下。
-        minister = assignee
         oid = db.create_secret_order(
             state, assignee.name, f"密查-{tool_action}", f"暗访-{tool_action}。", [],
             deadline_months=6,
@@ -1294,22 +1290,42 @@ def test_976_production_tools_non_create_pins_latest_held_oral(game):
                 (state.turn - 1, oid),
             )
             db.conn.commit()
-        mid_sec = db.append_chat_message(minister.name, state.turn, "user", secret_q)
+        mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
         context = CourtContext(state=state, db=db)
-        tools = build_minister_tools(minister, context)
+        tools = build_minister_tools(assignee, context)
         secret_order = next(t for t in tools if getattr(t, "__name__", "") == "secret_order")
         out = secret_order(action=tool_action, order_id=oid, **kwargs)
         assert out.startswith("__secret_action__"), tool_action
         data = _json.loads(out.removeprefix("__secret_action__"))
         assert data["action"] == expected_sa, tool_action
-        pin = int((data.get("payload") or {}).get("origin_chat_message_id") or 0)
-        assert pin == mid_sec, f"{tool_action}: tools must pin latest held oral"
+        pin = (data.get("payload") or {}).get("origin_chat_message_id")
+        assert pin in (None, "", 0), (
+            f"{tool_action}: tools must not auto-pin pure-public held as origin"
+        )
+        # stage+commit via production payload must not swallow pure public
+        pid = db.stage_pending_action(
+            state.turn, kind="secret_order", action=expected_sa,
+            minister_name=assignee.name, target_id=oid,
+            payload=dict(data.get("payload") or {}),
+        )
+        applied = db.commit_pending_actions(
+            state, minister_name=assignee.name, action_ids={pid}, content=content,
+        )
+        assert applied and applied[0]["kind"] == "secret_order", tool_action
+        pub_status = db.conn.execute(
+            "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,),
+        ).fetchone()["knowledge_status"]
+        assert pub_status != "withheld", (
+            f"{tool_action}: pure public swallowed as secret origin (status={pub_status})"
+        )
 
 
-def test_976_production_session_tool_path_stage_commit_withholds_oral(game):
-    """生产 session tool 路径：口述 → tools 记进展 → stage → commit → oral withheld 不进共享。
+def test_976_production_session_tool_path_progress_not_shared(game):
+    """生产 session tool 记进展：承办人同人路径，无 pin 不得把口谕投进共享源。
 
-    复现 judge residual：no-pin 记进展 → release 进 shared。
+    tools 仅 own-order；口谕 held 在承办人名下。无 pin → settle release = private
+    （S3 参与即知），永不进 character_knowledge_sources。跨人 shared 泄漏仅 DB
+    直 stage 可达，非生产 tools 路径。
     """
     import json as _json
     from types import SimpleNamespace
@@ -1317,7 +1333,6 @@ def test_976_production_session_tool_path_stage_commit_withholds_oral(game):
     from ming_sim.session import GameSession
 
     db, state, content = game
-    # 承办人即召对对象：tools progress 仅认 own order；口谕 held 挂其名下。
     assignee = _active_ministers(db, content)[0]
     other = next(m for m in _active_ministers(db, content) if m.name != assignee.name)
     oid = db.create_secret_order(
@@ -1346,7 +1361,7 @@ def test_976_production_session_tool_path_stage_commit_withholds_oral(game):
     )
     assert tool_out.startswith("__secret_action__")
     tool_data = _json.loads(tool_out.removeprefix("__secret_action__"))
-    assert int((tool_data.get("payload") or {}).get("origin_chat_message_id") or 0) == mid_sec
+    assert (tool_data.get("payload") or {}).get("origin_chat_message_id") in (None, "", 0)
 
     class Agent:
         def run(self, _message):
@@ -1381,18 +1396,24 @@ def test_976_production_session_tool_path_stage_commit_withholds_oral(game):
     ).fetchone()
     assert staged["action"] == "记进展"
     staged_payload = _json.loads(staged["payload_json"] or "{}")
-    assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
+    assert staged_payload.get("origin_chat_message_id") in (None, "", 0)
 
     applied = db.commit_pending_actions(
         state, minister_name=assignee.name,
         action_ids={int(result.pending_action_id)}, content=content,
     )
     assert applied and applied[0]["kind"] == "secret_order"
-    _assert_oral_decree_withheld_not_shared(
-        db, state, mid_sec=mid_sec, secret_q=secret_q,
-        speakers={assignee.name}, content=content,
-    )
-    # 旁人不得见口谕
+    # settle-style release: same-person assignee → private, never shared source
+    db.release_held_audience_knowledge(commit=True)
+    sec_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,),
+    ).fetchone()["knowledge_status"]
+    assert sec_status != "released", "oral must not enter shared release track"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_sec}",),
+    ).fetchone()[0] == 0
+    assert all(secret_q not in body for body in _shared_bodies(db))
     other_view = db.get_character_knowledge(state, other.name)
     other_text = " ".join(
         item.get("body", "")
@@ -1402,7 +1423,11 @@ def test_976_production_session_tool_path_stage_commit_withholds_oral(game):
 
 
 def test_976_production_session_extract_update_withholds_oral(game, monkeypatch):
-    """生产 extract 路径：口述更新 → apply_cli_conversation_actions stage → commit → withheld。"""
+    """生产 extract「更新」：新口谕须 pin → stage → commit → withheld 不进共享。
+
+    建议修法红测：口述更新→stage→commit→oral withheld shared=false。
+    催办/记进展 无新正文不 pin（见 tools pure-public 测）；仅 更新 钉 pin。
+    """
     import json as _json
     import types
     from types import SimpleNamespace
@@ -1470,6 +1495,79 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
         db, state, mid_sec=mid_sec, secret_q=secret_q,
         speakers={assignee.name}, content=content,
     )
+
+
+def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypatch):
+    """生产 extract 催办/记进展：无新正文动作不钉 pin（与 tools 同口径）。"""
+    import json as _json
+    import types
+    from types import SimpleNamespace
+
+    import ming_sim.cli_backend as cb
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    public_q = "近来京营操练如何？先催办前令。"
+
+    for secret_action, extra in (
+        ("催办", {"deadline_months": 1}),
+        ("记进展", {}),
+    ):
+        oid = db.create_secret_order(
+            state, assignee.name, f"密查-{secret_action}", f"暗访-{secret_action}。", [],
+            deadline_months=6,
+        )
+        if int(db.get_secret_order(oid)["turn_issued"] or 0) == int(state.turn):
+            db.conn.execute(
+                "UPDATE secret_orders SET turn_issued=? WHERE id=?",
+                (state.turn - 1, oid),
+            )
+            db.conn.commit()
+        mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
+        monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+        monkeypatch.setattr(cb, "_trace", lambda rec: None)
+        monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+            "secret_action": secret_action, "order_id": oid,
+            "new_title": "", "new_content": "",
+            "deadline_months": int(extra.get("deadline_months") or 0),
+            "cultivate_skill": "", "cultivate_trait": "",
+        })
+        monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "")
+        monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+            "appoint_action": "无", "name": "", "office": "",
+        })
+        monkeypatch.setattr(cb, "resolve_minister_actions", lambda *a, **k: {
+            "decree_text": None, "secret_order": None,
+        })
+        sess = SimpleNamespace(
+            db=db, state=state, registry=None, content=content,
+            llm_config=SimpleNamespace(channel=""),
+        )
+        sess.apply_cli_conversation_actions = types.MethodType(
+            GameSession.apply_cli_conversation_actions, sess,
+        )
+        out = sess.apply_cli_conversation_actions(
+            SimpleNamespace(name=assignee.name, office_type="兵部"),
+            public_q, "臣遵旨催办/记进展。",
+            has_directive=False, secret_order_id=None,
+        )
+        pid = int(out.get("pending_action_id") or 0)
+        assert pid > 0, secret_action
+        staged = db.conn.execute(
+            "SELECT payload_json, action FROM pending_actions WHERE id=?", (pid,),
+        ).fetchone()
+        assert staged["action"] == secret_action
+        staged_payload = _json.loads(staged["payload_json"] or "{}")
+        assert staged_payload.get("origin_chat_message_id") in (None, "", 0), secret_action
+        applied = db.commit_pending_actions(
+            state, minister_name=assignee.name, action_ids={pid}, content=content,
+        )
+        assert applied and applied[0]["kind"] == "secret_order", secret_action
+        pub_status = db.conn.execute(
+            "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_pub,),
+        ).fetchone()["knowledge_status"]
+        assert pub_status != "withheld", secret_action
 
 
 # ── #976 红队四轴 + 消息级 provenance 根治（正负配对，真实接缝）──────────────
