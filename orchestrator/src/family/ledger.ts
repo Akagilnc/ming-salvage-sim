@@ -36,6 +36,7 @@ import {
   type FamilyLedgerEntry,
   type IntegratedCmrPass,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /**
  * The full-schema fields a #298 `merged` event can carry (ADR 0022 decision 5).
@@ -72,7 +73,7 @@ export interface MergedRecord {
  */
 export interface AbortedRecord {
   /** Which verify barrier was red. */
-  readonly phase: "wave" | "final" | "correctness_checkpoint";
+  readonly phase: VerifyCmrPhase;
   /** Which integrated CMR pass failed, when the abort came from a CMR pass. */
   readonly cmrPass?: IntegratedCmrPass;
   /** Human-readable abort reason (the verify error / cmr non-convergence). */
@@ -152,7 +153,7 @@ export interface CmrPassedRecord {
    * Barrier phase that produced this green pass. Defaults to `"final"`.
    * `#961` incremental IC checkpoints write `"correctness_checkpoint"`.
    */
-  readonly phase?: "wave" | "final" | "correctness_checkpoint";
+  readonly phase?: VerifyCmrPhase;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /** #930 — family judge session id for resume / prior-verdict rows. */
@@ -175,7 +176,7 @@ export interface CmrReviewedRecord {
   readonly reason?: string;
   readonly familyHeadAfter?: string;
   /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
-  readonly phase?: "wave" | "final" | "correctness_checkpoint";
+  readonly phase?: VerifyCmrPhase;
   /**
    * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
    * the blocking findings the runner must route through coder-fix. The runner
@@ -207,7 +208,7 @@ export interface CmrFixCommittedRecord {
   readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
   /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
-  readonly phase?: "wave" | "final" | "correctness_checkpoint";
+  readonly phase?: VerifyCmrPhase;
   /**
    * #979 — Sandcastle session id of this coder-fix open. Ledger sole truth for
    * same-chain fix-round resume (mirrors #966 judge sessionId on cmr_reviewed).
@@ -219,7 +220,7 @@ export interface CmrFixCommittedRecord {
 /** A PHASE-LEVEL family escalation marker (#439). */
 export interface FamilyEscalatedRecord {
   readonly escalationKind: EscalationKind;
-  readonly phase?: "wave" | "final" | "correctness_checkpoint";
+  readonly phase?: VerifyCmrPhase;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary (#450). */

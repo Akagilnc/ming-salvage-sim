@@ -10,7 +10,7 @@
  *      Runner does not read lastCorrectnessConvergedHead for admission/park
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   lastCorrectnessConvergedHeadFromLedger,
   recordCmrPassed,
@@ -42,7 +42,7 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
 } from "../../../src/family/types.js";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -387,40 +387,15 @@ describe("#961 spine — incremental IC after batch verify green", () => {
     expect(checkpointTargets[0]).not.toBe("+1002");
   });
 
-  it("Runner admission/park path never reads lastCorrectnessConvergedHead", async () => {
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: true }),
-      cmr: () => ({
-        converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      }),
-    });
-    // Spy: if Runner imported and called the helper for admission, this would fire
-    // during child scheduling. Production Runner must not.
-    const spy = vi.spyOn(
-      await import("../../../src/family/ledger.js"),
-      "lastCorrectnessConvergedHeadFromLedger",
+  it("Runner admission/park path never reads lastCorrectnessConvergedHead", () => {
+    // Import-surface / source-text guard: must fail if Runner starts importing
+    // or calling the durable IC ledger helper for admission/park. IC Action /
+    // verifyCmr owns lastCorrectnessConvergedHead; Runner comments may mention
+    // the field name as a negative constraint, but must not bind the helper API.
+    const runnerSrc = readFileSync(
+      join(import.meta.dirname, "../../../src/family/runner.ts"),
+      "utf8",
     );
-
-    const result = await runFamily({
-      epic: {
-        issue: 961,
-        children: [{ issue: 1001, blockedBy: [] }],
-      },
-      familyBackend: backend,
-      singleSliceBackend: new ChildBackend(),
-      familyBase: "family/961-base",
-    });
-    expect(result.status).toBe("completed");
-    // IC Action / verifyCmr may read the helper; Runner scheduling must not gate
-    // on it. We assert the run completed with children dispatched regardless of
-    // whether the helper was used inside IC — and that no admission skip was
-    // invented from the field.
-    expect(result.children.every((c) => c.status === "merged" || c.status === "already_done")).toBe(
-      true,
-    );
-    // Even if IC reads the helper, Runner must not use it to park.
-    expect(result.status).not.toBe("parked");
-    spy.mockRestore();
+    expect(runnerSrc).not.toMatch(/\blastCorrectnessConvergedHeadFromLedger\b/);
   });
 });

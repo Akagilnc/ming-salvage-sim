@@ -224,9 +224,7 @@ type FamilyQuotaWallDecision =
 
 /** Family barrier / merge wall phases that share the park/relay machine. */
 export type FamilyQuotaWallPhase =
-  | "wave"
-  | "correctness_checkpoint"
-  | "final"
+  | VerifyCmrPhase
   | "online_review"
   | "merge";
 
