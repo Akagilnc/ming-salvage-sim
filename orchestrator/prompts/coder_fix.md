@@ -9,8 +9,9 @@ Read the role soul first (live-mounted):
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
 you. Use the runner parameters `ORCHESTRATOR_ISSUE_NUMBER` / `ISSUE_NUMBER`,
 `ORCHESTRATOR_REPO`, `.orchestrator-fix-findings.json`, and optional
-`ORCHESTRATOR_RELAY_BRIEF`; the fix-findings path may carry an
-`escalationAnswer`. Invoke the baked skills selected by the soul.
+`ORCHESTRATOR_RELAY_BRIEF`; the fix-findings JSON carries the judge-authored
+`fixPacketBody` (ADR 0138 — sole packet content; verbatim) and may also carry
+an `escalationAnswer`. Invoke the baked skills selected by the soul.
 The soul owns character and adjudication taste; this prompt + skills own the
 mechanical method.
 

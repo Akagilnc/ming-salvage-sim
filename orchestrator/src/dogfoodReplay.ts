@@ -83,6 +83,18 @@ function judgeContinueOutput(
   findings: ReadonlyArray<Finding>,
   cargo: Record<string, unknown> = {},
 ): WorkerOutput {
+  const fixPacketBody =
+    typeof cargo.fixPacketBody === "string" &&
+    cargo.fixPacketBody.trim().length > 0
+      ? cargo.fixPacketBody
+      : findings.length > 0
+        ? findings
+            .map(
+              (f) =>
+                `${f.severity} ${f.category} @ ${f.location}: ${f.claim_quote}`,
+            )
+            .join("\n")
+        : "dogfood judge continue: live findings remain";
   return {
     kind: "judge",
     status: "continue",
@@ -91,6 +103,7 @@ function judgeContinueOutput(
       identityKey: findingIdentityKey(f),
       action: "live" as const,
     })),
+    fixPacketBody,
     ...cargo,
   } as WorkerOutput;
 }

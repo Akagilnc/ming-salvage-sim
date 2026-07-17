@@ -1521,6 +1521,12 @@ export class RealFamilyBackend implements FamilyBackend {
                 station: "judge",
                 status: "continue",
                 findingDispositions: outcome.findingDispositions ?? [],
+                // ADR 0138: required traffic field; empty string fails later at
+                // requireFixPacketBody before family coder-fix dispatch.
+                fixPacketBody:
+                  typeof outcome.fixPacketBody === "string"
+                    ? outcome.fixPacketBody
+                    : "",
                 ...(outcome.advanceCoder !== undefined
                   ? { advanceCoder: outcome.advanceCoder }
                   : {}),
@@ -1944,13 +1950,18 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
+    const fixPacketBody =
+      typeof landing?.fixPacketBody === "string" &&
+      landing.fixPacketBody.trim().length > 0
+        ? landing.fixPacketBody
+        : undefined;
     writeFileSync(
       path,
       `${JSON.stringify(
         {
-          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-          // ADR 0062) — never from the runner's thin DispatchContext.
-          blockingFindings: landing?.blockingFindings ?? [],
+          // ADR 0138 / #978: sole coder-fix packet content — judge body
+          // verbatim. Bare blockingFindings packing deleted (no second path).
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
           ...(rawReviewerArtifacts !== undefined
             ? { rawReviewerArtifacts }
             : {}),
@@ -3230,6 +3241,8 @@ export type CmrWorkerOutcome =
       readonly findingDispositions?: ReadonlyArray<
         import("../types.js").JudgeFindingDisposition
       >;
+      /** ADR 0138: judge-authored coder-fix packet body on continue. */
+      readonly fixPacketBody?: string;
       readonly advanceCoder?: string;
       readonly findings?: readonly Finding[];
       readonly reason?: string;
@@ -3650,6 +3663,7 @@ function classifyCmrOutcomePayload(
       kind: "judge",
       status: "continue",
       findingDispositions: v.findingDispositions,
+      fixPacketBody: v.fixPacketBody,
       ...(v.advanceCoder !== undefined ? { advanceCoder: v.advanceCoder } : {}),
       ...cargo,
     };
@@ -3669,6 +3683,7 @@ const JUDGE_TRAFFIC_KEYS = new Set([
   "status",
   "cargoPointer",
   "findingDispositions",
+  "fixPacketBody",
   "advanceCoder",
   "reason",
   "diagnosis",

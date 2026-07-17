@@ -795,6 +795,7 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
                   action: "live",
                 },
               ],
+              fixPacketBody: "live: correctness|x.ts:1|live",
             },
           };
         }
