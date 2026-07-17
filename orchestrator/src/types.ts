@@ -1203,32 +1203,35 @@ export interface MergeWorkerResult {
 /**
  * Online review verify worker output (#600 / #940).
  *
- * The worker owns per-finding judgment AND GitHub side effects (reply / resolve /
- * deferred issue). After side effects succeed it self-reports judge disposition
- * via {@link converged} + optional {@link terminalState}; the host routes only on
- * that three-state mapping (`converged | continue | escalate`) and never on
- * findings counts (#934 ID-012). Cargo fields remain opaque diagnostics / fixer
- * landing data.
+ * The worker owns per-finding judgment and should execute GitHub side effects
+ * (reply / resolve / deferred) before self-reporting. The host still applies
+ * cargo plan fields as a fail-safe applicator ({@link threadReplies} /
+ * {@link threadsToResolve} / {@link deferredIssueUrls}) before accepting a
+ * disposition as mergeable — effects must land even when the worker only emits
+ * the plan. Host routes on three-state disposition + CI, never on findings
+ * counts (#934 ID-012).
  */
 export interface VerifyResult {
   readonly kind: "verify";
   /**
    * Judge green (converged). Combined with host CI check-runs for mergeability;
    * `false` is the continue disposition unless {@link terminalState} escalates.
+   * Worker must not set this until reply/resolve/deferred side effects succeed
+   * (or the host fail-safe applicator will apply remaining plan cargo).
    */
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
    * Identity keys carried through as data for the verify worker to use when
-   * reporting which fix-marked findings it evaluated.
+   * reporting which fix-marked findings it evaluated (fixer landing).
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
-  /** Thread IDs resolved by the worker after a fresh re-check confirms the fix. */
+  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
   readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (worker-populated). */
+  /** Tracked issue URLs created for deferred findings (runner-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
   /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;

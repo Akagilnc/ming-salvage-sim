@@ -50,7 +50,11 @@ class FakeFamilyBackend implements FamilyBackend {
       childHead: `child-head-${child.childIssue}`,
     };
   }
-  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this #293
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam
   // no-conflict test merges cleanly and never reaches it (the conflict path has
   // its own coverage in merger-conflict.test.ts), so the fake omits it.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {

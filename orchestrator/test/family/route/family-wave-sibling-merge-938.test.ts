@@ -690,6 +690,17 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(mergerSrc).not.toMatch(/for\s*\(\s*let\s+attempt/);
     // Deleted: missing-resolver fake business exit.
     expect(mergerSrc).not.toMatch(/no resolveMergeConflict resolver/);
+    // #934 ID-010 / #938: required seam — no optional `?` + non-null `!` call.
+    expect(mergerSrc).toMatch(/backend\.resolveMergeConflict\s*\(/);
+    expect(mergerSrc).not.toMatch(/backend\.resolveMergeConflict!\s*\(/);
+    const typesSrc = readFileSync(
+      join(import.meta.dirname, "../../../src/family/types.ts"),
+      "utf8",
+    );
+    expect(typesSrc).toMatch(
+      /resolveMergeConflict\s*\(\s*req:\s*ConflictResolveRequest\s*\)\s*:\s*Promise\s*<\s*MergeResult\s*>/,
+    );
+    expect(typesSrc).not.toMatch(/resolveMergeConflict\?\s*\(/);
     // Deleted: startup whole-family cycle guard + rethrow-first + still-conflicted host court.
     expect(runnerSrc).not.toMatch(/assertAcyclic\(epic\.children\)/);
     expect(runnerSrc).not.toMatch(/firstRejected/);

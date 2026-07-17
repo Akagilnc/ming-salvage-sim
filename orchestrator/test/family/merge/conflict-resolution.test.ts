@@ -16,7 +16,7 @@
  *   - the merged ledger entry is written ONLY AFTER a clean OR an LLM-RESOLVED
  *     merge lands (ADR 0022 decision 5 ordering preserved). If resolution itself
  *     fails (throws, OR returns still-conflicted), the ledger is NOT written and
- *     the failure is surfaced — not swallowed. The resolver seam is OPTIONAL: a
+ *     the failure is surfaced — not swallowed. The resolver seam is required (#934 ID-010 / #938).
  *     conflict on a backend that does not implement it fails loud too.
  *
  * Acceptance evidence:
@@ -140,14 +140,18 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     // (no-conflict) deterministic merge must NOT leak a false LLM-resolved signal
     // downstream — the merger is the sole source of truth for the flag.
     class FlagStampingFamilyBackend implements FamilyBackend {
-  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
-    return { ok: true };
-  }
+      async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+        return { ok: true };
+      }
 
       readonly appended: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
         return { familyHead: `merged-${child.childIssue}`, conflictResolvedByLlm: true };
       }
+      async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+        throw new Error("resolveMergeConflict not used in this test");
+      }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.appended.push(entry);
       }

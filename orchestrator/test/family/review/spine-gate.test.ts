@@ -128,6 +128,10 @@ class CapableFamilyBackend implements FamilyBackend {
     this.liveHead = `+${child.childIssue}`;
     return { familyHead: this.liveHead };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -667,6 +671,10 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
       async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `+${c.childIssue}` };
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }
