@@ -37,6 +37,7 @@ import {
   recordFamilyEscalated,
 } from "../../../src/family/ledger.js";
 import { runFamily } from "../../../src/family/runner.js";
+import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyEpic,
@@ -51,7 +52,7 @@ import {
   type ResolvedModelRoute,
 } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
-import { terminateSpawnedChild } from "../../../src/workerMonitor.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { PrReviewSnapshot } from "../../../src/botPolling.js";
 import type {
   Backend,
@@ -522,6 +523,98 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(fetchCalls).toBe(1 + LANDING_CI_FETCH_FAILURE_LIMIT);
   });
 
+  it("NEGATIVE Std R2 S1: repeated mid-loop pollSnapshot failures park as decision_gate", async () => {
+    let pollCalls = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "OPEN",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+        executeMerge: () => {
+          throw new Error("must not merge while poll is dead");
+        },
+        pollSnapshot: async () => {
+          pollCalls += 1;
+          // First poll enters CI-pending loop; subsequent polls die — pre-fix
+          // would throw out of band instead of typed decision_gate.
+          if (pollCalls === 1) return PENDING_CI_SNAPSHOT;
+          throw new Error("gh poll auth dead");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stopSummary?.summary).toMatch(/poll failed repeatedly/i);
+    // initial success + LANDING_CI_FETCH_FAILURE_LIMIT consecutive mid-loop failures
+    expect(pollCalls).toBe(1 + LANDING_CI_FETCH_FAILURE_LIMIT);
+  });
+
+  it("NEGATIVE Std R2 S1: repeated initial pollSnapshot failures park as decision_gate", async () => {
+    let pollCalls = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "OPEN",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+        executeMerge: () => {
+          throw new Error("must not merge while poll is dead");
+        },
+        pollSnapshot: async () => {
+          pollCalls += 1;
+          throw new Error("gh poll auth dead from the start");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stopSummary?.summary).toMatch(/poll failed repeatedly/i);
+    expect(pollCalls).toBe(LANDING_CI_FETCH_FAILURE_LIMIT);
+  });
+
 });
 
 describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authority)", () => {
@@ -757,6 +850,122 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
       escalation: { escalationKind: "decision" },
     });
   });
+
+  it("POSITIVE: runVerifyCmr fresh final-barrier landing decision_gate writes escalated (not aborted-only)", async () => {
+    // Mirror resume POSITIVE, but through the live fresh author: final barrier
+    // records review_loop_converged then runLandingAction parks → must durable
+    // recordFamilyEscalated(decision), not aborted-only.
+    class FreshParkFamilyBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      head = "family-base-941";
+      resolveLandingLiveHooks() {
+        return {
+          fetchState: () => ({
+            prNumber: 941,
+            prUrl: "pr://family/941-landing",
+            state: "OPEN",
+            headOid: "family-base-941",
+            headRefName: "family/epic-941",
+            mergeStateStatus: "BLOCKED",
+          }),
+          executeMerge: () => {
+            throw new Error("must not merge when ruleset blocked");
+          },
+          pollSnapshot: async () => BASE_SNAPSHOT,
+        };
+      }
+      async mergeChildIntoFamilyBase(
+        child: MergeRequest,
+      ): Promise<{ familyHead: string }> {
+        this.head = `+${child.childIssue}`;
+        return { familyHead: this.head };
+      }
+      async resolveMergeConflict(): Promise<never> {
+        throw new Error("resolveMergeConflict not used in this test");
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return this.head;
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: "family/epic-941",
+              status: "pr_opened",
+              pr: "pr://family/941-landing",
+              prHead: this.head,
+            },
+          };
+        }
+        if (spec.kind === "landing") {
+          return {
+            kind: "completed",
+            output: { kind: "landing", released: true },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        throw new Error(`unexpected ${spec.kind}`);
+      }
+    }
+
+    const familyBackend = new FreshParkFamilyBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/epic-941",
+      familyBackend,
+      familyHeadAfter: "family-base-941",
+    });
+
+    // Decision park: ok:false without stage-named failedStatus.
+    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result.failedStatus).toBeUndefined();
+
+    // Fresh path itself authored review_loop_converged (not pre-seeded).
+    expect(
+      familyBackend.ledger.some(
+        (e) =>
+          e.status === "review_loop_converged" &&
+          e.event === "review_loop_converged",
+      ),
+    ).toBe(true);
+
+    const escalated = familyBackend.ledger.filter(
+      (e) => e.status === "escalated" && e.event === "escalated",
+    );
+    expect(escalated).toHaveLength(1);
+    expect(escalated[0]).toMatchObject({
+      escalationKind: "decision",
+      phase: "final",
+    });
+    // Must not leave only an aborted park that familyEscalationState cannot see.
+    const abortedParks = familyBackend.ledger.filter(
+      (e) =>
+        e.status === "aborted" &&
+        e.stopSummary?.reason === "decision_gate_park",
+    );
+    expect(abortedParks).toHaveLength(0);
+    expect(familyEscalationState(familyBackend.ledger)).toMatchObject({
+      escalation: { escalationKind: "decision" },
+    });
+  });
 });
 
 describe("#941 public driver — ID-015 cleanup already-gone", () => {
@@ -908,10 +1117,8 @@ describe("#941 unified worker dispatch — ID-004 / ID-006 still hold", () => {
 
   // Export smoke only — do not claim ID-006 ownership; continuous terminate-on-
   // handle for landing is covered by shared monitored dispatch court elsewhere.
-  it("smoke: terminateSpawnedChild export remains available", () => {
-    expect(typeof terminateSpawnedChild).toBe("function");
-    expect(terminateSpawnedChild.name).toBe("terminateSpawnedChild");
-  });
+  // N1: hollow terminateSpawnedChild typeof pin deleted — real ID-006 proof is
+  // monitored-dispatch ownership elsewhere, not a second export smoke here.
 
   it("smoke: landingWorkerSpec S12 seat + local withMechanicalRetry seam", async () => {
     const spec = landingWorkerSpec();

@@ -100,7 +100,11 @@ export function classifyLandingActionResult(
     : { kind: "hard_fail", stopSummary };
 }
 
-/** Consecutive mid-loop `fetchState` failures before landing parks (Std S4). */
+/**
+ * Consecutive mid-loop live I/O failures before landing parks (Std S4 / R2 S1).
+ * Covers both `fetchState` and `pollSnapshot` / `pollOnce` — auth/API death
+ * must not keep-prior forever or escape as an uncaught throw.
+ */
 export const LANDING_CI_FETCH_FAILURE_LIMIT = 3;
 
 /** Injectable live GitHub/git surface for tests — production uses gh defaults. */
@@ -383,11 +387,43 @@ export async function runLandingAction(
         });
       };
 
-      let readiness = assessMergeReadiness(live, await pollOnce());
-      // Std S4: repeated mid-loop fetchState failures → decision_gate (not
-      // infinite keep-prior on stale OPEN+ci_pending after auth/API death).
+      // Std S4 / R2 S1: repeated live I/O failures (fetchState OR pollOnce)
+      // → decision_gate. Do not infinite keep-prior or throw out of band on
+      // auth/API death while OPEN+ci_pending. Initial poll fails closed the
+      // same way (retry interval until consecutive limit).
       let consecutiveFetchFailures = 0;
-      while (!readiness.ready) {
+      let consecutivePollFailures = 0;
+      let snapshot: PrReviewSnapshot | undefined;
+      let readiness: ReturnType<typeof assessMergeReadiness> | undefined;
+      while (true) {
+        try {
+          snapshot = await pollOnce();
+          consecutivePollFailures = 0;
+        } catch (err) {
+          consecutivePollFailures += 1;
+          if (consecutivePollFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
+            const detail = err instanceof Error ? err.message : String(err);
+            return {
+              ok: false,
+              terminalState: "decision_gate",
+              stopSummary: decisionGateParkStopSummary({
+                summary: `landing PR review poll failed repeatedly during CI readiness: ${detail}`,
+                repairHint:
+                  "restore gh/auth connectivity or answer the decision gate, then re-enter landing",
+              }),
+            };
+          }
+          if (snapshot === undefined) {
+            // No prior snapshot yet — blip then re-poll (same limit as mid-loop).
+            await sleepPendingCiPollInterval();
+            continue;
+          }
+          /* keep prior snapshot for a single/transient blip */
+        }
+
+        readiness = assessMergeReadiness(live, snapshot!);
+        if (readiness.ready) break;
+
         const pendingOnly =
           readiness.blockers.length > 0 &&
           readiness.blockers.every((b) => b === "ci_pending");
@@ -433,7 +469,6 @@ export async function runLandingAction(
           };
           break;
         }
-        readiness = assessMergeReadiness(live, await pollOnce());
       }
 
       if (mergeRecord === undefined) {
