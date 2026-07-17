@@ -259,8 +259,10 @@ export interface FindingDispositionEvidence {
 }
 
 /**
- * Ledger findings-store row. Status tokens are single-sourced in
- * {@link FindingStoreStatus} (`findingsStateStore.ts`) — do not redeclare.
+ * Ledger findings-store row (sole row shape for store write-point flips).
+ * Status tokens single-sourced in {@link FindingStoreStatus}
+ * (`findingsStateStore.ts`); constructed via `recordFindingStoreFlip` —
+ * do not redeclare a parallel store-record type.
  */
 export interface FindingDisposition {
   readonly identityKey: string;

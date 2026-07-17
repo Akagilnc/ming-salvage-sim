@@ -234,8 +234,8 @@ describe("#930 pure family judge closure", () => {
     expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
     expect(closure.blocking).toEqual([live]);
     expect(closure.blockingFindingCount).toBe(1);
-    expect(closure.killDispositions).toHaveLength(1);
-    expect(closure.killDispositions[0]?.status).toBe("refuted");
+    expect(closure.terminalDispositions).toHaveLength(1);
+    expect(closure.terminalDispositions[0]?.status).toBe("refuted");
   });
 
   it("escalate → escalate action with reason/diagnosis", () => {
