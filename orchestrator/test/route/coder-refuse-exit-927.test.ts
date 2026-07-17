@@ -672,4 +672,3 @@ describe("#927 AC: S4 dissolved — fixer refuse second gate still reachable", (
     expect(rebuilt.refuseRecords?.[0]?.reason).toBe("over_defense");
   });
 });
-
