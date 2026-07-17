@@ -582,7 +582,12 @@ export function relaySlotForSingleSliceWallStep(
  * fallbacks apply only when the step is not an explicit wall role.
  */
 export function familyRelaySlotsForWall(opts: {
-  readonly phase: "wave" | "final" | "online_review" | "merge";
+  readonly phase:
+    | "wave"
+    | "correctness_checkpoint"
+    | "final"
+    | "online_review"
+    | "merge";
   readonly wallStep: StepId;
   readonly cmrPass?: "completeness" | "correctness";
 }): ReadonlyArray<ModelRouteSlot> {
@@ -600,7 +605,15 @@ export function familyRelaySlotsForWall(opts: {
   }
   if (step === "S5") return ["coderFix"];
   if (step === "S7") return ["ship"];
-  if (step === "S9") return ["verify"];
+  if (step === "S9") {
+    // Residual / legacy walls may still stamp S9 for IC checkpoint; do not
+    // rewrite the verify slot when the phase is the correctness court.
+    if (opts.phase === "correctness_checkpoint") {
+      if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
+      return ["cmrCorrectness"];
+    }
+    return ["verify"];
+  }
   if (step === "S10") return ["fixer"];
   if (step === "S12") return ["landing"];
   // Explicit wall roles above. Phase fallbacks never rewrite ship for
@@ -608,6 +621,8 @@ export function familyRelaySlotsForWall(opts: {
   if (opts.phase === "online_review") return ["verify"];
   if (opts.phase === "merge") return ["merger"];
   if (opts.phase === "wave") return ["verify"];
+  // #961 incremental IC checkpoint — correctness court only.
+  if (opts.phase === "correctness_checkpoint") return ["cmrCorrectness"];
   // final with ambiguous step — cover primary final consume slots
   return ["cmrCompleteness", "ship"];
 }

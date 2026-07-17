@@ -152,6 +152,7 @@ class PersistCoderBackend implements Backend {
           kind: "reviewer",
           findings,
           findingsCount,
+          fixPacketBody: "fixture residual authored body",
         },
         sessionId: `sess-review-${this.reviewCount}`,
       };
@@ -170,7 +171,7 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
   it("S2 is single-iter fresh; S5 is single-iter resume of the S2 session", async () => {
     const backend = new PersistCoderBackend();
     const result = await runOrchestrator({ issueNumber: 924, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s2Idx = backend.specs.findIndex((s) => s.id === "S2");
     const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
@@ -225,7 +226,12 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
             ];
             return {
               kind: "completed",
-              output: { kind: "reviewer", findings, findingsCount: 1 },
+              output: {
+                kind: "reviewer",
+                findings,
+                findingsCount: 1,
+                fixPacketBody: "fixture residual authored body",
+              },
               sessionId: `sess-review-${this.reviews}`,
             };
           }
@@ -241,7 +247,7 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
 
     const backend = new TwoFixRoundsBackend();
     const result = await runOrchestrator({ issueNumber: 924, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s5Resumes = backend.resumeSessionCalls.filter(([step]) => step === "S5");
     expect(s5Resumes.length).toBeGreaterThanOrEqual(2);

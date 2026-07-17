@@ -316,7 +316,7 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     const { backend, clone } = captured!;
 
     // ── 1. honest success: every child merged, the run is success ──────────────
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.map((c) => c.issue).sort()).toEqual([11, 12, 13]);
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
 
@@ -364,10 +364,21 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     // inline host PR path — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
-    expect(backend.cmrCalls).toEqual([
-      { familyBase, cmrPass: "completeness" },
-      { familyBase, cmrPass: "correctness" },
+    // #961 / #982: final barrier must be completeness then correctness in order
+    // (checkpoint-only green must not satisfy final court ordering via .some()).
+    const passes = backend.cmrCalls.map((c) => c.cmrPass);
+    expect(passes).toContain("completeness");
+    expect(passes).toContain("correctness");
+    const finalCompletenessIdx = passes.lastIndexOf("completeness");
+    const finalCorrectnessIdx = passes.lastIndexOf("correctness");
+    expect(finalCompletenessIdx).toBeGreaterThanOrEqual(0);
+    expect(finalCorrectnessIdx).toBeGreaterThan(finalCompletenessIdx);
+    // Trailing final pair is completeness → correctness.
+    expect(passes.slice(finalCompletenessIdx, finalCompletenessIdx + 2)).toEqual([
+      "completeness",
+      "correctness",
     ]);
+    expect(backend.cmrCalls.every((c) => c.familyBase === familyBase)).toBe(true);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
   });
@@ -481,7 +492,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
         }),
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     // Fail closed on parse, not installDeps pseudo-red (#934 ID-011).
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /parse package\.json|failed to parse/i,
@@ -527,7 +538,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
           verifyCwd,
         }),
     });
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /scripts.*must be an object/i,
     );
@@ -584,7 +595,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
 
     // Legal empty command set after successful read: verify does not fail, and
     // the rest of the production final barrier can complete (#934 ID-011).
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend?.shipCalls).toEqual([familyBase]);
   });
 });

@@ -92,6 +92,7 @@ import type {
   FamilyRunResult,
   ReconcileGit,
 } from "./family/types.js";
+import { failedFamilyResult } from "./family/types.js";
 
 // ════════════════════════════════════════════════════════════════════════════
 // PURE epic-assembly logic (unit-tested without live GitHub)
@@ -1051,12 +1052,7 @@ export function admissionSkippedFromLedger(
   return out;
 }
 
-/**
- * Current-schema terminal replay for a resident family ledger (ID-005).
- * Returns a FamilyRunResult when the durable scene is already terminal
- * (completed cleanup, or unresolved escalation park/fail). Non-terminal
- * resident state returns undefined so admission + spine resume continue.
- */
+/** Current-schema terminal replay (ID-005); undefined when non-terminal. */
 export function planFamilyTerminalReplay(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   familyBase: string,
@@ -1099,7 +1095,7 @@ export function planFamilyTerminalReplay(
       ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
     };
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       ...(familyHead !== undefined ? { familyHead } : {}),
       stopSummary: {
@@ -1147,26 +1143,34 @@ export function planFamilyTerminalReplay(
           sources: { actualFamilyHead: "family escalated ledger row" },
         }
       : undefined;
-  return {
-    status: "escalated",
+  const common = {
     familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
     escalation: { reason, diagnosis },
-    stopSummary: decisionGatePark
-      ? decisionGateParkStopSummary({
-          summary: reason,
-          repairHint:
-            "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
-          ...(heads !== undefined ? { heads } : {}),
-        })
-      : infraFailureStopSummary({
-          summary: reason,
-          repairHint:
-            "inspect the family ledger escalation entry and repair before rerun",
-          ...(heads !== undefined ? { heads } : {}),
-        }),
     children,
-  };
+  } as const;
+  if (decisionGatePark) {
+    return {
+      status: "parked" as const,
+      ...common,
+      stopSummary: decisionGateParkStopSummary({
+        summary: reason,
+        repairHint:
+          "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
+        ...(heads !== undefined ? { heads } : {}),
+      }),
+    };
+  }
+  return failedFamilyResult({
+    cause: "runner_internal_error",
+    ...common,
+    stopSummary: infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "inspect the family ledger escalation entry and repair before rerun",
+      ...(heads !== undefined ? { heads } : {}),
+    }),
+  });
 }
 
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
@@ -1189,8 +1193,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
- *   family base HEAD + the honest run status (success / stage failures /
- *   incomplete / escalated — #922 real names, not the old verify_failed mash).
+ *   family base HEAD + public status completed|parked|failed (#942 / ID-001).
+ *   Stage diagnostics stay on stopSummary / cause, never as public status.
  */
 export async function runFamilyDriver(
   options: FamilyDriverOptions,
@@ -1217,8 +1221,8 @@ export async function runFamilyDriver(
     clonePath: familyClonePath,
   });
   if (familyScene.kind === "corrupted") {
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "resume_state_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: "resume state invalid",
@@ -1230,7 +1234,7 @@ export async function runFamilyDriver(
           "repair or clear the resident family ledger/worksite before re-entry",
       }),
       children: [],
-    };
+    });
   }
   if (familyScene.kind === "resident") {
     const terminal = planFamilyTerminalReplay(
@@ -1247,8 +1251,8 @@ export async function runFamilyDriver(
   const admitted = admitRouteFromEnv();
   if (admitted.kind === "stop") {
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "route_config_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1260,7 +1264,7 @@ export async function runFamilyDriver(
           "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
       }),
       children: [],
-    };
+    });
   }
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
@@ -1277,7 +1281,7 @@ export async function runFamilyDriver(
         `root epic #${options.epicIssue} is blocked by open upstream issue(s): ` +
         err.openBlockers.map((n) => `#${n}`).join(", ");
       return {
-        status: "escalated",
+        status: "parked",
         familyBase: options.familyBase,
         escalation: { reason: err.message, diagnosis },
         stopSummary: decisionGateParkStopSummary({
@@ -1294,7 +1298,7 @@ export async function runFamilyDriver(
     // issue_metadata_unavailable (deterministic bad data / exhausted durable).
     if (isGithubAuthFailure(err)) {
       return {
-        status: "escalated",
+        status: "parked",
         familyBase: options.familyBase,
         escalation: {
           reason: "GitHub authentication required",
@@ -1308,8 +1312,10 @@ export async function runFamilyDriver(
         children: [],
       };
     }
-    return {
-      status: "escalated",
+    // #942 / #934 ID-001: metadata read failure is issue_metadata_unavailable,
+    // not coder_rec_invalid (staffing/route mark class).
+    return failedFamilyResult({
+      cause: "issue_metadata_unavailable",
       familyBase: options.familyBase,
       escalation: { reason: "issue metadata unavailable", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1317,14 +1323,14 @@ export async function runFamilyDriver(
         repairHint: "repair GitHub metadata access and rerun",
       }),
       children: [],
-    };
+    });
   }
   // #934 ID-002 / ID-003: all-filtered is unconditional completed/0 with full
   // skip inventory. Parent is not a planned runnable slice on this path — do
   // not gate success on parent Coder-Rec validity or worksite creation.
   if (epic.children.length === 0) {
     return {
-      status: "success",
+      status: "completed",
       familyBase: options.familyBase,
       stopSummary: {
         reason: "already_done",
@@ -1379,8 +1385,8 @@ export async function runFamilyDriver(
   }
   if (coderRecErrors.length > 0) {
     const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1391,15 +1397,15 @@ export async function runFamilyDriver(
       ...(epic.admissionSkipped !== undefined
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-    };
+    });
   }
   // All planned issues admitted — parent is ready (errors would have returned).
   if (parentCoderRec.kind !== "ready") {
     // Unreachable: empty errors + parent stop is contradictory, but keep the
     // exhaustiveness net for the type checker.
     const diagnosis = parentCoderRec.escalation.diagnosis;
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1407,7 +1413,7 @@ export async function runFamilyDriver(
         repairHint: "repair the owner-authored Coder-Rec before rerun",
       }),
       children: [],
-    };
+    });
   }
   const coderRec = parentCoderRec;
 
@@ -1536,8 +1542,10 @@ function routeSmokeFailureResult(
   options: Pick<FamilyDriverOptions, "familyBase">,
   escalation: { readonly reason: string; readonly diagnosis: string },
 ): FamilyRunResult {
-  return {
-    status: "escalated",
+  return failedFamilyResult({
+    // #942 public cause: same smoke-stop as family/single-slice runners
+    // (not worktree_prepare_failed — PR #982 C2).
+    cause: "route_smoke_failed",
     familyBase: options.familyBase,
     escalation,
     stopSummary: infraFailureStopSummary({
@@ -1545,7 +1553,7 @@ function routeSmokeFailureResult(
       repairHint: "repair the selected model×pipe smoke before rerun",
     }),
     children: [],
-  };
+  });
 }
 
 /**
@@ -1570,18 +1578,18 @@ export function resolveImageTag(envTag: string | undefined): string {
   return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
 }
 
-// #929 — re-export the pure exit-code map so launchers that only import
-// familyDriver can shell process.exit(map(result.status)) without a second import.
+// Public exit map re-export for launchers that only import familyDriver (#942).
 export {
-  TERMINAL_EXIT_CODES,
-  TERMINAL_EXIT_STATUSES,
-  exitCodeForTerminal,
+  PUBLIC_EXIT_CODES,
+  PUBLIC_RUN_RESULTS,
+  exitCodeForPublicResult,
   exitProcessForFamilyRun,
   familyDriverExitCode,
-  isTerminalExitStatus,
+  isPublicRunResult,
+  publicResultExitCode,
   runResultExitCode,
-} from "./terminalExitCode.js";
-export type { TerminalExitStatus } from "./terminalExitCode.js";
+} from "./publicResult.js";
+export type { PublicRunResult } from "./publicResult.js";
 
 /**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the

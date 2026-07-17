@@ -86,7 +86,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
 
     // The run completes from the resumed point.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.branch).toBe(WORKTREE.branch);
   });
 
@@ -121,7 +121,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -138,7 +138,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
@@ -164,7 +164,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
@@ -186,7 +186,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
         },
         {
           step: "S8",
-          handoffStatus: "error",
+          handoffStatus: "failed",
           stopSummary: {
             reason: "infra_failure",
             summary:
@@ -204,7 +204,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
@@ -222,7 +222,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -240,7 +240,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.calls).not.toContain(
       `countCommitsBetween(${beforeFixHead}, ${afterFixHead})`,
     );
@@ -269,7 +269,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
@@ -288,7 +288,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       ledger: [
         { ...entry("S0"), branchHEAD: beforeBuildHead },
         { ...entry("S1"), branchHEAD: beforeBuildHead },
-        { ...s8("error"), branchHEAD: afterBuildHead },
+        { ...s8("failed"), branchHEAD: afterBuildHead },
         {
           step: "S2",
           sessionId: "session-s2-sha256-protocol-failed",
@@ -302,7 +302,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
@@ -323,7 +323,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           ts: "2026-07-02T00:00:00.000Z",
         },
         {
-          ...s8("error"),
+          ...s8("failed"),
           branchHEAD: afterBuildHead,
           stopSummary: {
             reason: "contract_drift",
@@ -336,7 +336,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
@@ -371,7 +371,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toHaveLength(0);
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
@@ -411,7 +411,7 @@ describe("#824 durable mechanical redispatch budget", () => {
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(backend.runStepIds).toEqual(["S2"]);
     expect(
       backend.ledgerWrites.filter(
@@ -442,7 +442,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
 
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 },
+      output: { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
     })).toEqual({ kind: "next", step: "S5" });
 
     const backend = new ResumeBackend({
@@ -452,14 +452,14 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.runStepIds[0]).toBe("S5");
   });
 
@@ -471,7 +471,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", { kind: "judge", status: "converged" }),
@@ -487,7 +487,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toContain(
       "review/fix loop made no progress",
     );
@@ -516,7 +516,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     // Resumed to local handoff purely from ledger truth.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
@@ -533,7 +533,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S7"),
-        s8("success"),
+        s8("completed"),
       ],
     };
     const backend = new ResumeBackend(resumeState);
@@ -544,7 +544,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.runStepIds).toEqual([]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     // The completed run reports success against the resident branch.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.branch).toBe(WORKTREE.branch);
   });
 
@@ -562,14 +562,14 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: false, commitsAdded: 0 }),
-        s8("error"),
+        s8("failed"),
       ],
     };
     const backend = new ResumeBackend(resumeState);
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.branch).toBeUndefined();
     expect(result.errorPackage).toBeDefined();
     // No agent steps re-run; this is a pure status report.
@@ -594,7 +594,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.runStepIds).toContain("S3");
     expect(backend.runStepIds).not.toContain("S2");
   });
@@ -617,7 +617,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("a terminal-status resume reports the finished run without mutating its worktree", async () => {
@@ -630,13 +630,13 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S7"),
-        s8("success"),
+        s8("completed"),
       ],
     };
     const backend = new ResumeBackend(resumeState);
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });

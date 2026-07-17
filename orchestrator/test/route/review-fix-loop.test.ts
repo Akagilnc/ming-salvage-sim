@@ -181,7 +181,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       action: "fix_now",
     };
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -190,10 +190,18 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
+    // ADR 0138 / #978: residual pass-through of authored body only (no invent).
+    // bare findings rows are no longer packed into the coder-fix landing.
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #925: live identity keys from the judge disposition table are the S5
     // control envelope (schema-fixed fields — not prose parsing).
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([
@@ -223,7 +231,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, followUpFinding], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [blocking, followUpFinding], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
@@ -233,7 +241,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
 });
@@ -284,13 +292,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       { kind: "completed", output: { kind: "judge", status: "converged" } },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(
       /omitted required disposition/i,
     );
@@ -304,7 +312,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -313,7 +321,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -325,7 +333,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("passes prior claimed-fixed findings and identity keys to the S6 fresh reviewer", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -334,10 +342,17 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
+    // ADR 0138: S6 landing may carry residual authored body (pass-through only).
+    expect(backend.landings[s6Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s6Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
+    expect(backend.landings[s6Index]?.blockingFindings).toBeUndefined();
     // #925: live keys from the continue disposition table are control envelope.
     expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([
       blockingKey,
@@ -368,7 +383,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
@@ -388,7 +403,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
               action: "fix_now",
             },
           ],
-          findingsCount: 1,
+          findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
             {
@@ -407,7 +422,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -429,11 +444,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     // Post-#877: no-progress court demolished; loop follows findings count until
     // the scripted backend falls through to empty findings and ships.
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -442,7 +457,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -452,7 +467,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -475,11 +490,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -488,7 +503,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -532,7 +547,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -550,7 +565,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { kind: "completed", output: { kind: "judge", status: "converged" } },
       ],
       undefined,
@@ -563,7 +578,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -581,11 +596,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -594,7 +609,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -638,7 +653,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -661,11 +676,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -674,7 +689,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -718,7 +733,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -742,7 +757,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -775,7 +790,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S6:verify"]);
   });
 
@@ -803,6 +818,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.initial,
           findingsCount: sample.initial.length,
+          fixPacketBody: "fixture residual authored body",
         },
       },
       {
@@ -811,6 +827,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.firstAfterFix,
           findingsCount: sample.firstAfterFix.length,
+          fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: sample.firstDispositions,
         },
       },
@@ -820,6 +837,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.secondAfterFix,
           findingsCount: sample.secondAfterFix.length,
+          fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: sample.secondDispositions,
         },
       },
@@ -831,7 +849,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage).toBeUndefined();
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -863,11 +881,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const firstNarrowedKey = findingIdentityKey(firstNarrowedFinding);
 
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [firstNarrowedFinding], findingsCount: 1,
+          kind: "reviewer", findings: [firstNarrowedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
           ],
@@ -876,7 +894,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [secondNarrowedFinding], findingsCount: 1,
+          kind: "reviewer", findings: [secondNarrowedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
             { identityKey: firstNarrowedKey, status: "still-active" },
@@ -888,7 +906,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
     // #877: no-progress court demolished; findings-count continues until empty fallback ships.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -918,12 +936,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "medium" }], findingsCount: 1,
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "medium" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -933,7 +951,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "low" }], findingsCount: 1,
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "low" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -950,7 +968,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     // #877: omitted still-active disposition prose does not reopen or no-progress-kill.
     // Secondary re-emitted findings keep the fix loop via findings-count until empty.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -985,13 +1003,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1002,14 +1020,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         continueFixingEvent,
       ],
     };
@@ -1018,7 +1036,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1034,7 +1052,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -1052,13 +1070,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1069,14 +1087,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
       ],
     };
     const backend = new RetryReviewBackend(
@@ -1101,7 +1119,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -1117,13 +1135,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1134,14 +1152,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1156,7 +1174,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1168,13 +1186,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1185,14 +1203,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1208,7 +1226,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1217,13 +1235,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { step: "S0" },
       { step: "S1" },
       { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-      { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       { step: "S4" },
       { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
       {
         step: "S6",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -1234,14 +1252,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         step: "S6",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
         },
       },
       { step: "S4" },
-      { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+      { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
     ] as const;
     const malformedEvents: PersistentLedgerFixture[] = [
       {
@@ -1264,7 +1282,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(backend.dispatched).toEqual([]);
     }
   });
@@ -1277,13 +1295,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1294,14 +1312,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "escalation_answered",
@@ -1315,7 +1333,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1329,7 +1347,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S2", output: { kind: "coder", committed: false, commitsAdded: 0 } },
         {
           step: "S8",
-          handoffStatus: "error",
+          handoffStatus: "failed",
           stopSummary: {
             reason: "contract_drift",
             summary: "persisted malformed coder output",
@@ -1342,11 +1360,70 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary).toMatchObject({
       reason: "contract_drift",
       summary: "persisted malformed coder output",
     });
+    expect(backend.dispatched).toEqual([]);
+  });
+
+  it("#982: S8(failed)+decision is terminal — answer does not reopen as answerable decision", async () => {
+    // failed is terminal ABI; only parked+decision reopens. An answer after a
+    // failed S8 must not re-enter the escalated step (no dispatch).
+    const resumeState: ResumeStateFixture = {
+      worktree: WORKTREE,
+      stateDir: "/resident/worktrees/.ledger-446-failed-decision",
+      ledger: [
+        { step: "S0" },
+        { step: "S1" },
+        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        {
+          step: "S3",
+          sessionId: "session-escalated",
+          output: {
+            kind: "judge",
+            status: "escalate",
+            reason: "product decision needed",
+            diagnosis: "needs owner call",
+            escalate: {
+              reason: "product decision needed",
+              diagnosis: "needs owner call",
+            },
+          },
+        },
+        {
+          step: "S8",
+          handoffStatus: "failed",
+          escalationKind: "decision",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "failed while writing decision park",
+            repairHint: "inspect S8 write path; do not reopen as answerable",
+          },
+        },
+        {
+          step: "S3",
+          event: "escalation_answered",
+          forStep: "S3",
+          answer: "ship the simpler option",
+          source: "human",
+        },
+      ],
+    };
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        },
+      ],
+      resumeState,
+    );
+
+    const result = await runOrchestrator({ issueNumber: 446, backend });
+
+    expect(result.status).toBe("failed");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1359,13 +1436,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1376,14 +1453,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
             },
           },
           { step: "S4" },
-          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
           {
             step: "S4",
             event: "escalation_answered",
@@ -1406,7 +1483,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
     }
   });
@@ -1420,20 +1497,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
             },
           },
           { step: "S4" },
-          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
           {
             step: "S4",
             event: "escalation_answered",
@@ -1448,7 +1525,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(backend.dispatched).toEqual([]);
     }
   });
@@ -1490,7 +1567,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         { step: "S4" },
         {
@@ -1500,7 +1577,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1515,7 +1592,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1523,7 +1600,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1546,7 +1623,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1570,7 +1647,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1579,7 +1656,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1593,14 +1670,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1623,7 +1700,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1648,7 +1725,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1657,7 +1734,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1671,14 +1748,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1701,7 +1778,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1726,7 +1803,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1735,7 +1812,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1749,14 +1826,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1779,7 +1856,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 });
@@ -1801,7 +1878,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
       ],
     };
@@ -1817,10 +1894,17 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
+    // ADR 0138: residual resume pass-through of authored body only (no invent).
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #899: resume still pass-through findings cargo; keys land at the writer.
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
@@ -1841,7 +1925,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1856,7 +1940,7 @@ describe("#369 runner resume/retry review fixes", () => {
             },
           },
         },
-        { step: "S8", handoffStatus: "escalate" },
+        { step: "S8", handoffStatus: "parked" },
         {
           step: "S5",
           event: "escalation_answered",
@@ -1878,14 +1962,18 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    // Resume rebuild may leave identity keys empty when replaying pre-#925
-    // ledger rows (keys derived at landing writer); cargo must still land.
-    expect(backend.landings[s5Index]?.blockingFindings?.length).toBe(1);
+    // ADR 0138: residual resume packet body is authored pass-through, not invent.
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
   it("#877/#925: resume after empty S6 (findingsCount=0) ships without re-dispatch", async () => {
@@ -1904,7 +1992,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         // #925: empty open-count / converged projects to S7 without S4.
         { step: "S6", output: { kind: "judge", status: "converged" } },
@@ -1914,7 +2002,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(
       /omitted required disposition/i,
     );
@@ -1938,7 +2026,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
@@ -1952,7 +2040,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2003,7 +2091,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
+          output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
         },
         { step: "S4", findingDispositions: [acceptedRiskDisposition] },
       ],
@@ -2027,7 +2115,7 @@ describe("#369 runner resume/retry review fixes", () => {
                 action: "fix_now",
               },
             ],
-            findingsCount: 1,
+            findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
               {
@@ -2048,7 +2136,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -2076,17 +2164,17 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S7" },
-        { step: "S8", handoffStatus: "success" },
+        { step: "S8", handoffStatus: "completed" },
       ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2131,7 +2219,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     // Process crash path: mechanical redispatch, not runner format court.
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
   });
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
@@ -2172,7 +2260,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process crash path only (not findings-schema court): mechanical budget then stop.
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
@@ -2296,12 +2384,16 @@ describe("#369 legacy S5 landing file", () => {
           source: "human",
         },
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:1|fix me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
-      blockingFindings: [finding],
+      // ADR 0138: bare findings packing deleted; body + keys + transport only.
+      fixPacketBody: "live: correctness|src/x.ts:1|fix me",
       blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
       escalationAnswer: {
         event: "escalation_answered",
@@ -2377,7 +2469,10 @@ describe("#369 legacy S5 landing file", () => {
         blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
         blockingFindingCount: 1,
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:2|mount me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(observedLanding).toEqual({
@@ -2454,7 +2549,7 @@ describe("#369 legacy S5 landing file", () => {
     );
 
     expect(observedLanding).toEqual({
-      blockingFindings: [finding],
+      // ADR 0138: bare blockingFindings packing deleted.
       blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
     });
     expect(observedMount).toEqual({

@@ -228,7 +228,7 @@ describe("#451 dogfood replay fixture", () => {
       expect(row?.sourceStopSummary, id).toMatchObject({ reason: "success" });
       expect(row?.sourceEvidence, id).toMatchObject({
         seam: "runner",
-        status: "success",
+        status: "completed",
         dispatched: expect.arrayContaining(["S5:coder", "S6:verify"]),
       });
     }
@@ -239,7 +239,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
-        status: "success",
+        status: "completed",
         courtDemolished: true,
       }),
     });
@@ -365,7 +365,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "reviewer_text_only_no_progress",
-        status: "success",
+        status: "completed",
         courtDemolished: true,
         implementationMovement: false,
       }),
@@ -378,7 +378,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "claimed_attempt_without_observable_progress",
-        status: "success",
+        status: "completed",
         courtDemolished: true,
         implementationMovement: false,
       }),
@@ -464,7 +464,7 @@ describe("#451 dogfood replay fixture", () => {
         declaredLegs: ["gpt-5.6-sol", "grok-4.5", "agy"],
         rejectedDefaultLeg: "opus",
         courtDemolished: true,
-        status: "success",
+        status: "completed",
       }),
     });
     expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
@@ -499,7 +499,7 @@ describe("#451 dogfood replay fixture", () => {
     expect(rowsById.get("376-closure-context-positive")?.sourceEvidence).toMatchObject({
       seam: "runner",
       mechanism: "s5_s6_closure_loop",
-      status: "success",
+      status: "completed",
       priorFindingStatus: "verified-closed",
       dispatched: expect.arrayContaining(["S2:coder", "S3:verify", "S5:coder", "S6:verify"]),
     });
@@ -564,7 +564,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr_provider_metadata",
         familyBase: "family/376-provider",
-        status: "success",
+        status: "completed",
       }),
     });
     expect(rowsById.get("433-provider-leg-skipped-strong-leg-pass")).toMatchObject({
@@ -574,7 +574,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr_provider_metadata",
         familyBase: "family/433-provider",
-        status: "success",
+        status: "completed",
       }),
     });
     expect(rowsById.get("376-closure-context-missing")).toMatchObject({
@@ -585,7 +585,7 @@ describe("#451 dogfood replay fixture", () => {
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "s6_missing_prior_context_survives",
-        status: "success",
+        status: "completed",
         closureContext: "missing_but_survived",
         courtDemolished: true,
       }),
@@ -604,7 +604,7 @@ describe("#451 dogfood replay fixture", () => {
         snapshotDualCourtDeleted: true,
         sourceKind: "live_worker_fetch",
         executableInstructionSourceAccepted: false,
-        status: "success",
+        status: "completed",
         dispatched: expect.arrayContaining(["S2:coder", "S3:verify"]),
       }),
     });

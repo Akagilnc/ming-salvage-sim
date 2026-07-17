@@ -78,11 +78,21 @@ function judgeGreenOutput(
  * #919 CR N3: live judge continue for dogfood blocking scripts.
  * Prefer this over residual kind:"cmr"+findingsCount (production residual is
  * unusableResidualOpenCountPaper only; court never continues from open-count).
+ *
+ * ADR 0138 / #978 CR nit: callers must pass explicit non-empty `fixPacketBody`.
+ * Never mint body from findings rows (no dual-path dogfood shortcut).
  */
 function judgeContinueOutput(
   findings: ReadonlyArray<Finding>,
   cargo: Record<string, unknown> = {},
 ): WorkerOutput {
+  const body = cargo.fixPacketBody;
+  if (typeof body !== "string" || body.length === 0 || body.trim().length === 0) {
+    throw new Error(
+      "dogfood judge continue requires explicit non-empty fixPacketBody " +
+        "(ADR 0138; no findings→body mint)",
+    );
+  }
   return {
     kind: "judge",
     status: "continue",
@@ -92,8 +102,39 @@ function judgeContinueOutput(
       action: "live" as const,
     })),
     ...cargo,
+    fixPacketBody: body,
   } as WorkerOutput;
 }
+
+/** Dogfood explicit packet body from a single finding (caller-authored, not mint). */
+function dogfoodFixPacketBody(finding: Finding): string {
+  return (
+    `live: ${finding.category}|${finding.location}|${finding.claim_quote}\n` +
+    `authority: dogfood explicit fixPacketBody (ADR 0138)\n` +
+    `boundary: assigned family only`
+  );
+}
+
+/** Residual open-count paper with explicit authored body (pass-through only). */
+function residualOpenReviewer(
+  findings: ReadonlyArray<Finding>,
+  findingsCount: number,
+  extra: Record<string, unknown> = {},
+): WorkerOutput {
+  const head = findings[0];
+  const fixPacketBody = head
+    ? dogfoodFixPacketBody(head)
+    : "dogfood residual open-count authored body (ADR 0138 pass-through)";
+  return {
+    kind: "reviewer",
+    findings: [...findings],
+    findingsCount,
+    // Mandatory body after ...extra so callers cannot override ADR 0138 cargo.
+    ...extra,
+    fixPacketBody,
+  } as WorkerOutput;
+}
+
 
 export type DogfoodReplayClassification =
   | "blocking"
@@ -252,6 +293,7 @@ async function familyClassificationScenario(input: {
           findings: [input.finding],
         })
       : judgeContinueOutput([input.finding], {
+          fixPacketBody: dogfoodFixPacketBody(input.finding),
           reason: "dogfood family CMR classification replay",
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
@@ -343,7 +385,7 @@ function ledgerEntry(
   step: SliceStepId,
   input?: {
     readonly output?: StepOutput;
-    readonly handoffStatus?: "success" | "escalate" | "error";
+    readonly handoffStatus?: "completed" | "parked" | "failed";
     readonly escalationKind?: "decision" | "failure";
     readonly event?: "escalation_answered" | "runner_bookkeeping";
     readonly forStep?: SliceStepId;
@@ -681,42 +723,29 @@ function noProgressDecisionLedger(
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S3", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
-      },
+      output: residualOpenReviewer(findings, findingsCount),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
+      output: residualOpenReviewer(findings, findingsCount, {
         priorFindingDispositions: dispositions,
-      },
+      }),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
-      output: {
-        kind: "reviewer",
-        findings,
-        // Explicit fixture declaration — not findings.length as a production rule.
-        findingsCount,
+      output: residualOpenReviewer(findings, findingsCount, {
         priorFindingDispositions: dispositions,
-      },
+      }),
     }),
     ledgerEntry("S4"),
     ledgerEntry("S8", {
-      handoffStatus: "escalate",
+      handoffStatus: "parked",
       escalationKind: "decision",
     }),
   ];
@@ -745,7 +774,7 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood runner answered-resume replay ended ${result.status}`);
   }
   return {
@@ -765,7 +794,7 @@ async function runnerModuleNotFoundReplay(): Promise<SeamReplay> {
     issueNumber: 440,
     backend: new ThrowingDogfoodSingleSliceBackend(),
   });
-  if (result.status !== "escalate" || result.stopSummary.reason !== "infra_failure") {
+  if (result.status !== "failed" || result.stopSummary.reason !== "infra_failure") {
     throw new Error(`dogfood runner module-not-found replay ended ${result.status}`);
   }
   return {
@@ -794,14 +823,12 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(
     undefined,
     [
-      { kind: "reviewer", findings: [originalFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [changedFinding], findingsCount: 1,
+      residualOpenReviewer([originalFinding], 1),
+      residualOpenReviewer([changedFinding], 1, {
         priorFindingDispositions: [
           { identityKey: originalKey, status: "verified-closed" },
         ],
-      },
+      }),
       { kind: "judge", status: "converged" },
     ],
     [
@@ -818,7 +845,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
     ],
   );
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood runner changed-shape replay ended ${result.status}`);
   }
   return {
@@ -863,19 +890,17 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
       }),
     ],
   }, [
-    {
-      kind: "reviewer",
-      findings: [siblingFinding], findingsCount: 1,
-        priorFindingDispositions: [
+    residualOpenReviewer([siblingFinding], 1, {
+      priorFindingDispositions: [
         { identityKey: targetKey, status: "verified-closed" },
         { identityKey: siblingKey, status: "still-active" },
       ],
-    },
+    }),
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
   // #877: no-progress court demolished; continue_fixing + findings-count ships
   // when the scripted sibling re-review falls through to empty findings.
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood runner targeted-reset replay ended ${result.status} after #877 court demolition`,
     );
@@ -906,7 +931,7 @@ async function runnerNoProgressReplay(input: {
   const result = await runOrchestrator({ issueNumber: 307, backend });
   // #877: runner no-progress disposition court demolished. Findings-count
   // continues until the scripted backend falls through to empty findings and ships.
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood runner no-progress replay ended ${result.status} after #877 court demolition`,
     );
@@ -947,7 +972,7 @@ async function runnerReviewerEscalationReplay(input: {
     },
   ]);
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "escalate") {
+  if (result.status !== "parked") {
     throw new Error(
       `dogfood runner disposition replay ${input.mechanism} ended ${result.status}`,
     );
@@ -991,7 +1016,7 @@ async function runnerInvalidEscalationAnswerReplay(): Promise<SeamReplay> {
     ],
   });
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "escalate") {
+  if (result.status !== "parked") {
     throw new Error(`dogfood invalid escalation-answer replay ended ${result.status}`);
   }
   return {
@@ -1145,6 +1170,7 @@ async function familyAttributionReplay(
     action: "fix_now",
   });
   const attributedContinue = judgeContinueOutput([attributedFinding], {
+    fixPacketBody: dogfoodFixPacketBody(attributedFinding),
     reason: "child attribution must stay local",
     successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
     claimedFixedFindingIdentityKeys: [],
@@ -1204,6 +1230,7 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: judgeContinueOutput([selfFixFinding], {
+      fixPacketBody: dogfoodFixPacketBody(selfFixFinding),
       reason:
         "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
@@ -1527,7 +1554,7 @@ async function familyAdmissionSkippedReplay(): Promise<SeamReplay> {
   });
   const skipped = result.stopSummary.metadata?.admissionSkipped?.[0];
   if (
-    result.status !== "success" ||
+    result.status !== "completed" ||
     result.stopSummary.reason !== "success" ||
     skipped?.issue !== 451
   ) {
@@ -1551,7 +1578,7 @@ async function runnerTrustBoundaryReplay(): Promise<SeamReplay> {
   // host path only uses lightweight meta (Coder-Rec body).
   const backend = new DogfoodSingleSliceBackend();
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "success" || result.stopSummary.reason !== "success") {
+  if (result.status !== "completed" || result.stopSummary.reason !== "success") {
     throw new Error(`dogfood trust-boundary replay ended ${result.status}`);
   }
   if (backend.dispatched.length === 0) {
@@ -1665,7 +1692,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       rejectedDefaultLeg,
       courtDemolished: true,
       dispatches: backend.dispatches,
-      status: "success",
+      status: "completed",
     },
   };
 }
@@ -1683,7 +1710,7 @@ async function routeFreezeReplay(): Promise<SeamReplay> {
     { ORCHESTRATOR_ROUTE: "codex-tight" },
     () => runOrchestrator({ issueNumber: 376, backend }),
   );
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood route freeze replay ended ${result.status}`);
   }
   if (!backend.dispatchedModels.includes("S3:opus")) {
@@ -1710,11 +1737,11 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   });
   const key = findingIdentityKey(closureFinding);
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
+    residualOpenReviewer([closureFinding], 1),
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood closure-positive replay ended ${result.status}`);
   }
   return {
@@ -1894,11 +1921,11 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
     location: "orchestrator/src/runner.ts:376",
   });
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
+    residualOpenReviewer([closureFinding], 1),
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood closure-context-missing replay ended ${result.status} after #877 court demolition`,
     );
@@ -1974,7 +2001,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
     sourceEvidence: {
       seam: "family_verify_cmr_pass_summary",
       mechanism: "zero_declaration_without_content_classification",
-      status: "success",
+      status: "completed",
       dispatches: backend.dispatches,
       runnerClassifiedFindingContent: false,
     },
@@ -2039,7 +2066,7 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
       }),
   );
   // Env asked for sonnet; preset keeps grok — run is not a tight-violation stop.
-  if (result.status === "escalate" && result.stopSummary.summary.includes("tight route violation")) {
+  if (result.status === "parked" && result.stopSummary.summary.includes("tight route violation")) {
     throw new Error(
       "dogfood startup route replay must not restaff from deleted CODER_MODEL env",
     );
@@ -2146,7 +2173,7 @@ async function providerStrongLegPassReplay(input: {
     sourceEvidence: {
       seam: "family_verify_cmr_provider_metadata",
       familyBase: input.familyBase,
-      status: "success",
+      status: "completed",
       routeName: "claude-tight",
       dispatches: backend.dispatches,
       successfulLegs: ["gpt-5.6-sol"],
@@ -2315,28 +2342,28 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "reviewer_text_only_no_progress",
     finding: textOnlyNoProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [textOnlyNoProgressFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [textOnlyNoProgressNarrowedFinding], findingsCount: 1,
+      residualOpenReviewer([textOnlyNoProgressFinding], 1),
+      residualOpenReviewer([textOnlyNoProgressNarrowedFinding], 1, {
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
         ],
-      },
-      {
-        kind: "reviewer",
-        findings: [
+      }),
+      residualOpenReviewer(
+        [
           {
             ...textOnlyNoProgressFinding,
             claim_quote: "changes cannot prove implementation progress",
             suggested_fix: "same finding with another wording-only review change",
           },
-        ], findingsCount: 1,
-        priorFindingDispositions: [
-          { identityKey: textOnlyNoProgressKey, status: "still-active" },
-          { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
         ],
-      },
+        1,
+        {
+          priorFindingDispositions: [
+            { identityKey: textOnlyNoProgressKey, status: "still-active" },
+            { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
+          ],
+        },
+      ),
     ],
   });
   const noObservableProgressFinding = runnerFinding({
@@ -2348,21 +2375,17 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "claimed_attempt_without_observable_progress",
     finding: noObservableProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [noObservableProgressFinding], findingsCount: 1 },
-      {
-        kind: "reviewer",
-        findings: [noObservableProgressFinding], findingsCount: 1,
+      residualOpenReviewer([noObservableProgressFinding], 1),
+      residualOpenReviewer([noObservableProgressFinding], 1, {
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
-      },
-      {
-        kind: "reviewer",
-        findings: [noObservableProgressFinding], findingsCount: 1,
+      }),
+      residualOpenReviewer([noObservableProgressFinding], 1, {
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
-      },
+      }),
     ],
   });
   const moduleDeclarationSource = await moduleDeclarationReplay();
@@ -2683,7 +2706,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: staleFamilyHeadStopSummary,
       sourceEvidence: {
         seam: "family",
-        status: "success",
+        status: "completed",
         finalCmrPass: "correctness",
         staleReportedHeadIgnored: true,
       },

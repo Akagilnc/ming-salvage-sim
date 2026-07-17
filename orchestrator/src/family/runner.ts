@@ -112,19 +112,20 @@ import {
   syncStopSummaryToStageFailure,
   type FamilyStageFailureStatus,
 } from "./familyTerminal.js";
-import type {
-  ChildSlice,
-  FamilyBackend,
-  FamilyChildDiagnostic,
-  FamilyChildEscalation,
-  FamilyChildResult,
-  FamilyLedgerEntry,
-  FamilyRunInput,
-  FamilyRunResult,
-  FamilyRunStatus,
-  IntegratedCmrPass,
+import {
+  failedFamilyResult,
+  type ChildSlice,
+  type FamilyBackend,
+  type FamilyChildDiagnostic,
+  type FamilyChildEscalation,
+  type FamilyChildResult,
+  type FamilyLedgerEntry,
+  type FamilyRunInput,
+  type FamilyRunResult,
+  type FamilyRunStatus,
+  type IntegratedCmrPass,
 } from "./types.js";
-import type { VerifyCmrPhase } from "./verifyCmr.js";
+import type { VerifyCmrPhase, VerifyCmrResult } from "./verifyCmr.js";
 
 function filled(value: string | undefined): string | undefined {
   if (value == null) return undefined;
@@ -223,8 +224,7 @@ type FamilyQuotaWallDecision =
 
 /** Family barrier / merge wall phases that share the park/relay machine. */
 export type FamilyQuotaWallPhase =
-  | "wave"
-  | "final"
+  | VerifyCmrPhase
   | "online_review"
   | "merge";
 
@@ -243,6 +243,11 @@ export function familyWallStepFromQuotaWait(opts: {
   if (opts.phase === "online_review") return "S9";
   if (opts.phase === "merge") return "S1";
   if (opts.phase === "wave") return "S9";
+  // #961 / #982: checkpoint is IC court, not ship — never fall through to S7.
+  // Prefer S3 (CMR wall) so familyRelaySlotsForWall + cmrPass rewrites
+  // cmrCorrectness, not verify. Bare S9 would hard-map to the verify slot and
+  // leave the quota-limited CMR slot unchanged on baton (Codex P2).
+  if (opts.phase === "correctness_checkpoint") return "S3";
   return "S7";
 }
 
@@ -284,7 +289,7 @@ async function decideFamilyQuotaWall(opts: {
     return {
       kind: "park",
       result: {
-        status: "escalated",
+        status: "parked",
         familyBase: opts.familyBase,
         familyHead: opts.familyHead,
         escalation: escalation ?? {
@@ -485,8 +490,9 @@ async function decideFamilyQuotaWall(opts: {
   // Identity / coder-only apply is hollow and must fail consumed-slot nails.
   // #934 ID-002 / R7 F2: single admit court ({@link admitRelayBaton}) — same
   // stop shape as single-slice (apply throw → typed stop; tight fail → stop).
-  // Spec N1 / OUT #942: keep stopSummary.reason = infra_failure until public
-  // ABI cutover; do not invent a parallel route_config_invalid token here.
+  // #942: public ABI is status completed|parked|failed only. stopSummary.reason
+  // stays a diagnostic token (infra_failure here) — not public ABI; do not invent
+  // a parallel route_config_invalid public cause on this path.
   const admitted = admitRelayBaton(
     opts.modelRoute,
     outcome.nextBaton,
@@ -674,6 +680,8 @@ function familyHeadMetadata(input: {
 
 function familyStopSummary(input: {
   readonly status: FamilyRunStatus;
+  /** Diagnostic stage token when status is failed from a barrier (#922 / #942). */
+  readonly stage?: FamilyStageFailureStatus;
   readonly failedPhase?: VerifyCmrPhase;
   readonly familyHead?: string;
   readonly headMetadata?: StopSummary["metadata"];
@@ -684,9 +692,8 @@ function familyStopSummary(input: {
   /**
    * B-class (#604 F2, ADR 0062 A/B分家): a HUMAN DECISION GATE parked this run
    * awaiting an answer (a child's own single-slice decision题). When true the
-   * `escalated`-status summary carries the `decision_gate_park` reason instead of
-   * the A-class `infra_failure` word — a park is answerable + resumable, not a
-   * failure to repair.
+   * parked summary carries the `decision_gate_park` reason instead of a
+   * failure word — a park is answerable + resumable, not a failure to repair.
    */
   readonly decisionGatePark?: boolean;
   readonly admissionSkipped?: ReadonlyArray<{
@@ -706,7 +713,7 @@ function familyStopSummary(input: {
       reportedFamilyHead: input.familyHead,
       actualFamilyHead: input.familyHead,
     });
-  if (input.status === "success") {
+  if (input.status === "completed") {
     const hasMetadata =
       metadata?.heads != null ||
       (input.admissionSkipped?.length ?? 0) > 0 ||
@@ -725,16 +732,19 @@ function familyStopSummary(input: {
         : undefined,
     );
   }
-  // #922 — stage failure status and stopSummary.reason share the same token.
-  if (isFamilyStageFailureStatus(input.status)) {
-    const synced = syncStopSummaryToStageFailure(
-      input.status,
-      input.barrierStopSummary,
-    );
+  // Stage diagnostic stopSummary when a barrier named the stage (public status is failed).
+  const stage =
+    input.stage ??
+    (input.barrierStopSummary !== undefined &&
+    isFamilyStageFailureStatus(input.barrierStopSummary.reason)
+      ? input.barrierStopSummary.reason
+      : undefined);
+  if (input.status === "failed" && stage !== undefined) {
+    const synced = syncStopSummaryToStageFailure(stage, input.barrierStopSummary);
     if (input.barrierStopSummary == null && input.failedPhase !== undefined) {
       return stageFailureStopSummary({
-        status: input.status,
-        summary: `family ${input.failedPhase} ${input.status.replace(/_failed$/, "")} barrier failed`,
+        status: stage,
+        summary: `family ${input.failedPhase} ${stage.replace(/_failed$/, "")} barrier failed`,
         repairHint: synced.repairHint,
         ...(metadata?.heads != null ? { metadata: { heads: metadata.heads } } : {}),
       });
@@ -747,20 +757,39 @@ function familyStopSummary(input: {
     }
     return synced;
   }
-  if (input.status === "incomplete") {
+  if (input.status === "failed") {
+// Explicit escalationReason owns summary over incomplete-children diagnostic.
+    if (
+      input.escalationReason !== undefined &&
+      input.escalationReason.trim().length > 0
+    ) {
+      return {
+        reason: "infra_failure",
+        summary: input.escalationReason,
+        repairHint: "inspect the family ledger and repair before rerun",
+        ...(metadata !== undefined ? { metadata } : {}),
+      };
+    }
     const blocked = input.children
       .filter((child) => child.status !== "merged" && child.status !== "already_done")
       .map((child) => `#${child.issue}:${child.status}`)
       .join(", ");
+    if (blocked.length > 0) {
+      return {
+        reason: "owning_issue_still_red",
+        summary: `family run failed; unmerged children: ${blocked}`,
+        repairHint: "repair or complete the listed child slices and rerun the family",
+      };
+    }
     return {
-      reason: "owning_issue_still_red",
-      summary: `family run is incomplete; unmerged children: ${blocked}`,
-      repairHint: "repair or complete the listed child slices and rerun the family",
+      reason: "infra_failure",
+      summary: "family run failed",
+      repairHint: "inspect the family ledger and repair before rerun",
+      ...(metadata !== undefined ? { metadata } : {}),
     };
   }
-  // B-class: a human decision gate parked the run (#604 F2). Answerable +
-  // resumable — never the A-class `infra_failure` word.
-  if (input.decisionGatePark === true) {
+  // parked (public) — answerable decision / intervention gate.
+  if (input.decisionGatePark === true || input.status === "parked") {
     return {
       reason: "decision_gate_park",
       summary: input.escalationReason ?? "family run parked on a decision gate",
@@ -771,7 +800,7 @@ function familyStopSummary(input: {
   }
   return {
     reason: "infra_failure",
-    summary: input.escalationReason ?? "family run escalated",
+    summary: input.escalationReason ?? "family run failed",
     repairHint: "inspect the family ledger escalation entry and repair before rerun",
     ...(metadata !== undefined ? { metadata } : {}),
   };
@@ -966,7 +995,7 @@ async function runChild(
       mergedBlockers: child.blockedBy.filter((b) => familyChildIssues.has(b)),
     },
   });
-  if (result.status === "success" && result.branch !== undefined) {
+  if (result.status === "completed" && result.branch !== undefined) {
     // The single-slice run succeeded and produced a reviewed branch — but it is
     // NOT merged yet (the spine's serial-merge step does that, then flips this to
     // "merged" once the merge commit lands — ADR 0022 decision 5). So runChild
@@ -974,11 +1003,10 @@ async function runChild(
     return { issue: child.issue, status: "ran", branch: result.branch };
   }
   // #604 slice 5 (A/B分家): a child that PARKED on a product/design DECISION题
-  // (`escalationKind:"decision"`) is `"escalated"`, NOT `"failed"` — an answerable
-  // pause the family can resume IN PLACE. Only the decision bucket parks; a
-  // `"failure"` escalate (infra / retries exhausted) and every other non-success
-  // outcome keep the current `"failed"` behaviour below.
-  if (result.status === "escalate") {
+  // (`escalationKind:"decision"`) is child-status `"escalated"`, NOT `"failed"` —
+  // an answerable pause the family can resume IN PLACE. Public single-slice
+  // status is `parked` (#942); only the decision bucket parks.
+  if (result.status === "parked") {
     const escalation = readChildDecisionEscalation(result.stepLedger);
     if (escalation !== undefined) {
       return { issue: child.issue, status: "escalated", escalation };
@@ -1165,7 +1193,7 @@ async function ensureLandingForResume(input: {
   );
   if (recorded.kind === "park") {
     return {
-      status: "escalated",
+      status: "parked",
       familyBase: input.familyBase,
       familyHead: input.familyHeadAfter,
       stopSummary: recorded.stopSummary,
@@ -1175,8 +1203,8 @@ async function ensureLandingForResume(input: {
         : {}),
     };
   }
-  return {
-    status: "merge_failed",
+  return failedFamilyResult({
+    cause: "landing_worker_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
     failedPhase: "final",
@@ -1185,7 +1213,7 @@ async function ensureLandingForResume(input: {
     ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
       : {}),
-  };
+  });
 }
 
 function latestVerifiedCmrHead(
@@ -1495,8 +1523,8 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "route_config_invalid",
       familyBase: input.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1512,7 +1540,7 @@ export async function runFamily(
       input.epic.admissionSkipped.length > 0
         ? { admissionSkipped: input.epic.admissionSkipped }
         : {}),
-    };
+    });
   }
   let modelRoute: ResolvedModelRoute = admitted.route;
   if (input.admittedRoute === undefined && typeof singleSliceBackend.smokeModelRoute !== "function") {
@@ -1522,8 +1550,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: reason },
       stopSummary: infraFailureStopSummary({
@@ -1531,7 +1559,7 @@ export async function runFamily(
         repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
       }),
       children,
-    };
+    });
   }
   let currentCliVersions: Readonly<Record<string, string | undefined>> = {};
   try {
@@ -1555,8 +1583,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
       stopSummary: infraFailureStopSummary({
@@ -1564,7 +1592,7 @@ export async function runFamily(
         repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
       }),
       children,
-    };
+    });
   }
   const degradation = input.admittedRoute ?? degradeOptionalRouteSmokeFailures(modelRoute);
   modelRoute = degradation.route;
@@ -1574,8 +1602,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "escalated",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
       stopSummary: infraFailureStopSummary({
@@ -1583,7 +1611,7 @@ export async function runFamily(
         repairHint: "rerun the route smoke or repair the selected model×pipe",
       }),
       children,
-    };
+    });
   }
   const routeLedger = degradation.dropped.length > 0
     ? await familyBackend.readFamilyLedger()
@@ -1641,51 +1669,61 @@ export async function runFamily(
     const { escalation, answer } = priorEscalation;
     if (escalation.escalationKind !== "decision" || answer === undefined) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
-      return {
-        status: "escalated",
-        familyBase,
-        ...(typeof escalation.familyHeadAfter === "string" &&
+      const decisionPark =
+        escalation.escalationKind === "decision" && answer === undefined;
+      const publicStatus = decisionPark ? "parked" : "failed";
+      const familyHead =
+        typeof escalation.familyHeadAfter === "string" &&
         escalation.familyHeadAfter.trim().length > 0
-          ? { familyHead: escalation.familyHeadAfter }
-          : {}),
-        escalation: {
-          reason:
-            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-              ? escalation.reason
-              : "family escalation is not answered",
-          diagnosis:
-            escalation.escalationKind === "failure"
-              ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-              : escalation.escalationKind !== "decision"
-                ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
+          ? escalation.familyHeadAfter
+          : undefined;
+      const escalationPayload = {
+        reason:
+          typeof escalation.reason === "string" && escalation.reason.trim().length > 0
+            ? escalation.reason
+            : "family escalation is not answered",
+        diagnosis:
+          escalation.escalationKind === "failure"
+            ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+            : escalation.escalationKind !== "decision"
+              ? "Prior family escalation kind is missing or invalid; append-only answers only reopen decision escalations."
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
-        },
-        stopSummary: familyStopSummary({
-          status: "escalated",
+      };
+      const children = input.epic.children.map((child) => ({
+        issue: child.issue,
+        status: (ledgerMerged.has(child.issue) ? "already_done" : "skipped") as
+          | "already_done"
+          | "skipped",
+      }));
+      const stopSummary = familyStopSummary({
+        status: publicStatus,
+        familyBase,
+        familyHead,
+        children,
+        escalationReason: escalationPayload.reason,
+        // #604 F2 / ADR 0062 A/B分家 (PR#643 R2): an UNANSWERED family-level
+        // DECISION escalation is an answerable park, not an A-class repair
+        // failure — carry `decision_gate_park`, mirroring the child-park path
+        // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
+        decisionGatePark: decisionPark,
+      });
+      if (publicStatus === "failed") {
+        return failedFamilyResult({
+          cause: "runner_internal_error",
           familyBase,
-          familyHead:
-            typeof escalation.familyHeadAfter === "string" &&
-            escalation.familyHeadAfter.trim().length > 0
-              ? escalation.familyHeadAfter
-              : undefined,
-          children: input.epic.children.map((child) => ({
-            issue: child.issue,
-            status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
-          })),
-          escalationReason:
-            typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-              ? escalation.reason
-              : "family escalation is not answered",
-          // #604 F2 / ADR 0062 A/B分家 (PR#643 R2): an UNANSWERED family-level
-          // DECISION escalation is an answerable park, not an A-class repair
-          // failure — carry `decision_gate_park`, mirroring the child-park path
-          // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
-          decisionGatePark: escalation.escalationKind === "decision",
-        }),
-        children: input.epic.children.map((child) => ({
-          issue: child.issue,
-          status: ledgerMerged.has(child.issue) ? "already_done" : "skipped",
-        })),
+          ...(familyHead !== undefined ? { familyHead } : {}),
+          escalation: escalationPayload,
+          stopSummary,
+          children,
+        });
+      }
+      return {
+        status: "parked",
+        familyBase,
+        ...(familyHead !== undefined ? { familyHead } : {}),
+        escalation: escalationPayload,
+        stopSummary,
+        children,
       };
     }
   }
@@ -1708,9 +1746,11 @@ export async function runFamily(
   //   - ANSWERED → the answer is fed into runChild, which injects it into the
   //     child's single-slice ledger so its own planResume → resumeSession reopens
   //     the paused step IN PLACE (原 sessionId, 退出-重入 per ADR 0062).
-  //   - UNANSWERED → the family stays PAUSED: return `status:"escalated"` before the
-  //     wave loop rather than fruitlessly re-running the parked child (which would
-  //     just re-escalate). Supports multiple children parked + answered separately.
+  //   - UNANSWERED → the family stays PAUSED: return public `status:"parked"`
+  //     (#942 completed|parked|failed) before the wave loop rather than fruitlessly
+  //     re-running the parked child (which would just re-escalate). Child result
+  //     status may still be internal `"escalated"`; ledger park rows stay as-is.
+  //     Supports multiple children parked + answered separately.
   const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
   {
     // #970 type-split: inject into runChild ONLY when the ledger proves a
@@ -1722,7 +1762,7 @@ export async function runFamily(
     // `unansweredChildEscalations` returns ONLY the still-unanswered parked
     // children. To also resume the ANSWERED ones we look up each parked child's
     // answer directly: answered → feed it into runChild (resume in place);
-    // unanswered → keep the family paused (return escalated).
+    // unanswered → keep the family paused (return public parked).
     // Single reverse pass → latest park per child (ledger authority predicate).
     const latestParkByChild = new Map<
       number,
@@ -1757,12 +1797,12 @@ export async function runFamily(
       const ledgerMerged = mergedSet(initialFamilyLedger);
       const first = unanswered[0]!;
       // #604 F8: an UNANSWERED parked child re-entered before the wave loop must
-      // map to `"escalated"` (its decision-gate park state), NOT `"skipped"`. The
-      // wave-loop parking path finalizes these via `finalizeDecisionPark` →
-      // `"escalated"`; the early-exit re-entry path must stay consistent, else the
-      // driver sees the parked child as skipped and mis-reads the run. Carry the
-      // escalation payload read from the `child_decision_parked` ledger row so the
-      // driver has the same reason/diagnosis/sessionId either path.
+      // map child status to internal `"escalated"` (decision-gate park payload),
+      // NOT `"skipped"`. Public family status from either path is `"parked"`
+      // (#942): wave-loop via `finalizeDecisionPark`, early-exit re-entry here.
+      // Keep both paths consistent so the driver does not mis-read the parked
+      // child as skipped. Carry the escalation payload from the
+      // `child_decision_parked` ledger row (reason/diagnosis/sessionId).
       const parkedByIssue = new Map<number, FamilyChildEscalation>();
       for (const row of unanswered) {
         parkedByIssue.set(row.childIssue, {
@@ -1788,7 +1828,7 @@ export async function runFamily(
       });
       const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
       return {
-        status: "escalated",
+        status: "parked",
         familyBase,
         ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
           ? { familyHead: first.familyHeadAfter }
@@ -1800,7 +1840,7 @@ export async function runFamily(
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
         },
         stopSummary: familyStopSummary({
-          status: "escalated",
+          status: "parked",
           familyBase,
           ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
             ? { familyHead: first.familyHeadAfter }
@@ -1854,12 +1894,13 @@ export async function runFamily(
   //     merged ledger (a blocker never merged / a fail-fast wave aborted before
   //     it ran) is `"skipped"`.
   //   - `status` is a stage-named failure (#922) when a barrier was red
-  //     (most urgent among non-escalated outcomes). Otherwise the run is
-  //     `"success"` iff EVERY child is merged, else `"incomplete"`.
+  //     (most urgent among non-escalated outcomes). Otherwise public ABI
+  //     (#942) is `"completed"` iff EVERY child is merged, else `"failed"`
+  //     (partial / unmerged children) — never legacy `"success"` / `"incomplete"`.
   //
   // Happy path (all independent children merge, every barrier green) is always
-  // `"success"`; incomplete / stage-failure / ledger-merged branches guard
-  // honesty for the failure + #294/#298 / #922 paths.
+  // `"completed"`; child-failure / stage-failure / ledger-merged branches guard
+  // honesty for the failure + #294/#298 / #922 paths (public failed + cause).
   const finalize = async (
     opts?: {
       readonly failedStatus?: FamilyStageFailureStatus;
@@ -1904,13 +1945,19 @@ export async function runFamily(
           })
         : undefined;
     const status: FamilyRunStatus =
-      terminal?.kind === "escalated"
-        ? "escalated"
-        : terminal?.kind === "stage"
-          ? terminal.status
+      terminal?.kind === "parked"
+        ? "parked"
+        : terminal?.kind === "failed"
+          ? "failed"
           : children.every((c) => c.status === "merged" || c.status === "already_done")
-            ? "success"
-            : "incomplete";
+            ? "completed"
+            : "failed";
+    const publicCause =
+      terminal?.kind === "failed"
+        ? terminal.cause
+        : status === "failed"
+          ? ("child_execution_failed" as const)
+          : undefined;
     const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
     const headMetadata = familyHeadMetadata({
       reportedFamilyHead: familyHead,
@@ -1929,15 +1976,16 @@ export async function runFamily(
         source: "family child already_done result",
       }));
     const allChildrenAlreadyDone =
-      status === "success" &&
+      status === "completed" &&
       childResults.length === 0 &&
       children.length > 0 &&
       alreadyDone.length === children.length;
     const computedStopSummary =
-      terminal?.kind === "escalated"
+      terminal?.kind === "parked"
         ? terminal.stopSummary
         : familyStopSummary({
             status,
+            ...(terminal?.kind === "failed" ? { stage: terminal.stage } : {}),
             failedPhase: verifyFailedPhase,
             familyBase,
             familyHead,
@@ -1948,14 +1996,14 @@ export async function runFamily(
             alreadyDone,
           });
     const materialSuccessStopSummary =
-      status === "success"
+      status === "completed"
         ? (latestSuccessfulFinalShippedStopSummary(
             familyLedger,
             barrierLedgerStartIndex,
           ) ??
           latestSuccessfulFinalCmrStopSummary(familyLedger, barrierLedgerStartIndex))
         : undefined;
-    const resultStopSummary =
+    const resultStopSummary: StopSummary =
       materialSuccessStopSummary !== undefined
         ? {
             ...materialSuccessStopSummary,
@@ -1965,30 +2013,49 @@ export async function runFamily(
             },
           }
         : computedStopSummary;
-    return attachDiagnostics({
-      status,
+    const stopSummary: StopSummary = allChildrenAlreadyDone
+      ? {
+          ...resultStopSummary,
+          reason: "already_done",
+          summary: "family resume found every child already merged and skipped rerun",
+        }
+      : resultStopSummary;
+    const shared = {
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
-      stopSummary: allChildrenAlreadyDone
-        ? {
-            ...resultStopSummary,
-            reason: "already_done",
-            summary: "family resume found every child already merged and skipped rerun",
-          }
-        : resultStopSummary,
+      stopSummary,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
+    };
+    // #942 CR R2 S3: status:"failed" always carries a mandatory ID-001 cause.
+    if (status === "failed") {
+      return attachDiagnostics(
+        failedFamilyResult({
+          cause: publicCause ?? "child_execution_failed",
+          ...shared,
+        }),
+      );
+    }
+    if (status === "parked") {
+      return attachDiagnostics({
+        status: "parked",
+        ...shared,
+      });
+    }
+    return attachDiagnostics({
+      status: "completed",
+      ...shared,
     });
   };
 
   // #604 slice 5: build the family result when a CHILD decision escalation parked
   // the run. Every epic child gets a record (the parked child carries its
   // `escalation`; already-merged children in `recorded` keep their status; the rest
-  // are `"skipped"`). The family status is `"escalated"` (the answerable pause), NOT
-  // verify_failed / incomplete.
+  // are `"skipped"`). Public family status is `"parked"` (answerable pause), NOT
+  // a stage-failure or child-execution failed terminal.
   const finalizeDecisionPark = async (
     parked: FamilyChildResult & { escalation: FamilyChildEscalation },
     recordedResults: ReadonlyArray<FamilyChildResult>,
@@ -2008,7 +2075,7 @@ export async function runFamily(
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
     return {
-      status: "escalated",
+      status: "parked",
       familyBase,
       familyHead,
       escalation: {
@@ -2016,7 +2083,7 @@ export async function runFamily(
         diagnosis: parked.escalation.diagnosis,
       },
       stopSummary: familyStopSummary({
-        status: "escalated",
+        status: "parked",
         familyBase,
         familyHead,
         children,
@@ -2039,8 +2106,10 @@ export async function runFamily(
   //     for each ancestor-confirmed child, so `currentMerged` (re-read each wave)
   //     skips it (no double-merge); a never-merged child (childHead absent / not an
   //     ancestor) is left OUT and the existing wave loop re-runs it (no漏合);
-  //   - branch ③ (inconsistent live HEAD): bail fail-closed to `status:"escalated"`
-  //     BEFORE any merge (decision 5 真有未落/不一致 → 升级; decision 4 escalate).
+  //   - branch ③ (inconsistent live HEAD): bail fail-closed to public
+  //     `status:"failed"` (+ cause; #942 completed|parked|failed) BEFORE any merge
+  //     (decision 5 真有未落/不一致 → fail-closed; ledger may still record an
+  //     internal escalated/failure row for triage — not public ABI).
   // Absent ⇒ a fresh run, the #293 behaviour unchanged. The reconcile LOGIC lives
   // in reconcile.ts; the spine only CALLS it + appends its补账条 (acceptance-4
   // seam boundary — the spine never carries the reconcile algorithm).
@@ -2056,7 +2125,7 @@ export async function runFamily(
     if (plan.escalate) {
       // Fail-closed (decision 5 branch ③): do not proceed to the wave loop. The
       // family base + ledger are left for human triage (decision 3⑤ 不静默吞);
-      // the run is observably `escalated`, NOT a fabricated success.
+      // public status is `failed` (+ cause), NOT a fabricated completed.
       const children: FamilyChildResult[] = epic.children.map((c) =>
         plan.merged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
@@ -2068,12 +2137,12 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
-      return {
-        status: "escalated",
+      return failedFamilyResult({
+        cause: "runner_internal_error",
         familyBase,
         familyHead,
         stopSummary: familyStopSummary({
-          status: "escalated",
+          status: "failed",
           familyBase,
           familyHead,
           children,
@@ -2081,7 +2150,7 @@ export async function runFamily(
             "family reconcile found the live family-base HEAD inconsistent with the ledger",
         }),
         children,
-      };
+      });
     }
     // Append each reconcile補账条 (status:"merged" + event:"reconciled") through
     // the ledger seam so the wave loop's `currentMerged` counts it (codex R3) and
@@ -2131,6 +2200,111 @@ export async function runFamily(
   // children converge in a single pass. Guard against a no-progress wave (a
   // child that failed to merge would otherwise re-select forever) by tracking
   // the set of children the spine has already ATTEMPTED.
+  //
+  // #961 / ADR 0139: after a batch verifies green, fire a full-strength
+  // Integrated Correctness checkpoint (correctness court only). Child coding of
+  // the next wave continues without a Runner review/dispatch lock on
+  // lastCorrectnessConvergedHead — IC is Family Flow owned. Parent merge and
+  // CMR fix stay serial: await any in-flight checkpoint before the next merge.
+  type PendingBarrier = ReturnType<typeof runFamilyBarrierWithQuotaRelay<VerifyCmrResult>>;
+  let pendingCorrectnessCheckpoint: PendingBarrier | undefined;
+  /**
+   * Await in-flight #961 IC checkpoint.
+   * - Hard fail: optional `beforeFailFinalize` runs first so call sites can
+   *   #938-drain settled wave siblings into `childResults` before finalize
+   *   residual-maps them to fake `skipped` (CORR-C1).
+   * - Quota park: park snapshot was built from pre-drain `recordedResults`;
+   *   optional `remountChildrenOnPark` drains + remounts honest children onto
+   *   the park result (CORR-C2; mirrors merge-wall residualChildrenAfterDrain).
+   */
+  const awaitPendingCorrectnessCheckpoint = async (opts?: {
+    readonly beforeFailFinalize?: () => void;
+    readonly remountChildrenOnPark?: () => Promise<FamilyChildResult[]>;
+  }): Promise<FamilyRunResult | undefined> => {
+    if (pendingCorrectnessCheckpoint === undefined) return undefined;
+    const barrier = await pendingCorrectnessCheckpoint;
+    pendingCorrectnessCheckpoint = undefined;
+    if (barrier.kind === "park") {
+      // CORR-C2: drain settled peers then remount — park result's children were
+      // snapshotted without current-wave allSettled siblings still in `ran`.
+      if (opts?.remountChildrenOnPark !== undefined) {
+        const children = await opts.remountChildrenOnPark();
+        return attachDiagnostics({ ...barrier.result, children });
+      }
+      return attachDiagnostics(barrier.result);
+    }
+    activeRoute = barrier.route;
+    if (barrier.relayBilling !== undefined) {
+      runRelayBilling = barrier.relayBilling;
+    }
+    const value = barrier.value;
+    if (!value.ok) {
+      opts?.beforeFailFinalize?.();
+      return await finalize({
+        ...(value.failedStatus !== undefined
+          ? { failedStatus: value.failedStatus }
+          : {}),
+        failedPhase: "correctness_checkpoint",
+      });
+    }
+    // Do not clobber spine familyHead from a live read here: merge HEAD remains
+    // the merge-loop truth for diagnostics, and subsequent barriers re-read live
+    // HEAD where needed (cmrPassAlreadyPassed / ship). IC coder-fix advances are
+    // durable on cmr_fix_committed / cmr_passed rows.
+    return undefined;
+  };
+  const fireCorrectnessCheckpoint = (): void => {
+    // Family Flow / Integrated Correctness Action owns cadence. Runner does not
+    // read lastCorrectnessConvergedHead for admission; the verifyCmr court skips
+    // via cmrPassAlreadyPassed when HEAD+route already green.
+    const checkpointHead = familyHead;
+    pendingCorrectnessCheckpoint = runFamilyBarrierWithQuotaRelay({
+      phase: "correctness_checkpoint",
+      familyBackend,
+      singleSliceBackend,
+      familyBase,
+      familyHead: checkpointHead,
+      runId,
+      modelRoute: activeRoute,
+      recordedResults: childResults,
+      epicChildren: epic.children,
+      epicIssue: epic.issue,
+      relayHandoffs,
+      wallHitBillingPools,
+      ...(runRelayBilling !== undefined
+        ? { initialRelayBilling: runRelayBilling }
+        : {}),
+      ...(applyRelayOverride !== undefined
+        ? { applyRelayBatonToRoute: applyRelayOverride }
+        : {}),
+      ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+      ...(input.now !== undefined ? { now: input.now } : {}),
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+      run: async (route, relayBilling) =>
+        verifyCmr({
+          phase: "correctness_checkpoint",
+          familyBase,
+          familyBackend,
+          runId,
+          modelRoute: route,
+          ...(relayBilling !== undefined
+            ? {
+                billingPool: relayBilling.pool,
+                billingPoolSlots: relayBilling.slots,
+              }
+            : {}),
+          llmResolvedChildren: await llmResolvedChildren(familyBackend),
+          familyHeadAfter: checkpointHead,
+          familyIssue: epic.issue,
+          ...(declaredModuleContext !== undefined
+            ? { moduleContext: declaredModuleContext }
+            : {}),
+        }),
+    });
+  };
+
   const attempted = new Set<number>();
   for (;;) {
     const merged = await currentMerged(familyBackend);
@@ -2138,6 +2312,9 @@ export async function runFamily(
       (c) => !attempted.has(c.issue),
     );
     if (wave.length === 0) {
+      // Drain any in-flight IC before residual/final gates.
+      const icStop = await awaitPendingCorrectnessCheckpoint();
+      if (icStop !== undefined) return icStop;
       // ID-009: residual cycle only at empty-wave + still-unmerged residual.
       const residual = epic.children.filter((c) => !merged.has(c.issue));
       if (residual.length > 0) {
@@ -2154,7 +2331,7 @@ export async function runFamily(
           });
           const escalationReason = `dependency_cycle: ${err.cycle.map((n) => `#${n}`).join(" → ")}`;
           const stopSummary = familyStopSummary({
-            status: "escalated",
+            status: "failed",
             familyBase,
             familyHead,
             children,
@@ -2168,18 +2345,20 @@ export async function runFamily(
             escalationKind: "failure",
             phase: "wave",
           });
-          return attachDiagnostics({
-            status: "escalated" as const,
-            familyBase,
-            familyHead,
-            escalation: { reason: escalationReason, diagnosis: err.message },
-            stopSummary,
-            children,
-            ...(epic.admissionSkipped !== undefined &&
-            epic.admissionSkipped.length > 0
-              ? { admissionSkipped: epic.admissionSkipped }
-              : {}),
-          });
+          return attachDiagnostics(
+            failedFamilyResult({
+              cause: "dependency_cycle",
+              familyBase,
+              familyHead,
+              escalation: { reason: escalationReason, diagnosis: err.message },
+              stopSummary,
+              children,
+              ...(epic.admissionSkipped !== undefined &&
+              epic.admissionSkipped.length > 0
+                ? { admissionSkipped: epic.admissionSkipped }
+                : {}),
+            }),
+          );
         }
       }
       break;
@@ -2248,12 +2427,14 @@ export async function runFamily(
     // here once mergeChild resolves — so a future #295 merge failure can leave the
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
     //
-    // #938: mid-wave early exit (merger decision escalate / still-conflicted)
-    // must drain remaining allSettled siblings into childResults first. Without
-    // that flush, finalize / residual maps map executed peers to fake "skipped".
-    // "skipped" is only for never-schedulable / never-ran children.
+    // #938: mid-wave early exit (merger decision escalate / still-conflicted /
+    // #961 IC-fail before merge) must drain remaining allSettled siblings into
+    // childResults first. Without that flush, finalize residual-maps executed
+    // peers to fake "skipped". "skipped" is only for never-schedulable / never-ran.
     // Spread the whole sibling so optional fields (branch / escalation /
     // failureCause / future FamilyChildResult cargo) are never silently dropped.
+    // Helpers are defined before the IC await so CORR-C1 can reuse the same drain.
+    let waveMergedAny = false;
     const recordWaveSibling = (sibling: FamilyChildResult): void => {
       childResults.push({ ...sibling });
     };
@@ -2277,6 +2458,20 @@ export async function runFamily(
           : { issue: child.issue, status: "skipped" as const };
       });
     };
+    // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
+    // serial under Family Flow). Child coding above already ran in parallel with
+    // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
+    // CORR-C1: drain settled current-wave peers before fail-finalize so they
+    // stay honest `ran` / `failed`, not residual `skipped`.
+    // CORR-C2: same drain+remount on IC quota-park (park snapshot otherwise
+    // residual-maps executed siblings to fake `skipped`).
+    {
+      const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint({
+        beforeFailFinalize: drainRemainingWaveSiblings,
+        remountChildrenOnPark: residualChildrenAfterDrain,
+      });
+      if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
+    }
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
         // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
@@ -2333,11 +2528,12 @@ export async function runFamily(
           const children = await residualChildrenAfterDrain();
           const escalation = mergeResult.escalation;
           const stopSummary = familyStopSummary({
-            status: "escalated",
+            status: "parked",
             familyBase,
             familyHead,
             children,
             escalationReason: escalation.reason,
+            decisionGatePark: true,
           });
           await familyBackend.escalateFamily?.({
             ...escalation,
@@ -2347,7 +2543,7 @@ export async function runFamily(
             phase: "wave",
           });
           return attachDiagnostics({
-            status: "escalated" as const,
+            status: "parked",
             familyBase,
             familyHead,
             escalation: {
@@ -2360,9 +2556,18 @@ export async function runFamily(
         }
         if (mergeResult.conflicted === true) {
           // ID-010: trust merger worker once; stop serial merge on conflicted base.
+          // #964: non-empty MergeResult.reason (AgentError / preflight detail) is
+          // ops surface for re-login — not a public cause token.
           familyHead = mergeResult.familyHead;
+          const detail =
+            typeof mergeResult.reason === "string" &&
+            mergeResult.reason.trim().length > 0
+              ? mergeResult.reason.trim()
+              : "conflict unresolved on the family base";
           const cause =
-            `merger_worker left child #${r.issue} conflict unresolved on the family base`;
+            detail === "conflict unresolved on the family base"
+              ? `merger_worker left child #${r.issue} ${detail}`
+              : `merger_worker left child #${r.issue} conflict unresolved: ${detail}`;
           waveDiagnostics.push({ issue: r.issue, cause, kind: "merger_worker" });
           childResults.push({
             issue: r.issue,
@@ -2374,6 +2579,7 @@ export async function runFamily(
           return await finalize();
         }
         familyHead = mergeResult.familyHead;
+        waveMergedAny = true;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {
         recordWaveSibling(r);
@@ -2491,16 +2697,31 @@ export async function runFamily(
         failedPhase: "wave",
       });
     }
+
+    // #961 / ADR 0139: batch integrated + Verification green → start IC checkpoint
+    // at this parent HEAD. Do not await here so the next wave's child coding can
+    // continue in parallel (no child dispatch / review lock). Await before next
+    // merge and before the final barrier.
+    if (waveMergedAny) {
+      fireCorrectnessCheckpoint();
+    }
+  }
+
+  // Final drain: last wave may have left a checkpoint in flight.
+  {
+    const icStop = await awaitPendingCorrectnessCheckpoint();
+    if (icStop !== undefined) return icStop;
   }
 
   // ── completeness gate (online R1 Codex P1): the final barrier is meaningful ONLY
   // for a COMPLETE family base ────────────────────────────────────────────────
   // A child can leave the wave loop UNMERGED without throwing (its single-slice run
   // returned "failed", or it stayed blocked) — finalize() then marks the run
-  // "incomplete". Running the final barrier (全量 verify → integrated cmr → 止于-PR)
+  // public `"failed"` (#942 completed|parked|failed; not legacy incomplete).
+  // Running the final barrier (全量 verify → integrated cmr → 止于-PR)
   // on that PARTIAL base would open a family PR missing slices, even though the
   // returned status is not shippable. So gate it: if not EVERY epic child is
-  // ledger-merged, skip the barrier and finalize() honestly returns "incomplete"
+  // ledger-merged, skip the barrier and finalize() honestly returns public failed
   // with NO verify / cmr / PR (decision 3⑤ 不静默吞 + decision 4 止于-PR only when whole).
   const mergedNow = await currentMerged(familyBackend);
   if (!epic.children.every((c) => mergedNow.has(c.issue))) {
@@ -2588,7 +2809,7 @@ export async function runFamily(
       },
     };
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       familyHead,
       stopSummary: alreadyDoneSummary,
@@ -2671,7 +2892,7 @@ export async function runFamily(
       const rawStop =
         reviewLoop.stopSummary ??
         stageFailureStopSummary({
-          status: "online_review_failed",
+      status: "online_review_failed",
           summary: "family online review loop did not converge during shipped resume",
           repairHint: "repair or answer the worker-reported stop, then re-feed the family run",
         });
@@ -2679,7 +2900,7 @@ export async function runFamily(
         stage: "online_review_failed",
         stopSummary: rawStop,
       });
-      if (terminal.status === "escalated") {
+      if (terminal.status === "parked") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
           phase: "final",
@@ -2697,16 +2918,23 @@ export async function runFamily(
           stopSummary: terminal.stopSummary,
         });
       }
-      return {
-        status: terminal.status,
+      if (terminal.status === "parked") {
+        return {
+          status: "parked",
+          familyBase,
+          familyHead: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+          children,
+        };
+      }
+      return failedFamilyResult({
+        cause: terminal.cause,
         familyBase,
         familyHead: preFinalFamilyHead,
-        ...(terminal.status === "online_review_failed"
-          ? { failedPhase: "final" as const }
-          : {}),
+        failedPhase: "final",
         stopSummary: terminal.stopSummary,
         children,
-      };
+      });
     }
 
     const convergedHead =
@@ -2754,7 +2982,7 @@ export async function runFamily(
       runRelayBilling = landingWall.relayBilling;
     }
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       familyHead,
       stopSummary: {
@@ -2846,7 +3074,7 @@ export async function runFamily(
           const rawStop =
             reviewLoop.stopSummary ??
             stageFailureStopSummary({
-              status: "online_review_failed",
+      status: "online_review_failed",
               summary:
                 "family online review loop did not converge during open-shipped re-entry",
               repairHint:
@@ -2856,7 +3084,7 @@ export async function runFamily(
             stage: "online_review_failed",
             stopSummary: rawStop,
           });
-          if (terminal.status === "escalated") {
+          if (terminal.status === "parked") {
             await recordFamilyEscalated(familyBackend, {
               escalationKind: "decision",
               phase: "final",
@@ -2874,20 +3102,31 @@ export async function runFamily(
               stopSummary: terminal.stopSummary,
             });
           }
-          openShippedTerminal = {
-            status: terminal.status,
-            familyBase,
-            familyHead: barrierHead,
-            ...(terminal.status === "online_review_failed"
-              ? { failedPhase: "final" as const }
-              : {}),
-            stopSummary: terminal.stopSummary,
-            children: openChildren,
-            ...(epic.admissionSkipped !== undefined &&
-            epic.admissionSkipped.length > 0
-              ? { admissionSkipped: epic.admissionSkipped }
-              : {}),
-          };
+          openShippedTerminal =
+            terminal.status === "parked"
+              ? {
+                  status: "parked",
+                  familyBase,
+                  familyHead: barrierHead,
+                  stopSummary: terminal.stopSummary,
+                  children: openChildren,
+                  ...(epic.admissionSkipped !== undefined &&
+                  epic.admissionSkipped.length > 0
+                    ? { admissionSkipped: epic.admissionSkipped }
+                    : {}),
+                }
+              : failedFamilyResult({
+                  cause: terminal.cause,
+                  familyBase,
+                  familyHead: barrierHead,
+                  failedPhase: "final",
+                  stopSummary: terminal.stopSummary,
+                  children: openChildren,
+                  ...(epic.admissionSkipped !== undefined &&
+                  epic.admissionSkipped.length > 0
+                    ? { admissionSkipped: epic.admissionSkipped }
+                    : {}),
+                });
           return { ok: false, ran: true };
         }
         // Mirror shipped-resume / verifyCmr post-ship tail.
@@ -2928,7 +3167,7 @@ export async function runFamily(
           return { ok: false, ran: true };
         }
         openShippedTerminal = {
-          status: "success",
+          status: "completed",
           familyBase,
           familyHead: convergedHead,
           stopSummary: {
@@ -3006,7 +3245,7 @@ export async function runFamily(
     });
   }
 
-  // Every barrier passed. finalize() derives "success" only if EVERY child
-  // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
+  // Every barrier passed. finalize() derives public `"completed"` only if EVERY
+  // child merged, else `"failed"` (a child failed / stayed blocked — not shippable).
   return await finalize({ barrierLedgerStartIndex: preFinalLedgerLength });
 }

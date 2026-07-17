@@ -325,7 +325,7 @@ describe("#955 r7 session rebuild ignores event audit rows", () => {
   it("ledger tail session_continuity_lost must not become coder resumeSessionId", async () => {
     const backend = new RebuildBackend(rebuildPoisonLedger());
     const result = await runOrchestrator({ issueNumber: 95572, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
     expect(s5Idx).toBeGreaterThanOrEqual(0);
@@ -421,7 +421,7 @@ describe("#955 r7 escalateTermination stamps modelSlug", () => {
   it("decision_gate escalate agent row carries seat modelSlug on stepLedger + disk", async () => {
     const backend = new DecisionGateBackend();
     const result = await runOrchestrator({ issueNumber: 95573, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
 
     const s2Mem = result.stepLedger.find(
       (e) => e.step === "S2" && e.event === undefined,

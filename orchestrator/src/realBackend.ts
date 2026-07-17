@@ -683,7 +683,6 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
-export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** #937 ephemeral relay brief rendered at dispatch (not a worktree file). */
@@ -2876,9 +2875,6 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
-    if (options?.fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
-    }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
@@ -2906,13 +2902,6 @@ export class RealBackend implements Backend {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (options?.fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: options.fixFocusLanding.path,
-        sandboxPath: options.fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
