@@ -7729,7 +7729,8 @@ class GameDB:
         items = [item for item in self.knowledge_items_for_turn(state.turn)
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
         # #883: private secret briefs never enter shared sources; when any
-        # undisclosed brief exists, do not trust a raw aggregate report string.
+        # active/pending secret still has a brief, do not trust a raw aggregate
+        # report string.
         has_restricted_source = self._has_restricted_source_gate(
             any(item.get("excluded_names") for item in items)
         )
@@ -10129,11 +10130,13 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def _has_undisclosed_secret_order_brief(self) -> bool:
+    def _has_active_secret_order_brief(self) -> bool:
         """True when any active/pending secret still has a private assignee brief.
 
         #883: shared archive writers consult this single structural flag instead
-        of treating secret order rows as shared restricted sources.
+        of treating secret order rows as shared restricted sources.  Name tracks
+        active/pending brief existence only — not disclosure state (deliberately
+        conservative: remains True after disclosure while status is open).
         """
         row = self.conn.execute(
             "SELECT 1 FROM secret_order_briefs b "
@@ -10146,10 +10149,10 @@ class GameDB:
         """Whether public-archive writers must refuse aggregate-as-public prose.
 
         Callers pass their local shared-exclusion predicate (item exclusions or
-        non-audience restricted kinds); undisclosed secret-order briefs are
-        OR'd in here so turn-report / chapter / settlement narrative stay aligned.
+        non-audience restricted kinds); active secret-order briefs are OR'd in
+        here so turn-report / chapter / settlement narrative stay aligned.
         """
-        return bool(has_shared_exclusions) or self._has_undisclosed_secret_order_brief()
+        return bool(has_shared_exclusions) or self._has_active_secret_order_brief()
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
