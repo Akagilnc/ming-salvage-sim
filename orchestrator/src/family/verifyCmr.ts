@@ -2284,6 +2284,8 @@ async function runIntegratedCmrPass(input: {
       escalationAnswer,
       familyIssue,
       resolvedRoute: activeRoute,
+      // #961: checkpoint vs final ownership on durable fix rows (PR #982 C1).
+      ledgerPhase,
       ...(billingPool !== undefined ? { billingPool } : {}),
       ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
       ...(priorCmrFindingIdentityKeysByPass !== undefined

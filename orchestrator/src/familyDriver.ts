@@ -1543,7 +1543,9 @@ function routeSmokeFailureResult(
   escalation: { readonly reason: string; readonly diagnosis: string },
 ): FamilyRunResult {
   return failedFamilyResult({
-    cause: "worktree_prepare_failed",
+    // #942 public cause: same smoke-stop as family/single-slice runners
+    // (not worktree_prepare_failed — PR #982 C2).
+    cause: "route_smoke_failed",
     familyBase: options.familyBase,
     escalation,
     stopSummary: infraFailureStopSummary({
