@@ -120,6 +120,7 @@ class SeatCapBackend implements Backend {
             kind: "reviewer",
             findings: [OPEN_FINDING],
             findingsCount: 1,
+            fixPacketBody: "fixture residual authored body",
           },
           sessionId,
         };

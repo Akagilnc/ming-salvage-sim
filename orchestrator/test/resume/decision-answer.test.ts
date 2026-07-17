@@ -52,7 +52,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         // Historical residual open-count zero + still-active prose (pre-#925).
@@ -421,7 +421,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1, fixPacketBody: "fixture residual authored body" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", { kind: "judge", status: "converged" }),

@@ -118,6 +118,9 @@ class SeamOnlyBackend implements Backend {
           kind: "reviewer",
           findings,
           findingsCount,
+          // ADR 0138: residual paper must carry authored body to reach S5;
+          // production never invents this string.
+          fixPacketBody: "fixture residual authored fixPacketBody (ADR 0138 pass-through)",
         },
       };
     }

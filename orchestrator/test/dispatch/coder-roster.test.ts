@@ -544,11 +544,11 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         // (reviewer-observed progress) so the no-progress bound does not fire
         // before the post-threshold S5 advance. S6#3: close.
         if (attempt === 0) {
-          return { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 };
+          return { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" };
         }
         if (attempt === 1) {
           return {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -556,7 +556,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         }
         if (attempt === 2) {
           return {
-            kind: "reviewer", findings: [{ ...blockingFinding, severity: "medium" }], findingsCount: 1,
+            kind: "reviewer", findings: [{ ...blockingFinding, severity: "medium" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -588,7 +588,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S3", {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           }),
           ledgerEntry("S4"),
           ledgerEntry("S5", {
@@ -597,7 +597,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -609,7 +609,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer", findings: [mediumBlocking], findingsCount: 1,
+            kind: "reviewer", findings: [mediumBlocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],

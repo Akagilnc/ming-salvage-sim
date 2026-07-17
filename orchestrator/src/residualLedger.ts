@@ -194,8 +194,9 @@ export function rebuildBlockingFromLedger(
       pendingBlockingFindingIdentityKeys = residualOpen.blockingIdentityKeys;
       pendingBlockingFindingCount = residualOpen.blockingFindingCount;
       pendingRawReviewerArtifacts = residualOpen.rawReviewerArtifacts;
-      // Residual paper has no authored packet; synthetic body keeps the single
-      // content path alive without reopening bare-findings packing.
+      // ADR 0138: residual continue may carry an already-authored body only
+      // (verbatim pass-through). Missing body stays omitted — S5 fail-loud,
+      // never invent a residual placeholder packet.
       const residualJudge = projectResidualReviewerToJudge(lastReviewerOutputForS4);
       pendingFixPacketBody =
         residualJudge?.status === "continue"

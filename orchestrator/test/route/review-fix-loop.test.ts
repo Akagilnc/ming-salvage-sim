@@ -181,7 +181,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       action: "fix_now",
     };
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -193,10 +193,13 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    // ADR 0138 / #978: packet body is judge-authored (residual synthetic here);
+    // ADR 0138 / #978: residual pass-through of authored body only (no invent).
     // bare findings rows are no longer packed into the coder-fix landing.
-    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
-      expect.stringContaining("[residual] open-count continue"),
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
     );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #925: live identity keys from the judge disposition table are the S5
@@ -228,7 +231,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, followUpFinding], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [blocking, followUpFinding], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
@@ -289,7 +292,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       { kind: "completed", output: { kind: "judge", status: "converged" } },
     ]);
 
@@ -309,7 +312,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -330,7 +333,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("passes prior claimed-fixed findings and identity keys to the S6 fresh reviewer", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: { kind: "judge", status: "converged" },
@@ -342,9 +345,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    // ADR 0138: S6 landing carries the same judge packet body, not bare rows.
-    expect(backend.landings[s6Index]?.fixPacketBody).toEqual(
-      expect.stringContaining("[residual] open-count continue"),
+    // ADR 0138: S6 landing may carry residual authored body (pass-through only).
+    expect(backend.landings[s6Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s6Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
     );
     expect(backend.landings[s6Index]?.blockingFindings).toBeUndefined();
     // #925: live keys from the continue disposition table are control envelope.
@@ -377,7 +383,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
@@ -397,7 +403,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
               action: "fix_now",
             },
           ],
-          findingsCount: 1,
+          findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
             {
@@ -438,11 +444,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     // Post-#877: no-progress court demolished; loop follows findings count until
     // the scripted backend falls through to empty findings and ships.
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -451,7 +457,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -484,11 +490,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -497,7 +503,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -559,7 +565,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { kind: "completed", output: { kind: "judge", status: "converged" } },
       ],
       undefined,
@@ -590,11 +596,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -603,7 +609,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -670,11 +676,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -683,7 +689,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -751,7 +757,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -812,6 +818,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.initial,
           findingsCount: sample.initial.length,
+          fixPacketBody: "fixture residual authored body",
         },
       },
       {
@@ -820,6 +827,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.firstAfterFix,
           findingsCount: sample.firstAfterFix.length,
+          fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: sample.firstDispositions,
         },
       },
@@ -829,6 +837,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           kind: "reviewer",
           findings: sample.secondAfterFix,
           findingsCount: sample.secondAfterFix.length,
+          fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: sample.secondDispositions,
         },
       },
@@ -872,11 +881,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const firstNarrowedKey = findingIdentityKey(firstNarrowedFinding);
 
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [firstNarrowedFinding], findingsCount: 1,
+          kind: "reviewer", findings: [firstNarrowedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
           ],
@@ -885,7 +894,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [secondNarrowedFinding], findingsCount: 1,
+          kind: "reviewer", findings: [secondNarrowedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
             { identityKey: firstNarrowedKey, status: "still-active" },
@@ -927,12 +936,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding], findingsCount: 2 },
+        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
       },
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "medium" }], findingsCount: 1,
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "medium" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -942,7 +951,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "low" }], findingsCount: 1,
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "low" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -994,13 +1003,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1011,7 +1020,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1027,7 +1036,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1061,13 +1070,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1078,7 +1087,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1126,13 +1135,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1143,7 +1152,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1177,13 +1186,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1194,7 +1203,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1226,13 +1235,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { step: "S0" },
       { step: "S1" },
       { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-      { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
       { step: "S4" },
       { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
       {
         step: "S6",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -1243,7 +1252,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         step: "S6",
         output: {
-          kind: "reviewer", findings: [blocking], findingsCount: 1,
+          kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -1286,13 +1295,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1303,7 +1312,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [blocking], findingsCount: 1,
+            kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1368,13 +1377,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1385,7 +1394,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1429,13 +1438,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer", findings: [blocking], findingsCount: 1,
+              kind: "reviewer", findings: [blocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1499,7 +1508,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         { step: "S4" },
         {
@@ -1509,7 +1518,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1524,7 +1533,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1579,7 +1588,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1588,7 +1597,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1602,7 +1611,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1657,7 +1666,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1666,7 +1675,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1680,7 +1689,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1735,7 +1744,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1744,7 +1753,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1758,7 +1767,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1810,7 +1819,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
       ],
     };
@@ -1829,9 +1838,12 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    // ADR 0138: residual resume lands synthetic fixPacketBody, not bare rows.
-    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
-      expect.stringContaining("[residual] open-count continue"),
+    // ADR 0138: residual resume pass-through of authored body only (no invent).
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
     );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #899: resume still pass-through findings cargo; keys land at the writer.
@@ -1854,7 +1866,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         {
           step: "S5",
@@ -1895,9 +1907,12 @@ describe("#369 runner resume/retry review fixes", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
-    // ADR 0138: residual resume packet body is synthetic judge text, not bare rows.
-    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
-      expect.stringContaining("[residual] open-count continue"),
+    // ADR 0138: residual resume packet body is authored pass-through, not invent.
+    expect(backend.landings[s5Index]?.fixPacketBody).toBe(
+      "fixture residual authored body",
+    );
+    expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
+      "[residual] open-count continue",
     );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
@@ -1918,7 +1933,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         // #925: empty open-count / converged projects to S7 without S4.
         { step: "S6", output: { kind: "judge", status: "converged" } },
@@ -1952,7 +1967,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
@@ -2017,7 +2032,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
+          output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2, fixPacketBody: "fixture residual authored body" },
         },
         { step: "S4", findingDispositions: [acceptedRiskDisposition] },
       ],
@@ -2041,7 +2056,7 @@ describe("#369 runner resume/retry review fixes", () => {
                 action: "fix_now",
               },
             ],
-            findingsCount: 1,
+            findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
               {
@@ -2090,7 +2105,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1 } },
+        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "completed" },

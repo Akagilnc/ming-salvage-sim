@@ -729,7 +729,7 @@ describe("#787 capacity relay", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
+            output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
           };
         }
         if (spec.kind === "coder" && spec.id === "S5") {
@@ -866,7 +866,7 @@ describe("#787 capacity relay", () => {
             if (spec.id === "S3" && capacityStep === "S6") {
               return {
                 kind: "completed",
-                output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
+                output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
               };
             }
             if (spec.id === "S6" && capacityStep === "S6") {

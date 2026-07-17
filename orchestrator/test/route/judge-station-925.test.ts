@@ -1136,6 +1136,8 @@ describe("#919 CR U1/U3: residual→judge projection + reviewer-role escalate mi
       findings: [sampleFinding("a", "a.ts:1")],
     });
     expect(cont?.status).toBe("continue");
+    // ADR 0138: residual positive-count continue omits body when absent.
+    expect(cont?.fixPacketBody).toBeUndefined();
     expect(projectResidualReviewerToJudge({ findingsCount: 0, findings: [] })).toBeUndefined();
     expect(
       projectResidualReviewerToJudge({
@@ -1161,7 +1163,36 @@ describe("#925 F3: single open-count → continue projection", () => {
     const continueOut = judgeContinueFromOpenCount(2, []);
     expect(continueOut?.status).toBe("continue");
     expect(continueOut?.findingDispositions).toEqual(sparse);
+    // ADR 0138 / family CMR R4-C1: residual open-count never invents body text.
+    expect(continueOut?.fixPacketBody).toBeUndefined();
+    expect(JSON.stringify(continueOut)).not.toContain("[residual] open-count continue");
     expect(judgeContinueFromOpenCount(0, [])).toBeUndefined();
+  });
+
+  it("residual open-count omits body when absent; pass-through when authored (ADR 0138)", () => {
+    const noBody = projectResidualReviewerToJudge({
+      findingsCount: 2,
+      findings: [],
+    });
+    expect(noBody?.status).toBe("continue");
+    expect(noBody?.fixPacketBody).toBeUndefined();
+    expect(JSON.stringify(noBody)).not.toMatch(/\[residual\] open-count continue/);
+
+    const authored =
+      "  residual authored packet body  \nlive: correctness|a.ts:1|claim";
+    const withBody = projectResidualReviewerToJudge({
+      findingsCount: 1,
+      findings: [sampleFinding("a", "a.ts:1")],
+      fixPacketBody: authored,
+    });
+    expect(withBody?.status).toBe("continue");
+    // Verbatim transport — no trim rewrite.
+    expect(withBody?.fixPacketBody).toBe(authored);
+
+    // Whitespace-only is not an authored body (omit, do not invent).
+    const wsOnly = judgeContinueFromOpenCount(1, [], "   \n\t");
+    expect(wsOnly?.status).toBe("continue");
+    expect(wsOnly?.fixPacketBody).toBeUndefined();
   });
 
   it("projectJudgeContinueBlocking keeps live keys only and flips kills", () => {

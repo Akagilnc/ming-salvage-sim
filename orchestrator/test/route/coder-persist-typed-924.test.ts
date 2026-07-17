@@ -152,6 +152,7 @@ class PersistCoderBackend implements Backend {
           kind: "reviewer",
           findings,
           findingsCount,
+          fixPacketBody: "fixture residual authored body",
         },
         sessionId: `sess-review-${this.reviewCount}`,
       };
@@ -225,7 +226,12 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
             ];
             return {
               kind: "completed",
-              output: { kind: "reviewer", findings, findingsCount: 1 },
+              output: {
+                kind: "reviewer",
+                findings,
+                findingsCount: 1,
+                fixPacketBody: "fixture residual authored body",
+              },
               sessionId: `sess-review-${this.reviews}`,
             };
           }

@@ -14,8 +14,35 @@ import type {
   Finding,
   JudgeFindingDisposition,
   JudgeResult,
+  ReviewerOutput,
   WorkerResult,
 } from "../../src/types.js";
+
+/** Authored residual body for fixtures that exercise residual open-count transport. */
+export const FIXTURE_RESIDUAL_FIX_PACKET_BODY =
+  "fixture residual authored fixPacketBody (ADR 0138 pass-through)";
+
+/**
+ * Residual open-count paper with an explicit authored body (pass-through only).
+ * Production never invents this string — tests must supply it when residual
+ * paper is expected to reach coder-fix (ADR 0138 / #978).
+ */
+export function residualOpenContinue(
+  findings: ReadonlyArray<Finding>,
+  opts?: {
+    readonly findingsCount?: number;
+    readonly fixPacketBody?: string;
+  },
+): ReviewerOutput {
+  const findingsCount = opts?.findingsCount ?? findings.length;
+  const fixPacketBody = opts?.fixPacketBody ?? FIXTURE_RESIDUAL_FIX_PACKET_BODY;
+  return {
+    kind: "reviewer",
+    findings: [...findings],
+    findingsCount,
+    fixPacketBody,
+  };
+}
 
 export function judgeConverged(): JudgeResult {
   return { kind: "judge", status: "converged" };
