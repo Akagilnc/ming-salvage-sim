@@ -755,35 +755,20 @@ export class RealFamilyBackend implements FamilyBackend {
     // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
-    // plain crash re-throws. #964: Sandcastle AgentError (incl. native grok
-    // non-interactive auth death) is Action-typed failure — never uncaught
-    // FiberFailure/AgentError at the launcher.
-    let outcome: {
-      resolved: boolean;
-      reason?: string;
-      escalation?: FamilyEscalation;
-    };
-    try {
-      outcome = await retryProcessCrash(async () => {
-        // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
-        // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
-        // landed merge instead (the post-state check below then returns it clean).
-        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
-          return { resolved: true };
-        }
-        return await this.runMergerAgent(req);
-      });
-    } catch (err) {
-      if (isSandcastleAgentError(err)) {
-        return {
-          familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
-          familyHeadBefore,
-          childHead,
-          conflicted: true,
-        };
+    // plain crash re-throws.
+    // #964: single AgentError court lives at sc.run inside {@link runMergerAgent}
+    // (structured non-resolve + reason). No outer dual conversion here — AgentError
+    // never escapes that seat, so throw→retryProcessCrash is skipped for the whole
+    // AgentError class (not only auth).
+    const outcome = await retryProcessCrash(async () => {
+      // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
+      // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
+      // landed merge instead (the post-state check below then returns it clean).
+      if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+        return { resolved: true };
       }
-      throw err;
-    }
+      return await this.runMergerAgent(req);
+    });
     if (outcome.escalation !== undefined) {
       return {
         familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
@@ -808,12 +793,24 @@ export class RealFamilyBackend implements FamilyBackend {
     // family base ref itself moved past familyHeadBefore AND childHead is now its
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
-    // never looks clean").
+    // never looks clean"). Non-empty merger reason threads onto MergeResult for
+    // family-runner diagnostics (#964 S3; not a public cause token).
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
     const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
-    return childLanded
-      ? { familyHead, familyHeadBefore, childHead }
-      : { familyHead, familyHeadBefore, childHead, conflicted: true };
+    if (childLanded) {
+      return { familyHead, familyHeadBefore, childHead };
+    }
+    const reason =
+      typeof outcome.reason === "string" && outcome.reason.trim().length > 0
+        ? outcome.reason.trim()
+        : undefined;
+    return {
+      familyHead,
+      familyHeadBefore,
+      childHead,
+      conflicted: true,
+      ...(reason !== undefined ? { reason } : {}),
+    };
   }
 
   /**
@@ -1028,10 +1025,13 @@ export class RealFamilyBackend implements FamilyBackend {
         } catch (error) {
           telemetry.stampCollect({ kind: "thrown", error });
           await telemetryEnvironmentStamp;
-          // #964: AgentError (native headless auth death / non-zero grok exit) →
-          // structured non-resolve for the owning Merge Action. Do not rethrow
-          // FiberFailure/AgentError (launcher terminal lost on flight3).
-          // Plain infrastructure crashes still throw for #598 retryProcessCrash.
+          // #964: single court at sc.run — ANY Sandcastle AgentError (native
+          // headless auth death, non-zero agent exit, FiberFailure wrap, …) →
+          // structured non-resolve for the owning Merge Action. Intentionally
+          // skips throw→retryProcessCrash for the whole AgentError class: same
+          // dead credentials / agent failure will not recover on re-dispatch.
+          // Do not rethrow FiberFailure/AgentError (launcher terminal lost on
+          // flight3). Plain infrastructure crashes still throw for #598.
           if (isSandcastleAgentError(error)) {
             return {
               resolved: false,
