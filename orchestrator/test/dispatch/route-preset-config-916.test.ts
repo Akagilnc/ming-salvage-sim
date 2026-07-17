@@ -66,7 +66,7 @@ function fullSlots(
     verify: "gpt-5.6-sol",
     fixer: "gpt-5.6-sol-low",
     cleanup: "gpt-5.6-sol-low",
-    docRelease: "gpt-5.6-sol-low",
+    landing: "gpt-5.6-sol-low",
     ...overrides,
   };
 }
@@ -130,7 +130,7 @@ describe("#916 claude-tight factory lineup", () => {
       verify: "gpt-5.6-sol",
       fixer: "gpt-5.6-sol-low",
       cleanup: "gpt-5.6-sol-low",
-      docRelease: "gpt-5.6-sol-low",
+      landing: "gpt-5.6-sol-low",
     });
     expect(route.legCollections.cmrReview).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },

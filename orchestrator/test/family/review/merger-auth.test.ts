@@ -39,6 +39,8 @@ import {
   SPAWNED_WORKER_ENV,
 } from "../../../src/realBackend.js";
 import type { ConflictResolveRequest } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 const here = join(import.meta.dirname ?? ".", "..", "..", "..", "prompts");
 const soulsDir = join(import.meta.dirname ?? ".", "..", "..", "..", "image", "souls");
@@ -78,6 +80,18 @@ function baseOpts(over: Partial<RealFamilyBackendOptions> = {}): RealFamilyBacke
 
 describe("integ-cmr int-r2 A-1 — mountMergerAuth on an empty $HOME degrades, never throws", () => {
   class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public auth(): MergerAuth {
       return this.mountMergerAuth();
     }
@@ -127,6 +141,18 @@ describe("integ-cmr int-r2 A-1 — mountMergerAuth on an empty $HOME degrades, n
 
 describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_TOKEN", () => {
   class CfgBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public cfg(auth: MergerAuth) {
       return this.mergerSandboxConfig(auth);
     }
@@ -181,6 +207,18 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
 
 describe("correctness N3 — merger agy mount + fail-closed", () => {
   class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public auth(): MergerAuth {
       return this.mountMergerAuth();
     }
@@ -238,7 +276,7 @@ describe("correctness N3 — merger agy mount + fail-closed", () => {
             verify: "gpt-5.6-sol",
             fixer: "sonnet",
             cleanup: "sonnet",
-            docRelease: "sonnet",
+            landing: "sonnet",
           },
           legCollections: {
             cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
@@ -270,6 +308,18 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
    * loud throw (never a phantom `merged`).
    */
   class NoClaudeMerger extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     sandboxReached = false;
     public run(req: ConflictResolveRequest) {
       return this.runMergerAgent(req);

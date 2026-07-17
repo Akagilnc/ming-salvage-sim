@@ -67,7 +67,7 @@ export const MODEL_ROUTE_SLOTS = [
   "verify",
   "fixer",
   "cleanup",
-  "docRelease",
+  "landing",
 ] as const;
 
 export const MODEL_ROUTE_LEG_COLLECTIONS = ["cmrReview"] as const;
@@ -576,7 +576,7 @@ export function relaySlotForSingleSliceWallStep(
  *   S3 → cmrCompleteness / cmrCorrectness (integrated CMR pass workers)
  *   S5 → coderFix
  *   S7 → ship
- *   S9 → verify, S10 → fixer, S12 → docRelease
+ *   S9 → verify, S10 → fixer, S12 → landing
  *
  * Correctness C1: endgame steps must never coerce onto ship/coder. Phase
  * fallbacks apply only when the step is not an explicit wall role.
@@ -602,7 +602,7 @@ export function familyRelaySlotsForWall(opts: {
   if (step === "S7") return ["ship"];
   if (step === "S9") return ["verify"];
   if (step === "S10") return ["fixer"];
-  if (step === "S12") return ["docRelease"];
+  if (step === "S12") return ["landing"];
   // Explicit wall roles above. Phase fallbacks never rewrite ship for
   // online-review / wave verify barriers (C1: online-review must not touch ship).
   if (opts.phase === "online_review") return ["verify"];

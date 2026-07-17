@@ -27,9 +27,23 @@ import {
   recordShipped,
 } from "../../../src/family/ledger.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 /** A zero-IO fake family backend that keeps the ledger in memory. */
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

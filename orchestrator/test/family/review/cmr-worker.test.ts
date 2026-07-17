@@ -90,11 +90,13 @@ import {
 import { shipOutcomeFromResult } from "../../../src/shipOutcome.js";
 import { isRunnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
 import type {
+
   DispatchContext,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -735,6 +737,18 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
 describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
   class FixturedCmrBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
     runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
@@ -815,6 +829,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     const runs: Parameters<typeof sc.run>[0][] = [];
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -985,6 +1011,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
     });
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(
@@ -1125,6 +1163,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -1184,6 +1234,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let sandcastleCalls = 0;
     let coderFixCalls = 0;
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -1251,6 +1313,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -1306,6 +1380,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let coderFixCalls = 0;
     let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -1382,6 +1468,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let nextGateCalls = 0;
     let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       /** Expose the production coder-fix seat that binds T2 coder receipt SO. */
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
@@ -1487,6 +1585,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -1551,6 +1661,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -1617,6 +1739,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let sandcastleCalls = 0;
     let nextGateCalls = 0;
     class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -1779,6 +1913,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const repo = realRepo335();
 
     class FailingOutcomeLandingBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       protected override mountShipAuth(): ShipAuth {
         return { claudeToken: "tok" };
       }
@@ -1856,6 +2002,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
             };
 
       class FixFindingsBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
         public writeFixFindings(
           ctx: DispatchContext,
           landing: WorkerLandingPayload,
@@ -2022,6 +2180,18 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
 describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () => {
   class AuthDispatchBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     config?: {
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
@@ -2126,6 +2296,18 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
 describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public config(
       auth: CmrAuth,
       spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
@@ -2404,6 +2586,18 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
    * otherwise leak the host's gh token into a "no creds" assertion.
    */
   class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public auth(): CmrAuth {
       return this.mountCmrAuth();
     }
@@ -2443,6 +2637,18 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
     // A separate backend whose readGhToken yields a present token: mountCmrAuth must
     // wire it onto CmrAuth.ghToken (cmrSandboxConfig then exports it as GH_TOKEN).
     class GhAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public auth(): CmrAuth {
         return this.mountCmrAuth();
       }
@@ -2498,6 +2704,18 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
 
 describe("#378 mountCmrAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
   class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public auth(): CmrAuth {
       return this.mountCmrAuth();
     }
@@ -2567,6 +2785,18 @@ describe("#378 mountCmrAuth — writes a minimal danger-full-access config, neve
 describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-resolved focus", () => {
   /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
   class FocusBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public focus(ctx: {
       familyBase: string;
       llmResolvedChildren?: readonly number[];
@@ -2850,6 +3080,18 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
 describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () => {
   /** Exposes runCmrWorker and traps sc.run so we can prove it is NEVER reached. */
   class GuardBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     scRunReached = false;
     public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
       return this.runCmrWorker(spec, ctx);
@@ -2917,6 +3159,18 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
    * spinning the container when `mountCmrAuth().claudeToken` is absent.
    */
   class NoClaudeAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     scRunReached = false;
     public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
       return this.runCmrWorker(spec, ctx);
@@ -2998,6 +3252,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
    * flagged the leak; the try/finally in runCmrWorker is the fix.
    */
   class ReclaimBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     constructor(opts: ConstructorParameters<typeof RealFamilyBackend>[0], private readonly dirs: CmrAuth) {
       super(opts);
     }
@@ -3052,6 +3318,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     let outcomePathAtRun: string | undefined;
     class OutcomeCleanupBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public calls = 0;
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
@@ -3122,6 +3400,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     let outcomePathAtRun: string | undefined;
 
     class FamilyCoderReceiptBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public calls: Parameters<typeof sc.run>[0][] = [];
       public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
         return this.runFamilyCoderFixWorker(spec, ctx);
@@ -3180,6 +3470,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     class NoSessionBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public calls = 0;
       public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
         return this.runFamilyCoderFixWorker(spec, ctx);
@@ -3210,6 +3512,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     class MissingTypedBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -3246,6 +3560,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     let outcomePathAtRun: string | undefined;
 
     class MissingTypedCmrBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -3311,6 +3637,18 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     let outcomePathAtRun: string | undefined;
 
     class BlankSidecarBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }

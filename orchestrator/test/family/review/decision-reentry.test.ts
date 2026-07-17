@@ -27,11 +27,13 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 // A single-slice backend that is NEVER exercised: the family prior-escalation
 // early return fires before the wave loop, so no child ever runs.
@@ -59,6 +61,18 @@ class UnusedChildBackend implements Backend {
 }
 
 class SeededFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

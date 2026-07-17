@@ -27,6 +27,7 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
@@ -35,6 +36,7 @@ import type {
   MergeRequest,
   ReconcileGit,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 class ChildBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -70,6 +72,18 @@ class ChildBackend implements Backend {
 
 /** A FamilyBackend pre-seeded with a ledger (the prior, crashed run's residue). */
 class SeededFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

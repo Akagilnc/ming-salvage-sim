@@ -55,6 +55,8 @@ import {
   legacyCmrScriptToWorkerOutput,
 } from "../../helpers/judge-fixtures.js";
 import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 /**
  * Test-fake boundary (#919 E / R7 / CR N2): scripts may declare positive
@@ -90,6 +92,18 @@ afterEach(() => {
  * assert what ran (no real container / codex / push).
  */
 class CapableFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly verifyCalls: FamilyVerifyRequest[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
@@ -201,6 +215,18 @@ function currentRouteFingerprint(): string {
  * still has no verify/cmr/ship dispatch capability.
  */
 class BareFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -1152,7 +1178,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           spec.kind === "verify" ||
           spec.kind === "fixer" ||
           spec.kind === "cleanup" ||
-          spec.kind === "docRelease"
+          spec.kind === "landing"
         ) {
           return {
             kind: "completed",
@@ -1167,7 +1193,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                   }
                   : spec.kind === "cleanup"
                     ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                    : { kind: "docRelease", released: true },
+                    : { kind: "landing", released: true },
           };
         }
         return { kind: "failed", reason: `unexpected worker ${spec.kind}` };

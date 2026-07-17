@@ -138,10 +138,13 @@ export { mergeChild } from "./family/merger.js";
 export { recordMerged, recordAborted, mergedSet, recordPrMerged, familyPrMergedForHead } from "./family/ledger.js";
 export type { MergedRecord, AbortedRecord, PrMergedRecord } from "./family/ledger.js";
 export {
-  runAutoMergeStage,
   assessMergeReadiness,
+  confirmPrMergedLive,
+  executePrMergeCommit,
+  fetchPrMergeLiveState,
   isPrMergedMarker,
 } from "./autoMerge.js";
+export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {

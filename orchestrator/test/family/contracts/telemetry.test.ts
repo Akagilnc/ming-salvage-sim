@@ -34,11 +34,13 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyLedgerEntry,
   FamilyVerifyResult,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const tempDirs: string[] = [];
 const here = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +126,18 @@ const FAMILY_HEAD = "head-809-sidecar";
  * runId). Does not accept a caller-supplied runId — runFamily must mint it.
  */
 class FamilyTelemetryBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ctxs: DispatchContext[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
 
@@ -581,6 +595,18 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
     let outcomePath: string | undefined;
 
     class TelemetryMergerBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       public runMergerAgentForTest() {
         return this.runMergerAgent({
           childIssue: 786,

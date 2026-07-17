@@ -287,11 +287,11 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           } as StepOutput,
         };
       }
-      if (spec.kind === "docRelease") {
+      if (spec.kind === "landing") {
         return {
           kind: "completed",
           output: {
-            kind: "docRelease",
+            kind: "landing",
             released: true,
             commitOid: "a".repeat(40),
           } as StepOutput,

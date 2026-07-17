@@ -4,6 +4,7 @@ import {
   type FamilyModuleContext,
 } from "./family/moduleDeclaration.js";
 import { runFamily } from "./family/runner.js";
+import { buildExplicitLandingLiveHooks } from "./family/landing.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
 import {
   runVerifyCmr,
@@ -505,6 +506,19 @@ class DogfoodFamilyBackend implements FamilyBackend {
     private readonly mergeFamilyHead?: string,
   ) {
     this.ledger.push(...initialLedger);
+  }
+
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    // Explicit offline live hooks for dogfood replay (not a silent MERGED hatch).
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
   }
 
   async mergeChildIntoFamilyBase(

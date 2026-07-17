@@ -39,6 +39,8 @@ import type {
 } from "../../../src/types.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import type { FamilyStageFailureStatus } from "../../../src/family/familyTerminal.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 class ChildBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -71,6 +73,18 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -250,6 +264,18 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
 
   it("missing integrated CMR capability is cmr_failed, not verify_failed", async () => {
     class VerifyOnlyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `+${c.childIssue}` };
@@ -318,6 +344,18 @@ describe("#922 fresh / resume same accident → same terminal name", () => {
 
       // Resume: children already merged; final barrier re-hits the same stage death.
       class ResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }

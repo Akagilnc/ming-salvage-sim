@@ -49,7 +49,7 @@ describe("#422 model route presets", () => {
       verify: "gpt-5.6-sol",
       fixer: "sonnet",
       cleanup: "sonnet",
-      docRelease: "sonnet",
+      landing: "sonnet",
     });
     expect(printableRouteLineup(resolved)).toEqual(
       [
@@ -63,7 +63,7 @@ describe("#422 model route presets", () => {
         "verify=gpt-5.6-sol",
         "fixer=sonnet",
         "cleanup=sonnet",
-        "docRelease=sonnet",
+        "landing=sonnet",
         "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );

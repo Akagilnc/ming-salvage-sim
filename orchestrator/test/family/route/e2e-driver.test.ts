@@ -48,6 +48,7 @@ import type {
 } from "../../../src/family/types.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
+
   Backend,
   DispatchContext,
   IssueMeta,
@@ -59,6 +60,7 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const familyPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -188,6 +190,18 @@ class RealGitChildBackend implements Backend {
  * verify / cmr / PR calls so the test can assert the run stopped at the PR.
  */
 class E2EFamilyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly verifyCalls: FamilyVerifyRequest[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly shipCalls: string[] = [];
@@ -366,6 +380,18 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
  * only cmr/ship stay controlled (no container).
  */
 class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly shipCalls: string[] = [];
   protected override async installDeps(): Promise<void> {
     // Legal empty skips before install; operational errors fail before install.

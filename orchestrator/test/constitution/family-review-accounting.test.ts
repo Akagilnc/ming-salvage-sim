@@ -36,6 +36,8 @@ import type {
   WorkerSpec,
 } from "../../src/types.js";
 import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -64,6 +66,18 @@ afterEach(() => {
  * verification capability so a surviving court path can complete to ok:true.
  */
 class ScriptedCmrBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
   currentFamilyHead = "head-1";
