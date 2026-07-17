@@ -7730,9 +7730,8 @@ class GameDB:
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
         # #883: private secret briefs never enter shared sources; when any
         # undisclosed brief exists, do not trust a raw aggregate report string.
-        has_restricted_source = (
+        has_restricted_source = self._has_restricted_source_gate(
             any(item.get("excluded_names") for item in items)
-            or self._has_undisclosed_secret_order_brief()
         )
         source_snapshot_supplied = knowledge_items is not None
         settlement_items = [
@@ -7817,9 +7816,8 @@ class GameDB:
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
         # #883: same single write-seam rule as turn reports — private secret
         # briefs force source-scoped public aggregation only.
-        has_restricted_source = (
+        has_restricted_source = self._has_restricted_source_gate(
             any(item.get("excluded_names") for item in items)
-            or self._has_undisclosed_secret_order_brief()
         )
         source_snapshot_supplied = knowledge_items is not None
         if public_body is None:
@@ -9988,6 +9986,15 @@ class GameDB:
                 return [str(name) for name in json.loads(row["excluded_names"] or "[]")]
             except (TypeError, ValueError):
                 return []
+        # #883 CR R1 S2: bare ``secret_order:`` shared *sources* are no longer
+        # produced (create/update → private briefs; production disclosure →
+        # ``secret_order_disclosure:``; register gate rejects the prefix).
+        # Retained: ``record_public_knowledge_event`` still inherits exclusions
+        # by looking up secret_orders when source_id is ``secret_order:N`` —
+        # exercised by AC harness paths (test_character_knowledge_489 /
+        # test_minister_context / test_web_chat_serialization_393). Without
+        # this branch those writes lose the blacklist. session.py only DELETEs
+        # legacy sources with this prefix; no live production producer.
         if source.startswith("secret_order:"):
             try:
                 order_id = int(source.split(":", 1)[1])
@@ -10014,6 +10021,10 @@ class GameDB:
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
         order_id = None
+        # #883 CR R1 S2: same retention as knowledge_exclusions_for_source —
+        # no production shared-source producer for bare ``secret_order:``, but
+        # the reader still serves exclusion-target inheritance for that prefix
+        # (AC harness + any residual event rows). See comment there.
         if source.startswith("secret_order:"):
             try:
                 order_id = int(source.split(":", 1)[1])
@@ -10092,14 +10103,12 @@ class GameDB:
         *, commit: bool = True,
     ) -> None:
         # #883 single rejection seam: secret orders and derivatives must not
-        # enter the shared knowledge ledger.  Disclosure events use a separate
-        # public source_id prefix and remain the only publicization path.
+        # enter the shared knowledge ledger.  Disclosure uses
+        # ``secret_order_disclosure:`` (does not start with ``secret_order:``)
+        # and remains the only publicization path.
         source_id = str(source_id or "")
         kind_text = str(kind or "")
-        if kind_text == "secret_order" or (
-            source_id.startswith("secret_order:")
-            and not source_id.startswith("secret_order_disclosure:")
-        ):
+        if kind_text == "secret_order" or source_id.startswith("secret_order:"):
             raise ValueError(
                 "密令不得写入共享知识源；只允许本体表 + 接令者专用简报表（#883）"
             )
@@ -10132,6 +10141,15 @@ class GameDB:
             "WHERE o.status IN ('active', 'pending_review') LIMIT 1"
         ).fetchone()
         return row is not None
+
+    def _has_restricted_source_gate(self, has_shared_exclusions: bool) -> bool:
+        """Whether public-archive writers must refuse aggregate-as-public prose.
+
+        Callers pass their local shared-exclusion predicate (item exclusions or
+        non-audience restricted kinds); undisclosed secret-order briefs are
+        OR'd in here so turn-report / chapter / settlement narrative stay aligned.
+        """
+        return bool(has_shared_exclusions) or self._has_undisclosed_secret_order_brief()
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,

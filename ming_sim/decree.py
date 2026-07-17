@@ -134,9 +134,8 @@ def _record_settlement_narrative_sources(
             (source_id,),
         ).fetchone()
         restricted_kinds.add(str(row["kind"] or "") if row is not None else "unknown")
-    has_restricted_source = (
+    has_restricted_source = db._has_restricted_source_gate(
         any(kind != "audience" for kind in restricted_kinds)
-        or db._has_undisclosed_secret_order_brief()
     )
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:

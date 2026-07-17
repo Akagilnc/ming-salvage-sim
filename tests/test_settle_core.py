@@ -122,7 +122,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         excluded_names=[excluded.name],
     )
     before_turn = state.turn
-    source_id = f"restricted:settlement-private"
+    source_id = "restricted:settlement-private"
     db.register_character_knowledge_source(
         state, [{"character_id": knower.name, "tier": "主办"}], "private_matter",
         "生产链密查", "生产链受限事项", source_id=source_id,
