@@ -6,6 +6,10 @@
  */
 
 import type { ModelRouteSlot } from "../modelRoutes.js";
+import {
+  billingPoolFromQuotaPool,
+  type BillingPoolId,
+} from "../quotaPoolTable.js";
 import type { IntegratedCmrPass } from "./types.js";
 import type { WorkerSpec } from "../types.js";
 
@@ -40,18 +44,22 @@ export function familyWorkerSlotForDispatch(
  * - No pool → undefined
  * - Pool without slots (explicit test / unscoped) → pool for every worker
  * - Pool + slots → only wall-role workers on listed slots get the rewrite
+ *
+ * Returns {@link BillingPoolId} so callers (e.g. landingWorkerSpec) need no cast.
  */
 export function billingPoolForFamilyWorker(opts: {
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly kind: WorkerSpec["kind"];
   readonly cmrPass?: IntegratedCmrPass | string;
-}): string | undefined {
+}): BillingPoolId | undefined {
   if (opts.billingPool === undefined) return undefined;
   if (opts.billingPoolSlots === undefined || opts.billingPoolSlots.length === 0) {
-    return opts.billingPool;
+    return billingPoolFromQuotaPool(opts.billingPool);
   }
   const slot = familyWorkerSlotForDispatch(opts.kind, opts.cmrPass);
   if (slot === undefined) return undefined;
-  return opts.billingPoolSlots.includes(slot) ? opts.billingPool : undefined;
+  return opts.billingPoolSlots.includes(slot)
+    ? billingPoolFromQuotaPool(opts.billingPool)
+    : undefined;
 }

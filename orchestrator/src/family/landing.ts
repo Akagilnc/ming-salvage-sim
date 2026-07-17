@@ -23,7 +23,6 @@ import {
   pollPrReviewState,
   type PrReviewSnapshot,
 } from "../botPolling.js";
-import { withMechanicalRetry } from "../dispatchRetry.js";
 import { landingWorkerSpec } from "../dispatchWorker.js";
 import { buildRoundTrigger } from "../evidenceAdmissibility.js";
 import { shWithClock } from "../externalCall.js";
@@ -39,23 +38,18 @@ import {
 import type {
   CleanupResult,
   DispatchContext,
-  WorkerLandingPayload,
-  WorkerMonitorHandle,
   WorkerResult,
-  WorkerSpec,
 } from "../types.js";
 import type { ModelRouteSlot, ResolvedModelRoute } from "../modelRoutes.js";
-import type { BillingPoolId } from "../quotaPoolTable.js";
 import {
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
-  mechanicalRedispatchAttemptsFromFamilyLedger,
   mergedSet,
   recordPostMergeCleanup,
   recordPrMerged,
 } from "./ledger.js";
 import { billingPoolForFamilyWorker } from "./familyWorkerSlots.js";
-import { dispatchFamilyWorkerWithMonitor } from "./dispatchFamilyWorker.js";
+import { dispatchFamilyWorkerOrAbort } from "./familyProcessRootDispatch.js";
 import { sleepPendingCiPollInterval } from "./onlineReviewLoop.js";
 import type { FamilyBackend } from "./types.js";
 import { shouldReclaimFamilyHost } from "../hostReclaim.js";
@@ -181,88 +175,6 @@ function ghSh(): (file: string, args: string[]) => string {
 }
 
 /**
- * Dispatch landing docs worker through the same process-root ownership court
- * as family review-loop workers (ID-004 / ID-006): monitored spawn +
- * withMechanicalRetry + durable mechanical_redispatch budget.
- */
-async function dispatchLandingDocsWorker(
-  familyBackend: FamilyBackend,
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-): Promise<WorkerResult> {
-  const workerStep = `landing`;
-  const ledger = await familyBackend.readFamilyLedger();
-  const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
-    ledger,
-    workerStep,
-  );
-  try {
-    return await withMechanicalRetry(
-      spec,
-      ctx,
-      async (s, c) => {
-        let dispatchError: unknown | undefined;
-        let workerResult: WorkerResult;
-        try {
-          const monitored = await dispatchFamilyWorkerWithMonitor(
-            familyBackend,
-            s,
-            c,
-            landing,
-            {
-              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
-                await familyBackend.appendFamilyLedger({
-                  status: "worker_dispatched",
-                  event: "worker_dispatched",
-                  monitorHandle: handle,
-                });
-              },
-            },
-          );
-          workerResult = monitored.result;
-          await monitored.telemetryEnvironmentStamp;
-        } catch (err) {
-          dispatchError = err;
-        }
-        if (dispatchError !== undefined) throw dispatchError;
-        return workerResult!;
-      },
-      {
-        attemptsAlreadyUsed,
-        // Vitest: no wall-clock 15s backoff (same pattern as pending-CI poll).
-        ...(process.env.VITEST !== undefined
-          ? { sleepMs: async () => {} }
-          : {}),
-        onFailure: async (outcome, attempt) => {
-          const reason =
-            "result" in outcome
-              ? outcome.result.kind === "failed"
-                ? outcome.result.reason
-                : `worker returned ${outcome.result.kind}`
-              : outcome.error instanceof Error
-                ? outcome.error.message
-                : String(outcome.error);
-          await familyBackend.appendFamilyLedger({
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep,
-            mechanicalRedispatchAttempt: attempt,
-            reason,
-          });
-        },
-        rethrowOnExhaustion: true,
-      },
-    );
-  } catch (err) {
-    const reason = `family landing worker threw on startup: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
-    return { kind: "failed", reason };
-  }
-}
-
-/**
  * Landing Action — docs worker → merge → MERGED confirm → close/cleanup leftovers.
  *
  * close/cleanup failures become leftovers only (ID-013); never park/fail/flip
@@ -322,8 +234,9 @@ export async function runLandingAction(
         ? { billingPoolSlots: input.billingPoolSlots }
         : {}),
     });
-    const poolId = pool as BillingPoolId | undefined;
-    const spec = landingWorkerSpec(input.resolvedRoute, poolId);
+    // Shared process-root court (ID-004 / ID-006 / #909): quota rethrows for
+    // park/relay — do not wrap and collapse into landing_failed.
+    const spec = landingWorkerSpec(input.resolvedRoute, pool);
     const ctx: DispatchContext = {
       familyBase: input.familyBase,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
@@ -334,26 +247,11 @@ export async function runLandingAction(
         ? { modelRoute: input.resolvedRoute }
         : {}),
     };
-    let workerResult: WorkerResult;
-    try {
-      workerResult = await dispatchLandingDocsWorker(
-        input.familyBackend,
-        spec,
-        ctx,
-      );
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        terminalState: "landing_failed",
-        stopSummary: {
-          // #942 will cut over public landing_worker_failed; keep stage token now.
-          reason: "merge_failed",
-          summary: `landing worker dispatch failed: ${detail}`,
-          repairHint: "repair landing worker startup, then re-enter landing",
-        },
-      };
-    }
+    const workerResult = await dispatchFamilyWorkerOrAbort(
+      input.familyBackend,
+      spec,
+      ctx,
+    );
     if (workerResult.kind === "escalated") {
       return {
         ok: false,

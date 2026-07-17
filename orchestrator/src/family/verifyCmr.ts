@@ -62,10 +62,9 @@ import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
-  dispatchFamilyWorkerWithMonitor,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { withMechanicalRetry } from "../dispatchRetry.js";
+import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import { executeAdvanceCoderSuggestion } from "../advanceCoderEffect.js";
 import {
   applyRelayBatonToRoute,
@@ -81,7 +80,6 @@ import {
   familyWorkerSlotForDispatch,
 } from "./familyWorkerSlots.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
-import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
   DispatchContext,
@@ -1428,110 +1426,6 @@ export async function runFamilyOnlineReviewLoop(input: {
       return err.result;
     }
     throw err;
-  }
-}
-
-function familyWorkerStepKey(
-  spec: Parameters<typeof dispatchFamilyWorker>[1],
-  ctx: Parameters<typeof dispatchFamilyWorker>[2],
-): string {
-  return `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`;
-}
-
-async function dispatchOrAbort(
-  familyBackend: FamilyBackend,
-  spec: Parameters<typeof dispatchFamilyWorker>[1],
-  ctx: Parameters<typeof dispatchFamilyWorker>[2],
-  landing?: Parameters<typeof dispatchFamilyWorker>[3],
-  opts?: {
-    readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
-  },
-): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
-  try {
-    // #598 / 2026-07-08: a family worker that CRASHES (throws) re-dispatches a fresh
-    // session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS — every role,
-    // read-only and write-capable alike. Every RESOLVED result (failed / malformed /
-    // completed / escalated) is DEFERRED to this gate's own rich terminal handling.
-    // #934 ID-004: durable mechanical_redispatch markers bind the budget across
-    // process re-entry (same contract as single-slice runner.ts).
-    const workerStep = familyWorkerStepKey(spec, ctx);
-    const ledger = await familyBackend.readFamilyLedger();
-    const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
-      ledger,
-      workerStep,
-    );
-    return await withMechanicalRetry(
-      spec,
-      ctx,
-      async (s, c) => {
-        let dispatchError: unknown | undefined;
-        let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
-        try {
-          const monitored = await dispatchFamilyWorkerWithMonitor(
-            familyBackend,
-            s,
-            c,
-            landing,
-            {
-              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
-                opts?.onMonitorHandle?.(handle);
-                // #934 ID-006 / #937: adoption/persist failure terminates the
-                // exact ChildProcess via dispatchFamilyWorkerWithMonitor —
-                // rethrow so terminateSpawnedChild runs (no best-effort swallow).
-                await familyBackend.appendFamilyLedger({
-                  status: "worker_dispatched",
-                  event: "worker_dispatched",
-                  monitorHandle: handle,
-                });
-              },
-            },
-          );
-          workerResult = monitored.result;
-          await monitored.telemetryEnvironmentStamp;
-        } catch (err) {
-          dispatchError = err;
-        }
-        if (dispatchError !== undefined) throw dispatchError;
-        return workerResult!;
-      },
-      {
-        attemptsAlreadyUsed,
-        onFailure: async (outcome, attempt) => {
-          const reason =
-            "result" in outcome
-              ? outcome.result.kind === "failed"
-                ? outcome.result.reason
-                : `worker returned ${outcome.result.kind}`
-              : outcome.error instanceof Error
-                ? outcome.error.message
-                : String(outcome.error);
-          await familyBackend.appendFamilyLedger({
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep,
-            mechanicalRedispatchAttempt: attempt,
-            reason,
-          });
-        },
-        rethrowOnExhaustion: true,
-      },
-    );
-  } catch (err) {
-    if (err instanceof OnlineReviewLoopTerminal) throw err;
-    // #909: 429/quota park signal must NOT collapse into generic startup
-    // `{kind:"failed"}` (leg-kill). Rethrow so upper family/runner can park or
-    // relay — same typed terminal as single-slice withMechanicalRetry.
-    if (isQuotaWaitForResetError(err)) {
-      // N2: stamp the hit CMR pass so wall relay rewrites only that slot.
-      if (ctx.cmrPass === "completeness" || ctx.cmrPass === "correctness") {
-        err.cmrPass = ctx.cmrPass;
-      }
-      throw err;
-    }
-    const reason = `family ${spec.kind} worker threw on startup: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
-    return { kind: "failed", reason };
   }
 }
 
