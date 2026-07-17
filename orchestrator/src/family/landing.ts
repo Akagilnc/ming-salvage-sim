@@ -177,9 +177,10 @@ export const LANDING_MERGED_CONFIRM_ATTEMPTS = 3;
 export interface LandingLiveHooks {
   readonly fetchState: () => PrMergeLiveState;
   readonly executeMerge?: (prNumber: number, headOid: string) => void;
+  /** Same three-state surface as {@link confirmPrMergedLive} (L2 / local CR nit). */
   readonly confirmMerged?: (
     expectedHeadOid: string,
-  ) => PrMergedTerminalRecord | undefined;
+  ) => MergeRecordAlignment;
   /** Real readiness snapshot; production uses pollPrReviewState when absent. */
   readonly pollSnapshot?: () => Promise<PrReviewSnapshot>;
   readonly closeIssue?: (issue: number) => void;
@@ -259,11 +260,14 @@ export function buildExplicitLandingLiveHooks(input: {
       merged = true;
     },
     confirmMerged: (expectedHeadOid) => ({
-      prUrl: input.prUrl,
-      prNumber,
-      remoteBranchName: input.remoteBranchName,
-      mergedHeadOid: expectedHeadOid,
-      convergedHeadOid: expectedHeadOid,
+      kind: "aligned" as const,
+      record: {
+        prUrl: input.prUrl,
+        prNumber,
+        remoteBranchName: input.remoteBranchName,
+        mergedHeadOid: expectedHeadOid,
+        convergedHeadOid: expectedHeadOid,
+      },
     }),
     pollSnapshot: async () => greenSnapshot(),
     closeIssue: () => {},
@@ -722,16 +726,12 @@ export async function runLandingAction(
         }
 
         // R4-CX1 / L2: merge exit ≠ live MERGED. Bounded confirm retries cover
-        // propagation lag. Production confirm returns three-state alignment so
-        // head-mismatch parks immediately (not opaque not_merged).
+        // propagation lag. Hooks and production share MergeRecordAlignment.
         const confirmAlignment = (
           expectedHeadOid: string,
         ): MergeRecordAlignment => {
           if (liveHooks?.confirmMerged !== undefined) {
-            const record = liveHooks.confirmMerged(expectedHeadOid);
-            return record !== undefined
-              ? { kind: "aligned", record }
-              : { kind: "not_merged" };
+            return liveHooks.confirmMerged(expectedHeadOid);
           }
           return confirmPrMergedLive(
             sh,
