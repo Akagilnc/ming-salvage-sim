@@ -8269,12 +8269,39 @@ class GameDB:
         self.conn.commit()
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
+    def _latest_held_user_chat_message_id(
+        self, minister_name: str, turn: int,
+    ) -> Optional[int]:
+        """Latest still-held user chat row for this minister on ``turn`` (oral-decree pin)."""
+        name = str(minister_name or "").strip()
+        if not name:
+            return None
+        try:
+            row = self.conn.execute(
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                "AND turn=? ORDER BY id DESC LIMIT 1",
+                (name, int(turn)),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return int(row["id"]) if row is not None else None
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
     ) -> int:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
-        颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。"""
+        颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
+
+        secret_order: pin oral-decree ``origin_chat_message_id`` at stage time so
+        later same-turn confirmation user lines cannot steal max(held id) bloodline.
+        """
+        payload_data: Dict[str, object] = dict(payload or {})
+        if str(kind) == "secret_order" and payload_data.get("origin_chat_message_id") is None:
+            origin_mid = self._latest_held_user_chat_message_id(minister_name, turn)
+            if origin_mid is not None:
+                payload_data["origin_chat_message_id"] = int(origin_mid)
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status)
@@ -8283,7 +8310,7 @@ class GameDB:
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
-                json.dumps(payload or {}, ensure_ascii=False),
+                json.dumps(payload_data, ensure_ascii=False),
             ),
         )
         self.conn.commit()
@@ -8611,10 +8638,22 @@ class GameDB:
                 excluded_offices = [str(t).strip() for t in excluded_offices if str(t).strip()] if isinstance(excluded_offices, list) else []
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
+                # Stage-time pin: do not re-guess max(held) after confirm utterance.
+                origin_mid_raw = payload.get("origin_chat_message_id")
+                origin_mid: Optional[int] = None
+                if origin_mid_raw is not None:
+                    try:
+                        origin_mid = int(origin_mid_raw)
+                    except (TypeError, ValueError):
+                        origin_mid = None
+                    if origin_mid is not None and origin_mid <= 0:
+                        origin_mid = None
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
-                    origin_minister_name=str(pa.get("minister_name") or "") or None)
+                    origin_minister_name=str(pa.get("minister_name") or "") or None,
+                    origin_chat_message_id=origin_mid,
+                )
                 if registry is not None:
                     try:
                         registry.refresh(assignee)
@@ -10152,7 +10191,9 @@ class GameDB:
             self.conn.commit()
 
     def _withhold_assignee_user_audience_origin(
-        self, state: GameState, minister_name: str, *, commit: bool = True,
+        self, state: GameState, minister_name: str, *,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
+        commit: bool = True,
     ) -> None:
         """Classify secret-origin audience user bloodline for one minister (#976).
 
@@ -10163,15 +10204,17 @@ class GameDB:
         Scope (narrowed after completeness review — 修类不修点):
         - Cross-turn still-``held`` user rows (any earlier turn) — F4 /
           T-hold → T+N create without settle.
-        - Same-turn still-``held`` user: **only the latest** (max id) is
-          treated as the oral-decree origin.  Earlier same-window pure-public
-          user lines survive classification and project via release (private
-          when the minister is an active assignee, else shared) — S3 参与即知.
-        - Already projected (``released``/``private``) user rows only inside
-          the open settle window ``turn >= state.turn - 1`` — retains the
-          accepted cost of pulling back just-publicized origin across one
-          settle boundary; does **not** yank unrelated older pure-public
-          召对 that other ministers already saw.
+        - Same-turn still-``held`` user:
+          * **Pinned mode** (``origin_chat_message_ids is not None``): withhold
+            only the pinned ids that belong to this minister.  Never re-guess
+            via max(held id) — pending-action confirmation utterances after
+            stage must not steal oral-decree bloodline.
+          * **Heuristic mode** (pins is None): only the latest held (max id)
+            is origin; earlier same-window pure-public user survives (S3).
+        - Already projected (``released``/``private``) user rows:
+          * Pinned mode: only pinned ids in the open settle window.
+          * Heuristic: all open-window released/private user rows (accepted
+            cost of pulling back just-publicized origin across one settle).
 
         Minister/assistant held rows are not withheld here: after the brief
         exists, ``release_held_audience_knowledge`` sends them private-only.
@@ -10185,6 +10228,16 @@ class GameDB:
         # Previous + current turn: post-settle advance leaves origin at turn-1.
         bound_turn = max(0, int(state.turn) - 1)
         current_turn = int(state.turn)
+        pin_mode = origin_chat_message_ids is not None
+        pinned: set = set()
+        if pin_mode:
+            for raw in origin_chat_message_ids or ():
+                try:
+                    mid = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if mid > 0:
+                    pinned.add(mid)
         withhold_ids: List[int] = []
         try:
             held_rows = self.conn.execute(
@@ -10203,17 +10256,32 @@ class GameDB:
                 withhold_ids.append(mid)
             else:
                 same_turn_held.append(mid)
-        # Same-turn: only the latest held user is secret-origin bloodline;
-        # earlier pure-public user in the same window is left for release.
-        if same_turn_held:
+        if pin_mode:
+            # Only pinned same-turn held rows — confirmation user is not origin.
+            for mid in same_turn_held:
+                if mid in pinned:
+                    withhold_ids.append(mid)
+        elif same_turn_held:
+            # Heuristic fallback: latest held user is secret-origin bloodline.
             withhold_ids.append(max(same_turn_held))
         try:
-            open_rows = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' "
-                "AND knowledge_status IN ('released', 'private') AND turn >= ?",
-                (name, bound_turn),
-            ).fetchall()
+            if pin_mode and pinned:
+                open_rows = self.conn.execute(
+                    f"SELECT id FROM chat_messages "
+                    f"WHERE minister_name=? AND role='user' "
+                    f"AND knowledge_status IN ('released', 'private') AND turn >= ? "
+                    f"AND id IN ({','.join('?' * len(pinned))})",
+                    (name, bound_turn, *sorted(pinned)),
+                ).fetchall()
+            elif pin_mode:
+                open_rows = []
+            else:
+                open_rows = self.conn.execute(
+                    "SELECT id FROM chat_messages "
+                    "WHERE minister_name=? AND role='user' "
+                    "AND knowledge_status IN ('released', 'private') AND turn >= ?",
+                    (name, bound_turn),
+                ).fetchall()
         except sqlite3.OperationalError:
             open_rows = []
         for row in open_rows:
@@ -10389,7 +10457,9 @@ class GameDB:
 
     def upsert_secret_order_brief(
         self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
-        *, origin_minister_name: Optional[str] = None, commit: bool = True,
+        *, origin_minister_name: Optional[str] = None,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
+        commit: bool = True,
     ) -> None:
         """Write the assignee-only secret-order brief (#883 isolation seam).
 
@@ -10397,6 +10467,10 @@ class GameDB:
         for the assignee **and** the origin audience speaker (when they differ
         — 跨人承办 oral decree lives on speaker rows), then release other held
         public audience.  No content-matching scrub machinery.
+
+        ``origin_chat_message_ids`` pins oral-decree provenance (stage-time id);
+        both withhold calls run in pin mode so post-stage confirmation user
+        lines cannot steal max(held) bloodline.
         """
         self.conn.execute(
             "INSERT INTO secret_order_briefs (order_id,turn,year,period,minister_name,title,body) "
@@ -10405,13 +10479,27 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
+        # Always pin-mode at classification: explicit list (possibly empty/auto).
+        pins: List[int] = []
+        if origin_chat_message_ids is not None:
+            for raw in origin_chat_message_ids:
+                try:
+                    mid = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if mid > 0:
+                    pins.append(mid)
         assignee = str(minister_name or "").strip()
-        self._withhold_assignee_user_audience_origin(state, assignee, commit=False)
+        self._withhold_assignee_user_audience_origin(
+            state, assignee, origin_chat_message_ids=pins, commit=False,
+        )
         # 跨人承办: oral decree was spoken in the speaker's audience, not the
         # final assignee's chat log — withhold speaker origin user bloodline too.
         origin = str(origin_minister_name or "").strip()
         if origin and origin != assignee:
-            self._withhold_assignee_user_audience_origin(state, origin, commit=False)
+            self._withhold_assignee_user_audience_origin(
+                state, origin, origin_chat_message_ids=pins, commit=False,
+            )
         # Release pure-public held rows (other ministers; non-withheld same-window user).
         self.release_held_audience_knowledge(commit=False)
         if commit:
@@ -10497,6 +10585,8 @@ class GameDB:
         excluded_names: Optional[Iterable[str]] = None,
         excluded_offices: Optional[Iterable[str]] = None,
         origin_minister_name: Optional[str] = None,
+        origin_chat_message_id: Optional[int] = None,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -10555,9 +10645,38 @@ class GameDB:
              json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
         self.conn.commit()
+        # Pin oral-decree provenance before classification. Prefer caller pin
+        # (pending stage); else auto-capture latest held user for speaker/assignee
+        # so direct create still withholds the oral line without max-after-confirm.
+        pinned_ids: List[int] = []
+        if origin_chat_message_ids is not None:
+            for raw in origin_chat_message_ids:
+                try:
+                    mid = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if mid > 0:
+                    pinned_ids.append(mid)
+        if origin_chat_message_id is not None:
+            try:
+                mid = int(origin_chat_message_id)
+            except (TypeError, ValueError):
+                mid = 0
+            if mid > 0 and mid not in pinned_ids:
+                pinned_ids.append(mid)
+        if not pinned_ids:
+            assignee_name = str(minister_name or "").strip()
+            origin_name = str(origin_minister_name or "").strip()
+            for name in dict.fromkeys(
+                n for n in (origin_name, assignee_name) if n
+            ):
+                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
+                if mid is not None and mid not in pinned_ids:
+                    pinned_ids.append(mid)
         self.upsert_secret_order_brief(
             state, int(cur.lastrowid), minister_name, title, content,
             origin_minister_name=origin_minister_name,
+            origin_chat_message_ids=pinned_ids,
         )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]

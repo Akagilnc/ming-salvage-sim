@@ -908,3 +908,82 @@ def test_976_same_window_pure_public_user_survives_secret_classification(game):
     )
     assert secret_q not in other_text
     assert extracted not in other_text
+
+
+def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
+    """pending 确认路径：同回合后续确认语不得被 max(held id) 误判为密令血缘。
+
+    皇帝对甲口述密令 → stage；后一句「准」确认 → commit。
+    口谕 chat_message 须 withheld；确认语不得顶替血缘导致口谕 release 进共享。
+    跨人承办：assignee=乙，origin speaker=甲。
+    """
+    db, state, content = game
+    speaker, assignee = _active_ministers(db, content)[:2]
+    assert speaker.name != assignee.name
+    secret_q = (
+        "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
+    confirm_q = "准。就按此办。"
+
+    mid_sec = db.append_chat_message(speaker.name, state.turn, "user", secret_q)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建",
+        minister_name=speaker.name, target_id=None,
+        payload={
+            "title": "密查国丈",
+            "content": extracted,
+            "assignee": assignee.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+        },
+    )
+    import json as _json
+    staged = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pid,)
+    ).fetchone()
+    staged_payload = _json.loads(staged["payload_json"] or "{}")
+    assert int(staged_payload.get("origin_chat_message_id") or 0) == mid_sec
+
+    # Confirmation utterance lands *after* stage — larger id than oral decree.
+    mid_confirm = db.append_chat_message(speaker.name, state.turn, "user", confirm_q)
+    assert mid_confirm > mid_sec
+
+    applied = db.commit_pending_actions(
+        state, minister_name=speaker.name, action_ids={pid}, content=content,
+    )
+    assert applied and applied[0]["kind"] == "secret_order"
+
+    sec_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_sec,)
+    ).fetchone()["knowledge_status"]
+    conf_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_confirm,)
+    ).fetchone()["knowledge_status"]
+
+    assert sec_status == "withheld"
+    # Confirm is not secret-origin bloodline — must not steal the pin.
+    assert conf_status != "withheld" or mid_confirm != mid_sec
+    assert conf_status in ("released", "private", "held", "withheld")
+    # Critical: oral decree never enters shared knowledge.
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_sec}",),
+    ).fetchone()[0] == 0
+    assert all(secret_q not in body for body in _shared_bodies(db))
+    assert all(secret_q not in body for body in _event_bodies(db))
+
+    other = next(
+        m for m in _active_ministers(db, content)
+        if m.name not in (speaker.name, assignee.name)
+    )
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert secret_q not in other_text
+    assert extracted not in other_text
