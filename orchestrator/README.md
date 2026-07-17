@@ -199,10 +199,11 @@ Rules of engagement:
   route smoke plus the merged gates are the launch bar (`npm test` is the bar
   for MERGING orchestrator changes, not for launching).
 
-Startup is fail-closed: if the route smoke fails, the run records an
-`infra_failure` escalation, skips every child, and exits **10**
-(`escalated` / pre-#942 process codes — see `terminalExitCode.ts`) — read the
-`stopSummary` in `run.log` for the reason.
+Startup is fail-closed: if the required route smoke fails, the run records an
+`infra_failure` stop summary, public status **`failed`** with cause
+`route_smoke_failed`, and OS exit **1** (`completed→0` / `parked→2` /
+`failed→1` — see `publicResult.ts`) — read the `stopSummary` in `run.log`
+for the reason.
 
 ### 5. Monitor
 
@@ -312,7 +313,7 @@ no container/tool loop. The smoke prompt carries a random `{{NONCE}}`
 exactly that nonce to stdout; no shell command or evidence file is part of the
 contract. A regression test drives the real rendering and a text-only-obedient
 agent, plus a negative case proving a value-less prompt fails. Any required
-smoke failing = fail-closed startup escalation (exit 10); nothing mutates.
+smoke failing = fail-closed startup (`failed` / OS exit 1); nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated

@@ -23,7 +23,7 @@ import type { Escalation } from "./types.js";
 /**
  * The transported outcome of a cleanly exited ship WORKER (#336). One of:
  *   - `shipped`   — a PR opened (`status:"pr_opened"`, `pr` set) or a push landed
- *     (`status:"pushed"`) — the normal success the consumer routes to S8(success);
+ *     (`status:"pushed"`) — the normal success the consumer routes to S8(completed);
  *   - `escalate`  — a genuine block (merge conflict the skill cannot resolve / a
  *     review ASK / a hard defect a human must decide) → the runner's escalate续跑
  *     fork (NOT a rerun-able flake — the worker reruns those itself);

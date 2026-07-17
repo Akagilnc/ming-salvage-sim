@@ -151,15 +151,19 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
       verifyCmr,
     });
-    // One wave (all independent) → one "wave" barrier call + one "final" call.
-    expect(calls.map((c) => c.phase)).toEqual(["wave", "final"]);
+    // One wave (all independent) → wave verify + #961 IC checkpoint + final.
+    expect(calls.map((c) => c.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+      "final",
+    ]);
     // Each carries the family base + the family backend (the #296 context).
     expect(calls.every((c) => c.familyBase === "family/293-base")).toBe(true);
     expect(calls.every((c) => typeof c.familyBackend.appendFamilyLedger === "function")).toBe(
       true,
     );
     // A clean run is observably "success", with no failedPhase.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.failedPhase).toBeUndefined();
   });
 
@@ -722,7 +726,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       verifyCmr: async () => ({ ok: true, ran: false }),
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.admissionSkipped).toEqual([
       {
         issue: 12,
@@ -761,7 +765,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("verify_failed");
     expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
   });
@@ -795,7 +799,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         input.phase === "final" ? { ok: false, ran: true } : { ok: true, ran: true },
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("verify_failed");
     expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
     expect(result.stopSummary.summary).not.toContain("old CMR blocker");
@@ -828,7 +832,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(phases).toEqual(["wave"]);
     // The red wave is OBSERVABLE in the result — NOT indistinguishable from a
     // clean run (the core of the round-2 finding): status + the failing phase.
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBe("wave");
     // Wave 1 merged 10; 11 was never scheduled → recorded "skipped", not dropped.
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([10]);
@@ -852,7 +856,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // all children "merged", so the per-child statuses alone CANNOT distinguish
     // them; the family-level status is what makes the failure visible (round-2
     // finding: a red final verify cannot look like success).
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBe("final");
     // The merged children are still returned honestly (decision 3⑤ "不静默吞").
     expect(result.children.map((c) => c.status)).toEqual(["merged", "merged"]);
@@ -922,7 +926,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       verifyCmr,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.metadata?.heads).toEqual({
       reportedFamilyHead: "+10",
       actualFamilyHead: "+10",
@@ -976,7 +980,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       verifyCmr,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.metadata?.acceptedSuppressions).toEqual([
       {
         source: "issue #448 acceptance criteria",
@@ -1031,7 +1035,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       verifyCmr,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.metadata?.providerDegraded).toEqual([
       {
         provider: "sourcery",
@@ -1054,7 +1058,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
     expect(result.children.map((c) => c.status)).toEqual(["merged"]);
     // Missing CMR on final is verify/cmr stage failure, not empty-success.
-    expect(result.status).not.toBe("success");
+    expect(result.status).not.toBe("completed");
   });
 
   it("INCOMPLETE: a child whose single-slice run does not succeed makes the family status 'incomplete' (NOT a false 'success')", async () => {
@@ -1080,7 +1084,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
     });
     // The child failed → it never merged → the family run is "incomplete".
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBeUndefined();
     expect(result.children).toEqual([
       {
@@ -1119,7 +1123,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children).toEqual([
       {
         issue: 11,
@@ -1158,7 +1162,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     expect(byIssue.get(10)).toBe("already_done"); // from the ledger, not "skipped"
     expect(byIssue.get(11)).toBe("merged");
     // Every child merged (one via ledger, one this run) → "success".
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   // #604 slice 3 / ADR 0062: the runner reads only the THIN control envelope. A

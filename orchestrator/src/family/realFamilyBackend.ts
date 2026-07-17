@@ -84,6 +84,7 @@ import {
 } from "../stationReceiptContracts.js";
 import {
   judgeResultFromVerdict,
+  materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
 } from "../judgeStation.js";
 
@@ -133,17 +134,10 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type AgentSandboxRunOptions,
-  SANDBOX_FIX_FOCUS_PATH_ENV,
   appendHomeEnvMount,
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
-import {
-  FIX_FOCUS_LANDING_FILE,
-  attachSanitizedFindingFamilies,
-  formatFixFocusMarkdown,
-  normalizeFindingFamiliesWireAliases,
-} from "../findingFamilies.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -177,6 +171,10 @@ import {
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
+  formatSandcastleAgentError,
+  isSandcastleAgentError,
+} from "../sandcastleAgentError.js";
+import {
   LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
@@ -201,7 +199,6 @@ import type {
   Escalation,
   WorkerMonitorHandle,
   Finding,
-  FindingFamily,
   FixerResult,
   OnlineReviewFindingDisposition,
   OnlineReviewThreadReply,
@@ -228,6 +225,7 @@ import type {
   MergeResult,
   ReconcileGit,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
@@ -542,6 +540,36 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
+  /**
+   * #966 / #979 — resolve a Sandcastle resumeSession id for family workers.
+   * Capability gate + existsOnHost presence check; dead / incapable → undefined
+   * (fresh open). Shared by family CMR judge and family coder-fix — one bus.
+   */
+  protected async resolveSandcastleResumeSessionId(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    agent: sc.AgentProvider,
+  ): Promise<string | undefined> {
+    const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+    let resumeSessionId: string | undefined =
+      typeof ctx.resumeSessionId === "string" && resumeCapable
+        ? ctx.resumeSessionId
+        : undefined;
+    if (
+      resumeSessionId !== undefined &&
+      agent.sessionStorage?.existsOnHost !== undefined
+    ) {
+      const present = await agent.sessionStorage.existsOnHost(
+        this.opts.workingRepo,
+        resumeSessionId,
+      );
+      if (!present) {
+        resumeSessionId = undefined;
+      }
+    }
+    return resumeSessionId;
+  }
+
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
@@ -729,7 +757,13 @@ export class RealFamilyBackend implements FamilyBackend {
     // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
-    // crash re-throws.
+    // plain crash re-throws.
+    // #964: merger seat court at sc.run inside {@link runMergerAgent}
+    // (structured non-resolve + reason). Generic workers share the same
+    // AgentError recognition via {@link workerResultFromAgentError} on the
+    // free-function dispatch / process-root seams. No outer dual conversion
+    // here — AgentError never escapes this seat, so throw→retryProcessCrash
+    // is skipped for the whole AgentError class (not only auth).
     const outcome = await retryProcessCrash(async () => {
       // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
       // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
@@ -763,12 +797,24 @@ export class RealFamilyBackend implements FamilyBackend {
     // family base ref itself moved past familyHeadBefore AND childHead is now its
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
-    // never looks clean").
+    // never looks clean"). Non-empty merger reason threads onto MergeResult for
+    // family-runner diagnostics (#964 S3; not a public cause token).
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
     const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
-    return childLanded
-      ? { familyHead, familyHeadBefore, childHead }
-      : { familyHead, familyHeadBefore, childHead, conflicted: true };
+    if (childLanded) {
+      return { familyHead, familyHeadBefore, childHead };
+    }
+    const reason =
+      typeof outcome.reason === "string" && outcome.reason.trim().length > 0
+        ? outcome.reason.trim()
+        : undefined;
+    return {
+      familyHead,
+      familyHeadBefore,
+      childHead,
+      conflicted: true,
+      ...(reason !== undefined ? { reason } : {}),
+    };
   }
 
   /**
@@ -983,6 +1029,20 @@ export class RealFamilyBackend implements FamilyBackend {
         } catch (error) {
           telemetry.stampCollect({ kind: "thrown", error });
           await telemetryEnvironmentStamp;
+          // #964: single court at sc.run — ANY Sandcastle AgentError (native
+          // headless auth death, non-zero agent exit, FiberFailure wrap, …) →
+          // structured non-resolve for the owning Merge Action. Intentionally
+          // skips throw→retryProcessCrash for the whole AgentError class: same
+          // dead credentials / agent failure will not recover on re-dispatch.
+          // Do not rethrow FiberFailure/AgentError (launcher terminal lost on
+          // flight3). Plain infrastructure crashes still throw for #598.
+          if (isSandcastleAgentError(error)) {
+            return {
+              resolved: false,
+              reason:
+                `merger agent invocation failed: ${formatSandcastleAgentError(error)}`,
+            };
+          }
           throw error;
         }
       } finally {
@@ -1495,14 +1555,26 @@ export class RealFamilyBackend implements FamilyBackend {
                 reason: outcome.reason ?? "family judge escalate",
                 diagnosis: outcome.diagnosis ?? "judge declared escalate",
               }
-            : {
-                station: "judge",
-                status: "continue",
-                findingDispositions: outcome.findingDispositions ?? [],
-                ...(outcome.advanceCoder !== undefined
-                  ? { advanceCoder: outcome.advanceCoder }
-                  : {}),
-              };
+            : (() => {
+                // ADR 0138 / #978 CR S2: never invent an empty packet body when
+                // missing — fail at projection (schema already requires body on
+                // live continue; empty invent only hides contract drift).
+                if (typeof outcome.fixPacketBody !== "string") {
+                  throw new Error(
+                    "family judge continue missing fixPacketBody " +
+                      "(ADR 0138; refuse invent empty string at projection)",
+                  );
+                }
+                return {
+                  station: "judge" as const,
+                  status: "continue" as const,
+                  findingDispositions: outcome.findingDispositions ?? [],
+                  fixPacketBody: outcome.fixPacketBody,
+                  ...(outcome.advanceCoder !== undefined
+                    ? { advanceCoder: outcome.advanceCoder }
+                    : {}),
+                };
+              })();
       const judge = judgeResultFromVerdict(verdict, outcome.findings);
       return {
         kind: "completed",
@@ -1698,22 +1770,11 @@ export class RealFamilyBackend implements FamilyBackend {
           // omit resumeSession (fresh open) — still keep priorJudgeVerdicts.
           const resumeCapable = this.resumeCapableForSpec(spec, ctx);
           const agent = this.agentForSpec(spec, ctx);
-          let resumeSessionId: string | undefined =
-            typeof ctx.resumeSessionId === "string" && resumeCapable
-              ? ctx.resumeSessionId
-              : undefined;
-          if (
-            resumeSessionId !== undefined &&
-            agent.sessionStorage?.existsOnHost !== undefined
-          ) {
-            const present = await agent.sessionStorage.existsOnHost(
-              this.opts.workingRepo,
-              resumeSessionId,
-            );
-            if (!present) {
-              resumeSessionId = undefined;
-            }
-          }
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
           result = await this.runAgentSandbox({
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1858,12 +1919,20 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
-      const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
           // #919 R3: T2 coder station receipt (CODER_RECEIPT_TAG + schema) —
           // same as single-slice; ordinary committed cargo stays outside SO.
+          // #979: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (same bus as family CMR #966 / single-slice #924).
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const agent = this.agentForSpec(spec, ctx);
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1873,18 +1942,20 @@ export class RealFamilyBackend implements FamilyBackend {
               spec.model,
               ctx,
               outcomeLanding,
-              fixFocusLanding,
             ),
-            agent: this.agentForSpec(spec, ctx),
+            agent,
             maxIterations: spec.maxIter,
             branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             // #919 post-R8 M1 / R3: T2 coderStationReceiptSchema — refuse
             // traffic survives the family decode path (not decision-gate dual).
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
-              this.resumeCapableForSpec(spec, ctx),
+              resumeCapable,
             ),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
@@ -1899,9 +1970,6 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(join(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
           force: true,
         });
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
-        }
       }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
@@ -1926,17 +1994,25 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
+    const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+    // Shared helper with single-slice landing writer — fail-loud when open set
+    // lacks body (raw-artifacts-only path with empty keys still soft-omits).
+    const fixPacketBody = materializeLandingFixPacketBody({
+      fixPacketBody: landing?.fixPacketBody,
+      blockingFindingIdentityKeys: identityKeys,
+      blockingFindingCount: ctx.blockingFindingCount,
+    });
     writeFileSync(
       path,
       `${JSON.stringify(
         {
-          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-          // ADR 0062) — never from the runner's thin DispatchContext.
-          blockingFindings: landing?.blockingFindings ?? [],
+          // ADR 0138 / #978: sole coder-fix packet content — judge body
+          // verbatim. Bare findings packing deleted (no second path).
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
           ...(rawReviewerArtifacts !== undefined
             ? { rawReviewerArtifacts }
             : {}),
-          blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          blockingFindingIdentityKeys: identityKeys,
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
             : {}),
@@ -1969,20 +2045,6 @@ export class RealFamilyBackend implements FamilyBackend {
       "utf8",
     );
     return { path, sandboxPath: FAMILY_FIX_FINDINGS_FILENAME };
-  }
-
-  /** Runner-owned pattern briefs for family coder-fix / online fixer (#711). */
-  protected writeFamilyFixFocusFile(
-    landing?: WorkerLandingPayload,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
-      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
-      return undefined;
-    }
-    this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
-    const path = join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE);
-    writeFileSync(path, `${formatFixFocusMarkdown(landing.findingFamilies)}\n`, "utf8");
-    return { path, sandboxPath: FIX_FOCUS_LANDING_FILE };
   }
 
   protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
@@ -2022,10 +2084,9 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding),
     );
   }
 
@@ -2034,7 +2095,6 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2047,9 +2107,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
-    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -2060,13 +2117,6 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
     ];
-    if (fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
-        readonly: true,
-      });
-    }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2186,8 +2236,6 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "landing"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
-      const fixFocusLanding =
-        spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
@@ -2202,7 +2250,6 @@ export class RealFamilyBackend implements FamilyBackend {
             spec,
             ctx,
             onlineReviewLanding,
-            fixFocusLanding,
             outcomeLanding,
           ),
           agent: this.agentForSpec(spec, ctx),
@@ -2219,9 +2266,6 @@ export class RealFamilyBackend implements FamilyBackend {
       } finally {
         if (onlineReviewLanding !== undefined) {
           rmSync(onlineReviewLanding.path, { force: true });
-        }
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
         }
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
@@ -2270,7 +2314,6 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
     outcomeLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
@@ -2279,7 +2322,6 @@ export class RealFamilyBackend implements FamilyBackend {
         spec,
         ctx,
         onlineReviewLanding,
-        fixFocusLanding,
         outcomeLanding,
       ),
     );
@@ -2290,7 +2332,6 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
     outcomeLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
@@ -2311,9 +2352,6 @@ export class RealFamilyBackend implements FamilyBackend {
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
-    }
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
@@ -2329,13 +2367,6 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: onlineReviewLanding.path,
         sandboxPath: onlineReviewLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -3257,6 +3288,8 @@ export type CmrWorkerOutcome =
       readonly findingDispositions?: ReadonlyArray<
         import("../types.js").JudgeFindingDisposition
       >;
+      /** ADR 0138: judge-authored coder-fix packet body on continue. */
+      readonly fixPacketBody?: string;
       readonly advanceCoder?: string;
       readonly findings?: readonly Finding[];
       readonly reason?: string;
@@ -3265,7 +3298,6 @@ export type CmrWorkerOutcome =
       readonly skippedLegs?: readonly CmrSkippedLeg[];
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-      readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths?: readonly string[];
       readonly sessionId?: string;
     }
@@ -3279,7 +3311,6 @@ export type CmrWorkerOutcome =
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
       readonly findingsCount?: number;
-      readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths: readonly string[];
       readonly sessionId?: string;
     }
@@ -3295,7 +3326,6 @@ export type CmrWorkerOutcome =
 function withFamilyJudgeCargo(
   judge: import("../types.js").JudgeResult,
   cargo: {
-    readonly findingFamilies?: readonly FindingFamily[];
     readonly skippedLegs?: readonly CmrSkippedLeg[];
     readonly successfulLegs?: readonly string[];
     readonly evidencePaths?: readonly string[];
@@ -3305,9 +3335,6 @@ function withFamilyJudgeCargo(
 ): import("../types.js").JudgeResult {
   return {
     ...judge,
-    ...(cargo.findingFamilies !== undefined
-      ? { findingFamilies: cargo.findingFamilies }
-      : {}),
     ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
     ...(cargo.successfulLegs !== undefined
       ? { successfulLegs: cargo.successfulLegs }
@@ -3611,10 +3638,7 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
-  // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
-  // before .strict() schemas reject them as extra keys.
-  const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
-  const base = isJsonRecord(withFamilies) ? withFamilies : parsed;
+  const base = parsed;
   const dispositions = base.priorFindingDispositions;
   if (!Array.isArray(dispositions)) return base;
   return {
@@ -3664,8 +3688,8 @@ function classifyCmrOutcomePayload(
   }
 
   // #930 live path: T2 judge verdict (same decode as single-slice S3/S6).
-  // Strip cargo siblings before strict decode (findings / findingFamilies ride
-  // as opaque cargo — same class as coder pickCoderTraffic).
+  // Strip cargo siblings before strict decode (findings ride as opaque cargo —
+  // same class as coder pickCoderTraffic).
   const envelope = decodeJudgeVerdict(pickJudgeTraffic(normalizedParsed));
   if (envelope.ok) {
     const cargo = extractCmrCargoFields(normalizedParsed);
@@ -3686,6 +3710,7 @@ function classifyCmrOutcomePayload(
       kind: "judge",
       status: "continue",
       findingDispositions: v.findingDispositions,
+      fixPacketBody: v.fixPacketBody,
       ...(v.advanceCoder !== undefined ? { advanceCoder: v.advanceCoder } : {}),
       ...cargo,
     };
@@ -3705,6 +3730,7 @@ const JUDGE_TRAFFIC_KEYS = new Set([
   "status",
   "cargoPointer",
   "findingDispositions",
+  "fixPacketBody",
   "advanceCoder",
   "reason",
   "diagnosis",
@@ -3728,7 +3754,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   readonly skippedLegs?: Array<{ slug: string; reason: string }>;
   readonly claimedFixedFindingIdentityKeys?: string[];
   readonly priorFindingDispositions?: PriorFindingDisposition[];
-  readonly findingFamilies?: readonly FindingFamily[];
   readonly evidencePaths?: string[];
 } {
   const findings = Array.isArray(normalizedParsed.findings)
@@ -3753,10 +3778,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
-  const families = attachSanitizedFindingFamilies(
-    {},
-    normalizedParsed.findingFamilies,
-  );
   return {
     ...(findings !== undefined ? { findings } : {}),
     successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
@@ -3767,7 +3788,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
     ...(priorFindingDispositions !== undefined
       ? { priorFindingDispositions }
       : {}),
-    ...families,
     ...(evidencePaths !== undefined ? { evidencePaths } : {}),
   };
 }
@@ -3804,9 +3824,6 @@ function residualCmrVerdictCargo(
       : {}),
     ...(cargo.findings !== undefined ? { findings: cargo.findings } : {}),
     ...(findingsCount !== undefined ? { findingsCount } : {}),
-    ...(cargo.findingFamilies !== undefined
-      ? { findingFamilies: cargo.findingFamilies }
-      : {}),
     evidencePaths: cargo.evidencePaths ?? [],
   };
 }
@@ -3947,7 +3964,10 @@ function classifyMergerOutcomePayload(
 }
 
 /** A one-line human-readable summary of a failed verify command (phase + error). */
-function summarizeError(phase: "wave" | "final", err: unknown): string {
+function summarizeError(
+  phase: VerifyCmrPhase,
+  err: unknown,
+): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
   // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
   // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only
@@ -4181,8 +4201,7 @@ export function parseVerifyOutcome(
 ): VerifyResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
-  const parsed = normalizeFindingFamiliesWireAliases(payload.parsed);
-  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
   if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
   const stringArray = (value: unknown): value is string[] =>
     Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -4211,27 +4230,20 @@ export function parseVerifyOutcome(
       : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
-    ...attachSanitizedFindingFamilies(
-      {
-        converged: parsed.converged,
-        ...(findingDispositions !== undefined
-          ? { findingDispositions }
-          : {}),
-        ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
-          ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(threadReplies !== undefined ? { threadReplies } : {}),
-        ...(stringArray(parsed.threadsToResolve)
-          ? { threadsToResolve: parsed.threadsToResolve }
-          : {}),
-        ...(stringArray(parsed.deferredIssueUrls)
-          ? { deferredIssueUrls: parsed.deferredIssueUrls }
-          : {}),
-        ...(terminalState !== undefined ? { terminalState } : {}),
-        ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
-      },
-      parsed.findingFamilies,
-    ),
+    converged: parsed.converged,
+    ...(findingDispositions !== undefined ? { findingDispositions } : {}),
+    ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
+      ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
+      : {}),
+    ...(threadReplies !== undefined ? { threadReplies } : {}),
+    ...(stringArray(parsed.threadsToResolve)
+      ? { threadsToResolve: parsed.threadsToResolve }
+      : {}),
+    ...(stringArray(parsed.deferredIssueUrls)
+      ? { deferredIssueUrls: parsed.deferredIssueUrls }
+      : {}),
+    ...(terminalState !== undefined ? { terminalState } : {}),
+    ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
   };
   return candidate;
 }

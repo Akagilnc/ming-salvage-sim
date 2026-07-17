@@ -8,7 +8,7 @@
  * #925 / ADR 0132: per-slice review/fix convergence is judge-verdict driven:
  *
  *   S0→S1→S2(implement)→S3(judge establish)
- *     converged → S7(local handoff) → S8(success)
+ *     converged → S7(local handoff) → S8(completed)
  *     continue  → S5(fix)→S6(judge resume)→(verdict again)
  *     escalate  → decision-kind park (global stop edge)
  *
@@ -27,7 +27,7 @@ export type RouteDecision =
   | { kind: "next"; step: SliceStepId }
   | {
       kind: "handoff";
-      status: "success" | "escalate" | "error";
+      status: "completed" | "parked" | "failed";
     };
 
 /** Inputs route() needs to decide the edge out of `from`. */
@@ -55,7 +55,7 @@ function routeEdgesFromJudgeStatus(
 ): RouteDecision {
   if (status === "converged") return { kind: "next", step: "S7" };
   if (status === "continue") return { kind: "next", step: "S5" };
-  if (status === "escalate") return { kind: "handoff", status: "escalate" };
+  if (status === "escalate") return { kind: "handoff", status: "parked" };
   // Unusable envelope → fixer path (never silent clean / S7).
   return { kind: "next", step: "S5" };
 }
@@ -74,7 +74,7 @@ export function route(ctx: RouteContext): RouteDecision {
   // reclassify (impl vs design is the model's call — US#20).
   const escalate = escalateOf(ctx.output);
   if (escalate != null) {
-    return { kind: "handoff", status: "escalate" };
+    return { kind: "handoff", status: "parked" };
   }
 
   switch (ctx.from) {
@@ -104,7 +104,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S7":
-      return { kind: "handoff", status: "success" };
+      return { kind: "handoff", status: "completed" };
 
     case "S8":
       throw new Error("route: S8 is terminal; nothing routes out of it");

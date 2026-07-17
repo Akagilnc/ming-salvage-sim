@@ -120,6 +120,7 @@ class SeatCapBackend implements Backend {
             kind: "reviewer",
             findings: [OPEN_FINDING],
             findingsCount: 1,
+            fixPacketBody: "fixture residual authored body",
           },
           sessionId,
         };
@@ -163,7 +164,7 @@ describe("#955 persistent seat resume capability gate", () => {
     const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
     try {
       const result = await runOrchestrator({ issueNumber: 95501, backend });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       const byId = (id: string) => {
         const i = backend.specs.findIndex((s) => s.id === id);
         expect(i).toBeGreaterThanOrEqual(0);
@@ -184,7 +185,7 @@ describe("#955 persistent seat resume capability gate", () => {
   it("resume-capable provider (grok-4.5 coder / sol judge) still resumes S5 and S6", async () => {
     const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
     const result = await runOrchestrator({ issueNumber: 95502, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const byId = (id: string) => {
       const i = backend.specs.findIndex((s) => s.id === id);

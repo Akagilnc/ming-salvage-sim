@@ -2937,12 +2937,13 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     expect(backend.dispatches[1]?.kind).toBe("coder");
     const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
     expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [],
+      fixPacketBody: expect.any(String),
       rawReviewerArtifacts: {
         reviewerSessionId: "cmr-reviewer-count-3-sparse-cargo",
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[coderIndex]?.blockingFindings).toBeUndefined();
     expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(true);
   });
 
@@ -3003,12 +3004,13 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     expect(result).toEqual({ ok: true, ran: true });
     const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
     expect(backend.landings[coderIndex]).toEqual({
-      blockingFindings: [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
+      fixPacketBody: expect.stringContaining(BLOCKING_FAMILY_CMR_FINDING.claim_quote),
       rawReviewerArtifacts: {
         reviewerSessionId: "cmr-partial-cargo-session",
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[coderIndex]?.blockingFindings).toBeUndefined();
   });
 
   it("keeps converged:true with zero findings on the pass path", async () => {

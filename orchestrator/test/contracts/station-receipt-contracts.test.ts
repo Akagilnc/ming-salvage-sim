@@ -31,7 +31,7 @@ import {
 
 // ─── Seams ───────────────────────────────────────────────────────────────────
 // 1. Judge verdict three-state encode/decode/validate
-// 2. Finding disposition table (four legal reasons + evidence on kill rows)
+// 2. Finding disposition table (kill rows: four legal reasons + evidence; suppress rows: evidence + exactly one of groundTicket|ownerRecordPointer)
 // 3. Coder refuse envelope (refused + identity keys + cargo pointer; no cargo body)
 // 4. Canonical refused* vocabulary (refuted* / dual fields rejected)
 // 5. Full-wave thin envelopes (judge / coder* / ship / merger / onlineReview)
@@ -48,6 +48,8 @@ describe("#921 judge verdict three-state", () => {
             station: "judge",
             status: "continue",
             findingDispositions: [],
+            // ADR 0138 / #978: continue requires non-empty fixPacketBody
+            fixPacketBody: "fixture continue packet",
           }
         : status === "escalate"
           ? {
@@ -99,6 +101,7 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "terra@med",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
     });
     expect(parsed.ok).toBe(true);
     if (parsed.ok && parsed.value.status === "continue") {
@@ -112,6 +115,7 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "   ",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
     });
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
@@ -151,6 +155,8 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "sol@med",
       cargoPointer: "artifacts/judge-cargo-1.json",
+      fixPacketBody:
+        "live: correctness|src/b.ts:2|other\nauthority: ADR 0131",
       findingDispositions: [
         {
           identityKey: "correctness|src/a.ts:1|claim",
@@ -273,6 +279,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -298,6 +305,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -314,10 +322,151 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     }
   });
 
+  // ─── #952 typed suppress disposition ─────────────────────────────────────
+
+  it("accepts suppress row with groundTicket + evidence (positive)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "owner deferred via ticket",
+      groundTicket: 949,
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).toEqual({
+        identityKey: "cat|loc|claim",
+        action: "suppress",
+        evidence: "owner deferred via ticket",
+        groundTicket: 949,
+      });
+    }
+  });
+
+  it("accepts suppress row with ownerRecordPointer + evidence (positive)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "owner batch pointer",
+      ownerRecordPointer: "owner-record://914/comment/3",
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).toEqual({
+        identityKey: "cat|loc|claim",
+        action: "suppress",
+        evidence: "owner batch pointer",
+        ownerRecordPointer: "owner-record://914/comment/3",
+      });
+    }
+  });
+
+  it("rejects suppress row missing both grounds (negative)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "no ground attached",
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/groundTicket|ownerRecordPointer|ground/i);
+    }
+  });
+
+  it("rejects suppress row with dual grounds (negative)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "both grounds illegal",
+      groundTicket: 949,
+      ownerRecordPointer: "owner-record://x",
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/groundTicket|ownerRecordPointer|exactly one|ground/i);
+    }
+  });
+
+  it("rejects suppress row with empty evidence (negative)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "   ",
+      groundTicket: 949,
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/evidence/i);
+    }
+  });
+
+  it("rejects suppress row that invents a four-reason reason field (negative)", () => {
+    const parsed = parseFindingDisposition({
+      identityKey: "cat|loc|claim",
+      action: "suppress",
+      evidence: "has ground",
+      groundTicket: 949,
+      reason: "not_established",
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/reason|suppress|invent|strict|unrecognized|unknown/i);
+    }
+  });
+
+  it("decodeJudgeVerdict accepts continue table with suppress row (positive)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "fixture continue packet with suppress",
+      findingDispositions: [
+        {
+          identityKey: "k-live",
+          action: "live",
+        },
+        {
+          identityKey: "k-suppress",
+          action: "suppress",
+          evidence: "deferred by owner ticket",
+          groundTicket: 952,
+        },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.value.status === "continue") {
+      expect(parsed.value.findingDispositions).toHaveLength(2);
+      expect(parsed.value.findingDispositions[1]).toMatchObject({
+        action: "suppress",
+        groundTicket: 952,
+      });
+    }
+  });
+
+  it("decodeJudgeVerdict rejects suppress missing ground with readable field name (negative)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "fixture continue packet",
+      findingDispositions: [
+        {
+          identityKey: "k",
+          action: "suppress",
+          evidence: "missing ground",
+        },
+      ],
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/findingDispositions/i);
+      expect(parsed.reason).toMatch(/groundTicket|ownerRecordPointer|ground/i);
+      expect(parsed.reason).not.toMatch(/Invalid input/i);
+    }
+  });
+
   it("decodeJudgeVerdict rejects live row that smuggles reason (negative)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -477,6 +626,7 @@ describe("#921 envelope field vocabulary — refused* only", () => {
       station: "judge",
       status: "continue",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
       refutedFindingIdentityKeys: ["x"],
     });
     expect(parsed.ok).toBe(false);

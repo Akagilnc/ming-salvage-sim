@@ -672,7 +672,7 @@ describe("#787 capacity relay", () => {
           mergedBlockers: [],
         },
       });
-      expect(result.status).toBe("error");
+      expect(result.status).toBe("failed");
       expect(result.errorPackage?.reason ?? "").toMatch(
         /record_persist_failed.*capacity relay_baton_handoff/i,
       );
@@ -729,7 +729,7 @@ describe("#787 capacity relay", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
+            output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
           };
         }
         if (spec.kind === "coder" && spec.id === "S5") {
@@ -797,7 +797,7 @@ describe("#787 capacity relay", () => {
         now: () => now,
       });
 
-      expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
+      expect(result.status, JSON.stringify(result, null, 2)).toBe("completed");
       // First S5 seat (after Coder-Rec) is grok; capacity relays onto codex.
       expect(coderFixModels).toEqual([
         "grok-4.5",
@@ -866,7 +866,7 @@ describe("#787 capacity relay", () => {
             if (spec.id === "S3" && capacityStep === "S6") {
               return {
                 kind: "completed",
-                output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
+                output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
               };
             }
             if (spec.id === "S6" && capacityStep === "S6") {
@@ -1371,7 +1371,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     // Only the wall-hit model was dispatched (no relay baton re-entry).
     expect(coderModels.every((m) => m === "grok-4.5")).toBe(true);
     expect(coderFails).toBeGreaterThanOrEqual(1);
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary?.summary ?? "").toMatch(
       /dispatch attempts|mechanical redispatch|process crashed/i,
     );
@@ -1711,7 +1711,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         now: () => NOW,
       });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(result.stepLedger).toContainEqual(expect.objectContaining({
         event: "relay_baton_handoff",
         toModelId: "terra@med",
@@ -2260,7 +2260,7 @@ describe("#686 R2 production seams", () => {
         now: () => NOW,
       });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("failed");
       expect(
         `${result.errorPackage?.reason ?? ""} ${result.stopSummary?.summary ?? ""}`,
       ).toMatch(/tight route violation/i);
@@ -2347,7 +2347,7 @@ describe("#686 R2 production seams", () => {
         backend: new ParkBackend(),
         now: () => NOW,
       });
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(result.stopSummary?.repairHint).toBe(
         "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
       );

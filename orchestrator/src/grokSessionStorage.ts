@@ -44,6 +44,30 @@ const bucketFor = (cwd: string): string => encodeURIComponent(cwd);
 /** Host tar of a session tree can be large; keep the chokepoint buffer generous. */
 const TAR_MAX_BUFFER = 256 * 1024 * 1024;
 
+/**
+ * #981 — macOS Finder/AFP AppleDouble sidecars (`._*`) and folder metadata
+ * (`.DS_Store`) are host OS garbage, never session cargo. Basename-only so
+ * nested session trees stay covered without path-shape assumptions.
+ */
+function isOsMetadataSessionEntry(name: string): boolean {
+  return name === ".DS_Store" || name.startsWith("._");
+}
+
+/** Drop OS metadata entries from a session tree (capture staging / resume scratch). */
+async function stripOsMetadataSessionEntries(dir: string): Promise<void> {
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const p = join(dir, entry.name);
+    if (isOsMetadataSessionEntry(entry.name)) {
+      await fsp.rm(p, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await stripOsMetadataSessionEntries(p);
+    }
+  }
+}
+
 async function dirExists(path: string): Promise<boolean> {
   try {
     return (await fsp.stat(path)).isDirectory();
@@ -138,6 +162,8 @@ async function walkSessionTexts(
 ): Promise<void> {
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // OS metadata is stripped at capture/resume entry before walk; no second
+    // filter here (single truth: stripOsMetadataSessionEntries).
     const p = join(dir, entry.name);
     // CR-9: reject symlinks / non-regular entries before any follow-on I/O.
     if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
@@ -451,7 +477,12 @@ export function makeGrokSessionStorage(
       const result = await sandboxExecWithClock(
         "grok-session:sandbox-export",
         sessionId,
-        () => handle.exec(`tar -C ${shellEscape(src)} -cf - . | base64`),
+        // #981: omit AppleDouble / .DS_Store at export so macOS host extract
+        // does not choke on resource-fork members and sidecars never transfer.
+        () =>
+          handle.exec(
+            `tar -C ${shellEscape(src)} --exclude='._*' --exclude='./._*' --exclude='.DS_Store' --exclude='./.DS_Store' -cf - . | base64`,
+          ),
       );
       if (result.exitCode !== 0) {
         throw new Error(
@@ -477,6 +508,9 @@ export function makeGrokSessionStorage(
           ["-C", staging, "-xf", tarPath],
           "grok-session:tar-extract",
         );
+        // #981: strip AppleDouble / .DS_Store before rewrite + integrity so
+        // they never enter the live host manifest.
+        await stripOsMetadataSessionEntries(staging);
         await rewriteSessionTexts(staging, sandboxCwd, hostCwd);
         await assertStagedSessionIntact(staging);
         await atomicReplaceDir(staging, target);
@@ -506,6 +540,8 @@ export function makeGrokSessionStorage(
       try {
         const copy = join(scratch, "session");
         await fsp.cp(src, copy, { recursive: true });
+        // #981: host sessions may already carry accumulated macOS sidecars.
+        await stripOsMetadataSessionEntries(copy);
         await rewriteSessionTexts(copy, rewriteFrom, sandboxCwd);
         // Write tar to a file (not stdout buffer) so the #884 utf8 chokepoint
         // can own the host subprocess without encoding:buffer escape hatches.

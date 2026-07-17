@@ -219,7 +219,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9261, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     // S2 first seat (Coder-Rec) → S5 advanced seat. The deleted coderFix env
     // must not freeze/restaff S5.
@@ -255,7 +255,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
     const result = await runOrchestrator({ issueNumber: 9262, backend });
 
     // Negative: roster failure must not end the run.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.status).not.toBe("error");
     expect(result.status).not.toBe("escalate");
 
@@ -306,7 +306,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
     ]);
     const result = await runOrchestrator({ issueNumber: 9266, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.status).not.toBe("error");
     expect(result.status).not.toBe("escalate");
 
@@ -352,7 +352,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9267, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.reason ?? "").toMatch(
       /record_persist_failed.*coder_advance/i,
     );
@@ -372,7 +372,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9263, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     expect(backend.coderModels.length).toBeGreaterThanOrEqual(4); // S2 + 3×S5
     expect(backend.coderModels.every((m) => m === "grok-4.5")).toBe(true);
@@ -397,7 +397,7 @@ describe("#926 behavior: runner executes advance_coder", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9264, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     // S2=grok, S5#1=terra (advanced), S5#2=terra (sticky).
     expect(backend.coderModels).toEqual([
@@ -421,7 +421,7 @@ describe("#926 ledger carriers are bookkeeping (not step results)", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9265, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s5 = backend.ctxs.find(
       (c, i) => backend.specs[i]?.id === "S5",

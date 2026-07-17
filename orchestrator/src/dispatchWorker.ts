@@ -31,11 +31,10 @@ import {
 import { join, resolve } from "node:path";
 
 import {
-  FIX_FOCUS_LANDING_FILE,
-  formatFixFocusMarkdown,
-} from "./findingFamilies.js";
-import { findingIdentityKeys } from "./findings.js";
-import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
+  isJudgeSeat,
+  materializeLandingFixPacketBody,
+  mintJudgeEscalate,
+} from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -48,6 +47,7 @@ import {
 } from "./modelRoutes.js";
 import { resolveModelSlugForPool } from "./modelRegistry.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
+import { workerResultFromAgentError } from "./sandcastleAgentError.js";
 import {
   createTelemetryLegStamper,
   scheduleTelemetryEnvironmentStamp,
@@ -177,43 +177,6 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
   }
 }
 
-function writeFixFocusLandingFile(
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
-  const needsFixFocus =
-    landing?.findingFamilies !== undefined &&
-    landing.findingFamilies.length > 0 &&
-    (spec.kind === "fixer" ||
-      (spec.kind === "coder" &&
-        (spec.id === "S5" || ctx.blockingFindingIdentityKeys !== undefined)));
-  if (!needsFixFocus || ctx.worktree === undefined) {
-    return undefined;
-  }
-  if (!existsSync(ctx.worktree.path)) return undefined;
-
-  const landingPath =
-    ctx.stateDir !== undefined
-      ? join(ctx.stateDir, "fix-focus.md")
-      : join(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
-  if (ctx.stateDir !== undefined) {
-    mkdirSync(ctx.stateDir, { recursive: true });
-  } else {
-    ensureGitExcluded(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
-  }
-  writeFileSync(
-    landingPath,
-    `${formatFixFocusMarkdown(landing.findingFamilies!)}\n`,
-    "utf8",
-  );
-  return {
-    path: landingPath,
-    sandboxPath: FIX_FOCUS_LANDING_FILE,
-    cleanup: ctx.stateDir === undefined,
-  };
-}
-
 function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
@@ -258,22 +221,26 @@ function writeFixFindingsLandingFile(
       : undefined;
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
-  // Identity keys are derived here at the fixer-landing boundary from opaque
-  // findings cargo — not by the runner reading cargo fields (ADR 0131 / #899).
-  // Prefer cargo-derived keys; fall back to ctx keys when findings rows are
-  // sparse (family envelope / count-only reopen may still carry prior keys).
-  const findingsRows = landing?.blockingFindings ?? [];
-  const identityKeys =
-    findingsRows.length > 0
-      ? findingIdentityKeys(findingsRows)
-      : [...(ctx.blockingFindingIdentityKeys ?? [])];
+  // ADR 0138 / #978: packet content is judge-authored fixPacketBody only.
+  // Identity keys stay on the thin control envelope (ctx); never derive packet
+  // content from bare findings rows (deleted dual path).
+  const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+  // Coder-fix (S5) open set requires body; S6 judge re-adjudicate may carry
+  // keys only (not a fix content packet). Shared helper with family writer.
+  const isCoderFixLanding = spec.id === "S5" && spec.kind === "coder";
+  const fixPacketBody = materializeLandingFixPacketBody({
+    fixPacketBody: landing?.fixPacketBody,
+    blockingFindingIdentityKeys: identityKeys,
+    blockingFindingCount: ctx.blockingFindingCount,
+    requireBodyWhenOpen: isCoderFixLanding,
+  });
   writeFileSync(
     landingPath,
     `${JSON.stringify(
       {
-        // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-        // ADR 0062) — never from the runner's thin DispatchContext.
-        blockingFindings: findingsRows,
+        // ADR 0138: sole coder-fix packet content path — verbatim judge body.
+        // Bare findings packing is deleted (no second content channel).
+        ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
         ...(rawReviewerArtifacts !== undefined
           ? { rawReviewerArtifacts }
           : {}),
@@ -497,7 +464,6 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
-  const fixFocusLanding = writeFixFocusLandingFile(spec, ctx, landing);
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {
@@ -507,25 +473,14 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
-  const fixFocusOptions =
-    fixFocusLanding !== undefined
-      ? {
-          fixFocusLanding: {
-            path: fixFocusLanding.path,
-            sandboxPath: fixFocusLanding.sandboxPath,
-          },
-        }
-      : undefined;
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
     fixFindingsOptions !== undefined ||
-    fixFocusOptions !== undefined ||
     outcomeLanding !== undefined ||
     ctx.billingPool !== undefined ||
     ctx.relayBrief !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
-          ...(fixFocusOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
           ...(ctx.billingPool !== undefined
             ? { billingPool: ctx.billingPool }
@@ -568,9 +523,6 @@ export async function legacyDispatchWorker(
         force: true,
       });
     }
-    if (fixFocusLanding?.cleanup) {
-      rmSync(fixFocusLanding.path, { force: true });
-    }
   }
   const { output, sessionId } = normalizeStepReturn(ret);
   return { kind: "completed", output, sessionId };
@@ -595,10 +547,18 @@ export async function dispatchWorker(
   if (smokeFailure !== undefined) {
     throw new Error(`worker dispatch refused (fail-closed): ${smokeFailure}`);
   }
-  if (backend.dispatchWorker !== undefined) {
-    return backend.dispatchWorker(spec, ctx, landing);
+  try {
+    if (backend.dispatchWorker !== undefined) {
+      return await backend.dispatchWorker(spec, ctx, landing);
+    }
+    return await legacyDispatchWorker(backend, spec, ctx, landing);
+  } catch (err) {
+    // #964: single AgentError → typed failure court at Worker Invocation seam
+    // (single-slice coder/judge + any legacy path). Merger has its own seat court.
+    const agentFailure = workerResultFromAgentError(err, spec.kind);
+    if (agentFailure !== undefined) return agentFailure;
+    throw err;
   }
-  return legacyDispatchWorker(backend, spec, ctx, landing);
 }
 
 /**

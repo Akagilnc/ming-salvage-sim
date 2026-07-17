@@ -1993,6 +1993,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           { identityKey: "correctness|a.ts:1|x", action: "live" },
           { identityKey: "correctness|b.ts:2|y", action: "live" },
         ],
+        fixPacketBody: "live: correctness|a.ts:1|x\nlive: correctness|b.ts:2|y",
       };
       const { agent, result } = await runScriptedStructuredOutput({
         tag: JUDGE_RECEIPT_TAG,
@@ -2318,7 +2319,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(receipt.safeParse({
       findingsCount: 0,
       findings: [],
-      findingFamilies: [{ identityKeys: ["c|l|q"] }],
+      evidencePaths: ["cmr/review.json"],
     }).success).toBe(true);
   });
 

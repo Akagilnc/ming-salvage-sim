@@ -335,7 +335,7 @@ describe("#786 family dispatch telemetry", () => {
       familyBase: "family/809-sidecar",
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("#876 preserves a green CMR verdict when the reviewer worktree HEAD drifted", async () => {
@@ -354,7 +354,7 @@ describe("#786 family dispatch telemetry", () => {
     });
 
     // Head drift is advisory routing plumbing (#876), not a durable reject.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const reviewRounds = readTelemetryRecords(durable).filter(
       (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
     );
@@ -390,7 +390,7 @@ describe("#786 family dispatch telemetry", () => {
       familyBase: "family/809-sidecar",
     });
 
-    expect(result.status).not.toBe("success");
+    expect(result.status).not.toBe("completed");
     expect(
       readTelemetryRecords(durable).filter(
         (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",

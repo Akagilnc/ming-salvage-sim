@@ -20,8 +20,8 @@
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
- *   - any backend call throws → S8(error) + error package  [runner catch]
- *   - the S2 worker carries escalate → S8(escalate) [route() detects]
+ *   - any backend call throws → S8(failed) + error package  [runner catch]
+ *   - the S2 worker carries escalate → S8(parked) [route() detects]
  * Slice #253: StepSpec contract — model/maxIter/soul/toolchain (#928: no signal).
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
@@ -127,6 +127,8 @@ import {
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
+  requireFixPacketBody,
+  storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
   rebuildBlockingFromLedger,
@@ -169,6 +171,31 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+import {
+  isLegacy929PublicStatusToken,
+  type PublicFailedCause,
+} from "./publicResult.js";
+
+/**
+ * Public single-slice failed RunResult with mandatory ID-001 cause.
+ * Every public failed path must go through this so no path forgets `cause`.
+ */
+function failedRunResult(input: {
+  readonly cause: PublicFailedCause;
+  readonly errorPackage: ErrorPackage;
+  readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  readonly stopSummary: StopSummary;
+  readonly branch?: string;
+}): RunResult {
+  return {
+    status: "failed",
+    cause: input.cause,
+    errorPackage: input.errorPackage,
+    stepLedger: input.stepLedger,
+    stopSummary: input.stopSummary,
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
+  };
+}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -311,7 +338,7 @@ function buildPersistentEntry(opts: {
     entry = { ...entry, output: opts.output };
   }
   // Tag the terminal S8 entry with its handoff status so a resuming run can
-  // tell success / escalate / error apart (#255).
+  // tell completed / parked / failed apart (#255 / #942).
   if (opts.handoffStatus !== undefined) {
     entry = { ...entry, handoffStatus: opts.handoffStatus };
   }
@@ -346,15 +373,18 @@ const SLICE_BASE = "main";
  *
  *   - `terminalStatus` — set when the prior run already reached a terminal
  *                      handoff that is NOT being re-opened. Re-feeding is a
- *                      no-op; the runner returns this exact status (success /
- *                      error / escalate), NOT a hardcoded success. A prior
- *                      ERROR or ESCALATE that the human has not re-opened must
- *                      not masquerade as success.
+ *                      no-op; the runner returns this exact public status
+ *                      (completed | parked | failed), NOT a hardcoded completed.
+ *                      A prior failed/parked that the human has not re-opened
+ *                      must not masquerade as completed. #929 tokens fail closed
+ *                      as failed (ID-005).
+ *   - `terminalCause` — ID-001 cause when terminalStatus is failed (mandatory
+ *                      for public failed returns).
  *   - `resumeStep`   — the step to continue from (only when terminalStatus is
  *                      undefined).
  *   - `resumeSessionId` — set when the step must be resumed in its ORIGINAL
  *                      agent session (Sandcastle `resumeSession`): the prior run
- *                      ESCALATED at this step and a human has since answered, so
+ *                      parked at this step and a human has since answered, so
  *                      the coder finishes in the same session rather than a
  *                      fresh `run()`. Undefined ⇒ continue with a fresh dispatch
  *                      (crash-resume: the next step is brand new work).
@@ -369,6 +399,8 @@ const SLICE_BASE = "main";
  */
 interface ResumePlan {
   readonly terminalStatus?: HandoffStatus;
+  /** ID-001 cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   readonly resumeStep: SliceStepId;
   readonly resumeSessionId?: string;
   readonly resumeSessionModel?: string;
@@ -436,7 +468,7 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
 
 /**
  * #683 — latest durable marker is a quota wait park. Resume re-enters the
- * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ * parked step (not S8(failed)). Same family as `online_review_ci_pending` parks.
  * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
  * next baton can continue from the preserved worktree.
  */
@@ -792,7 +824,7 @@ function escalationKindForHandoff(
 ): EscalationKind | undefined {
   // This call site only transports route()'s worker-raised decision gate.
   // Process failures use escalateTermination(..., "failure") directly.
-  return status === "escalate" ? "decision" : undefined;
+  return status === "parked" ? "decision" : undefined;
 }
 
 /**
@@ -864,12 +896,13 @@ function lastReviewerStep(
  *   1. Empty ledger              → resume from S0 (treat as a fresh run).
  *   2. The last agent output escalated AND a later escalation_answered row exists
  *      → resume THAT step in its original session (resumeSession + sessionId).
- *      Without the appended answer, report the prior escalate terminal status.
+ *      Without the appended answer, report the prior parked/failed terminal status.
  *   3. The prior run reached a terminal handoff that is NOT being re-opened
  *      (S8 entry, or the last step routes straight to a handoff) → report that
- *      handoff's TRUE status (success / error / escalate) — never a hardcoded
- *      success. The S8 entry carries `handoffStatus` (#255); when the terminal
- *      status must be inferred (a crash before the S8 write), route() gives it.
+ *      handoff's TRUE public status (completed | parked | failed) — never a
+ *      hardcoded completed. The S8 entry carries `handoffStatus` (#255); when the
+ *      terminal status must be inferred (a crash before the S8 write), route()
+ *      gives it.
  *   4. Otherwise (crash mid-run) → continue from `route()`'s successor of the
  *      last recorded step, with a fresh dispatch.
  */
@@ -891,21 +924,43 @@ function planResume(
   const agentEntry = lastAgentEntry(executableLedger);
 
   // #709 exemption: keep strict !== undefined (not != null) — escalationKind presence
-  // on S8(escalate) distinguishes legacy untagged (absent → fallthrough to Case 2
+  // on S8(parked) distinguishes legacy untagged (absent → fallthrough to Case 2
   // agentEscalate + answer reopen logic) from tagged kind (present → use "decision"
   // vs "failure" to decide reopen vs always-terminal). Traced: planResume Case1 vs
   // Case2/3a; familyEscalationState uses ==/=== directly; "unknown tagged" test forces
   // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
   // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
   // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
+  // #942 / #934 ID-005: legacy #929 / unknown handoff tokens fail closed as failed.
+  // No dual-read to completed/parked; scene preserved; cause = resume_state_invalid.
   if (
     lastEntry.step === "S8" &&
-    lastEntry.handoffStatus === "escalate" &&
+    lastEntry.handoffStatus !== undefined &&
+    (isLegacy929PublicStatusToken(lastEntry.handoffStatus) ||
+      ((lastEntry.handoffStatus as string) !== "completed" &&
+        (lastEntry.handoffStatus as string) !== "parked" &&
+        (lastEntry.handoffStatus as string) !== "failed"))
+  ) {
+    return {
+      terminalStatus: "failed",
+      terminalCause: "resume_state_invalid",
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
+  // #982: S8(failed) is terminal — never reopen as an answerable decision,
+  // even when escalationKind is "decision". Only parked + decision reopens.
+  // Tagged failed falls through to Case 3a (true handoffStatus).
+  if (
+    lastEntry.step === "S8" &&
+    lastEntry.handoffStatus === "parked" &&
     lastEntry.escalationKind !== undefined
   ) {
     if (lastEntry.escalationKind === "failure") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -913,7 +968,8 @@ function planResume(
     }
     if (lastEntry.escalationKind !== "decision") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -945,7 +1001,7 @@ function planResume(
       (answer === undefined && continueFixingRepair === undefined)
     ) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -955,7 +1011,7 @@ function planResume(
     if (decisionStep === "S4") {
       if (continueFixingRepair === undefined) {
         return {
-          terminalStatus: "escalate",
+          terminalStatus: "parked",
           resumeStep: "S8",
           lastOutput: agentEntry?.output,
           priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -995,7 +1051,7 @@ function planResume(
     }
 
     return {
-      terminalStatus: "escalate",
+      terminalStatus: "parked",
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1005,23 +1061,23 @@ function planResume(
   // Case 2: legacy/untagged agent decision-escalate residue — the last agent
   // output carries an escalation object (the bell; its fields are cargo). Only a
   // later escalation_answered row re-opens THAT step in its original agent
-  // session; otherwise the prior S8(escalate) remains a pause.
+  // session; otherwise the prior S8(parked) remains a pause.
   //
   // Persisted legacy ledgers may predate the receipt bell normalizer. Keep the
   // compatibility presence guard here; current receipt cargo quality never
   // changes whether the worker pressed the decision bell.
   //
-  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
+  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(failed) ALSO supersedes
   // escalate-resume, even when the decision bell is present. An escalate handoff
-  // whose S8 write faulted returns status:error in-run and best-effort persists
-  // a tagged 'error' S8 — the disk then holds a decision-bell agent entry AND a
-  // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
+  // whose S8 write faulted returns status:failed in-run and best-effort persists
+  // a tagged 'failed' S8 — the disk then holds a decision-bell agent entry AND a
+  // trailing S8(failed). The run failed; re-feeding must report that failed (Case
   // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
-  // the last entry is a tagged terminal-error S8. (A legitimate human-answered
-  // escalate has S8(escalate) plus a later answer row — NOT error — so it still
+  // the last entry is a tagged terminal-failed S8. (A legitimate human-answered
+  // escalate has S8(parked) plus a later answer row — NOT failed — so it still
   // resumes here.)
   const lastIsTaggedError =
-    lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
+    lastEntry.step === "S8" && lastEntry.handoffStatus === "failed";
   const agentEscalate = escalateOf(agentEntry?.output);
   if (
     !lastIsTaggedError &&
@@ -1042,7 +1098,7 @@ function planResume(
     );
     if (answer === undefined) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1071,12 +1127,15 @@ function planResume(
   }
 
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
-  // (recorded in handoffStatus, #255) — a prior error/escalate must not be
-  // re-reported as success. If an older ledger lacks the tag, fall back to
-  // inferring via route() below.
+  // (recorded in handoffStatus, #255/#942) — a prior failed/parked must not be
+  // re-reported as completed. If an older ledger lacks the tag, fall back to
+  // inferring via route() below. Non-canonical tokens already failed closed above.
   if (lastEntry.step === "S8" && lastEntry.handoffStatus !== undefined) {
     return {
       terminalStatus: lastEntry.handoffStatus,
+      ...(lastEntry.handoffStatus === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1106,7 +1165,7 @@ function planResume(
     output: routeOutput,
   });
   const priorForResume = ledger as ReadonlyArray<LedgerEntry>;
-  // #683: quota wait park → re-enter the parked step (not S8(error)).
+  // #683: quota wait park → re-enter the parked step (not S8(failed)).
   const quotaWaitStep = sliceQuotaWaitPending(ledger);
   if (quotaWaitStep !== undefined) {
     return {
@@ -1118,6 +1177,9 @@ function planResume(
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
+      ...(decision.status === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
       lastOutput: routeOutput,
       priorLedger: priorForResume,
@@ -1388,17 +1450,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       summary: reason,
       repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
-    return {
-      status: "error",
+    return failedRunResult({
+      cause: "resume_state_invalid",
       errorPackage: { failedStep: "S0", reason },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-    };
+    });
   }
 
   // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
   // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
-  // finished success/error/unanswered-escalate terminal (zero meta/smoke).
+  // finished completed/failed/parked terminal (zero meta/smoke).
   // Skip early short-circuit when a repairIntent is present — that path must
   // still durable-write the intent (and surface write failures) before planResume.
   if (scene.kind === "resident" && input.repairIntent === undefined) {
@@ -1406,9 +1468,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (earlyPlan.terminalStatus !== undefined) {
       const worktree = scene.state.worktree;
       const ledger = earlyPlan.priorLedger;
-      if (earlyPlan.terminalStatus === "error") {
+      if (earlyPlan.terminalStatus === "failed") {
         const reason =
-          "prior run terminated with an error handoff (re-fed after completion)";
+          earlyPlan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
           failedStep: lastAgentStep(ledger) ?? "S8",
           reason,
@@ -1416,18 +1480,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return {
-          status: "error",
+        return failedRunResult({
+          cause: earlyPlan.terminalCause ?? "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
       const stopSummary: StopSummary =
-        earlyPlan.terminalStatus === "success"
+        earlyPlan.terminalStatus === "completed"
           ? {
               reason: "already_done",
-              summary: "prior run already reached a success handoff",
+              summary: "prior run already reached a completed handoff",
             }
           : latestLedgerStopSummary(ledger) ?? {
               reason: "spec_conflict",
@@ -1436,7 +1500,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
       return {
         status: earlyPlan.terminalStatus,
-        branch: earlyPlan.terminalStatus === "success" ? worktree.branch : undefined,
+        branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
       };
@@ -1450,15 +1514,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   if (admitted.kind === "stop") {
     const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
     const isTight = admitted.escalation.reason === "tight route violation";
-    return {
-      status: isTight ? "escalate" : "error",
+    const cause: PublicFailedCause = isTight
+      ? "route_config_invalid"
+      : /coder-rec|coder_rec/i.test(admitted.escalation.reason)
+        ? "coder_rec_invalid"
+        : "route_config_invalid";
+    return failedRunResult({
+      cause,
       errorPackage: {
         failedStep: "S0",
         reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-    };
+    });
   }
   console.info(
     `[orchestrator] model route lineup\n${printableRouteLineup(admitted.route)}`,
@@ -1649,21 +1718,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "S8",
       undefined,
       undefined,
-      "escalate",
+      "failed",
       undefined,
       undefined,
       "failure",
       stopSummary,
     );
-    return {
-      status: "escalate",
+    const cause: PublicFailedCause =
+      escalation.reason === "tight route violation" ||
+      /route/i.test(escalation.reason)
+        ? "route_config_invalid"
+        : "coder_rec_invalid";
+    return failedRunResult({
+      cause,
       errorPackage: {
         failedStep: "S0",
         reason: `${escalation.reason}: ${escalation.diagnosis}`,
       },
       stepLedger: ledger,
       stopSummary,
-    };
+    });
   };
 
   /**
@@ -1996,6 +2070,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   /**
+   * ADR 0138 / #978: judge-authored fix packet body for the sole coder-fix
+   * content path. Verbatim transport only — never synthesised from findings.
+   */
+  let pendingFixPacketBody: string | undefined;
+  /**
    * #926 / #937 / #934 ID-008: consecutive review/fix no-baton stay-puts.
    * First stay-put is non-terminal (return to judge / preserve findings); a
    * second consecutive typed-429 wall with no baton parks for external reset
@@ -2188,11 +2267,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * nor raw-reject. The in-memory ledger still records the step regardless.
    *
    * integ-cmr m2 r1 (Finding 1): `handoffStatus` is threaded through so the
-   * error-path terminal S8 is persisted TAGGED (handoffStatus:'error'). Without
+   * error-path terminal S8 is persisted TAGGED (handoffStatus:'failed'). Without
    * the tag, planResume Case 3a (which only reports a terminal status when
    * lastEntry.handoffStatus !== undefined) falls through to Case 3b/4 and routes
    * from the prior NON-S8 step — re-entering the fix loop on a no-progress bail,
-   * or reporting SUCCESS for a push-fail. The terminal status must be recorded
+   * or reporting completed for a push-fail. The terminal status must be recorded
    * on disk, not inferred. Non-terminal best-effort persists (the failing step)
    * pass handoffStatus=undefined, matching emitLedger's "undefined for non-S8".
    */
@@ -2234,11 +2313,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   /**
-   * Build an S8(status=error) termination from the failing step + caught error.
+   * Build an S8 public-failed termination from the failing step + caught error.
    *
    * #3: records BOTH the failing step and the terminal S8 in the in-memory
    * ledger AND persists them (best-effort) to the sibling state dir, so a
-   * resume reading the PERSISTED ledger sees the error termination instead of
+   * resume reading the PERSISTED ledger sees the failed termination instead of
    * the failing step + S8 vanishing.
    *
    * PRE-WORKTREE failures are an unpersistable special case (integ-cmr base r2,
@@ -2249,8 +2328,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
-   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (after
-   * stateDir is fixed) and later steps persist their error termination.
+   * public failed, but NOTHING is persisted. Only POST-worktree S1 (after
+   * stateDir is fixed) and later steps persist their failed termination.
    * So this contract does NOT promise "every S1 throw is persisted" — only
    * post-worktree ones.
    */
@@ -2262,6 +2341,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
       stopSummary?: StopSummary;
+      cause?: PublicFailedCause;
     },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
@@ -2288,7 +2368,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
     const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
-    // #929 — non-success terminals must speak externally (not only return
+    // #942 — non-completed terminals must speak externally (not only return
     // errorPackage). stopForCoderRec already console.errors; keep the same
     // invariant on the shared errorTermination helper so mid-run crashes are
     // visible without parsing the RunResult.
@@ -2322,10 +2402,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Terminal S8 entry — in-memory + persisted. The PERSISTED entry is TAGGED
     // with the terminal status (integ-cmr m2 r1, Finding 1): errorTermination is
-    // always an ERROR handoff, so the disk S8 must carry handoffStatus:'error';
-    // a re-feed then reports the true error via planResume Case 3a instead of
+    // always a failed handoff, so the disk S8 must carry handoffStatus:'failed';
+    // a re-feed then reports the true failed via planResume Case 3a instead of
     // falling through to Case 3b/4 (which would re-route from the prior NON-S8
-    // step — reporting a spurious success). The in-memory entry stays untagged,
+    // step — reporting a spurious completed). The in-memory entry stays untagged,
     // matching the normal handoff path (only the disk ledger is the resume truth;
     // the in-memory ledger is the live result).
     ledger.push({ step: "S8", stopSummary });
@@ -2333,7 +2413,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "S8",
       undefined,
       undefined,
-      "error",
+      "failed",
       undefined,
       undefined,
       undefined,
@@ -2344,12 +2424,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
     // runner-visible S3/S4/S5/S6 steps; deferral tracking belongs to the later
     // family/integrated gates, not this error path.
-    return {
-      status: "error",
+    const cause: PublicFailedCause =
+      opts?.cause ??
+      (reason.startsWith("record_persist_failed")
+        ? "record_persist_failed"
+        : "runner_internal_error");
+    return failedRunResult({
+      cause,
       errorPackage,
       stepLedger: ledger,
       stopSummary,
-    };
+    });
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2363,7 +2448,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
     const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
-    // #929 — same non-success loudness invariant as errorTermination /
+    // #942 — same non-completed loudness invariant as errorTermination /
     // stopForCoderRec: operators must see the park without parsing RunResult.
     console.error(
       `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
@@ -2392,26 +2477,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // modelSlug is written by emitLedger for worker steps (same seat model).
       await persistBestEffort(failedStep, output, undefined, undefined, sessionId);
     }
+    // #942 ID-001: decision parks are public parked/2; failure escalations are failed/1.
+    const publicStatus = escalationKind === "decision" ? "parked" : "failed";
     ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
       "S8",
       undefined,
       undefined,
-      "escalate",
+      publicStatus,
       undefined,
       undefined,
       escalationKind,
       stopSummary,
     );
+    const errorPackage = {
+      failedStep,
+      reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+      branchHead: worktree?.branch,
+    };
+    if (publicStatus === "failed") {
+      return failedRunResult({
+        cause: "runner_internal_error",
+        errorPackage,
+        stepLedger: ledger,
+        stopSummary,
+      });
+    }
     return {
-      status: "escalate",
-      // Surface the escalation as the error package so the caller can read the
-      // reason/diagnosis (resume指引) — same diagnostic channel, escalate status.
-      errorPackage: {
-        failedStep,
-        reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
-        branchHead: worktree?.branch,
-      },
+      status: "parked",
+      errorPackage,
       stepLedger: ledger,
       stopSummary,
     };
@@ -2464,15 +2558,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (typeof backend.smokeModelRoute !== "function") {
       const reason =
         "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
-      return {
-        status: "error",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: reason,
           repairHint: "provide a real model×pipe smoke executor before dispatching workers",
         }),
-      };
+      });
     }
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
@@ -2493,15 +2587,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return {
-        status: "error",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: `route smoke failed: ${reason}`,
           repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
         }),
-      };
+      });
     }
     const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
     modelRoute = degradation.route;
@@ -2512,15 +2606,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions,
     );
     if (smokeFailure !== undefined) {
-      return {
-        status: "error",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason: smokeFailure },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: smokeFailure,
           repairHint: "rerun the route smoke or repair the selected model×pipe",
         }),
-      };
+      });
     }
     for (const dropped of degradation.dropped) {
       console.error(
@@ -2618,16 +2712,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #925/#877: rebuild pending open-set / kill flips from the prior ledger
-    // (judge continue + residual historical S4/reviewer open-count). Each
-    // projection replaces the pending blocker set; prose dispositions do not
-    // reopen findings. #899: also rebuild raw reviewer artifact pointers so a
-    // crash/resume after S4 still hands the fixer host paths (materialised at
+    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
+    // prior ledger (judge continue + residual historical S4/reviewer open-count).
+    // Each projection replaces the pending blocker set; prose dispositions do
+    // not reopen findings. Terminal flips include refute→refuted and
+    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
+    // a crash/resume after S4 still hands the fixer host paths (materialised at
     // landing).
     const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
     pendingBlockingFindings = [...rebuiltBlocking.blocking];
     pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
     pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
     findingDispositions = [...rebuiltBlocking.findingDispositions];
     pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
@@ -2693,11 +2789,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
       // so no destructive cleanup is run here (a cleanup failure must not flip
       // an already-finished run's reported status). Report the
-      // TRUE terminal status (success / error / escalate), never a hardcoded
-      // success (#255: a prior error/escalate must not masquerade as success).
-      if (plan.terminalStatus === "error") {
+      // TRUE public terminal status (completed | parked | failed), never a
+      // hardcoded completed (#255/#942: a prior failed/parked must not masquerade).
+      if (plan.terminalStatus === "failed") {
         const reason =
-          "prior run terminated with an error handoff (re-fed after completion)";
+          plan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
           failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
           reason,
@@ -2705,18 +2803,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return {
-          status: "error",
+        return failedRunResult({
+          cause: plan.terminalCause ?? "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
       const stopSummary: StopSummary =
-        plan.terminalStatus === "success"
+        plan.terminalStatus === "completed"
           ? {
               reason: "already_done",
-              summary: "prior run already reached a success handoff",
+              summary: "prior run already reached a completed handoff",
             }
           : latestLedgerStopSummary(ledger) ?? {
               reason: "spec_conflict",
@@ -2725,7 +2823,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
       return {
         status: plan.terminalStatus,
-        branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
+        branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
       };
@@ -2832,9 +2930,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
-  // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
-  // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
-  // keeps the absence of any "数到 N 就停" cap explicit (US#18).
+  // public handoff (completed|parked|failed). ADR 0030 makes the per-slice
+  // review/fix loop visible in S3/S4/S5/S6, but still rejects a blind round
+  // cap; a `for (;;)` keeps the absence of any "数到 N 就停" cap explicit (US#18).
   orchestratorStepLoop: for (;;) {
     if (!routeSmokeChecked && step !== "S0") {
       const smokeResult = await ensureRouteSmoke();
@@ -2868,7 +2966,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         //   (a) ready-for-agent label
         //   (b) no sub-issues (leaf slice, not a parent/epic)
         //   (c) all blocked_by dependencies are closed
-        // A gate violation terminates as structured S8(error): the runner still
+        // A gate violation terminates as structured S8(failed): the runner still
         // stops before preparing a worktree or dispatching an agent step, but AFK
         // callers get the unified terminal result / stop summary instead of a raw
         // process error.
@@ -2906,7 +3004,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
           // the resume contract needs a worktree's sibling dir). errorTermination
           // records the in-memory S8 and persists only if stateDir is resolved.
-          return await errorTermination("S0", err);
+          // #942 / #934 ID-001: live metadata throw is issue_metadata_unavailable
+          // (not the default runner_internal_error).
+          return await errorTermination("S0", err, {
+            cause: "issue_metadata_unavailable",
+          });
         }
 
         if (meta.isClosed) {
@@ -2985,7 +3087,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         try {
           worktree = await backend.prepareWorktree(issueNumber, sliceBase);
         } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
+          // PRE-worktree throw → unpersistable; S8(failed) in-memory only.
           return await errorTermination("S1", err);
         }
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
@@ -3207,11 +3309,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {}),
               };
+              // ADR 0138 / #978: when a judge continue established a live open
+              // set, packet body is required and is the sole content path.
+              // Unusable non-judge → S5 (raw artifacts only) may lack a body —
+              // that edge is intentionally body-less, never bare-findings pack.
+              if (
+                step === "S5" &&
+                (pendingBlockingFindingCount > 0 ||
+                  pendingBlockingFindingIdentityKeys.length > 0)
+              ) {
+                try {
+                  pendingFixPacketBody = requireFixPacketBody({
+                    status: "continue",
+                    fixPacketBody: pendingFixPacketBody,
+                  });
+                } catch (err) {
+                  const reason =
+                    err instanceof Error
+                      ? err.message
+                      : "judge continue missing fixPacketBody (ADR 0138)";
+                  return await errorTermination(step, new Error(reason), {
+                    output: lastOutput,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue must author non-empty fixPacketBody; " +
+                        "runner transports it verbatim and will not pack bare findings",
+                    }),
+                  });
+                }
+              }
               const landingPayload =
                 step === "S5" || step === "S6"
                   ? {
-                      // Full findings cargo always — never scope-filtered (#899).
-                      blockingFindings: pendingBlockingFindings,
+                      // ADR 0138: sole packet content path (verbatim judge body).
+                      ...(pendingFixPacketBody !== undefined
+                        ? { fixPacketBody: pendingFixPacketBody }
+                        : {}),
                       ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
                         ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
                         : {}),
@@ -3247,7 +3382,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // #661 / #937: process-level retry CONTINUES on the current scene —
               // no Git reset/checkout/clean. Uncommitted work is the payload.
               //
-              // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
+              // Reviewer: rethrow on throw-exhaust so S8(failed) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
               // Coder keeps default failed→durable abort (existing escalate path).
               // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
@@ -3407,6 +3542,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : String(writeErr)
                     }`,
                   ),
+                  { cause: "record_persist_failed" },
                 );
               }
             }
@@ -3693,6 +3829,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
               pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                 stepMonitorHandle,
                 stepSessionId,
@@ -3704,43 +3841,79 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Apply continue dispositions via the shared projection helper
             // (same helper resume rebuild uses — F2 single open-set seam).
             if (output.status === "continue") {
-              const projected = projectJudgeContinueBlocking(output);
+              // ADR 0138: missing/empty fixPacketBody is contract drift — fail
+              // loud here so S5 never falls back to bare-findings packing.
+              let authoredBody: string;
+              try {
+                authoredBody = requireFixPacketBody(output);
+              } catch (err) {
+                const reason =
+                  err instanceof Error
+                    ? err.message
+                    : "judge continue missing fixPacketBody (ADR 0138)";
+                return await errorTermination(step, new Error(reason), {
+                  output,
+                  findingDispositions,
+                  stopSummary: contractDriftStopSummary({
+                    summary: reason,
+                    repairHint:
+                      "judge status:continue must author non-empty fixPacketBody; " +
+                      "runner transports it verbatim and will not pack bare findings",
+                  }),
+                });
+              }
+              // #952 R6-C2: pass accumulated store statuses so terminal→terminal
+              // morphs fail at the write point (no open hardcode laundering).
+              const projected = projectJudgeContinueBlocking(
+                output,
+                storeStatusByIdentityFromDispositions(findingDispositions),
+              );
               if (projected !== undefined) {
-                // Apply kill flips first, then gate empty live set (#919 M6).
-                if (projected.killDispositions.length > 0) {
+                // Apply terminal store flips first, then gate empty live set (#919 M6).
+                if (projected.terminalDispositions.length > 0) {
                   findingDispositions = [
                     ...findingDispositions,
-                    ...projected.killDispositions,
+                    ...projected.terminalDispositions,
                   ];
                 }
                 pendingBlockingFindings = projected.blocking;
                 pendingBlockingFindingIdentityKeys =
                   projected.blockingIdentityKeys;
                 pendingBlockingFindingCount = projected.blockingFindingCount;
+                pendingFixPacketBody = authoredBody;
                 if (pendingBlockingFindingCount > 0) {
                   pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                     stepMonitorHandle,
                     stepSessionId,
                   );
                 } else if (projected.blockingIdentityKeys.length === 0) {
-                  // #919 M6 / family M1 isomorphic: empty continue is court
-                  // contract drift — never empty-spin S5. Unusable (non-judge)
-                  // still routes to S5 above; route() continue→S5 stays for
-                  // non-empty live sets only.
-                  const reason =
-                    `judge ${step} continue with 0 live findings ` +
-                    `(court contract drift; empty continue must not spin coder-fix)`;
-                  return await errorTermination(step, new Error(reason), {
-                    output,
-                    findingDispositions,
-                    stopSummary: contractDriftStopSummary({
-                      summary: reason,
-                      repairHint:
-                        "judge status:continue requires non-empty live identity keys; " +
-                        "re-open the same judge seat or repair the seat envelope — " +
-                        "do not empty-spin S5 coder-fix",
-                    }),
-                  });
+                  // #952: 0 live + non-empty terminal flips (suppress/refute) =
+                  // terminal court closure — apply flips (above), do not S5,
+                  // route like converged via judgeStatusFromOutput. True empty
+                  // (0 live AND 0 terminals) remains M6 contract drift.
+                  if (projected.terminalDispositions.length === 0) {
+                    // #919 M6 / family M1 isomorphic: true empty continue is
+                    // court contract drift — never empty-spin S5. Unusable
+                    // (non-judge) still routes to S5 above; route() continue→S5
+                    // stays for non-empty live sets only.
+                    const reason =
+                      `judge ${step} continue with 0 live findings ` +
+                      `(court contract drift; empty continue must not spin coder-fix)`;
+                    return await errorTermination(step, new Error(reason), {
+                      output,
+                      findingDispositions,
+                      stopSummary: contractDriftStopSummary({
+                        summary: reason,
+                        repairHint:
+                          "judge status:continue requires non-empty live identity keys " +
+                          "or terminal-only dispositions (suppress/refute); " +
+                          "re-open the same judge seat or repair the seat envelope — " +
+                          "do not empty-spin S5 coder-fix",
+                      }),
+                    });
+                  }
+                  // Terminal-only: pending open set already 0; fall through so
+                  // ledger records flips + continue envelope, then route → S7.
                 }
               }
             } else {
@@ -3748,6 +3921,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
             }
           }
         }
@@ -3814,8 +3988,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // #925 / #919 S1: verdict + kill flips land on judge seats (S4 residual).
-    // Residual S4 still accepts dispositions if a legacy path writes them.
+    // #925 / #919 / #952 S1: verdict + terminal store flips (refute/suppress)
+    // land on judge seats (S4 residual). Residual S4 still accepts dispositions
+    // if a legacy path writes them.
     const stepFindingDispositions =
       isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
 
@@ -3848,8 +4023,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
-    // converge to S8(error) with an error package, NOT raw-reject out of
-    // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
+    // converge to S8(failed) with an error package, NOT raw-reject out of
+    // runOrchestrator (PRD route table: any backend call throwing → S8(failed)).
     // The step is already recorded in-memory above, so don't double-record it.
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
@@ -3919,9 +4094,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     if (decision.kind === "handoff") {
       const handoffStopSummary: StopSummary =
-        decision.status === "success"
+        decision.status === "completed"
           ? successSummaryForCurrentState({ findingDispositions })
-          : decision.status === "error"
+          : decision.status === "failed"
             ? stopSummaryForErrorPackage({
                 failedStep: step,
                 reason: buildErrorReason(step, lastOutput),
@@ -3936,9 +4111,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
-      // S8(error), not a raw rejection.
+      // S8(failed), not a raw rejection.
       // #255: tag the entry with the terminal status (decision.status) so a
-      // resuming run can tell a prior success / escalate / error apart (the S8
+      // resuming run can tell a prior completed / parked / failed apart (the S8
       // entry is otherwise identical for all three).
       try {
         await emitLedger(
@@ -3974,33 +4149,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
-        // #929 — speak before best-effort re-persist (same loudness class as
+        // Speak before best-effort re-persist (same loudness class as
         // errorTermination; this path does not call that helper).
         console.error(
           `[orchestrator] S8 failed: writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
         );
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
         // persistBestEffort swallows a secondary write fault — we already return
-        // status:error, a second ledger fault must not mask the original cause.
+        // status:failed, a second ledger fault must not mask the original cause.
         await persistBestEffort(
           "S8",
           undefined,
           undefined,
-          "error",
+          "failed",
           undefined,
           undefined,
           undefined,
           stopSummary,
         );
-        return {
-          status: "error",
+        return failedRunResult({
+          cause: "record_persist_failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
 
-      if (decision.status === "error") {
+      if (decision.status === "failed") {
         // Build an error package from the current step context so the developer
         // can diagnose without re-running the pipeline (#252 / US#30).
         const reason = buildErrorReason(step, lastOutput);
@@ -4009,17 +4184,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
-        return {
-          status: "error",
+        return failedRunResult({
+          cause: "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
-        };
+        });
       }
 
       return {
         status: decision.status,
-        branch: decision.status === "success" ? worktree?.branch : undefined,
+        branch: decision.status === "completed" ? worktree?.branch : undefined,
         stepLedger: ledger,
         stopSummary: handoffStopSummary,
       };

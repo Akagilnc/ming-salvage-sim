@@ -493,7 +493,7 @@ export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
   // #922: family surface terminal owns online_review_failed at the source —
   // do not emit infra_failure for callers to restamp.
   return stageFailureStopSummary({
-    status: "online_review_failed",
+      status: "online_review_failed",
     summary: `online review verify side effects failed: ${detail}`,
     repairHint:
       "fix GitHub side-effect preconditions (valid PR ref, recheck fixing commit, defer issue creation) and rerun the online review loop",
@@ -510,7 +510,7 @@ export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary 
   // #922: family surface terminal owns online_review_failed at the source —
   // do not emit infra_failure for callers to restamp.
   return stageFailureStopSummary({
-    status: "online_review_failed",
+      status: "online_review_failed",
     summary: `online review host operation failed: ${detail}`,
     repairHint:
       "repair the online review host operation (bot retrigger / poll) and rerun the online review loop",
@@ -532,7 +532,7 @@ export function onlineReviewDispatchFailureStopSummary(
         ? "verify dispatch"
         : "fixer dispatch";
   return stageFailureStopSummary({
-    status: "online_review_failed",
+      status: "online_review_failed",
     summary: `online review ${label} failed: ${detail}`,
     repairHint:
       "repair the online review loop infrastructure failure and rerun the online review loop",
@@ -972,9 +972,6 @@ export async function runOnlineReviewLoopStage(
         ...landing,
         fixMarkedFindingIdentityKeys: fixKeys,
         fixMarkedFindingThreads,
-        ...(verify.findingFamilies !== undefined
-          ? { findingFamilies: verify.findingFamilies }
-          : {}),
       };
 
       const reviewSnap = landing.onlineReviewSnapshot;
@@ -1000,7 +997,7 @@ export async function runOnlineReviewLoopStage(
           terminalState: "decision_gate_raised",
           round,
           stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
+      status: "online_review_failed",
             summary:
               "online review bots are clean but CI check-runs failed on the PR head",
             repairHint:

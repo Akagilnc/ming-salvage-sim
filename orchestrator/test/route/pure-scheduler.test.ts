@@ -118,6 +118,9 @@ class SeamOnlyBackend implements Backend {
           kind: "reviewer",
           findings,
           findingsCount,
+          // ADR 0138: residual paper must carry authored body to reach S5;
+          // production never invents this string.
+          fixPacketBody: "fixture residual authored fixPacketBody (ADR 0138 pass-through)",
         },
       };
     }
@@ -137,7 +140,7 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     const backend = new SeamOnlyBackend();
     const result = await runOrchestrator({ issueNumber: 337, backend });
     // Reached S8(success) without ever touching a throwing legacy method.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // ADR 0030: every productive step is a worker dispatch through the single
     // seam, and the review/fix loop is visible at runner boundaries.
     expect(backend.dispatched).toEqual([

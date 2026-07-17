@@ -85,7 +85,7 @@ class TerminalResumeSmokeBackend extends MissingSmokeBackend {
       prompt_hash: "prior-prompt",
       branchHEAD: "prior-head",
       ts: "2026-07-10T00:00:00.000Z",
-      handoffStatus: "success",
+      handoffStatus: "completed",
     };
     return {
       worktree: { branch: "feat/685", base: "main", path: "/tmp/685" },
@@ -199,11 +199,6 @@ function productionSmokeBackend(
 }
 
 describe("#685 route tool smoke", () => {
-  it("keeps the nonce placeholder in the route-smoke prompt for bare-ping oracle", () => {
-    const prompt = readFileSync(join(smokePromptsDir, "route-smoke.md"), "utf8");
-    expect(prompt).toContain("{{NONCE}}");
-  });
-
   it("passes when bare ping echoes the nonce (credential oracle)", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-rendered-pass-"));
     try {
@@ -322,7 +317,7 @@ describe("#685 route tool smoke", () => {
       backend: new MissingSmokeBackend(),
     });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/smoke/i);
   });
@@ -349,7 +344,7 @@ describe("#685 route tool smoke", () => {
 
     const result = await runOrchestrator({ issueNumber: 685, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.reason).toBe("already_done");
     expect(backend.calls).toEqual(["findResumeState"]);
   });

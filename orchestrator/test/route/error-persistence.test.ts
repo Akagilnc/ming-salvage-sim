@@ -111,7 +111,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     // The failing step AND the terminal S8 must be in the PERSISTED ledger,
     // so a resume reading the persisted ledger sees the error termination.
@@ -131,7 +131,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
@@ -152,7 +152,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
@@ -182,7 +182,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.stepLedger.map((e) => e.step)).toContain("S8");
   });
@@ -203,7 +203,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
   });
@@ -220,7 +220,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.runStepIds.filter((id) => id === "S3")).toHaveLength(1);
     expect(result.stepLedger.at(-1)?.step).toBe("S8");
     expect(backend.runStepIds).toContain("S5");
@@ -238,7 +238,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("a well-formed committed S2 plus clean S3/S4 review routes to S7 local handoff", async () => {
@@ -254,6 +254,6 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });

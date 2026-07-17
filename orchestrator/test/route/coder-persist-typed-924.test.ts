@@ -152,6 +152,7 @@ class PersistCoderBackend implements Backend {
           kind: "reviewer",
           findings,
           findingsCount,
+          fixPacketBody: "fixture residual authored body",
         },
         sessionId: `sess-review-${this.reviewCount}`,
       };
@@ -170,7 +171,7 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
   it("S2 is single-iter fresh; S5 is single-iter resume of the S2 session", async () => {
     const backend = new PersistCoderBackend();
     const result = await runOrchestrator({ issueNumber: 924, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s2Idx = backend.specs.findIndex((s) => s.id === "S2");
     const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
@@ -225,7 +226,12 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
             ];
             return {
               kind: "completed",
-              output: { kind: "reviewer", findings, findingsCount: 1 },
+              output: {
+                kind: "reviewer",
+                findings,
+                findingsCount: 1,
+                fixPacketBody: "fixture residual authored body",
+              },
               sessionId: `sess-review-${this.reviews}`,
             };
           }
@@ -241,7 +247,7 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
 
     const backend = new TwoFixRoundsBackend();
     const result = await runOrchestrator({ issueNumber: 924, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s5Resumes = backend.resumeSessionCalls.filter(([step]) => step === "S5");
     expect(s5Resumes.length).toBeGreaterThanOrEqual(2);
@@ -360,25 +366,3 @@ describe("#924 session lost degrades to fresh (run survives)", () => {
   });
 });
 
-describe("#924 coder prompts teach legal envelope (T2 reference, no second copy)", () => {
-  it("implement + fix prompts name station envelope traffic fields and T2 source", () => {
-    const implement = readFileSync(
-      join(PROMPTS_DIR, "coder_implement.md"),
-      "utf8",
-    );
-    const fix = readFileSync(join(PROMPTS_DIR, "coder_fix.md"), "utf8");
-
-    for (const text of [implement, fix]) {
-      // Envelope traffic vocabulary (T2 / stationReceiptContracts).
-      expect(text).toMatch(/station/);
-      expect(text).toMatch(/status/);
-      expect(text).toMatch(/completed|refused|escalate/);
-      expect(text).toMatch(/refusedFindingIdentityKeys/);
-      expect(text).toMatch(/cargoPointer/);
-      // Point at the contract module — do not hand-copy a second schema.
-      expect(text).toMatch(/stationReceiptContracts/);
-      // Four reasons live in cargo body for the judge, not envelope schema.
-      expect(text).toMatch(/违宪|unconstitutional|四理由/);
-    }
-  });
-});

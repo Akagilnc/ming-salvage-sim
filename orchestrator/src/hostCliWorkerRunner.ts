@@ -23,6 +23,7 @@ import {
   isQuotaWaitForResetError,
   serializeQuotaWaitForResetBridge,
 } from "./quotaProbe.js";
+import { workerResultFromAgentError } from "./sandcastleAgentError.js";
 import type { WorkerResult } from "./types.js";
 
 async function main(): Promise<void> {
@@ -84,12 +85,23 @@ async function main(): Promise<void> {
         reason: serializeQuotaWaitForResetBridge(err),
       };
     } else {
-      result = {
-        kind: "failed",
-        reason: `hostCliWorkerRunner: worker threw: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      };
+      // #964: AgentError → Action-typed failure (same single court as free-function
+      // dispatch). dispatchWorker/dispatchFamilyWorker already convert; this is
+      // belt for any throw that bypassed that seam.
+      const agentFailure = workerResultFromAgentError(
+        err,
+        `hostCliWorkerRunner ${job.spec.kind}`,
+      );
+      if (agentFailure !== undefined) {
+        result = agentFailure;
+      } else {
+        result = {
+          kind: "failed",
+          reason: `hostCliWorkerRunner: worker threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+      }
     }
   }
 
