@@ -2417,11 +2417,11 @@ export async function runVerifyCmr(
         : { ...refuseRecordsByPass, correctness: undefined };
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
-  // Both CMR passes converged. Continue through ship, online review, auto-merge,
-  // and post-merge cleanup below.
+  // Both CMR passes converged. Continue through ship, online review, then
+  // landing (docs / merge / MERGED / close / cleanup) below.
 
   // ── Ship stage: green verify + converged CMR ⇒ open the family PR, then the
-  //    same final barrier continues through online review, auto-merge, and cleanup.
+  //    same final barrier continues through online review and landing.
   // #940 / ID-012: ship capability is guaranteed by production/test contract
   // (dispatchWorker). Missing-capability host fake exits deleted — ship is
   // always dispatched; worker/process failure is the only ship_failed path.

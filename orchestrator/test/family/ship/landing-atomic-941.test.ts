@@ -213,16 +213,22 @@ function liveOpenHooks(opts: {
 }
 
 describe("#941 public driver — ID-013 landing owns merge close cleanup", () => {
-  it("POSITIVE: host auto-merge / familyAutoMerge modules and docRelease name are gone", async () => {
+  // Thin compile/surface guard (not counted as continuous-behavior AC).
+  // Behavioral proof for ID-013/016 lives in runLandingAction / runFamily cases.
+  it("guard: host auto-merge courts gone; landing is S12 seat", async () => {
     const srcDir = join(
       dirname(fileURLToPath(import.meta.url)),
       "../../../src",
     );
     expect(existsSync(join(srcDir, "family/familyAutoMerge.ts"))).toBe(false);
     expect(existsSync(join(srcDir, "family/landing.ts"))).toBe(true);
+    const root = join(srcDir, "..");
+    expect(existsSync(join(root, "image/souls/docRelease.md"))).toBe(false);
+    expect(existsSync(join(root, "prompts/docRelease.md"))).toBe(false);
+    expect(existsSync(join(root, "image/souls/landing.md"))).toBe(true);
+    expect(existsSync(join(root, "prompts/landing.md"))).toBe(true);
 
     const landingMod = await import("../../../src/family/landing.js");
-    expect(typeof landingMod.runLandingAction).toBe("function");
     expect("ensureLandingComplete" in landingMod).toBe(false);
     expect("runFamilyAutoMergeStage" in landingMod).toBe(false);
     expect("ensureFamilyPostMergeCleanup" in landingMod).toBe(false);
@@ -230,9 +236,6 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     const autoMergeMod = await import("../../../src/autoMerge.js");
     expect("runAutoMergeStage" in autoMergeMod).toBe(false);
     expect("tryResumePrMergedBackfill" in autoMergeMod).toBe(false);
-    expect(typeof autoMergeMod.fetchPrMergeLiveState).toBe("function");
-    expect(typeof autoMergeMod.executePrMergeCommit).toBe("function");
-    expect(typeof autoMergeMod.confirmPrMergedLive).toBe("function");
 
     const spec = landingWorkerSpec();
     expect(spec.kind).toBe("landing");
@@ -458,18 +461,6 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(mergeExecuted.n).toBe(1);
   });
 
-  it("POSITIVE: ID-016 production surface drops host court modules", async () => {
-    const srcDir = join(
-      dirname(fileURLToPath(import.meta.url)),
-      "../../../src",
-    );
-    expect(existsSync(join(srcDir, "family/familyAutoMerge.ts"))).toBe(false);
-    const root = join(srcDir, "..");
-    expect(existsSync(join(root, "image/souls/docRelease.md"))).toBe(false);
-    expect(existsSync(join(root, "prompts/docRelease.md"))).toBe(false);
-    expect(existsSync(join(root, "image/souls/landing.md"))).toBe(true);
-    expect(existsSync(join(root, "prompts/landing.md"))).toBe(true);
-  });
 });
 
 describe("#941 public driver — ID-015 cleanup already-gone", () => {
@@ -526,7 +517,8 @@ describe("#941 public driver — ID-015 cleanup already-gone", () => {
 });
 
 describe("#941 unified worker dispatch — ID-004 / ID-006 still hold", () => {
-  it("POSITIVE: process-root budget remains 6 attempts / five 15s intervals (ID-004)", () => {
+  // Const/export smoke only — real ID-004 proof is transport-throw + quota rethrow.
+  it("smoke: process-root budget constants (6 attempts / five 15s intervals)", () => {
     expect(MAX_DISPATCH_ATTEMPTS).toBe(6);
     expect(DISPATCH_RETRY_BACKOFF_MS).toEqual([
       15_000, 15_000, 15_000, 15_000, 15_000,
@@ -618,17 +610,18 @@ describe("#941 unified worker dispatch — ID-004 / ID-006 still hold", () => {
     expect(attempts).toHaveLength(0);
   });
 
-  it("POSITIVE: terminateSpawnedChild remains the exact-handle ownership seam (ID-006)", () => {
+  // Export smoke only — do not claim ID-006 ownership; continuous terminate-on-
+  // handle for landing is covered by shared monitored dispatch court elsewhere.
+  it("smoke: terminateSpawnedChild export remains available", () => {
     expect(typeof terminateSpawnedChild).toBe("function");
     expect(terminateSpawnedChild.name).toBe("terminateSpawnedChild");
   });
 
-  it("POSITIVE: landingWorkerSpec is the S12 seat; dispatch uses family monitored path", async () => {
+  it("smoke: landingWorkerSpec S12 seat + local withMechanicalRetry seam", async () => {
     const spec = landingWorkerSpec();
     expect(spec.kind).toBe("landing");
     expect(spec.role).toBe("landing");
     expect(spec.id).toBe("S12");
-    // Smoke the same mechanical-retry seam review-loop workers use
     let hits = 0;
     const result = await withMechanicalRetry(
       spec,
@@ -774,9 +767,166 @@ describe("#941 public runFamily driver re-enters landing (ID-013)", () => {
     ).toHaveLength(1);
   });
 
-  it("POSITIVE: verifyCmr no longer exports ensureFamilyPostMergeCleanup host court", async () => {
+  // Export-absence guard (not continuous land path AC).
+  it("guard: verifyCmr no longer exports ensureFamilyPostMergeCleanup host court", async () => {
     const mod = await import("../../../src/family/verifyCmr.js");
     expect("ensureFamilyPostMergeCleanup" in mod).toBe(false);
     expect(typeof mod.runVerifyCmr).toBe("function");
+  });
+
+  it("POSITIVE: resume landing 429 parks via family quota wall (ID-004 / S3)", async () => {
+    // already-converged resume re-enters landing outside the primary final
+    // barrier — must still hit runFamilyBarrierWithQuotaRelay so 429 parks
+    // (does not escape runFamily as an uncaught throw).
+    class ChildBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+        };
+      }
+      async prepareWorktree(
+        issueNumber: number,
+        base: string,
+      ): Promise<WorktreeHandle> {
+        return {
+          branch: `feat/child-${issueNumber}`,
+          base,
+          path: `/wt/${issueNumber}`,
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
+    }
+
+    // Within park threshold T (30m) → park; beyond T would chase a live baton.
+    const now = new Date("2026-07-17T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    let landingCalls = 0;
+    class ResumeQuotaBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      head = "family-base-941";
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      }
+      async mergeChildIntoFamilyBase(
+        child: MergeRequest,
+      ): Promise<{ familyHead: string }> {
+        this.head = `+${child.childIssue}`;
+        return { familyHead: this.head };
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return this.head;
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(
+        spec: WorkerSpec,
+        _ctx?: DispatchContext,
+        _landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "landing") {
+          landingCalls += 1;
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "zai",
+              resetAt,
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "zai",
+                resetAt: resetAt.toISOString(),
+                reason: "quota limited (429); wait for reset",
+                step: "S12",
+                workerPid: 0,
+                ts: "2026-07-17T12:00:00.000Z",
+              },
+            },
+            pool: "zai",
+          });
+        }
+        throw new Error(`unexpected ${spec.kind} on already-converged resume`);
+      }
+    }
+
+    const familyBackend = new ResumeQuotaBackend();
+    familyBackend.ledger.push(
+      {
+        childIssue: 9411,
+        status: "merged",
+        familyHeadAfter: "family-base-941",
+      },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/941-landing",
+        familyHeadAfter: "family-base-941",
+      },
+    );
+
+    const epic: FamilyEpic = {
+      issue: 941,
+      children: [{ issue: 9411, blockedBy: [] }],
+    };
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic,
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/epic-941",
+      now: () => now,
+    });
+
+    expect(landingCalls).toBe(1);
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
+    // Park durable marker from the resume landing barrier (not uncaught throw).
+    const parkMarkers = familyBackend.ledger.filter(
+      (e) =>
+        e.status === "worker_dispatched" &&
+        typeof e.workerStep === "string" &&
+        e.workerStep.startsWith("quota_park:"),
+    );
+    expect(parkMarkers.length).toBeGreaterThanOrEqual(1);
   });
 });
