@@ -40,7 +40,10 @@ vi.mock("../../src/externalCall.js", async (importOriginal) => {
 });
 
 // Import after vi.mock so captureToHost's dynamic import of externalCall sees the mock.
-const { makeGrokSessionStorage } = await import("../../src/grokSessionStorage.js");
+const {
+  makeGrokSessionStorage,
+  grokSessionAtomicReplaceTestInject,
+} = await import("../../src/grokSessionStorage.js");
 
 const tempDirs: string[] = [];
 function tmp(prefix: string): string {
@@ -50,11 +53,19 @@ function tmp(prefix: string): string {
 }
 afterEach(() => {
   failAfterHostExtract = false;
+  grokSessionAtomicReplaceTestInject.reset();
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
 });
 
+/** Leftover `.<sessionId>.old-*` backups under a cwd bucket (Standards S1). */
+function oldBackupNames(bucketDir: string, sessionId: string): string[] {
+  if (!existsSync(bucketDir)) return [];
+  return readdirSync(bucketDir).filter(
+    (n) => n.startsWith(`.${sessionId}.old-`) || n.includes(`.old-`),
+  );
+}
 /** Local-shell sandbox handle — same pattern as grok-resume.test.ts. */
 function localHandleWithStdin(worktreePath: string): BindMountSandboxHandle {
   return {
@@ -231,6 +242,150 @@ describe("#959 captureToHost atomic temp+swap", () => {
     );
     expect(resumed).toContain("OLD_SESSION_V1");
     expect(resumed).not.toContain("NEW_SESSION_V2");
+  });
+
+  it("swap-segment place failure after displace restores old complete session (resumeable)", async () => {
+    // Spec S1: failure during the rename swap (after live is displaced to
+    // .old-*, before/while placing staging) must restore the prior complete
+    // tree — existing failure tests only inject pre-swap (extract/integrity).
+    const hostRoot = tmp("grok-959-host-");
+    const sandboxFs = tmp("grok-959-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const hostCwd = tmp("grok-959-hostcwd-swapfail-");
+    const sessionId = "019f-959-swapfail";
+    const oldHistory = `{"cwd":"${hostCwd}","mark":"OLD_PRE_SWAP"}\n`;
+    const oldEvents = `{"type":"end","mark":"OLD_PRE_SWAP"}\n`;
+    seedHostSession(hostRoot, hostCwd, sessionId, {
+      "chat_history.jsonl": oldHistory,
+      "events.jsonl": oldEvents,
+    });
+
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    seedSandboxSession(sandboxFs, sbxSessions, sandboxCwd, sessionId, {
+      "chat_history.jsonl": `{"cwd":"${sandboxCwd}","mark":"NEW_SHOULD_NOT_LAND"}\n`,
+      "events.jsonl": `{"type":"end","mark":"NEW_SHOULD_NOT_LAND"}\n`,
+    });
+
+    grokSessionAtomicReplaceTestInject.failPlaceAfterDisplace = true;
+    const storage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: sbxSessions,
+    });
+
+    await expect(
+      storage.captureToHost({
+        hostCwd,
+        sandboxCwd,
+        sessionId,
+        handle: localHandleWithStdin(sandboxFs),
+      }),
+    ).rejects.toThrow(/injected place failure after displace/);
+
+    const hostDir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
+    expect(readFileSync(join(hostDir, "chat_history.jsonl"), "utf8")).toBe(
+      oldHistory,
+    );
+    expect(readFileSync(join(hostDir, "events.jsonl"), "utf8")).toBe(oldEvents);
+    expect(readFileSync(join(hostDir, "chat_history.jsonl"), "utf8")).not.toContain(
+      "NEW_SHOULD_NOT_LAND",
+    );
+
+    // Restore path used rename(backup→target); no orphan .old-* left behind.
+    const bucket = join(hostRoot, encodeURIComponent(hostCwd));
+    expect(oldBackupNames(bucket, sessionId)).toEqual([]);
+
+    expect(await storage.existsOnHost(hostCwd, sessionId)).toBe(true);
+    expect(await storage.readHostSession(hostCwd, sessionId)).toBe(oldHistory);
+
+    // End-to-end resume still sees the restored complete old version.
+    const resumeFs = tmp("grok-959-swap-resume-");
+    const resumeSbxSessions = join(resumeFs, "sessions");
+    const resumeStorage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: resumeSbxSessions,
+    });
+    await resumeStorage.resumeIntoSandbox({
+      hostCwd,
+      sandboxCwd: join(resumeFs, "workspace"),
+      sessionId,
+      handle: localHandleWithStdin(resumeFs),
+    });
+    const resumed = readFileSync(
+      join(
+        resumeSbxSessions,
+        encodeURIComponent(join(resumeFs, "workspace")),
+        sessionId,
+        "chat_history.jsonl",
+      ),
+      "utf8",
+    );
+    expect(resumed).toContain("OLD_PRE_SWAP");
+    expect(resumed).not.toContain("NEW_SHOULD_NOT_LAND");
+  });
+
+  it("swap place fail with concurrent winner leaves winner intact and cleans our .old backup", async () => {
+    // Standards S1: when place fails but live was recreated by a concurrent
+    // winner, do not restore our stale backup over them — and drop the orphan.
+    const hostRoot = tmp("grok-959-host-");
+    const sandboxFs = tmp("grok-959-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const hostCwd = tmp("grok-959-hostcwd-orphan-");
+    const sessionId = "019f-959-orphan";
+    seedHostSession(hostRoot, hostCwd, sessionId, {
+      "chat_history.jsonl": `{"cwd":"${hostCwd}","mark":"OLD_DISPLACED"}\n`,
+      "events.jsonl": `{"type":"end","mark":"OLD_DISPLACED"}\n`,
+    });
+
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    seedSandboxSession(sandboxFs, sbxSessions, sandboxCwd, sessionId, {
+      "chat_history.jsonl": `{"cwd":"${sandboxCwd}","mark":"LOSER_STAGING"}\n`,
+      "events.jsonl": `{"type":"end","mark":"LOSER_STAGING"}\n`,
+    });
+
+    const winnerHistory = `{"cwd":"${hostCwd}","mark":"CONCURRENT_WINNER"}\n`;
+    const winnerEvents = `{"type":"end","mark":"CONCURRENT_WINNER"}\n`;
+    // After our displace, plant a complete concurrent winner at the live path
+    // so place fails (ENOTEMPTY) and restore must be suppressed.
+    grokSessionAtomicReplaceTestInject.afterDisplace = async ({ targetDir }) => {
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(targetDir, "chat_history.jsonl"), winnerHistory);
+      writeFileSync(join(targetDir, "events.jsonl"), winnerEvents);
+    };
+
+    const storage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: sbxSessions,
+    });
+
+    await expect(
+      storage.captureToHost({
+        hostCwd,
+        sandboxCwd,
+        sessionId,
+        handle: localHandleWithStdin(sandboxFs),
+      }),
+    ).rejects.toThrow();
+
+    const hostDir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
+    expect(readFileSync(join(hostDir, "chat_history.jsonl"), "utf8")).toBe(
+      winnerHistory,
+    );
+    expect(readFileSync(join(hostDir, "events.jsonl"), "utf8")).toBe(
+      winnerEvents,
+    );
+    expect(readFileSync(join(hostDir, "chat_history.jsonl"), "utf8")).not.toContain(
+      "LOSER_STAGING",
+    );
+    expect(readFileSync(join(hostDir, "chat_history.jsonl"), "utf8")).not.toContain(
+      "OLD_DISPLACED",
+    );
+
+    // Our displaced backup must not linger as an orphan.
+    const bucket = join(hostRoot, encodeURIComponent(hostCwd));
+    expect(oldBackupNames(bucket, sessionId)).toEqual([]);
+
+    // Winner is a complete single version — resumeable.
+    expect(await storage.readHostSession(hostCwd, sessionId)).toBe(winnerHistory);
   });
 
   it("integrity failure after unpack leaves existing host session untouched", async () => {
