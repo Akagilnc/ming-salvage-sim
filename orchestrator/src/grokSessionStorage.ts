@@ -12,6 +12,9 @@
  * matches (`from` or `from + "/"`), not raw text substrings — so a sibling
  * cwd like `/work/tree-2` and dialogue that merely mentions a path stay intact.
  *
+ * #959 — captureToHost lands via same-volume temp dir + integrity check +
+ * atomic rename swap. Failures never leave a half-written live host session.
+ *
  * Host tar goes through the #884 chokepoint (`execFileAsyncWithTimeout`) via
  * dynamic import: this module sits on the vitest setup import chain
  * (modelRoutes → modelRegistry → grokAgent → here), and a static import of
@@ -25,10 +28,12 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix } from "node:path";
 import type * as sc from "@ai-hero/sandcastle";
@@ -55,6 +60,156 @@ async function dirExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * #959 — staged session tree must be parseable before it can replace the live
+ * host dir. Requires chat_history.jsonl (resume critical path) and validates
+ * every .json / .jsonl file under the tree.
+ */
+async function assertStagedSessionIntact(dir: string): Promise<void> {
+  if (!(await dirExists(dir))) {
+    throw new Error("grok-cap: integrity failed — staged session dir missing");
+  }
+  const historyPath = join(dir, "chat_history.jsonl");
+  let history: string;
+  try {
+    history = await readFile(historyPath, "utf8");
+  } catch {
+    throw new Error(
+      "grok-cap: integrity failed — staged session missing chat_history.jsonl",
+    );
+  }
+  await assertJsonlParseable(history, "chat_history.jsonl");
+
+  await walkSessionTexts(dir, async (filePath, body) => {
+    const name = basename(filePath);
+    if (name === "chat_history.jsonl") return; // already checked
+    if (name.endsWith(".jsonl")) {
+      await assertJsonlParseable(body, name);
+      return;
+    }
+    if (name.endsWith(".json")) {
+      try {
+        JSON.parse(body);
+      } catch (err) {
+        throw new Error(
+          `grok-cap: integrity failed — ${name} is not valid JSON: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  });
+}
+
+async function assertJsonlParseable(body: string, label: string): Promise<void> {
+  const lines = body.split("\n");
+  let sawRecord = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.length === 0) continue;
+    sawRecord = true;
+    try {
+      JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `grok-cap: integrity failed — ${label} line ${i + 1} is not valid JSONL: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  if (!sawRecord) {
+    throw new Error(
+      `grok-cap: integrity failed — ${label} has no parseable JSONL records`,
+    );
+  }
+}
+
+async function walkSessionTexts(
+  dir: string,
+  visit: (filePath: string, body: string) => Promise<void>,
+): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkSessionTexts(p, visit);
+      continue;
+    }
+    if (!/\.(json|jsonl)$/.test(entry.name)) continue;
+    const body = await readFile(p, "utf8");
+    await visit(p, body);
+  }
+}
+
+/**
+ * #959 — atomic directory replace on the same volume. Stage is fully written
+ * + validated first; live target is only displaced once the new tree is ready.
+ * Concurrent racers: last successful place wins; losers must not restore a
+ * stale backup over a newer complete winner.
+ */
+async function atomicReplaceDir(
+  sourceDir: string,
+  targetDir: string,
+): Promise<void> {
+  const parent = dirname(targetDir);
+  await mkdir(parent, { recursive: true });
+  const token = randomBytes(6).toString("hex");
+  const backup = join(
+    parent,
+    `.${basename(targetDir)}.old-${process.pid}-${token}`,
+  );
+
+  // Fast path: no live target yet.
+  try {
+    await rename(sourceDir, targetDir);
+    return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Empty dir may be replaceable on some platforms; non-empty → ENOTEMPTY /
+    // EEXIST / EISDIR. Anything else is a real failure.
+    if (
+      code !== "ENOTEMPTY" &&
+      code !== "EEXIST" &&
+      code !== "EISDIR" &&
+      code !== "EPERM"
+    ) {
+      throw err;
+    }
+  }
+
+  let displaced = false;
+  try {
+    await rename(targetDir, backup);
+    displaced = true;
+  } catch (err) {
+    // Another racer may have already moved the live target. Try placing into
+    // the vacancy; if the winner already re-created target, leave it alone.
+    try {
+      await rename(sourceDir, targetDir);
+      return;
+    } catch {
+      throw err;
+    }
+  }
+
+  try {
+    await rename(sourceDir, targetDir);
+  } catch (err) {
+    // Only restore our backup when nobody else landed a complete tree.
+    if (!(await dirExists(targetDir))) {
+      try {
+        await rename(backup, targetDir);
+      } catch {
+        // Best-effort restore; surface the original place error.
+      }
+    }
+    throw err;
+  }
+
+  await rm(backup, { recursive: true, force: true }).catch(() => {});
 }
 
 /** Exact path or path-prefix (`from` / `from/…`); never bare substring. */
@@ -229,18 +384,30 @@ export function makeGrokSessionStorage(
         );
       }
       const target = hostSessionDir(hostCwd, sessionId);
-      await mkdir(target, { recursive: true });
-      const tarPath = join(
-        await mkdtemp(join(tmpdir(), "grok-cap-")),
-        "session.tar",
-      );
-      await writeFile(tarPath, Buffer.from(result.stdout.replace(/\s+/g, ""), "base64"));
+      // #959: stage on the same volume as the live target so rename is atomic.
+      // Unpack + rewrite + integrity run only under staging; the live dir is
+      // swapped in last. Any failure leaves the previous target untouched.
+      const parent = dirname(target);
+      await mkdir(parent, { recursive: true });
+      const work = await mkdtemp(join(parent, ".grok-cap-"));
+      const staging = join(work, "session");
+      const tarPath = join(work, "session.tar");
       try {
-        await hostTar(["-C", target, "-xf", tarPath], "grok-session:tar-extract");
+        await mkdir(staging);
+        await writeFile(
+          tarPath,
+          Buffer.from(result.stdout.replace(/\s+/g, ""), "base64"),
+        );
+        await hostTar(
+          ["-C", staging, "-xf", tarPath],
+          "grok-session:tar-extract",
+        );
+        await rewriteSessionTexts(staging, sandboxCwd, hostCwd);
+        await assertStagedSessionIntact(staging);
+        await atomicReplaceDir(staging, target);
       } finally {
-        await rm(dirname(tarPath), { recursive: true, force: true });
+        await rm(work, { recursive: true, force: true });
       }
-      await rewriteSessionTexts(target, sandboxCwd, hostCwd);
     },
 
     resumeIntoSandbox: async ({ hostCwd, sandboxCwd, sessionId, handle }) => {
