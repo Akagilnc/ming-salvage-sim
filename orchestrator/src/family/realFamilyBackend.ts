@@ -4177,7 +4177,6 @@ export function parseVerifyOutcome(
     : undefined;
   const terminalState: VerifyWorkerTerminalState | undefined =
     parsed.terminalState === "mergeable" ||
-    parsed.terminalState === "round_budget_exhausted" ||
     parsed.terminalState === "decision_gate_raised"
       ? parsed.terminalState
       : undefined;

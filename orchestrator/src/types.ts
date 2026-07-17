@@ -811,10 +811,13 @@ export interface OnlineReviewThreadReply {
   readonly body: string;
 }
 
-/** Terminal states a verify worker may self-declare (#600 wire schema). */
+/**
+ * Terminal states a verify worker may self-declare (#600 wire schema / #940).
+ * Mechanical `round_budget_exhausted` deleted — continue vs escalate is the
+ * persistent verify judge's three-state (#934 ID-012).
+ */
 export type VerifyWorkerTerminalState =
   | "mergeable"
-  | "round_budget_exhausted"
   | "decision_gate_raised";
 
 /** Runner-internal online review terminals (contract_drift retained for non-git protocol failures). */
@@ -1075,7 +1078,7 @@ export interface DispatchContext {
   readonly prHead?: string;
   /** GitHub `owner/repo` for gh api polling. */
   readonly repo?: string;
-  /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
+  /** 1-based online review round (ledger / landing cargo; #940 no host round cap). */
   readonly onlineReviewRound?: number;
   /**
    * Judge workers only: prior-round finding snapshots extracted from ledger (#711).
@@ -1198,15 +1201,23 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review verify worker output (#600). The verify worker owns per-finding
- * fix / reject / defer judgment; the runner applies GitHub side effects and only
- * counts findings (0 / non-0) for routing — it does not interpret finding content.
+ * Online review verify worker output (#600 / #940).
+ *
+ * The worker owns per-finding judgment AND GitHub side effects (reply / resolve /
+ * deferred issue). After side effects succeed it self-reports judge disposition
+ * via {@link converged} + optional {@link terminalState}; the host routes only on
+ * that three-state mapping (`converged | continue | escalate`) and never on
+ * findings counts (#934 ID-012). Cargo fields remain opaque diagnostics / fixer
+ * landing data.
  */
 export interface VerifyResult {
   readonly kind: "verify";
-  /** Bot/online review converged (green) ⇒ the fix loop can stop. */
+  /**
+   * Judge green (converged). Combined with host CI check-runs for mergeability;
+   * `false` is the continue disposition unless {@link terminalState} escalates.
+   */
   readonly converged: boolean;
-  /** Per-finding dispositions judged by the verify worker. */
+  /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
    * Identity keys carried through as data for the verify worker to use when
@@ -1215,11 +1226,11 @@ export interface VerifyResult {
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
-  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
+  /** Thread IDs resolved by the worker after a fresh re-check confirms the fix. */
   readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (runner-populated). */
+  /** Tracked issue URLs created for deferred findings (worker-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
-  /** Documented terminal state when the loop ends (#600 AC1/AC5). */
+  /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
