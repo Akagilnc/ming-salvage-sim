@@ -166,6 +166,25 @@ describe("#603 assessBranchDeletePrecondition", () => {
       }),
     ).toBe("skip_pr_not_merged");
   });
+
+  it("treats MERGED case/whitespace-insensitively (landing/cleanup shared predicate)", () => {
+    expect(
+      assessBranchDeletePrecondition({
+        prState: "merged",
+        branchExists: true,
+        branchTip: MERGED_HEAD,
+        mergedHeadOid: MERGED_HEAD,
+      }),
+    ).toBe("may_delete");
+    expect(
+      assessBranchDeletePrecondition({
+        prState: "  Merged  ",
+        branchExists: true,
+        branchTip: MERGED_HEAD,
+        mergedHeadOid: MERGED_HEAD,
+      }),
+    ).toBe("may_delete");
+  });
 });
 
 describe("#603 branchTipMatchesMergedHead", () => {

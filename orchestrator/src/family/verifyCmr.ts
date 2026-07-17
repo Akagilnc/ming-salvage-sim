@@ -25,7 +25,7 @@ import { shWithClock } from "../externalCall.js";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
 import {
-  classifyLandingActionResult,
+  recordLandingActionFailure,
   runLandingAction,
 } from "./landing.js";
 import {
@@ -2688,49 +2688,24 @@ export async function runVerifyCmr(
     ...scopedPoolFields,
   });
   if (!landing.ok) {
-    // family/914 CR R1 Std M1: one durable re-entry shape for landing parks —
-    // recordFamilyEscalated(decision), same as ensureLandingForResume. Do not
-    // dual-author park as aborted-only (familyEscalationState stops at
-    // review_loop_converged and would hide an aborted-only park).
-    const classified = classifyLandingActionResult(landing);
-    if (classified.kind === "park") {
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "decision",
-        phase: "final",
-        reason: classified.stopSummary.summary,
-        familyHeadAfter: convergedFamilyHead,
-        stopSummary: classified.stopSummary,
-      });
+    // family/914 CR — single durable exit (recordLandingActionFailure); same
+    // writer as ensureLandingForResume. Callers only map kind → result shape.
+    const recorded = await recordLandingActionFailure(
+      familyBackend,
+      landing,
+      { phase: "final", familyHeadAfter: convergedFamilyHead },
+    );
+    if (recorded.kind === "park") {
       // failedStatus omitted → spine finalize escalates via barrier stopSummary
       return { ok: false, ran: true };
     }
-    // hard_fail (classify never returns ok when !landing.ok)
-    const hard =
-      classified.kind === "hard_fail"
-        ? classified.stopSummary
-        : decisionGateParkStopSummary({
-            summary: `family landing did not complete (${landing.terminalState})`,
-            repairHint:
-              "repair landing and re-run the family final barrier",
-          });
-    const failStop = stageFailureStopSummary({
-      status: "merge_failed",
-      summary: hard.summary,
-      repairHint:
-        hard.repairHint ??
-        "repair landing and re-run the family final barrier",
-    });
+    // hard_fail: optional #296 in-memory hook (RealFamilyBackend no-op); durable
+    // aborted row already written by recordLandingActionFailure.
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
-      errorPackage: { reason: failStop.summary },
+      errorPackage: { reason: recorded.stopSummary.summary },
       familyHeadAfter: convergedFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason: failStop.summary,
-      familyHeadAfter: convergedFamilyHead,
-      stopSummary: failStop,
     });
     return stageGate("merge_failed");
   }

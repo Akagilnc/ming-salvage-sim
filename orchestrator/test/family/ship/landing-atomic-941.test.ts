@@ -30,6 +30,8 @@ import {
   buildExplicitLandingLiveHooks,
   classifyLandingActionResult,
   LANDING_CI_FETCH_FAILURE_LIMIT,
+  LANDING_MERGED_CONFIRM_ATTEMPTS,
+  recordLandingActionFailure,
   runLandingAction,
 } from "../../../src/family/landing.js";
 import {
@@ -599,10 +601,12 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(landingWorkerCalls).toBe(1);
     expect(mergeExecuted).toBe(1);
 
-    // CR-6: docs release is durable before merge.
+    // CR-6: docs release is durable before merge. Non-empty push stamps both
+    // pre-doc (immediate crash window) and post-doc keys (dual-key resume).
     const docsReleased = backend.ledger.filter((e) => e.status === "docs_released");
-    expect(docsReleased).toHaveLength(1);
-    expect(docsReleased[0]?.familyHeadAfter).toBe(POST_DOC);
+    const docsHeads = docsReleased.map((e) => e.familyHeadAfter);
+    expect(docsHeads).toEqual(expect.arrayContaining([PRE_DOC, POST_DOC]));
+    expect(docsReleased).toHaveLength(2);
 
     const prMerged = backend.ledger.filter((e) => e.status === "pr_merged");
     const cleanups = backend.ledger.filter(
@@ -1033,6 +1037,205 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     ).toHaveLength(1);
   });
 
+  it("POSITIVE CR-6: HEAD advanced without docs_released infers release and skips re-dispatch", async () => {
+    // Crash window: worker pushed (HEAD advanced) but docs_released never written.
+    const POST = "head-941-docs";
+    let landingWorkerCalls = 0;
+    const mergeExecuted = { n: 0 };
+
+    class AdvancedHeadBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [
+        {
+          status: "review_loop_converged",
+          event: "review_loop_converged",
+          phase: "final",
+          pr: STAGE_SHIP.pr!,
+          familyHeadAfter: "head-941",
+        },
+      ];
+      async mergeChildIntoFamilyBase(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async resolveMergeConflict(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return POST;
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        landingWorkerCalls += 1;
+        throw new Error(`must not re-dispatch ${spec.kind}`);
+      }
+    }
+
+    const backend = new AdvancedHeadBackend();
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: mergeExecuted.n > 0 ? "MERGED" : "OPEN",
+          headOid: POST,
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+        executeMerge: () => {
+          mergeExecuted.n += 1;
+        },
+        confirmMerged: (expectedHeadOid) => ({
+          prUrl: STAGE_SHIP.pr!,
+          prNumber: 941,
+          remoteBranchName: "family/epic-941",
+          mergedHeadOid: expectedHeadOid,
+          convergedHeadOid: expectedHeadOid,
+        }),
+        pollSnapshot: async () => ({
+          ...BASE_SNAPSHOT,
+          headOid: POST,
+          checkRuns: [
+            {
+              id: 1,
+              name: "ci",
+              status: "completed",
+              conclusion: "success",
+              headSha: POST,
+            },
+          ],
+          roundTriggerUsed: {
+            headOid: POST,
+            triggeredAt: "1970-01-01T00:00:00.000Z",
+          },
+        }),
+        closeIssue: () => {},
+        deleteBranch: () => {},
+        branchExists: () => false,
+        fetchIssueState: () => "CLOSED",
+        fetchSubIssues: () => [],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(landingWorkerCalls).toBe(0);
+    expect(mergeExecuted.n).toBe(1);
+    expect(
+      backend.ledger.some(
+        (e) => e.status === "docs_released" && e.familyHeadAfter === POST,
+      ),
+    ).toBe(true);
+  });
+
+  it("POSITIVE R4-CX1: live MERGED confirm retries through propagation lag", async () => {
+    let confirmCalls = 0;
+    const mergeExecuted = { n: 0 };
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        ...liveOpenHooks({ mergeExecuted }),
+        confirmMerged: (expectedHeadOid) => {
+          confirmCalls += 1;
+          // First attempts lag as OPEN; last attempt within bound confirms.
+          if (confirmCalls < LANDING_MERGED_CONFIRM_ATTEMPTS) {
+            return undefined;
+          }
+          return {
+            prUrl: STAGE_SHIP.pr!,
+            prNumber: 941,
+            remoteBranchName: "family/epic-941",
+            mergedHeadOid: expectedHeadOid,
+            convergedHeadOid: expectedHeadOid,
+          };
+        },
+        // Keep fetchState OPEN so only confirmMerged drives success.
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "OPEN",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("completed");
+    expect(confirmCalls).toBe(LANDING_MERGED_CONFIRM_ATTEMPTS);
+    expect(mergeExecuted.n).toBe(1);
+  });
+
+  it("POSITIVE: lowercase live MERGED is accepted (shared githubFieldEquals)", async () => {
+    const mergeExecuted = { n: 0 };
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          // Already merged with non-canonical casing before executeMerge.
+          state: "merged",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "UNKNOWN",
+        }),
+        executeMerge: () => {
+          mergeExecuted.n += 1;
+        },
+        pollSnapshot: async () => BASE_SNAPSHOT,
+        closeIssue: () => {},
+        deleteBranch: () => {},
+        branchExists: () => false,
+        fetchIssueState: () => "CLOSED",
+        fetchSubIssues: () => [],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mergeExecuted.n).toBe(0); // entry path accepted MERGED, no re-merge
+    expect(backend.ledger.some((e) => e.status === "pr_merged")).toBe(true);
+  });
+
 });
 
 describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authority)", () => {
@@ -1064,6 +1267,69 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
     expect(classifyLandingActionResult({ ok: true, terminalState: "completed" })).toEqual({
       kind: "ok",
     });
+  });
+
+  it("recordLandingActionFailure: single durable park/abort writer (no dual-write)", async () => {
+    class MemBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      async mergeChildIntoFamilyBase(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async resolveMergeConflict(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-941";
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(): Promise<never> {
+        throw new Error("n/a");
+      }
+    }
+
+    const parkBackend = new MemBackend();
+    const parkStop = decisionGateParkStopSummary({
+      summary: "landing merge blocked: ruleset",
+      repairHint: "fix ruleset",
+    });
+    const parked = await recordLandingActionFailure(
+      parkBackend,
+      {
+        ok: false,
+        terminalState: "decision_gate",
+        stopSummary: parkStop,
+      },
+      { phase: "final", familyHeadAfter: "head-941" },
+    );
+    expect(parked.kind).toBe("park");
+    expect(parkBackend.ledger.map((e) => e.status)).toEqual(["escalated"]);
+    expect(parkBackend.ledger.some((e) => e.status === "aborted")).toBe(false);
+
+    const hardBackend = new MemBackend();
+    const hard = await recordLandingActionFailure(
+      hardBackend,
+      {
+        ok: false,
+        terminalState: "landing_failed",
+        stopSummary: {
+          reason: "merge_failed",
+          summary: "landing worker failed: boom",
+          repairHint: "retry",
+        },
+      },
+      { phase: "final", familyHeadAfter: "head-941" },
+    );
+    expect(hard.kind).toBe("hard_fail");
+    expect(hardBackend.ledger.map((e) => e.status)).toEqual(["aborted"]);
+    expect(hardBackend.ledger.some((e) => e.status === "escalated")).toBe(false);
   });
 
   it("ledger honesty: escalated AFTER review_loop_converged is answerable; aborted-only is not", async () => {

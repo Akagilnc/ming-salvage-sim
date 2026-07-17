@@ -16,6 +16,7 @@ import {
   confirmPrMergedLive,
   executePrMergeCommit,
   fetchPrMergeLiveState,
+  githubFieldEquals,
   type PrMergeLiveState,
   type PrMergedTerminalRecord,
 } from "../autoMerge.js";
@@ -46,7 +47,9 @@ import {
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
+  recordAborted,
   recordDocsReleased,
+  recordFamilyEscalated,
   recordPostMergeCleanup,
   recordPrMerged,
   recordReviewLoopConverged,
@@ -56,6 +59,7 @@ import { dispatchFamilyWorkerOrAbort } from "./familyProcessRootDispatch.js";
 import { sleepPendingCiPollInterval } from "./onlineReviewLoop.js";
 import type { FamilyBackend } from "./types.js";
 import { shouldReclaimFamilyHost } from "../hostReclaim.js";
+import { stageFailureStopSummary } from "./familyTerminal.js";
 
 export type LandingActionTerminal =
   | "completed"
@@ -104,11 +108,68 @@ export function classifyLandingActionResult(
 }
 
 /**
+ * Single durable exit for non-ok landing (family/914 CR Standards DRY).
+ * Fresh final-barrier (`verifyCmr`) and resume re-entry (`runner`) share this
+ * writer — park → escalated decision; hard_fail → aborted + merge_failed stop.
+ * Callers only map the returned kind onto their own result shape.
+ */
+export type LandingActionFailureRecorded =
+  | { readonly kind: "park"; readonly stopSummary: StopSummary }
+  | { readonly kind: "hard_fail"; readonly stopSummary: StopSummary };
+
+export async function recordLandingActionFailure(
+  familyBackend: FamilyBackend,
+  landing: LandingActionResult,
+  input: {
+    readonly phase?: "wave" | "final";
+    readonly familyHeadAfter: string;
+  },
+): Promise<LandingActionFailureRecorded> {
+  const classified = classifyLandingActionResult(landing);
+  if (classified.kind === "ok") {
+    throw new Error(
+      "recordLandingActionFailure called on ok landing result",
+    );
+  }
+  const phase = input.phase ?? "final";
+  if (classified.kind === "park") {
+    await recordFamilyEscalated(familyBackend, {
+      escalationKind: "decision",
+      phase,
+      reason: classified.stopSummary.summary,
+      familyHeadAfter: input.familyHeadAfter,
+      stopSummary: classified.stopSummary,
+    });
+    return classified;
+  }
+  const failStop = stageFailureStopSummary({
+    status: "merge_failed",
+    summary: classified.stopSummary.summary,
+    repairHint:
+      classified.stopSummary.repairHint ??
+      "repair landing and re-enter the family final barrier",
+  });
+  await recordAborted(familyBackend, {
+    phase,
+    reason: failStop.summary,
+    familyHeadAfter: input.familyHeadAfter,
+    stopSummary: failStop,
+  });
+  return { kind: "hard_fail", stopSummary: failStop };
+}
+
+/**
  * Consecutive mid-loop live I/O failures before landing parks (Std S4 / R2 S1).
  * Covers both `fetchState` and `pollSnapshot` / `pollOnce` — auth/API death
  * must not keep-prior forever or escape as an uncaught throw.
  */
 export const LANDING_CI_FETCH_FAILURE_LIMIT = 3;
+
+/**
+ * After `gh pr merge` succeeds, live MERGED may lag GitHub's eventual-consistency
+ * window. Bounded retries before parking as ambiguous (R4-CX1) — not stale green.
+ */
+export const LANDING_MERGED_CONFIRM_ATTEMPTS = 3;
 
 /** Injectable live GitHub/git surface for tests — production uses gh defaults. */
 export interface LandingLiveHooks {
@@ -246,7 +307,7 @@ function mergeRecordIfHeadAligned(
   | { readonly kind: "aligned"; readonly record: PrMergedTerminalRecord }
   | { readonly kind: "mismatch" }
   | { readonly kind: "not_merged" } {
-  if (live.state.toUpperCase() !== "MERGED") return { kind: "not_merged" };
+  if (!githubFieldEquals(live.state, "MERGED")) return { kind: "not_merged" };
   if (live.headOid !== completionHeadOid) return { kind: "mismatch" };
   return {
     kind: "aligned",
@@ -325,11 +386,32 @@ export async function runLandingAction(
       : undefined);
   // Durable docs release (CR-6): crash after worker push must not re-dispatch
   // VERSION/CHANGELOG. Keyed post-release HEAD (dual-key with pre-doc fallback).
-  const priorDocsReleased =
+  let priorDocsReleased =
     familyDocsReleasedForHead(ledger, liveMarkerHead) ??
     (liveMarkerHead !== input.convergedHeadOid
       ? familyDocsReleasedForHead(ledger, input.convergedHeadOid)
       : undefined);
+  // Infer successful prior release when HEAD advanced past pre-doc OID but the
+  // docs_released row never landed (crash after push, before ledger write).
+  // Empty-run leaves HEAD unchanged → re-dispatch is idempotent (文档发布空跑).
+  if (
+    priorMerged === undefined &&
+    priorDocsReleased === undefined &&
+    liveMarkerHead !== input.convergedHeadOid
+  ) {
+    await recordDocsReleased(input.familyBackend, {
+      pr: prUrl,
+      familyHeadAfter: liveMarkerHead,
+    });
+    await recordReviewLoopConverged(input.familyBackend, {
+      pr: prUrl,
+      familyHeadAfter: liveMarkerHead,
+    });
+    priorDocsReleased = {
+      pr: prUrl,
+      familyHeadAfter: liveMarkerHead,
+    };
+  }
   const sh = ghSh();
   // Explicit live surface only — no silent non-live pr:// MERGED hatch (ID-013).
   const liveHooks =
@@ -407,6 +489,12 @@ export async function runLandingAction(
         },
       };
     }
+    // CR-6 durable window: stamp pre-doc key IMMEDIATELY on released:true so a
+    // crash before post-HEAD re-read still dual-key skips re-dispatch.
+    await recordDocsReleased(input.familyBackend, {
+      pr: prUrl,
+      familyHeadAfter: input.convergedHeadOid,
+    });
   }
 
   // Docs may have advanced family HEAD. Re-read live HEAD only when docs just
@@ -418,20 +506,17 @@ export async function runLandingAction(
         input.convergedHeadOid,
       )
     : liveMarkerHead;
-  if (docsNeedRun) {
-    // Durable before merge (CR-6): DB-only recovery must not re-run release.
+  if (docsNeedRun && completionHeadOid !== input.convergedHeadOid) {
+    // Post-doc key + re-stamp so resume dual-key / already-converged short path
+    // find markers after a non-empty docs push.
     await recordDocsReleased(input.familyBackend, {
       pr: prUrl,
       familyHeadAfter: completionHeadOid,
     });
-    if (completionHeadOid !== input.convergedHeadOid) {
-      // Re-stamp so runner's already-converged short path (live HEAD equality)
-      // still finds review_loop_converged after a non-empty docs push.
-      await recordReviewLoopConverged(input.familyBackend, {
-        pr: prUrl,
-        familyHeadAfter: completionHeadOid,
-      });
-    }
+    await recordReviewLoopConverged(input.familyBackend, {
+      pr: prUrl,
+      familyHeadAfter: completionHeadOid,
+    });
   }
 
   // ── 2. Merge + live MERGED confirm (Action-owned; no host auto-merge court)
@@ -469,7 +554,7 @@ export async function runLandingAction(
     }
     if (entryMerged.kind === "aligned") {
       mergeRecord = entryMerged.record;
-    } else if (live.state.toUpperCase() === "CLOSED") {
+    } else if (githubFieldEquals(live.state, "CLOSED")) {
       return {
         ok: false,
         terminalState: "decision_gate",
@@ -604,30 +689,45 @@ export async function runLandingAction(
           };
         }
 
-        try {
-          const confirm =
-            liveHooks?.confirmMerged ??
-            ((expectedHeadOid: string) =>
-              confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
-          mergeRecord = confirm(completionHeadOid);
-        } catch {
-          mergeRecord = undefined;
-        }
-        if (mergeRecord === undefined) {
+        // R4-CX1: merge exit ≠ live MERGED. Bounded confirm/fetch retries cover
+        // GitHub propagation lag before parking as ambiguous.
+        const confirmOnce =
+          liveHooks?.confirmMerged ??
+          ((expectedHeadOid: string) =>
+            confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
+        for (
+          let attempt = 0;
+          attempt < LANDING_MERGED_CONFIRM_ATTEMPTS;
+          attempt += 1
+        ) {
           try {
-            const after = fetchState();
-            const afterMerged = mergeRecordIfHeadAligned(
-              after,
-              completionHeadOid,
-            );
-            if (afterMerged.kind === "mismatch") {
-              return mergedHeadMismatchPark(after.headOid, completionHeadOid);
-            }
-            if (afterMerged.kind === "aligned") {
-              mergeRecord = afterMerged.record;
-            }
+            mergeRecord = confirmOnce(completionHeadOid);
           } catch {
-            /* fall through */
+            mergeRecord = undefined;
+          }
+          if (mergeRecord === undefined) {
+            try {
+              const after = fetchState();
+              const afterMerged = mergeRecordIfHeadAligned(
+                after,
+                completionHeadOid,
+              );
+              if (afterMerged.kind === "mismatch") {
+                return mergedHeadMismatchPark(
+                  after.headOid,
+                  completionHeadOid,
+                );
+              }
+              if (afterMerged.kind === "aligned") {
+                mergeRecord = afterMerged.record;
+              }
+            } catch {
+              /* try again / fall through */
+            }
+          }
+          if (mergeRecord !== undefined) break;
+          if (attempt + 1 < LANDING_MERGED_CONFIRM_ATTEMPTS) {
+            await sleepPendingCiPollInterval();
           }
         }
         if (mergeRecord === undefined) {

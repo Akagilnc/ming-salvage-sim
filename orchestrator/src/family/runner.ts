@@ -94,7 +94,7 @@ import {
   runVerifyCmr,
 } from "./verifyCmr.js";
 import {
-  classifyLandingActionResult,
+  recordLandingActionFailure,
   runLandingAction,
 } from "./landing.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
@@ -1156,55 +1156,31 @@ async function ensureLandingForResume(input: {
       : {}),
   });
   if (landing.ok) return undefined;
-  // family/914 CR R1 Std M1 — same classifier + escalated park ledger as
-  // verifyCmr fresh final barrier (one authority; not aborted-only).
-  const classified = classifyLandingActionResult(landing);
-  if (classified.kind === "park") {
-    await recordFamilyEscalated(input.familyBackend, {
-      escalationKind: "decision",
-      phase: "final",
-      reason: classified.stopSummary.summary,
-      familyHeadAfter: input.familyHeadAfter,
-      stopSummary: classified.stopSummary,
-    });
+  // family/914 CR — single durable exit (recordLandingActionFailure); not dual-
+  // written park/abort next to verifyCmr.
+  const recorded = await recordLandingActionFailure(
+    input.familyBackend,
+    landing,
+    { phase: "final", familyHeadAfter: input.familyHeadAfter },
+  );
+  if (recorded.kind === "park") {
     return {
       status: "escalated",
       familyBase: input.familyBase,
       familyHead: input.familyHeadAfter,
-      stopSummary: classified.stopSummary,
+      stopSummary: recorded.stopSummary,
       children: [...input.children],
       ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
         ? { admissionSkipped: input.admissionSkipped }
         : {}),
     };
   }
-  const failSummary =
-    classified.kind === "hard_fail"
-      ? classified.stopSummary
-      : decisionGateParkStopSummary({
-          summary: `family landing did not complete (${landing.terminalState})`,
-          repairHint:
-            "resolve landing blockers or answer the decision gate, then re-enter landing",
-        });
-  const failStop = stageFailureStopSummary({
-    status: "merge_failed",
-    summary: failSummary.summary,
-    repairHint: failSummary.repairHint,
-  });
-  await input.familyBackend.appendFamilyLedger({
-    status: "aborted",
-    event: "aborted",
-    phase: "final",
-    reason: failStop.summary,
-    familyHeadAfter: input.familyHeadAfter,
-    stopSummary: failStop,
-  });
   return {
     status: "merge_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
     failedPhase: "final",
-    stopSummary: failStop,
+    stopSummary: recorded.stopSummary,
     children: [...input.children],
     ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
