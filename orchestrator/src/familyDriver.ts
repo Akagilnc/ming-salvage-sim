@@ -66,6 +66,7 @@ import {
   isCompleteFamilyEscalation,
   isValidPostMergeCleanup,
   mergedSet,
+  parseFamilyLedgerJsonl,
 } from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
 import {
@@ -111,7 +112,13 @@ export interface SubIssueAdmission {
   readonly skipped: ReadonlyArray<SkippedFamilyChild>;
 }
 
-function subIssueNodes(parsed: unknown): unknown[] {
+/**
+ * Fail-closed sub-issues body decoder (#934 ID-003 / CR S-2).
+ * REST native list OR GraphQL `{subIssues:{nodes:[]}}`. Schema garbage throws —
+ * never soft-empty into family-of-one / vacuous parent-close.
+ * Shared by family admission and post-merge cleanup (single helper).
+ */
+export function decodeSubIssueNodes(parsed: unknown): unknown[] {
   // REST native sub-issues endpoint: `gh api repos/O/R/issues/<epic>/sub_issues`.
   if (Array.isArray(parsed)) return parsed;
   // Older/newer gh GraphQL shape retained for pure parser compatibility.
@@ -122,8 +129,6 @@ function subIssueNodes(parsed: unknown): unknown[] {
       if (Array.isArray(nodes)) return nodes;
     }
   }
-  // #934 ID-003: deterministic schema garbage must fail closed — never soft-empty
-  // into family-of-one / empty-children admission.
   throw new Error(
     `sub_issues schema error: expected array or {subIssues:{nodes:[]}}, got ${
       parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
@@ -196,7 +201,7 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
  * Optional label/parent fields remain soft for S0 backstop compatibility.
  */
 export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
-  const nodes = subIssueNodes(parsed);
+  const nodes = decodeSubIssueNodes(parsed);
   const seen = new Set<number>();
   const admitted: number[] = [];
   const skipped: SkippedFamilyChild[] = [];
@@ -414,10 +419,9 @@ export function discoverSubprojects(workingRepo: string): string[] {
     entries = readdirSync(workingRepo, { withFileTypes: true });
   } catch (err) {
     const d = err instanceof Error ? err.message : String(err);
-    // Phrase covers both #934 (`failed to readdir subprojects`) and #939
-    // (`failed to read project directory`) test assertions.
+    // #934 CR: one canonical reason token (no dual-era slash-joined phrases).
     throw new Error(
-      `family verify: failed to readdir subprojects / failed to read project directory at "${workingRepo}": ${d}`,
+      `family verify: failed to readdir subprojects at "${workingRepo}": ${d}`,
     );
   }
   const found: string[] = [];
@@ -432,7 +436,7 @@ export function discoverSubprojects(workingRepo: string): string[] {
       }
       const d = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `family verify: package.json probe failed (failed to probe package.json) at "${pkg}": ${d}`,
+        `family verify: package.json probe failed at "${pkg}": ${d}`,
       );
     }
   }
@@ -719,7 +723,7 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
       "api",
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
-    const nodes = subIssueNodes(JSON.parse(subRaw));
+    const nodes = decodeSubIssueNodes(JSON.parse(subRaw));
     allSubIssueNodes.push(...nodes);
     if (nodes.length < 100) break;
   }
@@ -955,10 +959,8 @@ export function discoverFamilyResidentScene(
   }
   let ledger: FamilyLedgerEntry[];
   try {
-    ledger = raw
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as FamilyLedgerEntry);
+    // #934 S-3: per-line shape gate (not bare JSON.parse cast).
+    ledger = parseFamilyLedgerJsonl(raw);
   } catch (err) {
     return {
       kind: "corrupted",

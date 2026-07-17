@@ -1467,3 +1467,86 @@ export function mergedSet(
   }
   return out;
 }
+
+/**
+ * Known {@link FamilyLedgerEntry.status} values. Shape gate for JSONL parse —
+ * a line that JSON.parses as `null` / `{}` / bad status must fail closed the
+ * same way as an unparseable line (#934 S-3; mirror single-slice isLedgerEntryShape).
+ */
+export const FAMILY_LEDGER_STATUSES: ReadonlySet<string> = new Set([
+  "merged",
+  "aborted",
+  "shipped",
+  "review_loop_converged",
+  "pr_merged",
+  "post_merge_cleanup",
+  "cmr_reviewed",
+  "cmr_fix_committed",
+  "cmr_passed",
+  "escalated",
+  "child_decision_parked",
+  "escalation_answered",
+  "admission_skipped",
+  "online_review_fix_committed",
+  "online_review_round_retrigger",
+  "worker_dispatched",
+  "route_degraded",
+  "coder_advance",
+  "coder_advance_stay_put",
+]);
+
+/**
+ * Per-line structural gate for family-ledger.jsonl (#934 S-3).
+ * Thin `{childIssue, status:"merged"}` remains valid; null/primitive/array/{}
+ * and unknown status values are not.
+ */
+export function isFamilyLedgerEntryShape(
+  value: unknown,
+): value is FamilyLedgerEntry {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const status = (value as { status?: unknown }).status;
+  if (typeof status !== "string" || !FAMILY_LEDGER_STATUSES.has(status)) {
+    return false;
+  }
+  const childIssue = (value as { childIssue?: unknown }).childIssue;
+  if (
+    childIssue !== undefined &&
+    (typeof childIssue !== "number" || !Number.isFinite(childIssue))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Parse family-ledger.jsonl fail-closed: every non-empty line must JSON.parse
+ * AND pass {@link isFamilyLedgerEntryShape}. Blank lines tolerated.
+ */
+export function parseFamilyLedgerJsonl(raw: string): FamilyLedgerEntry[] {
+  const entries: FamilyLedgerEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `corrupt family ledger: a non-empty family-ledger.jsonl line failed to parse — ` +
+          `refusing to resume on a partially-readable ledger (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isFamilyLedgerEntryShape(parsed)) {
+      throw new Error(
+        "corrupt family ledger: a family-ledger.jsonl line parsed but is not a " +
+          "valid FamilyLedgerEntry (must be an object with a known status) — " +
+          "refusing to resume on a malformed ledger (fail closed).",
+      );
+    }
+    entries.push(parsed);
+  }
+  return entries;
+}

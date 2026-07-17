@@ -8,7 +8,7 @@ import {
 } from "./autoMerge.js";
 import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
-import type { Sh } from "./familyDriver.js";
+import { decodeSubIssueNodes, type Sh } from "./familyDriver.js";
 import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
@@ -89,24 +89,6 @@ export function shouldCloseParentIssue(
   );
 }
 
-function subIssueNodes(parsed: unknown): unknown[] {
-  // Same-class fail-closed decoder as familyDriver (#934 ID-003): schema garbage
-  // must not soft-empty into "no children" parent-close decisions.
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed !== null && typeof parsed === "object") {
-    const sub = (parsed as { subIssues?: unknown }).subIssues;
-    if (sub !== null && typeof sub === "object" && !Array.isArray(sub)) {
-      const nodes = (sub as { nodes?: unknown }).nodes;
-      if (Array.isArray(nodes)) return nodes;
-    }
-  }
-  throw new Error(
-    `sub_issues schema error: expected array or {subIssues:{nodes:[]}}, got ${
-      parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
-    }`,
-  );
-}
-
 function parseLiveSubIssue(node: unknown, index: number): LiveSubIssue {
   if (node === null || typeof node !== "object" || Array.isArray(node)) {
     throw new Error(
@@ -148,7 +130,7 @@ export function fetchPaginatedSubIssues(
       "api",
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
-    const nodes = subIssueNodes(JSON.parse(raw));
+    const nodes = decodeSubIssueNodes(JSON.parse(raw));
     for (let i = 0; i < nodes.length; i++) {
       all.push(parseLiveSubIssue(nodes[i], all.length + i));
     }

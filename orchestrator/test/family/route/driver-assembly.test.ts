@@ -812,7 +812,7 @@ describe("#934 readFamilyEpic root blocked_by + external filter (ID-002)", () =>
 describe("#934 discoverSubprojects operational errors fail closed (ID-011)", () => {
   it("throws when readdir fails (never soft-returns [])", () => {
     expect(() => discoverSubprojects("/definitely/missing/path-934-subprojects")).toThrow(
-      /failed to readdir subprojects/,
+      /^family verify: failed to readdir subprojects at /,
     );
   });
 });

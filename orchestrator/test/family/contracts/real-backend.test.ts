@@ -3422,7 +3422,8 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
 describe("#939 discoverSubprojects directory op-errors", () => {
   it("readdir operational failure throws (never degrades to [])", () => {
     const missing = join(trackTempDir("disc-missing-"), "no-such");
-    expect(() => discoverSubprojects(missing)).toThrow(/failed to read project directory/i);
+    // #934 CR: single canonical token `failed to readdir subprojects`.
+    expect(() => discoverSubprojects(missing)).toThrow(/failed to readdir subprojects/i);
   });
 
   it("successful empty top-level (no child package.json) returns []", () => {
