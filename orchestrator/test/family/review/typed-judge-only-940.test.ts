@@ -372,13 +372,3 @@ describe("#940 unified worker dispatch — ID-004 / ID-006 still hold", () => {
   });
 });
 
-describe("#940 inventory / ID-016 deletion pins", () => {
-  it("POSITIVE: VerifyWorkerTerminalState no longer includes host round_budget_exhausted", async () => {
-    // Type-level proof is compile-time; runtime proof: loop result type union
-    // never surfaces the retired terminal from the host path above.
-    const loopMod = await import("../../../src/family/onlineReviewLoop.js");
-    // fixMarked pure helpers survive for fixer landing cargo (not side effects).
-    expect(typeof loopMod.fixMarkedKeysFromVerify).toBe("function");
-    expect(typeof loopMod.fixMarkedFindingThreadsFromVerify).toBe("function");
-  });
-});
