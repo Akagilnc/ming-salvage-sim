@@ -23,6 +23,7 @@ import { findingIdentityKey } from "./findings.js";
 import {
   OPEN_FINDING_STORE_STATUS,
   recordFindingStoreFlip,
+  type FindingStoreStatus,
 } from "./findingsStateStore.js";
 import type {
   JudgeVerdict,
@@ -102,19 +103,33 @@ function pushTerminalOrThrow(
  * Live rows stay out of the terminal ledger flip set (they remain open).
  * Transitions go through {@link recordFindingStoreFlip} (single write-point
  * source — ADR 0129). Illegal store flips fail loud (throw with store reason).
+ *
+ * #952 R6-C2: `currentStoreStatusByIdentity` supplies the actual prior store
+ * status as `from` when known. Absent key → treat as open (backward compat for
+ * pure unit tests / first write). Production callers that accumulate store
+ * rows must pass the map so illegal terminal→terminal morphs are rejected.
  */
 export function judgeTerminalsToLedgerDispositions(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
   severity: Finding["severity"] = "medium",
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
 ): FindingDisposition[] {
   const out: FindingDisposition[] = [];
+  // Working copy so same-table sequential flips see prior terminal status
+  // (illegal terminal→terminal morph fails loud; no open hardcode laundering).
+  const known: Partial<Record<string, FindingStoreStatus>> = {
+    ...(currentStoreStatusByIdentity ?? {}),
+  };
   for (const d of dispositions) {
+    const from = known[d.identityKey] ?? OPEN_FINDING_STORE_STATUS;
     if (d.action === "refute") {
       pushTerminalOrThrow(
         out,
         recordFindingStoreFlip({
           identityKey: d.identityKey,
-          from: OPEN_FINDING_STORE_STATUS,
+          from,
           to: "refuted",
           reason: `${d.reason}: ${d.evidence}`,
           severity,
@@ -122,6 +137,7 @@ export function judgeTerminalsToLedgerDispositions(
           scope: d.reason,
         }),
       );
+      known[d.identityKey] = "refuted";
       continue;
     }
     if (d.action === "suppress") {
@@ -137,7 +153,7 @@ export function judgeTerminalsToLedgerDispositions(
         out,
         recordFindingStoreFlip({
           identityKey: d.identityKey,
-          from: OPEN_FINDING_STORE_STATUS,
+          from,
           to: "suppressed",
           reason: d.evidence,
           severity,
@@ -145,9 +161,27 @@ export function judgeTerminalsToLedgerDispositions(
           scope: groundKind,
         }),
       );
+      known[d.identityKey] = "suppressed";
     }
   }
   return out;
+}
+
+/**
+ * Build identityKey → latest store status from accumulated ledger store rows.
+ * Last row wins per key (mirrors live accumulation order).
+ */
+export function storeStatusByIdentityFromDispositions(
+  storeRows: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: FindingStoreStatus;
+  }>,
+): Partial<Record<string, FindingStoreStatus>> {
+  const map: Partial<Record<string, FindingStoreStatus>> = {};
+  for (const row of storeRows) {
+    map[row.identityKey] = row.status;
+  }
+  return map;
 }
 
 /**
@@ -578,12 +612,22 @@ export function projectResidualReviewerToJudge(residual: {
  * {@link requireFixPacketBody} (or the non-empty field here) before dispatch;
  * `blocking` findings cargo is residual/telemetry and is **not** the packet path.
  */
-export function projectJudgeContinueBlocking(output: {
-  readonly status: string;
-  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  readonly findings?: ReadonlyArray<Finding>;
-  readonly fixPacketBody?: string;
-}): {
+export function projectJudgeContinueBlocking(
+  output: {
+    readonly status: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly findings?: ReadonlyArray<Finding>;
+    readonly fixPacketBody?: string;
+  },
+  /**
+   * #952 R6-C2: prior store statuses (identityKey → status) for legal
+   * transition checks. Production live/resume paths pass accumulated
+   * findingDispositions via {@link storeStatusByIdentityFromDispositions}.
+   */
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
+): {
   readonly blocking: Finding[];
   readonly blockingIdentityKeys: string[];
   readonly blockingFindingCount: number;
@@ -592,7 +636,11 @@ export function projectJudgeContinueBlocking(output: {
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
-  const terminals = judgeTerminalsToLedgerDispositions(dispositions);
+  const terminals = judgeTerminalsToLedgerDispositions(
+    dispositions,
+    "medium",
+    currentStoreStatusByIdentity,
+  );
   const cargo = output.findings ?? [];
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);

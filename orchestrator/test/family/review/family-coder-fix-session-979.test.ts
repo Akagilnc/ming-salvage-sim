@@ -377,6 +377,70 @@ describe("#979 pure ledger helper — familyCoderFixResumeSessionIdFromLedger", 
       pass: "completeness",
       expected: "still-valid",
     },
+    {
+      // #979 R6-C1: converged court (cmr_passed) ends the findings chain —
+      // do not walk past it to an older pre-pass cmr_fix_committed session.
+      name: "cmr_passed ends chain — later open must not resume pre-pass session",
+      ledger: [
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "pre-pass-session",
+        },
+        {
+          status: "cmr_passed",
+          event: "cmr_passed",
+          cmrPass: "completeness",
+        },
+        // Later reopen (e.g. IC checkpoint re-entry / new findings chain) —
+        // no newer fix row yet; resume must be fresh, not pre-pass-session.
+      ] as FamilyLedgerEntry[],
+      pass: "completeness",
+      expected: undefined,
+    },
+    {
+      name: "cmr_passed for other pass does not block this pass resume",
+      ledger: [
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "comp-session",
+        },
+        {
+          status: "cmr_passed",
+          event: "cmr_passed",
+          cmrPass: "correctness",
+        },
+      ] as FamilyLedgerEntry[],
+      pass: "completeness",
+      expected: "comp-session",
+    },
+    {
+      name: "same-pass fix after cmr_passed is a new chain (resume that session)",
+      ledger: [
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "old-chain",
+        },
+        {
+          status: "cmr_passed",
+          event: "cmr_passed",
+          cmrPass: "completeness",
+        },
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "new-chain",
+        },
+      ] as FamilyLedgerEntry[],
+      pass: "completeness",
+      expected: "new-chain",
+    },
   ])("$name", ({ ledger, pass, expected }) => {
     expect(familyCoderFixResumeSessionIdFromLedger(ledger, pass)).toBe(expected);
   });

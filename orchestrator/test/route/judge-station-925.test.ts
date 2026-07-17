@@ -301,6 +301,57 @@ describe("#952 pure: suppress disposition → suppressed store + fixer exclusion
     });
   });
 
+  // #952 R6-C2: write path must use actual current store status as `from`
+  // when supplied — hardcoding open would launder illegal terminal re-flips.
+  it("refuted → suppress throws when current store status is supplied (negative)", () => {
+    const key = findingIdentityKey(sampleFinding("already-refuted", "d.ts:4"));
+    const dispositions = [
+      {
+        identityKey: key,
+        action: "suppress" as const,
+        evidence: "illegal morph from refuted",
+        groundTicket: 952,
+      },
+    ];
+    expect(() =>
+      judgeTerminalsToLedgerDispositions(dispositions, "medium", {
+        [key]: "refuted",
+      }),
+    ).toThrow(/transition|terminal|illegal/i);
+  });
+
+  it("open → suppress still ok when from map supplies unrepaired (positive)", () => {
+    const key = findingIdentityKey(sampleFinding("still-open", "e.ts:5"));
+    const dispositions = [
+      {
+        identityKey: key,
+        action: "suppress" as const,
+        evidence: "legal open suppress",
+        groundTicket: 952,
+      },
+    ];
+    const flips = judgeTerminalsToLedgerDispositions(dispositions, "medium", {
+      [key]: "unrepaired",
+    });
+    expect(flips).toHaveLength(1);
+    expect(flips[0]).toMatchObject({ identityKey: key, status: "suppressed" });
+  });
+
+  it("absent from-map treats as open (backward compat for pure unit tests)", () => {
+    const key = findingIdentityKey(sampleFinding("compat-open", "f.ts:6"));
+    const dispositions = [
+      {
+        identityKey: key,
+        action: "suppress" as const,
+        evidence: "compat path",
+        groundTicket: 1,
+      },
+    ];
+    const flips = judgeTerminalsToLedgerDispositions(dispositions);
+    expect(flips).toHaveLength(1);
+    expect(flips[0]!.status).toBe("suppressed");
+  });
+
   it("openFindingsForFixer excludes suppress keys — not sent to fixer (negative)", () => {
     const live = sampleFinding("live", "a.ts:1");
     const suppressed = sampleFinding("suppressed", "c.ts:3");
