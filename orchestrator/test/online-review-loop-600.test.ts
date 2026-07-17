@@ -2691,6 +2691,53 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(fixerCalls).toBe(0);
   });
 
+  it("#934 ID-004: pending CI keeps re-polling past bot overdue window — no host fail", async () => {
+    // Bot overdue window is for bots only. Pending-CI-only must sleep+continue
+    // with no finite BOT_OVERDUE terminal, then proceed when CI goes terminal.
+    let pollCalls = 0;
+    let verifyCalls = 0;
+    let fixerCalls = 0;
+    const pendingPolls = BOT_OVERDUE_POLL_COUNT + 2;
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => {
+        pollCalls += 1;
+        if (pollCalls <= pendingPolls) {
+          return {
+            ...baseSnapshot,
+            checkRuns: [
+              {
+                id: 1,
+                name: "ci",
+                headSha: "head-1",
+                status: "in_progress",
+              },
+            ],
+          };
+        }
+        return baseSnapshot;
+      },
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return { kind: "verify", converged: true } satisfies VerifyResult;
+      },
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return fixerCommitted();
+      },
+      dispatchDocRelease: async () => true,
+      retriggerAfterFix: () => {},
+    });
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("mergeable");
+    expect(result.stopSummary?.summary ?? "").not.toMatch(
+      /stayed non-terminal past the overdue poll window/i,
+    );
+    // N pending-CI polls + 1 clear poll after CI terminal.
+    expect(pollCalls).toBe(pendingPolls + 1);
+    expect(verifyCalls).toBe(pendingPolls + 1);
+    expect(fixerCalls).toBe(0);
+  });
+
   it("pin r22: stage landing shipDelivery.branch threads the real ship branch", async () => {
     let landingBranch: string | undefined;
     await runOnlineReviewLoopStage(stageShip, {

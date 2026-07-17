@@ -611,6 +611,71 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     }
   });
 
+  it("POSITIVE: merge-phase quota park attaches wave diagnostics for failed siblings", async () => {
+    // #11 fails single-slice (wave diagnostic); #10 hits QuotaWait on merge.
+    // Park path must attachDiagnostics so failed-sibling causes are not dropped.
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    class QuotaParkOnMergeBackend extends RecordingFamilyBackend {
+      override async mergeChildIntoFamilyBase(
+        child: MergeRequest,
+      ): Promise<MergeResult> {
+        this.mergeOrder.push(child.childIssue);
+        if (child.childIssue === 10) {
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "zai",
+              resetAt,
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "zai",
+                resetAt: resetAt.toISOString(),
+                reason: "quota limited (429); wait for reset",
+                step: "S1",
+                workerPid: 0,
+                ts: "2026-07-14T12:00:00.000Z",
+              },
+            },
+            pool: "zai",
+          });
+        }
+        return { familyHead: `h${child.childIssue}` };
+      }
+    }
+    const familyBackend = new QuotaParkOnMergeBackend();
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new SiblingFailBackend(new Set([11])),
+      familyBase: "family/938-base",
+      now: () => now,
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.children.find((c) => c.issue === 10)?.status).toBe("ran");
+    expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
+    expect(result.diagnostics ?? []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue: 11,
+          kind: "child_execution",
+        }),
+      ]),
+    );
+  });
+
   it("NEGATIVE: production merger has no host still-conflicted re-dispatch loop (ID-016 delete)", () => {
     const mergerSrc = readFileSync(
       join(import.meta.dirname, "../../../src/family/merger.ts"),

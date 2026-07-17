@@ -652,8 +652,8 @@ export const immediateBotPollClock: BotPollClock = {
 /**
  * Family pending-CI re-poll delay.
  * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
- * Production uses real 2-minute cadence so CI latency does not burn the overdue
- * budget in milliseconds (online R4/R5 Codex+Gemini chain).
+ * Production uses real 2-minute cadence between pending-CI polls (#934 ID-004:
+ * CI pending is not on the bot overdue window — no finite host-fail budget).
  */
 export async function sleepPendingCiPollInterval(
   clock?: BotPollClock,
@@ -926,7 +926,9 @@ export async function runOnlineReviewLoopStage(
         };
       }
 
-      // Pending CI only: re-poll — do not fixer, do not empty-success (#934 ID-004).
+      // Pending CI only: re-poll without finite host fail (#934 ID-004).
+      // Bot overdue window is for bots only — CI pending keeps sleeping until
+      // check-runs go terminal (or the worker escalates on a later poll).
       if (
         verifyBlockedOnlyOnPendingCheckRuns(
           verify,
@@ -934,20 +936,6 @@ export async function runOnlineReviewLoopStage(
         )
       ) {
         pendingCiPolls += 1;
-        if (pendingCiPolls > BOT_OVERDUE_POLL_COUNT) {
-          return {
-            ok: false,
-            terminalState: "decision_gate_raised",
-            round,
-            stopSummary: stageFailureStopSummary({
-              status: "online_review_failed",
-              summary:
-                "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
-              repairHint:
-                "wait for CI to complete (or fail) on the PR head, then re-run online review",
-            }),
-          };
-        }
         await sleepPendingCiPollInterval();
         continue;
       }

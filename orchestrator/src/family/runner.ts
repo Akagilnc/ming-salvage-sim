@@ -2080,18 +2080,10 @@ export async function runFamily(
     // must drain remaining allSettled siblings into childResults first. Without
     // that flush, finalize / residual maps map executed peers to fake "skipped".
     // "skipped" is only for never-schedulable / never-ran children.
+    // Spread the whole sibling so optional fields (branch / escalation /
+    // failureCause / future FamilyChildResult cargo) are never silently dropped.
     const recordWaveSibling = (sibling: FamilyChildResult): void => {
-      childResults.push({
-        issue: sibling.issue,
-        status: sibling.status,
-        ...(sibling.branch !== undefined ? { branch: sibling.branch } : {}),
-        ...(sibling.escalation !== undefined
-          ? { escalation: sibling.escalation }
-          : {}),
-        ...(sibling.failureCause !== undefined
-          ? { failureCause: sibling.failureCause }
-          : {}),
-      });
+      childResults.push({ ...sibling });
     };
     const drainRemainingWaveSiblings = (): void => {
       const recorded = new Set(childResults.map((c) => c.issue));
@@ -2100,6 +2092,18 @@ export async function runFamily(
         recordWaveSibling(sibling);
         recorded.add(sibling.issue);
       }
+    };
+    /** #938: drain allSettled peers then residual-map epic children for early exits. */
+    const residualChildrenAfterDrain = async (): Promise<FamilyChildResult[]> => {
+      drainRemainingWaveSiblings();
+      const ledgerMerged = await currentMerged(familyBackend);
+      return epic.children.map((child) => {
+        const recorded = childResults.find((entry) => entry.issue === child.issue);
+        if (recorded !== undefined) return recorded;
+        return ledgerMerged.has(child.issue)
+          ? { issue: child.issue, status: "already_done" as const }
+          : { issue: child.issue, status: "skipped" as const };
+      });
     };
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
@@ -2141,19 +2145,10 @@ export async function runFamily(
             }),
         });
         if (mergeBarrier.kind === "park") {
-          // #938: park result residual-mapped children from childResults before
-          // remaining allSettled peers were flushed — remount after drain so
-          // executed siblings stay honest `ran`, not fake `skipped`.
-          drainRemainingWaveSiblings();
-          const ledgerMerged = await currentMerged(familyBackend);
-          const children = epic.children.map((child) => {
-            const recorded = childResults.find((entry) => entry.issue === child.issue);
-            if (recorded !== undefined) return recorded;
-            return ledgerMerged.has(child.issue)
-              ? { issue: child.issue, status: "already_done" as const }
-              : { issue: child.issue, status: "skipped" as const };
-          });
-          return { ...mergeBarrier.result, children };
+          // #938: remount residual children after drain so executed siblings stay
+          // honest `ran`, not fake `skipped`; attach wave diagnostics too.
+          const children = await residualChildrenAfterDrain();
+          return attachDiagnostics({ ...mergeBarrier.result, children });
         }
         activeRoute = mergeBarrier.route;
         if (mergeBarrier.relayBilling !== undefined) {
@@ -2163,15 +2158,7 @@ export async function runFamily(
         if (mergeResult.escalation !== undefined) {
           familyHead = mergeResult.familyHead;
           childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
-          drainRemainingWaveSiblings();
-          const ledgerMerged = await currentMerged(familyBackend);
-          const children = epic.children.map((child) => {
-            const recorded = childResults.find((entry) => entry.issue === child.issue);
-            if (recorded !== undefined) return recorded;
-            return ledgerMerged.has(child.issue)
-              ? { issue: child.issue, status: "already_done" as const }
-              : { issue: child.issue, status: "skipped" as const };
-          });
+          const children = await residualChildrenAfterDrain();
           const escalation = mergeResult.escalation;
           const stopSummary = familyStopSummary({
             status: "escalated",
