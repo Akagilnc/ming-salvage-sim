@@ -24,7 +24,6 @@ import type {
   DispatchContext,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -281,9 +280,6 @@ class RebuildBackend implements Backend {
       body: this.coderRecBody,
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
   }
@@ -379,9 +375,6 @@ class DecisionGateBackend implements Backend {
       openBlockedBy: [],
       body: this.coderRecBody,
     };
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return {

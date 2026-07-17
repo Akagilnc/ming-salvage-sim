@@ -19,7 +19,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   WorkerResult,
   WorkerSpec,
@@ -77,9 +76,6 @@ class SeatCapBackend implements Backend {
       openBlockedBy: [],
       ...(this.coderRecBody.length > 0 ? { body: this.coderRecBody } : {}),
     };
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
