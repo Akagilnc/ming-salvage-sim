@@ -721,12 +721,15 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
       familyBase: "family/291-base",
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
-    // Both verify barriers ran green; the child merged; but the final barrier is red
-    // because the 承重闸 cmr could not run — observably cmr_failed (#922), never success.
-    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
+    // Wave verify green + #961 IC checkpoint; missing CMR capability fails the
+    // checkpoint (or final) with cmr_failed (#922), never success.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+    ]);
     expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("cmr_failed");
-    expect(result.failedPhase).toBe("final");
+    expect(result.failedPhase).toBe("correctness_checkpoint");
   });
 });
 
@@ -742,13 +745,18 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/291-base",
     });
-    // One wave (all independent): wave verify (green) then final verify (green) →
-    // step5 completeness → step6 correctness → PR opened ONCE from the family base.
-    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(backend.cmrCalls).toEqual([
-      { familyBase: "family/291-base", cmrPass: "completeness" },
-      { familyBase: "family/291-base", cmrPass: "correctness" },
+    // One wave: wave verify → #961 IC checkpoint → final completeness→correctness→ship.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+      "final",
     ]);
+    // Checkpoint runs correctness early; final reuses skip or re-runs + completeness.
+    const cmrPasses = backend.cmrCalls.map((c) => c.cmrPass);
+    expect(cmrPasses).toContain("completeness");
+    expect(cmrPasses.filter((p) => p === "correctness").length).toBeGreaterThanOrEqual(1);
+    expect(cmrPasses[0]).toBe("correctness"); // checkpoint first
+    expect(cmrPasses).toContain("completeness");
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     // 止于 PR: a PR was opened, but the run STOPS here — every child merged into the
     // family base, status success, no escalate. (No merge-to-main seam exists on

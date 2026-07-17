@@ -3961,7 +3961,10 @@ function classifyMergerOutcomePayload(
 }
 
 /** A one-line human-readable summary of a failed verify command (phase + error). */
-function summarizeError(phase: "wave" | "final", err: unknown): string {
+function summarizeError(
+  phase: "wave" | "final" | "correctness_checkpoint",
+  err: unknown,
+): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
   // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
   // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only

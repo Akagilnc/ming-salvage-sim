@@ -582,7 +582,12 @@ export function relaySlotForSingleSliceWallStep(
  * fallbacks apply only when the step is not an explicit wall role.
  */
 export function familyRelaySlotsForWall(opts: {
-  readonly phase: "wave" | "final" | "online_review" | "merge";
+  readonly phase:
+    | "wave"
+    | "correctness_checkpoint"
+    | "final"
+    | "online_review"
+    | "merge";
   readonly wallStep: StepId;
   readonly cmrPass?: "completeness" | "correctness";
 }): ReadonlyArray<ModelRouteSlot> {
@@ -608,6 +613,8 @@ export function familyRelaySlotsForWall(opts: {
   if (opts.phase === "online_review") return ["verify"];
   if (opts.phase === "merge") return ["merger"];
   if (opts.phase === "wave") return ["verify"];
+  // #961 incremental IC checkpoint — correctness court only.
+  if (opts.phase === "correctness_checkpoint") return ["cmrCorrectness"];
   // final with ambiguous step — cover primary final consume slots
   return ["cmrCompleteness", "ship"];
 }

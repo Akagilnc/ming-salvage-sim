@@ -125,7 +125,7 @@ import {
   type FamilyRunStatus,
   type IntegratedCmrPass,
 } from "./types.js";
-import type { VerifyCmrPhase } from "./verifyCmr.js";
+import type { VerifyCmrPhase, VerifyCmrResult } from "./verifyCmr.js";
 
 function filled(value: string | undefined): string | undefined {
   if (value == null) return undefined;
@@ -225,6 +225,7 @@ type FamilyQuotaWallDecision =
 /** Family barrier / merge wall phases that share the park/relay machine. */
 export type FamilyQuotaWallPhase =
   | "wave"
+  | "correctness_checkpoint"
   | "final"
   | "online_review"
   | "merge";
@@ -2195,6 +2196,92 @@ export async function runFamily(
   // children converge in a single pass. Guard against a no-progress wave (a
   // child that failed to merge would otherwise re-select forever) by tracking
   // the set of children the spine has already ATTEMPTED.
+  //
+  // #961 / ADR 0139: after a batch verifies green, fire a full-strength
+  // Integrated Correctness checkpoint (correctness court only). Child coding of
+  // the next wave continues without a Runner review/dispatch lock on
+  // lastCorrectnessConvergedHead — IC is Family Flow owned. Parent merge and
+  // CMR fix stay serial: await any in-flight checkpoint before the next merge.
+  type PendingBarrier = ReturnType<typeof runFamilyBarrierWithQuotaRelay<VerifyCmrResult>>;
+  let pendingCorrectnessCheckpoint: PendingBarrier | undefined;
+  const awaitPendingCorrectnessCheckpoint = async (): Promise<
+    FamilyRunResult | undefined
+  > => {
+    if (pendingCorrectnessCheckpoint === undefined) return undefined;
+    const barrier = await pendingCorrectnessCheckpoint;
+    pendingCorrectnessCheckpoint = undefined;
+    if (barrier.kind === "park") return attachDiagnostics(barrier.result);
+    activeRoute = barrier.route;
+    if (barrier.relayBilling !== undefined) {
+      runRelayBilling = barrier.relayBilling;
+    }
+    const value = barrier.value;
+    if (!value.ok) {
+      return await finalize({
+        ...(value.failedStatus !== undefined
+          ? { failedStatus: value.failedStatus }
+          : {}),
+        failedPhase: "correctness_checkpoint",
+      });
+    }
+    // Do not clobber spine familyHead from a live read here: merge HEAD remains
+    // the merge-loop truth for diagnostics, and subsequent barriers re-read live
+    // HEAD where needed (cmrPassAlreadyPassed / ship). IC coder-fix advances are
+    // durable on cmr_fix_committed / cmr_passed rows.
+    return undefined;
+  };
+  const fireCorrectnessCheckpoint = (): void => {
+    // Family Flow / Integrated Correctness Action owns cadence. Runner does not
+    // read lastCorrectnessConvergedHead for admission; the verifyCmr court skips
+    // via cmrPassAlreadyPassed when HEAD+route already green.
+    const checkpointHead = familyHead;
+    pendingCorrectnessCheckpoint = runFamilyBarrierWithQuotaRelay({
+      phase: "correctness_checkpoint",
+      familyBackend,
+      singleSliceBackend,
+      familyBase,
+      familyHead: checkpointHead,
+      runId,
+      modelRoute: activeRoute,
+      recordedResults: childResults,
+      epicChildren: epic.children,
+      epicIssue: epic.issue,
+      relayHandoffs,
+      wallHitBillingPools,
+      ...(runRelayBilling !== undefined
+        ? { initialRelayBilling: runRelayBilling }
+        : {}),
+      ...(applyRelayOverride !== undefined
+        ? { applyRelayBatonToRoute: applyRelayOverride }
+        : {}),
+      ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+      ...(input.now !== undefined ? { now: input.now } : {}),
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+      run: async (route, relayBilling) =>
+        verifyCmr({
+          phase: "correctness_checkpoint",
+          familyBase,
+          familyBackend,
+          runId,
+          modelRoute: route,
+          ...(relayBilling !== undefined
+            ? {
+                billingPool: relayBilling.pool,
+                billingPoolSlots: relayBilling.slots,
+              }
+            : {}),
+          llmResolvedChildren: await llmResolvedChildren(familyBackend),
+          familyHeadAfter: checkpointHead,
+          familyIssue: epic.issue,
+          ...(declaredModuleContext !== undefined
+            ? { moduleContext: declaredModuleContext }
+            : {}),
+        }),
+    });
+  };
+
   const attempted = new Set<number>();
   for (;;) {
     const merged = await currentMerged(familyBackend);
@@ -2202,6 +2289,9 @@ export async function runFamily(
       (c) => !attempted.has(c.issue),
     );
     if (wave.length === 0) {
+      // Drain any in-flight IC before residual/final gates.
+      const icStop = await awaitPendingCorrectnessCheckpoint();
+      if (icStop !== undefined) return icStop;
       // ID-009: residual cycle only at empty-wave + still-unmerged residual.
       const residual = epic.children.filter((c) => !merged.has(c.issue));
       if (residual.length > 0) {
@@ -2314,12 +2404,21 @@ export async function runFamily(
     // here once mergeChild resolves — so a future #295 merge failure can leave the
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
     //
+    // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
+    // serial under Family Flow). Child coding above already ran in parallel with
+    // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
+    {
+      const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint();
+      if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
+    }
+    //
     // #938: mid-wave early exit (merger decision escalate / still-conflicted)
     // must drain remaining allSettled siblings into childResults first. Without
     // that flush, finalize / residual maps map executed peers to fake "skipped".
     // "skipped" is only for never-schedulable / never-ran children.
     // Spread the whole sibling so optional fields (branch / escalation /
     // failureCause / future FamilyChildResult cargo) are never silently dropped.
+    let waveMergedAny = false;
     const recordWaveSibling = (sibling: FamilyChildResult): void => {
       childResults.push({ ...sibling });
     };
@@ -2450,6 +2549,7 @@ export async function runFamily(
           return await finalize();
         }
         familyHead = mergeResult.familyHead;
+        waveMergedAny = true;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {
         recordWaveSibling(r);
@@ -2567,6 +2667,20 @@ export async function runFamily(
         failedPhase: "wave",
       });
     }
+
+    // #961 / ADR 0139: batch integrated + Verification green → start IC checkpoint
+    // at this parent HEAD. Do not await here so the next wave's child coding can
+    // continue in parallel (no child dispatch / review lock). Await before next
+    // merge and before the final barrier.
+    if (waveMergedAny) {
+      fireCorrectnessCheckpoint();
+    }
+  }
+
+  // Final drain: last wave may have left a checkpoint in flight.
+  {
+    const icStop = await awaitPendingCorrectnessCheckpoint();
+    if (icStop !== undefined) return icStop;
   }
 
   // ── completeness gate (online R1 Codex P1): the final barrier is meaningful ONLY
