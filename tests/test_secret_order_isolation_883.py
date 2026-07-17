@@ -138,6 +138,72 @@ def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
     assert marker in assignee_text
 
 
+def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(game):
+    """召对原话 ≠ 密令 title/body 时，结构隔离仍须清掉同次召对 audience 共享行。
+
+    文本 needle 只覆盖精确子串；LLM 润稿后的 title/body 与皇帝原话不一致时，
+    必须按 turn+接令者血缘清 audience/chat_message 共享源（#883 结构隔离）。
+    """
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    chat_origin = (
+        "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
+        "不得走漏半句，亦不可经司礼监转呈。"
+    )
+    extracted_title = "密查国丈"
+    extracted_body = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
+
+    assert extracted_body not in chat_origin
+    assert chat_origin not in extracted_body
+    assert extracted_title not in chat_origin
+
+    db.append_chat_message(assignee.name, state.turn, "user", chat_origin)
+    db.append_chat_message(
+        assignee.name, state.turn, "minister", "臣领密旨，即暗中查办，不敢外泄。"
+    )
+    # 同回合无关召对（另一大臣）不得被误清。
+    other_public = "臣报：山东漕粮本月起运如常，无阻。"
+    db.append_chat_message(other.name, state.turn, "user", other_public)
+
+    oid = db.create_secret_order(
+        state, assignee.name, extracted_title, extracted_body, [],
+    )
+    assert oid > 0
+
+    shared_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    shared_event_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_events").fetchall()
+    ]
+    brief = db.conn.execute(
+        "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view["public_events"]]
+    )
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
+
+    assert brief is not None
+    assert brief["minister_name"] == assignee.name
+    assert extracted_body in (brief["body"] or "")
+    # 原话与润稿正文均不得残留共享存储。
+    assert all(chat_origin not in body for body in shared_bodies)
+    assert all(chat_origin not in body for body in shared_event_bodies)
+    assert all(extracted_body not in body for body in shared_bodies)
+    assert all(extracted_body not in body for body in shared_event_bodies)
+    assert chat_origin not in other_text
+    assert extracted_body not in other_text
+    # 接令者仍从专用简报读到密令；同回合他人公开召对不受误伤。
+    assert extracted_body in assignee_text
+    assert any(other_public in body for body in shared_bodies)
+
+
 def test_883_shared_write_seam_refuses_body_matching_active_secret_brief(game):
     """共享写入接缝：正文携带已有密令简报原文时，不得以 audience 等形态落共享源。"""
     db, state, content = game
