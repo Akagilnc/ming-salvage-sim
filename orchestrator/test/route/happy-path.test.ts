@@ -158,7 +158,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     const result = await runOrchestrator({ issueNumber: 247, backend });
 
     // Final state: success handoff pointing at the resident child branch.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.branch).toBe("feat/orchestrator/issue-247");
     expect(result.stopSummary.reason).toBe("success");
     expect(result.stepLedger.at(-1)?.stopSummary?.reason).toBe("success");
@@ -213,7 +213,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
 
     // A committed build plus clean independent review → local handoff succeeds.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("only takes an issue number as input and uses versioned promptFiles (no ad-hoc prompts)", async () => {
@@ -283,7 +283,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
       const result = await runOrchestrator({ issueNumber: 786, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(backend.runStepIds).toContain("S3");
       expect(schedule).toHaveBeenCalledOnce();
       expect(schedule.mock.calls[0]?.[0]).toMatchObject({
@@ -346,7 +346,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.metadata?.acceptedSuppressions).toBeUndefined();
     expect(backend.ledgerWrites.at(-1)?.stopSummary?.metadata?.acceptedSuppressions)
       .toBeUndefined();

@@ -377,7 +377,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
     const firstS6 = backend.dispatched.indexOf("S6:verify");
     expect(firstS6).toBeGreaterThan(backend.dispatched.indexOf("S5:coder"));
     // Must not park at S5 refuse
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });
 
@@ -510,7 +510,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       backend: countingBackend,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = countingBackend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     expect(countingBackend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
@@ -572,7 +572,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
   });
@@ -647,7 +647,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
     });
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     // #919 M3: refuse traffic keys sole on thin ctx; landing = refuseRecords only.
@@ -808,7 +808,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
     });
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);

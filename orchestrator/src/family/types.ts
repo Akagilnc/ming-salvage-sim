@@ -40,13 +40,13 @@ import type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
-import type { FamilyStageFailureStatus } from "./familyTerminal.js";
 import type { StopSummary } from "../stopSummary.js";
 import type {
   ModelRouteSlot,
   ResolvedModelRoute,
 } from "../modelRoutes.js";
 import type { LandingLiveHooks } from "./landing.js";
+import type { PublicFailedCause, PublicRunResult } from "../publicResult.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -1083,73 +1083,28 @@ export interface FamilyChildResult {
   readonly failureCause?: string;
 }
 
-/**
- * The family-run outcome (ADR 0022 decision 3④/⑤/⑥ + #922 terminal real names).
- *
- * - `"success"` — every verify barrier passed AND every epic child is merged into
- *   the family base. Only a fully-closed family run is `"success"` (N independent
- *   children that all merge with green barriers ⇒ `"success"`).
- * - Stage failures (#922) — the post-wave final barrier used to mash every stage
- *   death into `"verify_failed"`. Each stage now has its own terminal name, and
- *   `stopSummary.reason` uses the same token:
- *   - `"verify_failed"` — pure verify red (wave barrier, or final-suite verify)
- *   - `"cmr_failed"` — integrated CMR / missing CMR capability
- *   - `"ship_failed"` — family ship worker / ship capability
- *   - `"online_review_failed"` — online review loop did not converge
- *   - `"merge_failed"` — landing merge / docs worker hard fail (non-decision)
- *   - `"cleanup_failed"` — legacy token; post-#941 cleanup never fails the run
- * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
- *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
- *   (`"skipped"`). The run did not silently look like success (decision 3⑤
- *   "不静默吞"); the caller MUST NOT treat it as fully closed. (A full-merge
- *   happy path never produces this — it guards the honest result.)
- *
- * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
- *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
- *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop; OR a
- *   human decision gate parked the run (`decision_gate_park`). Distinct from
- *   stage failures — escalation is the answerable / resume-entry pause.
- *
- * Precedence when more than one applies: `"escalated"` (resume-entry / park, most
- * urgent) > stage failures > `"incomplete"` > `"success"`.
- *
- * Stage-failure tokens derive from canonical {@link FamilyStageFailureStatus}
- * (FAMILY_STAGE_FAILURE_STATUSES) — do not re-list here.
- */
-/** Family-run outcome. Stage failures derive from {@link FamilyStageFailureStatus}. */
-export type FamilyRunStatus =
-  | "success"
-  | "incomplete"
-  | "escalated"
-  | FamilyStageFailureStatus;
+/** Public family-run outcome: completed | parked | failed (#942 / ID-001). */
+export type FamilyRunStatus = PublicRunResult;
 
 /** The family run result. */
 export interface FamilyRunResult {
-  /**
-   * The family-run outcome. Stage-failure statuses (#922) mean a post-child
-   * barrier died at that named stage; the caller MUST NOT treat the run as
-   * shippable. A complete run with green barriers is `"success"`; failure paths
-   * are wired + tested (via injected `verifyCmr` in tests and real
-   * `runVerifyCmr` in production) for #296 / #922.
-   */
+  /** Public outcome: completed | parked | failed. */
   readonly status: FamilyRunStatus;
-  /**
-   * Which verify barrier phase was red (`wave` | `final`). Set for stage
-   * failures that originated from a verify/cmr barrier call; omitted for
-   * resume-path stage failures that never re-entered the barrier hook.
-   */
+  /** ID-001 failed cause when status is failed. */
+  readonly cause?: PublicFailedCause;
+  /** Barrier phase diagnostic (wave|final); not public status. */
   readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
   readonly familyBase: string;
   /** The family base HEAD after all merges (undefined if nothing merged). */
   readonly familyHead?: string;
-  /** Structured startup/escalation reason when status is `"escalated"`. */
+  /** Startup/escalation reason when parked or failed. */
   readonly escalation?: Escalation;
-  /** Unified family-level stop reason summary (#450). */
+  /** Stop reason summary (#450). */
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
-  /** Wave sibling root causes (#938 / ID-009); outer status until #942 cutover. */
+  /** Wave sibling root causes (#938 / ID-009). */
   readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;

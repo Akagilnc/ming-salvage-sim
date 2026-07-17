@@ -343,7 +343,7 @@ function ledgerEntry(
   step: SliceStepId,
   input?: {
     readonly output?: StepOutput;
-    readonly handoffStatus?: "success" | "escalate" | "error";
+    readonly handoffStatus?: "completed" | "parked" | "failed";
     readonly escalationKind?: "decision" | "failure";
     readonly event?: "escalation_answered" | "runner_bookkeeping";
     readonly forStep?: SliceStepId;
@@ -716,7 +716,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S8", {
-      handoffStatus: "escalate",
+      handoffStatus: "parked",
       escalationKind: "decision",
     }),
   ];
@@ -745,7 +745,7 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood runner answered-resume replay ended ${result.status}`);
   }
   return {
@@ -765,7 +765,7 @@ async function runnerModuleNotFoundReplay(): Promise<SeamReplay> {
     issueNumber: 440,
     backend: new ThrowingDogfoodSingleSliceBackend(),
   });
-  if (result.status !== "escalate" || result.stopSummary.reason !== "infra_failure") {
+  if (result.status !== "failed" || result.stopSummary.reason !== "infra_failure") {
     throw new Error(`dogfood runner module-not-found replay ended ${result.status}`);
   }
   return {
@@ -818,7 +818,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
     ],
   );
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood runner changed-shape replay ended ${result.status}`);
   }
   return {
@@ -875,7 +875,7 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
   const result = await runOrchestrator({ issueNumber: 307, backend });
   // #877: no-progress court demolished; continue_fixing + findings-count ships
   // when the scripted sibling re-review falls through to empty findings.
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood runner targeted-reset replay ended ${result.status} after #877 court demolition`,
     );
@@ -906,7 +906,7 @@ async function runnerNoProgressReplay(input: {
   const result = await runOrchestrator({ issueNumber: 307, backend });
   // #877: runner no-progress disposition court demolished. Findings-count
   // continues until the scripted backend falls through to empty findings and ships.
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood runner no-progress replay ended ${result.status} after #877 court demolition`,
     );
@@ -947,7 +947,7 @@ async function runnerReviewerEscalationReplay(input: {
     },
   ]);
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "escalate") {
+  if (result.status !== "parked") {
     throw new Error(
       `dogfood runner disposition replay ${input.mechanism} ended ${result.status}`,
     );
@@ -991,7 +991,7 @@ async function runnerInvalidEscalationAnswerReplay(): Promise<SeamReplay> {
     ],
   });
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "escalate") {
+  if (result.status !== "parked") {
     throw new Error(`dogfood invalid escalation-answer replay ended ${result.status}`);
   }
   return {
@@ -1527,7 +1527,7 @@ async function familyAdmissionSkippedReplay(): Promise<SeamReplay> {
   });
   const skipped = result.stopSummary.metadata?.admissionSkipped?.[0];
   if (
-    result.status !== "success" ||
+    result.status !== "completed" ||
     result.stopSummary.reason !== "success" ||
     skipped?.issue !== 451
   ) {
@@ -1551,7 +1551,7 @@ async function runnerTrustBoundaryReplay(): Promise<SeamReplay> {
   // host path only uses lightweight meta (Coder-Rec body).
   const backend = new DogfoodSingleSliceBackend();
   const result = await runOrchestrator({ issueNumber: 440, backend });
-  if (result.status !== "success" || result.stopSummary.reason !== "success") {
+  if (result.status !== "completed" || result.stopSummary.reason !== "success") {
     throw new Error(`dogfood trust-boundary replay ended ${result.status}`);
   }
   if (backend.dispatched.length === 0) {
@@ -1665,7 +1665,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       rejectedDefaultLeg,
       courtDemolished: true,
       dispatches: backend.dispatches,
-      status: "success",
+      status: "completed",
     },
   };
 }
@@ -1683,7 +1683,7 @@ async function routeFreezeReplay(): Promise<SeamReplay> {
     { ORCHESTRATOR_ROUTE: "codex-tight" },
     () => runOrchestrator({ issueNumber: 376, backend }),
   );
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood route freeze replay ended ${result.status}`);
   }
   if (!backend.dispatchedModels.includes("S3:opus")) {
@@ -1714,7 +1714,7 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(`dogfood closure-positive replay ended ${result.status}`);
   }
   return {
@@ -1898,7 +1898,7 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
     { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "success") {
+  if (result.status !== "completed") {
     throw new Error(
       `dogfood closure-context-missing replay ended ${result.status} after #877 court demolition`,
     );
@@ -1974,7 +1974,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
     sourceEvidence: {
       seam: "family_verify_cmr_pass_summary",
       mechanism: "zero_declaration_without_content_classification",
-      status: "success",
+      status: "completed",
       dispatches: backend.dispatches,
       runnerClassifiedFindingContent: false,
     },
@@ -2039,7 +2039,7 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
       }),
   );
   // Env asked for sonnet; preset keeps grok — run is not a tight-violation stop.
-  if (result.status === "escalate" && result.stopSummary.summary.includes("tight route violation")) {
+  if (result.status === "parked" && result.stopSummary.summary.includes("tight route violation")) {
     throw new Error(
       "dogfood startup route replay must not restaff from deleted CODER_MODEL env",
     );
@@ -2146,7 +2146,7 @@ async function providerStrongLegPassReplay(input: {
     sourceEvidence: {
       seam: "family_verify_cmr_provider_metadata",
       familyBase: input.familyBase,
-      status: "success",
+      status: "completed",
       routeName: "claude-tight",
       dispatches: backend.dispatches,
       successfulLegs: ["gpt-5.6-sol"],
@@ -2683,7 +2683,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       sourceStopSummary: staleFamilyHeadStopSummary,
       sourceEvidence: {
         seam: "family",
-        status: "success",
+        status: "completed",
         finalCmrPass: "correctness",
         staleReportedHeadIgnored: true,
       },

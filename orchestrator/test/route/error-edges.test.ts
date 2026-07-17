@@ -90,7 +90,7 @@ describe("S2 coder completed 0-commit report", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(runStepIds).toContain("S3");
     expect(runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(JSON.stringify(result.stepLedger)).not.toContain("synthesizedFailure");
@@ -107,7 +107,7 @@ describe("S2 coder completed 0-commit report", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
   });
 
@@ -143,7 +143,7 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(result.errorPackage?.reason).toContain("sandbox.run crashed");
   });
@@ -156,7 +156,7 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S1");
   });
 
@@ -168,7 +168,7 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toContain("gh: not found");
   });
@@ -180,7 +180,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
   it("happy path still yields S8(status=success) — regression check", async () => {
     const backend = new ErrorEdgeBackend();
     const result = await runOrchestrator({ issueNumber: 252, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage).toBeUndefined();
   });
 
@@ -193,7 +193,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       return { kind: "judge", status: "converged" };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
   });
 
@@ -219,9 +219,9 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       return { kind: "judge", status: "converged" };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(result.status).not.toBe("error");
-    expect(result.status).not.toBe("success");
+    expect(result.status).not.toBe("completed");
   });
 
   it("success has branch set; error has errorPackage set; escalate has neither branch nor errorPackage", async () => {
@@ -270,7 +270,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       issueNumber: 252,
       backend: escalateBackend,
     });
-    expect(escalateResult.status).toBe("escalate");
+    expect(escalateResult.status).toBe("parked");
     expect(escalateResult.branch).toBeUndefined();
     expect(escalateResult.errorPackage).toBeUndefined();
   });

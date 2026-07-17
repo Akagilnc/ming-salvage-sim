@@ -271,7 +271,7 @@ describe("#925 pure: route tri-state", () => {
     ).toEqual({ kind: "next", step: "S5" });
     expect(route({ from: "S6", output: judgeEscalate() })).toEqual({
       kind: "handoff",
-      status: "escalate",
+      status: "parked",
     });
   });
 
@@ -287,7 +287,7 @@ describe("#925 pure: route tri-state", () => {
       ).toEqual({ kind: "next", step: "S5" });
       expect(route({ from, output: judgeEscalate() })).toEqual({
         kind: "handoff",
-        status: "escalate",
+        status: "parked",
       });
       expect(
         route({ from, output: { kind: "reviewer", findingsCount: 0, findings: [] } }),
@@ -419,7 +419,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 925, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s3 = backend.specs.find((s) => s.id === "S3");
     const s6 = backend.specs.find((s) => s.id === "S6");
@@ -449,7 +449,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9251, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
     expect(s5Idx).toBeGreaterThanOrEqual(0);
@@ -478,7 +478,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary?.reason).toBe("contract_drift");
     expect(result.stopSummary?.summary).toMatch(
       /0 live findings|court contract drift|empty continue/i,
@@ -498,7 +498,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     ]);
     const result = await runOrchestrator({ issueNumber: 91961, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary?.reason).toBe("contract_drift");
     expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
     // Kills still land on the S3 ledger row before the empty-live gate.
@@ -518,7 +518,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       { kind: "converged" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9252, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s3 = result.stepLedger.find((e) => e.step === "S3");
     // U7/R2: sole source = output.advanceCoder (recovery/prior-verdict rows);
     // LedgerEntry.advanceCoder top-level field deleted (zero readers).
@@ -534,8 +534,8 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       { kind: "escalate", reason: "stalled", diagnosis: "same bug 3 rounds" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9253, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.status).not.toBe("success");
+    expect(result.status).toBe("parked");
+    expect(result.status).not.toBe("completed");
     // Must not invent a brand-new terminal — still the escalate park family.
     expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
   });
@@ -545,7 +545,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       { kind: "escalate", reason: "stalled", diagnosis: "same bug 3 rounds" },
     ]);
     const result = await runOrchestrator({ issueNumber: 9253, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     // #925 / ADR 0132: judge escalate = existing decision-kind park (not a third token).
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.stepLedger.find((e) => e.step === "S8")?.stopSummary?.reason).toBe(
@@ -565,7 +565,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       },
     ]);
     const result = await runOrchestrator({ issueNumber: 9191, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     const s3 = result.stepLedger.find((e) => e.step === "S3");
     expect(s3?.output).toMatchObject({
       kind: "judge",
@@ -590,7 +590,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       },
     ]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     const s6 = result.stepLedger.find((e) => e.step === "S6");
     expect(s6?.output).toMatchObject({
       kind: "judge",
@@ -712,7 +712,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 9254, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // Dead resume once, then fresh S6 (no second resume).
     expect(resumeFailCount).toBe(1);
     expect(s6FreshOpenings).toBe(1);
@@ -736,7 +736,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
   it("no S4 open-count step appears on a clean judge path", async () => {
     const backend = new JudgeBackend([{ kind: "converged" }]);
     const result = await runOrchestrator({ issueNumber: 9255, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.some((e) => e.step === "S4")).toBe(false);
     expect(backend.dispatched.some((d) => d.startsWith("S4:"))).toBe(false);
   });
@@ -859,7 +859,7 @@ describe("#925 F2: crash/resume rebuilds open set from judge continue", () => {
     // Finish after S5: override S6 to judge converged (default returns reviewer
     // open-count 0 which normalises to converged — also fine).
     const result = await runOrchestrator({ issueNumber: 9256, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     // planResume of S3 continue → S5; first dispatch is S5 with open set.
     expect(backend.dispatchSpecs[0]?.id).toBe("S5");
@@ -920,13 +920,13 @@ describe("#925 S1: judge escalate park → owner answer → 原地 resume", () =
           judgeEscalate("stalled", "same bug 3 rounds"),
           S3_SESSION,
         ),
-        s8("escalate"),
+        s8("parked"),
         escalationAnswer("S3", "owner: keep going with the live set"),
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 9257, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // 原地 resume of the escalated S3 judge session — not a fresh S0 cut.
     expect(backend.resumeSessionCalls[0]).toEqual(["S3", S3_SESSION]);
     expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({

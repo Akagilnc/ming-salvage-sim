@@ -1,22 +1,13 @@
-/**
- * #922 — family terminal real names.
- *
- * The post-wave final barrier used to collapse every stage failure into the
- * umbrella `verify_failed`. Callers (and resume) must see the stage that
- * actually died: verify / CMR / ship / online review / merge / cleanup.
- *
- * FamilyRunResult.status and StopSummary.reason use the SAME token for these
- * stage failures (no alias layer, no "infra_failure" stand-in).
- */
+/** #922/#942 stage diagnostics; public ABI is completed|parked|failed (publicResult). */
 
+import {
+  causeFromStageFailure,
+  type PublicFailedCause,
+  type PublicRunResult,
+} from "../publicResult.js";
 import type { StopSummary } from "../stopSummary.js";
 
-/** Per-stage family terminal failure names (PRD #919 / issue #922). */
-/**
- * Public stage-failure ABI tokens (#922 / #942 freeze).
- * `cleanup_failed` remains for exit-code table stability until #942 cutover —
- * production landing never emits it (host cleanup-fail court deleted in #941).
- */
+/** Diagnostic stage tokens for stopSummary / failedStatus (not public ABI). */
 export const FAMILY_STAGE_FAILURE_STATUSES = [
   "verify_failed",
   "cmr_failed",
@@ -44,9 +35,7 @@ const DEFAULT_SUMMARY: Readonly<Record<FamilyStageFailureStatus, string>> = {
   cmr_failed: "family integrated CMR barrier failed",
   ship_failed: "family ship stage failed",
   online_review_failed: "family online review stage failed",
-  // #941: landing owns merge; keep token merge_failed until #942 public ABI.
   merge_failed: "family landing merge stage failed",
-  // Legacy ABI token only — production never sets this after #941.
   cleanup_failed: "family post-merge cleanup stage failed (legacy token)",
 };
 
@@ -63,12 +52,9 @@ const DEFAULT_REPAIR: Readonly<Record<FamilyStageFailureStatus, string>> = {
     "resolve landing/merge blockers or answer the decision gate, then re-enter landing",
   cleanup_failed:
     "legacy token only — re-enter landing after live MERGED; leftovers never fail the run",
-}
+};
 
-/**
- * Build a stage-named stop summary. `reason` is always the stage token so
- * family aggregation and stopSummary stay synchronized.
- */
+/** Stage diagnostic stopSummary (reason = stage token). */
 export function stageFailureStopSummary(input: {
   readonly status: FamilyStageFailureStatus;
   readonly summary?: string;
@@ -83,11 +69,7 @@ export function stageFailureStopSummary(input: {
   };
 }
 
-/**
- * Re-stamp an existing barrier stopSummary so its reason matches the stage
- * terminal name, preserving summary / repairHint / metadata. Decision parks
- * are left untouched (caller routes those to `escalated`).
- */
+/** Restamp barrier stopSummary.reason to stage; leave decision parks. */
 export function syncStopSummaryToStageFailure(
   status: FamilyStageFailureStatus,
   barrier: StopSummary | undefined,
@@ -104,56 +86,50 @@ export function syncStopSummaryToStageFailure(
   };
 }
 
-/**
- * Resolve the honest family terminal for a red barrier:
- * - decision_gate_park → escalated (answerable pause, not a stage failure)
- * - explicit failedStatus from the verify/cmr hook wins
- * - barrier stopSummary already carrying a stage token is reused (resume truth)
- * - otherwise default to verify_failed (wave verify / bare inject hooks)
- */
+/** Red barrier → parked (decision) or failed+cause (stage). */
 export function resolveFamilyStageTerminal(input: {
   readonly failedStatus?: FamilyStageFailureStatus;
   readonly barrierStopSummary?: StopSummary;
   readonly defaultStatus?: FamilyStageFailureStatus;
 }):
-  | { readonly kind: "stage"; readonly status: FamilyStageFailureStatus }
-  | { readonly kind: "escalated"; readonly stopSummary: StopSummary } {
+  | {
+      readonly kind: "failed";
+      readonly stage: FamilyStageFailureStatus;
+      readonly cause: PublicFailedCause;
+    }
+  | { readonly kind: "parked"; readonly stopSummary: StopSummary } {
   const barrier = input.barrierStopSummary;
   if (barrier?.reason === "decision_gate_park") {
-    return { kind: "escalated", stopSummary: barrier };
+    return { kind: "parked", stopSummary: barrier };
   }
-  if (input.failedStatus !== undefined) {
-    return { kind: "stage", status: input.failedStatus };
-  }
-  if (barrier !== undefined && isFamilyStageFailureStatus(barrier.reason)) {
-    return { kind: "stage", status: barrier.reason };
-  }
+  const stage =
+    input.failedStatus !== undefined
+      ? input.failedStatus
+      : barrier !== undefined && isFamilyStageFailureStatus(barrier.reason)
+        ? barrier.reason
+        : (input.defaultStatus ?? "verify_failed");
   return {
-    kind: "stage",
-    status: input.defaultStatus ?? "verify_failed",
+    kind: "failed",
+    stage,
+    cause: causeFromStageFailure(stage),
   };
 }
 
-/**
- * Single seam: raw stopSummary + stage context → FamilyRunResult terminal
- * `{ status, stopSummary }` used by merge / online-review resume tails (and any
- * same-class incomplete stage that already owns a stopSummary).
- *
- * - decision_gate_park → escalated (park preserved; no stage restamp)
- * - otherwise → stage token with status === stopSummary.reason (no infra_failure stand-in)
- */
+/** stopSummary + stage → public parked|failed (+ cause). */
 export function familyTerminalFromStopSummary(input: {
   readonly stage: FamilyStageFailureStatus;
   readonly stopSummary: StopSummary;
 }): {
-  readonly status: "escalated" | FamilyStageFailureStatus;
+  readonly status: Extract<PublicRunResult, "parked" | "failed">;
+  readonly cause?: PublicFailedCause;
   readonly stopSummary: StopSummary;
 } {
   if (input.stopSummary.reason === "decision_gate_park") {
-    return { status: "escalated", stopSummary: input.stopSummary };
+    return { status: "parked", stopSummary: input.stopSummary };
   }
   return {
-    status: input.stage,
+    status: "failed",
+    cause: causeFromStageFailure(input.stage),
     stopSummary: stageFailureStopSummary({
       status: input.stage,
       summary: input.stopSummary.summary,

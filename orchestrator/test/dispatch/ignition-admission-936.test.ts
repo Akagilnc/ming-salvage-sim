@@ -223,7 +223,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("should not clone after route admission stop");
       },
     });
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.reason).toMatch(/startup route failure|unknown route/i);
     expect(ghCalls).toBe(0);
     expect(cloneCalls).toBe(0);
@@ -264,7 +264,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("all-filtered admission must not create a worksite");
       },
     });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children).toEqual([]);
     expect(result.admissionSkipped?.map((child) => child.issue)).toEqual([935, 936]);
     expect(cloneCalls).toBe(0);
@@ -311,7 +311,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("all-filtered must not create a worksite for parent Coder-Rec");
       },
     });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children).toEqual([]);
     expect(result.admissionSkipped?.map((child) => child.issue)).toEqual([935, 936]);
     expect(result.stopSummary?.reason).toBe("already_done");
@@ -361,7 +361,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("schema failure must precede clone");
       },
     });
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/blocked_by schema error|issue metadata unavailable/i);
     expect(cloneCalls).toBe(0);
   });
@@ -406,7 +406,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("Coder-Rec aggregate failure must precede clone");
       },
     });
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/2 errors/);
     expect(result.escalation?.diagnosis).toContain("issue #935");
     expect(result.escalation?.diagnosis).toContain("issue #936");
@@ -457,7 +457,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
         throw new Error("parent+child Coder-Rec aggregate must precede clone");
       },
     });
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/3 errors/);
     expect(result.escalation?.diagnosis).toContain("issue #934");
     expect(result.escalation?.diagnosis).toContain("issue #935");
@@ -496,7 +496,7 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
       sh,
       realBackendFactory: () => backend,
     });
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation).toEqual({
       reason: "startup route smoke failure",
       diagnosis: "route smoke failed: nonce smoke failed",
@@ -538,12 +538,12 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     backend.resumeState = {
       worktree: { branch: "feat/issue-936", base: "main", path: "/tmp/wt-936" },
       stateDir: "/tmp/ledger-936",
-      ledger: [s8("success")],
+      ledger: [s8("completed")],
     };
     const scene = await discoverResidentScene(backend, 936);
     expect(scene.kind).toBe("resident");
     if (scene.kind === "resident") {
-      expect(scene.state.ledger[0]?.handoffStatus).toBe("success");
+      expect(scene.state.ledger[0]?.handoffStatus).toBe("completed");
     }
   });
 
@@ -574,7 +574,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(scene.reason).toMatch(/partial residue|without readable ledger/i);
     }
     const result = await runOrchestrator({ issueNumber: 936, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.reason).toMatch(/without readable ledger|partial residue/i);
     expect(backend.prepareCalls).toBe(0);
     expect(backend.metaCalls).toBe(0);
@@ -588,11 +588,11 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       stateDir: "/tmp/ledger-936",
       ledger: [
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        s8("success"),
+        s8("completed"),
       ],
     };
     const result = await runOrchestrator({ issueNumber: 936, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.metaCalls).toBe(0);
     expect(backend.smokeCalls).toBe(0);
     expect(backend.prepareCalls).toBe(0);
@@ -770,7 +770,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           throw new Error("terminal replay must not clone");
         },
       });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(result.stopSummary?.reason).toBe("already_done");
       expect(result.familyHead).toBe("abc123");
       expect(result.children).toEqual([{ issue: 936, status: "already_done" }]);
@@ -836,7 +836,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           throw new Error("terminal replay must not clone");
         },
       });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(result.admissionSkipped).toEqual([
         {
           issue: 935,
@@ -889,7 +889,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
           throw new Error("corrupt scene must not clone");
         },
       });
-      expect(result.status).toBe("escalated");
+      expect(result.status).toBe("failed");
       expect(result.escalation?.reason).toMatch(/resume state invalid/i);
       expect(result.escalation?.diagnosis).toMatch(/corrupt/i);
       expect(ghCalls).toBe(0);
@@ -1010,7 +1010,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(scene.kind).toBe("resident");
       if (scene.kind === "resident") {
         expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")?.status).toBe(
-          "success",
+          "completed",
         );
       }
     } finally {
@@ -1103,7 +1103,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(scene.kind).toBe("resident");
       if (scene.kind === "resident") {
         const replay = planFamilyTerminalReplay(scene.ledger, "family/934-base");
-        expect(replay?.status).toBe("escalated");
+        expect(replay?.status).toBe("parked");
         expect(replay?.stopSummary?.reason).toBe("decision_gate_park");
       }
     } finally {
