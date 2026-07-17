@@ -84,8 +84,7 @@ export function liveFindingsBlockConverged(
  *
  * Live rows stay out of the terminal ledger flip set (they remain open).
  * Transitions go through {@link recordFindingStoreFlip} (single write-point
- * source — ADR 0129). Illegal transitions are skipped (caller/seat already
- * validated disposition shape; store only records legal open→terminal flips).
+ * source — ADR 0129). Illegal store flips fail loud (throw with store reason).
  */
 export function judgeTerminalsToLedgerDispositions(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
@@ -103,12 +102,19 @@ export function judgeTerminalsToLedgerDispositions(
         source: "judge_kill",
         scope: d.reason,
       });
-      if (written.ok) out.push(written.value);
+      if (!written.ok) {
+        throw new Error(written.reason);
+      }
+      out.push(written.value);
       continue;
     }
     if (d.action === "suppress") {
-      const groundSource =
+      const groundKind =
         "groundTicket" in d && d.groundTicket !== undefined
+          ? "groundTicket"
+          : "ownerRecordPointer";
+      const groundSource =
+        groundKind === "groundTicket"
           ? `groundTicket:${d.groundTicket}`
           : d.ownerRecordPointer;
       const written = recordFindingStoreFlip({
@@ -118,12 +124,12 @@ export function judgeTerminalsToLedgerDispositions(
         reason: d.evidence,
         severity,
         source: groundSource,
-        scope:
-          "groundTicket" in d && d.groundTicket !== undefined
-            ? "groundTicket"
-            : "ownerRecordPointer",
+        scope: groundKind,
       });
-      if (written.ok) out.push(written.value);
+      if (!written.ok) {
+        throw new Error(written.reason);
+      }
+      out.push(written.value);
     }
   }
   return out;

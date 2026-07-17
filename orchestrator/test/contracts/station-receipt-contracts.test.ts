@@ -31,7 +31,7 @@ import {
 
 // ─── Seams ───────────────────────────────────────────────────────────────────
 // 1. Judge verdict three-state encode/decode/validate
-// 2. Finding disposition table (four legal reasons + evidence on kill rows)
+// 2. Finding disposition table (kill rows: four legal reasons + evidence; suppress rows: evidence + exactly one of groundTicket|ownerRecordPointer)
 // 3. Coder refuse envelope (refused + identity keys + cargo pointer; no cargo body)
 // 4. Canonical refused* vocabulary (refuted* / dual fields rejected)
 // 5. Full-wave thin envelopes (judge / coder* / ship / merger / onlineReview)
