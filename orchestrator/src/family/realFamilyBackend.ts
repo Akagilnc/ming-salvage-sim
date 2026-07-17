@@ -133,17 +133,10 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type AgentSandboxRunOptions,
-  SANDBOX_FIX_FOCUS_PATH_ENV,
   appendHomeEnvMount,
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
-import {
-  FIX_FOCUS_LANDING_FILE,
-  attachSanitizedFindingFamilies,
-  formatFixFocusMarkdown,
-  normalizeFindingFamiliesWireAliases,
-} from "../findingFamilies.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -201,7 +194,6 @@ import type {
   Escalation,
   WorkerMonitorHandle,
   Finding,
-  FindingFamily,
   FixerResult,
   OnlineReviewFindingDisposition,
   OnlineReviewThreadReply,
@@ -1858,7 +1850,6 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
-      const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
@@ -1873,7 +1864,6 @@ export class RealFamilyBackend implements FamilyBackend {
               spec.model,
               ctx,
               outcomeLanding,
-              fixFocusLanding,
             ),
             agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
@@ -1899,9 +1889,6 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(join(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
           force: true,
         });
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
-        }
       }
     } finally {
       this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
@@ -1971,20 +1958,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return { path, sandboxPath: FAMILY_FIX_FINDINGS_FILENAME };
   }
 
-  /** Runner-owned pattern briefs for family coder-fix / online fixer (#711). */
-  protected writeFamilyFixFocusFile(
-    landing?: WorkerLandingPayload,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
-      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
-      return undefined;
-    }
-    this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
-    const path = join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE);
-    writeFileSync(path, `${formatFixFocusMarkdown(landing.findingFamilies)}\n`, "utf8");
-    return { path, sandboxPath: FIX_FOCUS_LANDING_FILE };
-  }
-
   protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
@@ -2022,10 +1995,9 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding),
     );
   }
 
@@ -2034,7 +2006,6 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2047,9 +2018,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
-    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -2060,13 +2028,6 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
     ];
-    if (fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
-        readonly: true,
-      });
-    }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2186,8 +2147,6 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "landing"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
-      const fixFocusLanding =
-        spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
@@ -2202,7 +2161,6 @@ export class RealFamilyBackend implements FamilyBackend {
             spec,
             ctx,
             onlineReviewLanding,
-            fixFocusLanding,
             outcomeLanding,
           ),
           agent: this.agentForSpec(spec, ctx),
@@ -2219,9 +2177,6 @@ export class RealFamilyBackend implements FamilyBackend {
       } finally {
         if (onlineReviewLanding !== undefined) {
           rmSync(onlineReviewLanding.path, { force: true });
-        }
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
         }
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
@@ -2270,7 +2225,6 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
     outcomeLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
@@ -2279,7 +2233,6 @@ export class RealFamilyBackend implements FamilyBackend {
         spec,
         ctx,
         onlineReviewLanding,
-        fixFocusLanding,
         outcomeLanding,
       ),
     );
@@ -2290,7 +2243,6 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
     outcomeLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
@@ -2311,9 +2263,6 @@ export class RealFamilyBackend implements FamilyBackend {
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
-    }
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
@@ -2329,13 +2278,6 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: onlineReviewLanding.path,
         sandboxPath: onlineReviewLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -3265,7 +3207,6 @@ export type CmrWorkerOutcome =
       readonly skippedLegs?: readonly CmrSkippedLeg[];
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-      readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths?: readonly string[];
       readonly sessionId?: string;
     }
@@ -3279,7 +3220,6 @@ export type CmrWorkerOutcome =
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
       readonly findingsCount?: number;
-      readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths: readonly string[];
       readonly sessionId?: string;
     }
@@ -3295,7 +3235,6 @@ export type CmrWorkerOutcome =
 function withFamilyJudgeCargo(
   judge: import("../types.js").JudgeResult,
   cargo: {
-    readonly findingFamilies?: readonly FindingFamily[];
     readonly skippedLegs?: readonly CmrSkippedLeg[];
     readonly successfulLegs?: readonly string[];
     readonly evidencePaths?: readonly string[];
@@ -3305,9 +3244,6 @@ function withFamilyJudgeCargo(
 ): import("../types.js").JudgeResult {
   return {
     ...judge,
-    ...(cargo.findingFamilies !== undefined
-      ? { findingFamilies: cargo.findingFamilies }
-      : {}),
     ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
     ...(cargo.successfulLegs !== undefined
       ? { successfulLegs: cargo.successfulLegs }
@@ -3611,10 +3547,7 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
-  // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
-  // before .strict() schemas reject them as extra keys.
-  const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
-  const base = isJsonRecord(withFamilies) ? withFamilies : parsed;
+  const base = parsed;
   const dispositions = base.priorFindingDispositions;
   if (!Array.isArray(dispositions)) return base;
   return {
@@ -3664,8 +3597,8 @@ function classifyCmrOutcomePayload(
   }
 
   // #930 live path: T2 judge verdict (same decode as single-slice S3/S6).
-  // Strip cargo siblings before strict decode (findings / findingFamilies ride
-  // as opaque cargo — same class as coder pickCoderTraffic).
+  // Strip cargo siblings before strict decode (findings ride as opaque cargo —
+  // same class as coder pickCoderTraffic).
   const envelope = decodeJudgeVerdict(pickJudgeTraffic(normalizedParsed));
   if (envelope.ok) {
     const cargo = extractCmrCargoFields(normalizedParsed);
@@ -3728,7 +3661,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   readonly skippedLegs?: Array<{ slug: string; reason: string }>;
   readonly claimedFixedFindingIdentityKeys?: string[];
   readonly priorFindingDispositions?: PriorFindingDisposition[];
-  readonly findingFamilies?: readonly FindingFamily[];
   readonly evidencePaths?: string[];
 } {
   const findings = Array.isArray(normalizedParsed.findings)
@@ -3753,10 +3685,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
-  const families = attachSanitizedFindingFamilies(
-    {},
-    normalizedParsed.findingFamilies,
-  );
   return {
     ...(findings !== undefined ? { findings } : {}),
     successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
@@ -3767,7 +3695,6 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
     ...(priorFindingDispositions !== undefined
       ? { priorFindingDispositions }
       : {}),
-    ...families,
     ...(evidencePaths !== undefined ? { evidencePaths } : {}),
   };
 }
@@ -3804,9 +3731,6 @@ function residualCmrVerdictCargo(
       : {}),
     ...(cargo.findings !== undefined ? { findings: cargo.findings } : {}),
     ...(findingsCount !== undefined ? { findingsCount } : {}),
-    ...(cargo.findingFamilies !== undefined
-      ? { findingFamilies: cargo.findingFamilies }
-      : {}),
     evidencePaths: cargo.evidencePaths ?? [],
   };
 }
@@ -4181,8 +4105,7 @@ export function parseVerifyOutcome(
 ): VerifyResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
-  const parsed = normalizeFindingFamiliesWireAliases(payload.parsed);
-  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
   if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
   const stringArray = (value: unknown): value is string[] =>
     Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -4211,27 +4134,20 @@ export function parseVerifyOutcome(
       : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
-    ...attachSanitizedFindingFamilies(
-      {
-        converged: parsed.converged,
-        ...(findingDispositions !== undefined
-          ? { findingDispositions }
-          : {}),
-        ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
-          ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(threadReplies !== undefined ? { threadReplies } : {}),
-        ...(stringArray(parsed.threadsToResolve)
-          ? { threadsToResolve: parsed.threadsToResolve }
-          : {}),
-        ...(stringArray(parsed.deferredIssueUrls)
-          ? { deferredIssueUrls: parsed.deferredIssueUrls }
-          : {}),
-        ...(terminalState !== undefined ? { terminalState } : {}),
-        ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
-      },
-      parsed.findingFamilies,
-    ),
+    converged: parsed.converged,
+    ...(findingDispositions !== undefined ? { findingDispositions } : {}),
+    ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
+      ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
+      : {}),
+    ...(threadReplies !== undefined ? { threadReplies } : {}),
+    ...(stringArray(parsed.threadsToResolve)
+      ? { threadsToResolve: parsed.threadsToResolve }
+      : {}),
+    ...(stringArray(parsed.deferredIssueUrls)
+      ? { deferredIssueUrls: parsed.deferredIssueUrls }
+      : {}),
+    ...(terminalState !== undefined ? { terminalState } : {}),
+    ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
   };
   return candidate;
 }
