@@ -1414,6 +1414,7 @@ class GameDB:
                 ON character_knowledge_sources(turn, id);
 
             -- #883: secret orders never enter the shared knowledge ledger.
+            -- origin_chat_message_ids: message-level oral-decree provenance (#976).
             CREATE TABLE IF NOT EXISTS secret_order_briefs (
                 order_id INTEGER PRIMARY KEY,
                 turn INTEGER NOT NULL,
@@ -1422,6 +1423,7 @@ class GameDB:
                 minister_name TEXT NOT NULL,
                 title TEXT NOT NULL,
                 body TEXT NOT NULL DEFAULT '',
+                origin_chat_message_ids TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
             );
@@ -1524,6 +1526,9 @@ class GameDB:
         # held | released | withheld | private
         self.ensure_column(
             "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
+        # #976 message-level origin provenance on assignee briefs (durable bloodline).
+        self.ensure_column(
+            "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
         # Read-side projection is registry-driven.  Only issue rows are shared
         # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
@@ -6852,6 +6857,9 @@ class GameDB:
     _ROLLBACK_TABLE_PK = {
         "turn_directives": "id",
         "secret_orders": "id",
+        # #976: briefs are not covered by FK CASCADE (PRAGMA foreign_keys=0);
+        # include in chat-turn rollback so undo cannot orphan secret_order_briefs.
+        "secret_order_briefs": "order_id",
         "characters": "name",
         "character_offices": "character_name",
         "consort_traits": "name",
@@ -8270,19 +8278,34 @@ class GameDB:
 
     # ── 动作闸门：结构化聊天写动作暂存(ADR 0006) ──────────────────────────
     def _latest_held_user_chat_message_id(
-        self, minister_name: str, turn: int,
+        self, minister_name: str, turn: Optional[int] = None,
     ) -> Optional[int]:
-        """Latest still-held user chat row for this minister on ``turn`` (oral-decree pin)."""
+        """Latest still-held user chat row for oral-decree pin (#976).
+
+        * ``turn`` set (stage path): only that turn — stage-time pin of the
+          utterance just spoken, so later confirmation user lines cannot steal.
+        * ``turn`` omitted (classification auto-capture): any still-held user
+          for this minister (covers F4 / zero-overlap cross-turn: hold at T,
+          create at T+N without settle).
+        """
         name = str(minister_name or "").strip()
         if not name:
             return None
         try:
-            row = self.conn.execute(
-                "SELECT id FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
-                "AND turn=? ORDER BY id DESC LIMIT 1",
-                (name, int(turn)),
-            ).fetchone()
+            if turn is not None:
+                row = self.conn.execute(
+                    "SELECT id FROM chat_messages "
+                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                    "AND turn=? ORDER BY id DESC LIMIT 1",
+                    (name, int(turn)),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT id FROM chat_messages "
+                    "WHERE minister_name=? AND role='user' AND knowledge_status='held' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (name,),
+                ).fetchone()
         except sqlite3.OperationalError:
             return None
         return int(row["id"]) if row is not None else None
@@ -8333,6 +8356,9 @@ class GameDB:
             if mid > 0 and mid not in pinned_ids:
                 pinned_ids.append(mid)
         if not pinned_ids:
+            # Auto-capture: any still-held user bloodline (cross-turn F4 included).
+            # Prefer same-turn first so pure-public earlier-turn held is not
+            # stolen when a fresh same-turn oral exists.
             for name in dict.fromkeys(
                 n for n in (
                     str(origin_minister_name or "").strip(),
@@ -8340,6 +8366,8 @@ class GameDB:
                 ) if n
             ):
                 mid = self._latest_held_user_chat_message_id(name, int(state.turn))
+                if mid is None:
+                    mid = self._latest_held_user_chat_message_id(name)
                 if mid is not None and mid not in pinned_ids:
                     pinned_ids.append(mid)
         return pinned_ids
@@ -10301,119 +10329,110 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    def _coerce_positive_message_ids(
+        self, message_ids: Optional[Iterable[int]],
+    ) -> List[int]:
+        """Normalize chat_message id pins to a stable unique positive list."""
+        out: List[int] = []
+        seen: set = set()
+        for raw in message_ids or ():
+            try:
+                mid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if mid > 0 and mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+        return out
+
+    def _registered_secret_origin_message_ids(self) -> set:
+        """All durable oral-decree message ids recorded on secret_order_briefs.
+
+        Message-level provenance (#976): release must never project these rows
+        into shared/private tracks — withhold is the only legal terminal for
+        secret-origin chat bloodline.
+        """
+        out: set = set()
+        try:
+            rows = self.conn.execute(
+                "SELECT origin_chat_message_ids FROM secret_order_briefs"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return out
+        for row in rows:
+            raw = row["origin_chat_message_ids"] if row is not None else "[]"
+            try:
+                parsed = json.loads(raw or "[]")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(parsed, list):
+                continue
+            for item in parsed:
+                try:
+                    mid = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if mid > 0:
+                    out.add(mid)
+        return out
+
+    def _withhold_origin_chat_messages(
+        self,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
+        *,
+        commit: bool = True,
+    ) -> List[int]:
+        """Withhold exact oral-decree message ids (#976 message-level provenance).
+
+        Structural rule (id bloodline, never content matching): only the pinned
+        chat_message rows are secret-origin.  Follows the message wherever it
+        lives (speaker vs assignee, 跨人承办).  Confirmation user lines and
+        pure-public same-window users are not guessed via (assignee, role=user).
+
+        Also re-withholds already-projected (released/private) pinned rows and
+        deletes any shared knowledge keyed by those source ids (id-based
+        cleanup if anything leaked before classification).
+        """
+        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
+        if not pins:
+            if commit:
+                self.conn.commit()
+            return []
+        placeholders = ",".join("?" for _ in pins)
+        try:
+            rows = self.conn.execute(
+                f"SELECT id FROM chat_messages WHERE id IN ({placeholders})",
+                pins,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        live_ids = [int(row["id"]) for row in rows]
+        source_ids: List[str] = []
+        for mid in live_ids:
+            self.conn.execute(
+                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
+                (mid,),
+            )
+            source_ids.append(f"chat_message:{mid}")
+        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
+        if commit:
+            self.conn.commit()
+        return live_ids
+
     def _withhold_assignee_user_audience_origin(
         self, state: GameState, minister_name: str, *,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> None:
-        """Classify secret-origin audience user bloodline for one minister (#976).
+        """Compat wrapper → message-level ``_withhold_origin_chat_messages``.
 
-        Structural rule (provenance, not content matching): emperor ``user``
-        chat that is the secret-origin line is never released (shared or
-        private events).  Zero-overlap LLM 润稿 is covered by role+identity.
-
-        Scope (narrowed after completeness review — 修类不修点):
-        - Cross-turn still-``held`` user rows (any earlier turn) — F4 /
-          T-hold → T+N create without settle.
-        - Same-turn still-``held`` user:
-          * **Pinned mode** (``origin_chat_message_ids is not None``): withhold
-            only the pinned ids that belong to this minister.  Never re-guess
-            via max(held id) — pending-action confirmation utterances after
-            stage must not steal oral-decree bloodline.
-          * **Heuristic mode** (pins is None): only the latest held (max id)
-            is origin; earlier same-window pure-public user survives (S3).
-        - Already projected (``released``/``private``) user rows:
-          * Pinned mode: only pinned ids in the open settle window.
-          * Heuristic: all open-window released/private user rows (accepted
-            cost of pulling back just-publicized origin across one settle).
-
-        Minister/assistant held rows are not withheld here: after the brief
-        exists, ``release_held_audience_knowledge`` sends them private-only.
-
-        Call for **both** final assignee and origin audience speaker when
-        they differ (跨人承办 — oral decree lives on speaker chat rows).
+        ``minister_name`` is ignored: origin bloodline follows message id, not
+        (assignee, role=user).  Kept so historical call sites keep compiling.
         """
-        name = str(minister_name or "").strip()
-        if not name:
-            return
-        # Previous + current turn: post-settle advance leaves origin at turn-1.
-        bound_turn = max(0, int(state.turn) - 1)
-        current_turn = int(state.turn)
-        pin_mode = origin_chat_message_ids is not None
-        pinned: set = set()
-        if pin_mode:
-            for raw in origin_chat_message_ids or ():
-                try:
-                    mid = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0:
-                    pinned.add(mid)
-        withhold_ids: List[int] = []
-        try:
-            held_rows = self.conn.execute(
-                "SELECT id, turn FROM chat_messages "
-                "WHERE minister_name=? AND role='user' AND knowledge_status='held'",
-                (name,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            held_rows = []
-        same_turn_held: List[int] = []
-        for row in held_rows:
-            mid = int(row["id"])
-            msg_turn = int(row["turn"] or 0)
-            if msg_turn < current_turn:
-                # Cross-turn held origin (F4 / zero-overlap rewrite).
-                withhold_ids.append(mid)
-            else:
-                same_turn_held.append(mid)
-        if pin_mode:
-            # Only pinned same-turn held rows — confirmation user is not origin.
-            for mid in same_turn_held:
-                if mid in pinned:
-                    withhold_ids.append(mid)
-        elif same_turn_held:
-            # Heuristic fallback: latest held user is secret-origin bloodline.
-            withhold_ids.append(max(same_turn_held))
-        try:
-            if pin_mode and pinned:
-                open_rows = self.conn.execute(
-                    f"SELECT id FROM chat_messages "
-                    f"WHERE minister_name=? AND role='user' "
-                    f"AND knowledge_status IN ('released', 'private') AND turn >= ? "
-                    f"AND id IN ({','.join('?' * len(pinned))})",
-                    (name, bound_turn, *sorted(pinned)),
-                ).fetchall()
-            elif pin_mode:
-                open_rows = []
-            else:
-                open_rows = self.conn.execute(
-                    "SELECT id FROM chat_messages "
-                    "WHERE minister_name=? AND role='user' "
-                    "AND knowledge_status IN ('released', 'private') AND turn >= ?",
-                    (name, bound_turn),
-                ).fetchall()
-        except sqlite3.OperationalError:
-            open_rows = []
-        for row in open_rows:
-            withhold_ids.append(int(row["id"]))
-        # Stable unique order.
-        seen: set = set()
-        source_ids: List[str] = []
-        for mid in withhold_ids:
-            if mid in seen:
-                continue
-            seen.add(mid)
-            source_ids.append(f"chat_message:{mid}")
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                (mid,),
-            )
-        # Provenance cleanup if anything leaked before classification (id-based,
-        # never content match). Empty under pure hold-first.
-        self._delete_shared_knowledge_source_ids(source_ids, commit=False)
-        if commit:
-            self.conn.commit()
+        del state, minister_name  # message-level; not assignee-scoped
+        self._withhold_origin_chat_messages(
+            origin_chat_message_ids, commit=commit,
+        )
 
     def _project_audience_chat_message(
         self,
@@ -10461,20 +10480,36 @@ class GameDB:
         self,
         *,
         minister_name: Optional[str] = None,
+        minister_names: Optional[Iterable[str]] = None,
+        exclude_message_ids: Optional[Iterable[int]] = None,
         commit: bool = True,
     ) -> int:
         """唯一投轨出口：held → shared 或 private（#976）。
 
-        分类后（upsert_secret_order_brief）与月末 settle 调用。withheld 永不放行。
-        接令者 active brief 时只进私有事件轨，不进共享源。
+        分类后（scoped，仅接令者/口谕 speaker）与月末 settle（全局）调用。
+        withheld 永不放行。接令者 active brief 时只进私有事件轨，不进共享源。
+
+        Message-level provenance: rows whose id is a registered secret-origin
+        pin (or explicitly excluded) are **not** projected — they are parked as
+        withheld so create(A) cannot smuggle B's yet-unclassified oral line into
+        the shared ledger via unfiltered global release.
         """
         name_filter = str(minister_name or "").strip()
+        name_set = {
+            str(n).strip() for n in (minister_names or ()) if str(n or "").strip()
+        }
+        if name_filter:
+            name_set.add(name_filter)
+        exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
+        exclude |= self._registered_secret_origin_message_ids()
         try:
-            if name_filter:
+            if name_set:
+                placeholders = ",".join("?" for _ in name_set)
                 rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, content FROM chat_messages "
-                    "WHERE knowledge_status='held' AND minister_name=? ORDER BY id",
-                    (name_filter,),
+                    f"SELECT id, minister_name, turn, content FROM chat_messages "
+                    f"WHERE knowledge_status='held' AND minister_name IN ({placeholders}) "
+                    f"ORDER BY id",
+                    tuple(sorted(name_set)),
                 ).fetchall()
             else:
                 rows = self.conn.execute(
@@ -10489,6 +10524,13 @@ class GameDB:
         released = 0
         for row in rows:
             mid = int(row["id"])
+            if mid in exclude:
+                # Origin bloodline must never leave held via release — park withheld.
+                self.conn.execute(
+                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
+                    (mid,),
+                )
+                continue
             minister = str(row["minister_name"] or "").strip()
             content = str(row["content"] or "")
             origin_turn = int(row["turn"] or state.turn)
@@ -10574,45 +10616,40 @@ class GameDB:
     ) -> None:
         """Write the assignee-only secret-order brief (#883 isolation seam).
 
-        #976 classification event: withhold secret-origin user-chat bloodline
-        for the assignee **and** the origin audience speaker (when they differ
-        — 跨人承办 oral decree lives on speaker rows), then release other held
-        public audience.  No content-matching scrub machinery.
-
-        ``origin_chat_message_ids`` pins oral-decree provenance (stage-time id);
-        both withhold calls run in pin mode so post-stage confirmation user
-        lines cannot steal max(held) bloodline.
+        #976 classification (message-level provenance):
+        1. Persist exact oral-decree ``origin_chat_message_ids`` on the brief.
+        2. Withhold those message ids only (not (assignee, role=user) bulk).
+        3. Scoped release: only pure-public held rows of the assignee and the
+           origin audience speaker — **never** global unfiltered release that
+           would project another minister's still-unclassified secret oral line
+           into the shared ledger (disease root 1).
         """
+        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
+        pins_json = json.dumps(pins, ensure_ascii=False)
         self.conn.execute(
-            "INSERT INTO secret_order_briefs (order_id,turn,year,period,minister_name,title,body) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET "
-            "turn=excluded.turn,year=excluded.year,period=excluded.period,minister_name=excluded.minister_name,"
-            "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
-            (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
+            "INSERT INTO secret_order_briefs "
+            "(order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids) "
+            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET "
+            "turn=excluded.turn,year=excluded.year,period=excluded.period,"
+            "minister_name=excluded.minister_name,title=excluded.title,body=excluded.body,"
+            "origin_chat_message_ids=excluded.origin_chat_message_ids,"
+            "updated_at=CURRENT_TIMESTAMP",
+            (
+                int(order_id), state.turn, state.year, state.period,
+                minister_name, title, body, pins_json,
+            ),
         )
-        # Always pin-mode at classification: explicit list (possibly empty/auto).
-        pins: List[int] = []
-        if origin_chat_message_ids is not None:
-            for raw in origin_chat_message_ids:
-                try:
-                    mid = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0:
-                    pins.append(mid)
+        # Message-level withhold: exact ids only (speaker or assignee owned).
+        self._withhold_origin_chat_messages(pins, commit=False)
         assignee = str(minister_name or "").strip()
-        self._withhold_assignee_user_audience_origin(
-            state, assignee, origin_chat_message_ids=pins, commit=False,
-        )
-        # 跨人承办: oral decree was spoken in the speaker's audience, not the
-        # final assignee's chat log — withhold speaker origin user bloodline too.
         origin = str(origin_minister_name or "").strip()
-        if origin and origin != assignee:
-            self._withhold_assignee_user_audience_origin(
-                state, origin, origin_chat_message_ids=pins, commit=False,
-            )
-        # Release pure-public held rows (other ministers; non-withheld same-window user).
-        self.release_held_audience_knowledge(commit=False)
+        # Scoped release — only ministers touched by this classification.
+        # Other ministers' held rows stay held until their own classify/settle.
+        self.release_held_audience_knowledge(
+            minister_names=[n for n in (assignee, origin) if n],
+            exclude_message_ids=pins,
+            commit=False,
+        )
         if commit:
             self.conn.commit()
 
