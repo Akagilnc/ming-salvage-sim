@@ -365,4 +365,3 @@ describe("#924 session lost degrades to fresh (run survives)", () => {
     ).toEqual({ kind: "propagate" });
   });
 });
-

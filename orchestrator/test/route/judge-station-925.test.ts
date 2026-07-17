@@ -1287,4 +1287,3 @@ describe("#925 F3: single open-count → continue projection", () => {
     expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
   });
 });
-
