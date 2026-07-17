@@ -533,22 +533,10 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
-   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295;
-   * #934 ID-010 / #938).
-   *
-   * Invoked by the Family Integration Merge Action ONLY when
-   * {@link mergeChildIntoFamilyBase} reports a conflict
-   * ({@link MergeResult.conflicted}) — "确定性优先、仅冲突上 LLM". Production and
-   * conflict-path tests guarantee this resolver exists; clean-merge-only fakes
-   * may omit it because the Action never reaches this method without a real
-   * conflict. Process-root transport retry lives inside the implementation
-   * (ID-004); the Action converges the completed/raise outcome once — no host
-   * still-conflicted re-dispatch court.
-   *
-   * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
-   * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
-   * result), the Action does NOT write a `merged` ledger entry — an unresolved
-   * conflict must never look clean.
+   * Conflict-only merger worker leg (#934 ID-010 / #938). Production/conflict
+   * tests guarantee it; clean-merge fakes may omit. Action converges once;
+   * process-root retry is ID-004 inside the impl. Still-conflicted/throw ⇒ no
+   * `merged` ledger entry.
    */
   resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
@@ -1058,20 +1046,11 @@ export interface FamilyChildEscalation {
   readonly sessionId?: string;
 }
 
-/**
- * Per-sibling root-cause diagnostic for a family wave aggregation
- * (#934 ID-009 / #938). Child process / durable-persist / runner-invariant /
- * merger-worker truths ride here — not a second outer cause.
- */
+/** Per-sibling root cause (#934 ID-009 / #938) — not a second outer cause. */
 export interface FamilyChildDiagnostic {
   readonly issue: number;
   readonly cause: string;
-  readonly kind:
-    | "process"
-    | "durable_persist"
-    | "runner_invariant"
-    | "child_execution"
-    | "merger_worker";
+  readonly kind: "process" | "child_execution" | "merger_worker";
 }
 
 /** Per-child outcome record in the family result. */
@@ -1086,10 +1065,7 @@ export interface FamilyChildResult {
    * `child_decision_parked` ledger row and resumes from.
    */
   readonly escalation?: FamilyChildEscalation;
-  /**
-   * Optional root-cause string when `status==="failed"` (#938 / ID-009).
-   * Prefer {@link FamilyRunResult.diagnostics} for the full wave inventory.
-   */
+  /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */
   readonly failureCause?: string;
 }
 
@@ -1159,12 +1135,7 @@ export interface FamilyRunResult {
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
-  /**
-   * Wave-aggregated sibling root causes (#934 ID-009 / #938). Present when any
-   * child process, durable-persist, runner-invariant, or merger-worker failure
-   * was observed; outer status/cause stay on the existing result surface until
-   * #942 public ABI cutover.
-   */
+  /** Wave sibling root causes (#938 / ID-009); outer status until #942 cutover. */
   readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
