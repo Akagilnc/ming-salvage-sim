@@ -972,9 +972,6 @@ export async function runOnlineReviewLoopStage(
         ...landing,
         fixMarkedFindingIdentityKeys: fixKeys,
         fixMarkedFindingThreads,
-        ...(verify.findingFamilies !== undefined
-          ? { findingFamilies: verify.findingFamilies }
-          : {}),
       };
 
       const reviewSnap = landing.onlineReviewSnapshot;
