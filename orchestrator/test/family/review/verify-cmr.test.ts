@@ -1082,7 +1082,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         (e) => e.status === "cmr_passed" && e.cmrPass === "correctness",
       ),
     ).toHaveLength(1);
+    // Landing Action re-reads family HEAD twice for post-doc marker keying
+    // (entry already_done lookup + post-docs completionHeadOid; C1 / #972).
     expect(backend.readFamilyHeadCalls).toEqual([
+      "family/291-base",
+      "family/291-base",
       "family/291-base",
       "family/291-base",
       "family/291-base",
