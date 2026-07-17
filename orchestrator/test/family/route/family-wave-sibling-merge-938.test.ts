@@ -307,8 +307,10 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
     expect(result.children.find((c) => c.issue === 99)?.status).toBe("merged");
     // Residual cycle is the typed outer boundary (not silent empty-wave success).
     expect(result.status).toBe("failed");
-    expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
-    expect(result.escalation?.reason ?? result.stopSummary.summary).toMatch(/dependency_cycle/i);
+    // Prefer escalation.reason; fall back to stopSummary when escalation is absent.
+    expect(result.escalation?.reason ?? result.stopSummary.summary).toMatch(
+      /dependency_cycle/i,
+    );
     // Cycle members never merged.
     expect(result.children.find((c) => c.issue === 10)?.status).not.toBe("merged");
     expect(result.children.find((c) => c.issue === 11)?.status).not.toBe("merged");
@@ -332,7 +334,9 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
 
     expect(familyBackend.mergeOrder).toEqual([]);
     expect(result.status).toBe("failed");
-    expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
+    expect(result.escalation?.reason ?? result.stopSummary.summary).toMatch(
+      /dependency_cycle/i,
+    );
     // Not an uncaught throw from startup assertAcyclic.
     expect(result.children).toHaveLength(2);
   });

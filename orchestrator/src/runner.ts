@@ -949,9 +949,12 @@ function planResume(
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
     };
   }
+  // #982: S8(failed) is terminal — never reopen as an answerable decision,
+  // even when escalationKind is "decision". Only parked + decision reopens.
+  // Tagged failed falls through to Case 3a (true handoffStatus).
   if (
     lastEntry.step === "S8" &&
-    (lastEntry.handoffStatus === "parked" || lastEntry.handoffStatus === "failed") &&
+    lastEntry.handoffStatus === "parked" &&
     lastEntry.escalationKind !== undefined
   ) {
     if (lastEntry.escalationKind === "failure") {

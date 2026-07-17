@@ -1264,6 +1264,28 @@ describe("#925 F3: single open-count → continue projection", () => {
     expect(projected?.terminalDispositions).toHaveLength(1);
     expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
   });
+
+  it("#982: preserves terminal finding severity from output.findings (not hardcode medium)", () => {
+    const highDead: Finding = {
+      ...sampleFinding("high-terminal", "high.ts:9"),
+      severity: "high",
+    };
+    const projected = projectJudgeContinueBlocking({
+      status: "continue",
+      findingDispositions: [
+        {
+          identityKey: findingIdentityKey(highDead),
+          action: "refute",
+          reason: "not_established",
+          evidence: "claim does not match tip code",
+        },
+      ],
+      findings: [highDead],
+    });
+    expect(projected?.terminalDispositions).toHaveLength(1);
+    expect(projected?.terminalDispositions[0]!.severity).toBe("high");
+    expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
+  });
 });
 
 describe("#925 verify.md 判官 duties + judge prompt", () => {

@@ -1105,7 +1105,7 @@ export type FamilyRunStatus = PublicRunResult;
 
 /** Shared fields on every public family handoff. */
 interface FamilyRunResultBase {
-  /** Barrier phase diagnostic (wave|final); not public status. */
+  /** Barrier phase diagnostic (wave|correctness_checkpoint|final); not public status. */
   readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
   readonly familyBase: string;

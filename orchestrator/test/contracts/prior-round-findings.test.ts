@@ -176,6 +176,32 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
     ]);
   });
 
+  it("#982: prefers explicit blockingFindingIdentityKeys over dual output fallback on same row", () => {
+    const finding = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "dual snapshot would invent round 2",
+      location: "src/dual.ts",
+      suggested_fix: "continue after explicit keys",
+      action: "fix_now" as const,
+    };
+    const ledger = [
+      {
+        event: "cmr_reviewed",
+        cmrPass: "completeness",
+        blockingFindingIdentityKeys: ["explicit:persisted-key"],
+        output: { kind: "judge", findings: [finding] },
+      },
+    ];
+    const snaps = priorCmrFindingsFromFamilyLedger(ledger, "completeness");
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]).toEqual({
+      round: 1,
+      fixMarkedFindingIdentityKeys: [],
+      blockingFindingIdentityKeys: ["explicit:persisted-key"],
+    });
+  });
+
   it("verify prompt contains only the data and output contract", () => {
     const prompt = readFileSync(
       join(ORCH_ROOT, "prompts/verify.md"),
