@@ -137,7 +137,7 @@ describe("#291 B7 — concurrent wave fan-out", () => {
     // Concurrency proof: all three children were in-flight at once.
     expect(ssb.maxActive).toBe(3);
     // All merged, run succeeded.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
     // The serial merge preserves WAVE (input) order, regardless of finish order:
     // 12/11 finish before 10, but 10 merges first (it is first in the wave array).
@@ -171,7 +171,7 @@ describe("#291 B7 — concurrent wave fan-out", () => {
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children).toEqual([
       expect.objectContaining({ issue: 10, status: "merged", branch: "feat/child-10" }),
       expect.objectContaining({ issue: 11, status: "failed" }),

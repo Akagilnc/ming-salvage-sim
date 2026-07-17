@@ -100,7 +100,7 @@ describe("#256 seam extension — real per-step sessionId in the ledger", () => 
     // the seam, not the run-level UUID shared by runner-action steps.
     const backend = new SeamExtensionBackend(/*returnStepResult*/ true);
     const result = await runOrchestrator({ issueNumber: 256, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const byStep = (s: string) =>
       backend.persisted.find((e) => e.step === s);
@@ -130,7 +130,7 @@ describe("#256 seam extension — real per-step sessionId in the ledger", () => 
     // the runner must still work and record the run-level UUID for agent steps.
     const backend = new SeamExtensionBackend(/*returnStepResult*/ false);
     const result = await runOrchestrator({ issueNumber: 256, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s0 = backend.persisted.find((e) => e.step === "S0")!;
     const s2 = backend.persisted.find((e) => e.step === "S2")!;
     // No per-step id → agent step shares the run-level UUID with runner actions.
@@ -177,7 +177,7 @@ describe("#256 true-value ledger — content prompt_hash + SHA branchHEAD", () =
     };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await runOrchestrator({ issueNumber: 256, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s2 = backend.persisted.find((e) => e.step === "S2")!;
     expect(s2.prompt_hash.startsWith("name:")).toBe(true);
     expect(
@@ -195,7 +195,7 @@ describe("#256 true-value ledger — content prompt_hash + SHA branchHEAD", () =
     };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await runOrchestrator({ issueNumber: 256, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s2 = backend.persisted.find((e) => e.step === "S2")!;
     // Legal degrade: omit branchHEAD, do not invent a branch-name fallback.
     expect(s2).not.toHaveProperty("branchHEAD");

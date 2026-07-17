@@ -247,7 +247,7 @@ describe("#970 — family-level answer is NOT a child decision resume", () => {
       ?.find((e) => e.event === "escalation_answered");
     expect(injectedChildAnswer).toBeUndefined();
     expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // No durable fail-closed residue for the false child-resume path.
     expect(
       familyBackend.ledger.some(
@@ -311,7 +311,7 @@ describe("#970 — park without sessionId is NOT a child decision resume", () =>
       ),
     ).toBe(false);
     expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });
 
@@ -329,7 +329,7 @@ describe("#970 — true child answer without parked state fails loud", () => {
       singleSliceBackend,
       familyBase: "family/485-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
     expect(
       familyBackend.ledger.some(
         (e) => e.event === "child_decision_parked" && e.childIssue === 883,
@@ -369,7 +369,7 @@ describe("#970 — true child answer without parked state fails loud", () => {
           e.childIssue === 883 && e.reason === "child_answer_without_parked_state",
       ),
     ).toBe(true);
-    expect(second.status).not.toBe("success");
+    expect(second.status).not.toBe("completed");
   });
 
   it("park + answer + resume ledger step missing sessionId → failed with typed reason", async () => {
@@ -408,7 +408,7 @@ describe("#970 — true child answer without parked state fails loud", () => {
         prompt_hash: "parked",
         branchHEAD: "head-parked",
         ts: "2026-07-17T00:00:00.000Z",
-        handoffStatus: "escalate",
+        handoffStatus: "parked",
         escalationKind: "decision",
       } as unknown as PersistentLedgerEntry,
     ]);
@@ -436,6 +436,6 @@ describe("#970 — true child answer without parked state fails loud", () => {
           e.childIssue === 883 && e.reason === "child_answer_without_parked_state",
       ),
     ).toBe(true);
-    expect(result.status).not.toBe("success");
+    expect(result.status).not.toBe("completed");
   });
 });

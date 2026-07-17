@@ -15,6 +15,7 @@
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
+import type { PublicFailedCause } from "./publicResult.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 // Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
 import type {
@@ -26,6 +27,7 @@ import type { FindingStoreStatus } from "./findingsStateStore.js";
 
 export type { JudgeFindingDisposition, JudgeVerdictStatus };
 export type { FindingStoreStatus };
+export type { PublicFailedCause };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -108,8 +110,8 @@ export type StepRole =
   | "cleanup"
   | "landing";
 
-/** Terminal handoff status (ADR 0018 / PRD #244 route table). */
-export type HandoffStatus = "success" | "escalate" | "error";
+/** Public handoff: completed | parked | failed (#942 / ID-001). */
+export type HandoffStatus = "completed" | "parked" | "failed";
 
 // ───────────────────────────── step spec ─────────────────────────────
 
@@ -1581,19 +1583,19 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
   /**
-   * Terminal handoff status — set ONLY on the S8 entry (#255).
+   * Terminal handoff status — set ONLY on the S8 entry (#255 / #942).
    *
-   * Both success and error handoffs previously wrote an identical `{step:"S8"}`
-   * entry, making them indistinguishable to a resuming run reading the ledger.
-   * Recording the status here lets {@link ResumeState} recovery report the TRUE
-   * terminal outcome (success / escalate / error) instead of inferring it — and
-   * lets a re-fed run tell a prior SUCCESS apart from a prior ERROR.
+   * Public tokens are completed | parked | failed (ID-001). Recording the
+   * status here lets {@link ResumeState} recovery report the TRUE terminal
+   * outcome instead of inferring it — and lets a re-fed run tell a prior
+   * completed apart from a prior failed/parked. #929 tokens (success / error /
+   * escalate / …) fail closed as public failed (ID-005, no dual-read).
    * Undefined for every non-S8 (in-flight) entry.
    */
   readonly handoffStatus?: HandoffStatus;
   /**
    * Distinguishes answerable decision pauses from true terminal failure
-   * escalations (#439). Set only with `handoffStatus:"escalate"` on S8.
+   * escalations (#439). Set only with handoffStatus parked|failed on S8.
    */
   readonly escalationKind?: EscalationKind;
 }
@@ -1929,18 +1931,25 @@ export interface ErrorPackage {
   readonly branchHead?: string;
 }
 
-/** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
-export interface RunResult {
-  readonly status: HandoffStatus;
-  /** The reviewed local slice branch handed to the family merger on success. */
+/** Shared fields on every public single-slice handoff. */
+interface RunResultBase {
   readonly branch?: string;
-  /**
-   * Diagnostic error payload — set when status=error (#252).
-   * Undefined for success and escalate outcomes.
-   */
+  /** Diagnostic package (failed terminals; optional on park for transport). */
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
 }
+
+/**
+ * Final handoff (S8); public completed|parked|failed.
+ * Discriminated: `status:"failed"` requires ID-001 `cause` (#942 CR R2 S3).
+ */
+export type RunResult =
+  | (RunResultBase & { readonly status: "completed" })
+  | (RunResultBase & { readonly status: "parked" })
+  | (RunResultBase & {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+    });

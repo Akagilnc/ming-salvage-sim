@@ -67,7 +67,7 @@ function s8Escalate(): PersistentLedgerEntry {
     prompt_hash: "hash-S8",
     branchHEAD: "deadbeefcommitsha",
     ts: "2026-07-16T00:00:01.000Z",
-    handoffStatus: "escalate",
+    handoffStatus: "parked",
     escalationKind: "decision",
   };
 }
@@ -213,7 +213,7 @@ describe("#955 resumeFor session identity gate", () => {
     // Ledger session was grok; #936: seat follows route preset (normal → terra), not env slot.
     const backend = new ResumeIdentityBackend(parkedEscalationLedger("grok-4.5"));
     const result = await runOrchestrator({ issueNumber: 95510, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s2 = firstCoderDispatch(backend);
     expect(s2.spec.model).toBe("gpt-5.6-terra");
@@ -247,7 +247,7 @@ describe("#955 resumeFor session identity gate", () => {
       "Coder-Rec: grok-4.5\n",
     );
     const result = await runOrchestrator({ issueNumber: 95511, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s2 = firstCoderDispatch(backend);
     expect(s2.spec.model).toBe("grok-4.5");
@@ -270,7 +270,7 @@ describe("#955 resumeFor session identity gate", () => {
     const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
     try {
       const result = await runOrchestrator({ issueNumber: 95512, backend });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       const s2 = firstCoderDispatch(backend);
       expect(s2.spec.model).toBe("gpt-5.6-terra");
       expect(s2.spec.session).toBe("fresh");

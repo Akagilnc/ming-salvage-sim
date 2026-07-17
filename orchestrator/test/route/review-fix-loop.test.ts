@@ -190,7 +190,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
@@ -233,7 +233,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
 });
@@ -290,7 +290,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(
       /omitted required disposition/i,
     );
@@ -313,7 +313,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -334,7 +334,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
@@ -407,7 +407,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -452,7 +452,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -532,7 +532,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -563,7 +563,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -638,7 +638,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -718,7 +718,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:verify",
@@ -775,7 +775,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S6:verify"]);
   });
 
@@ -831,7 +831,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage).toBeUndefined();
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -888,7 +888,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
     // #877: no-progress court demolished; findings-count continues until empty fallback ships.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -950,7 +950,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     // #877: omitted still-active disposition prose does not reopen or no-progress-kill.
     // Secondary re-emitted findings keep the fix loop via findings-count until empty.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
@@ -1009,7 +1009,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         continueFixingEvent,
       ],
     };
@@ -1034,7 +1034,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -1076,7 +1076,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
       ],
     };
     const backend = new RetryReviewBackend(
@@ -1101,7 +1101,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -1141,7 +1141,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1156,7 +1156,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1192,7 +1192,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1208,7 +1208,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1241,7 +1241,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
       },
       { step: "S4" },
-      { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+      { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
     ] as const;
     const malformedEvents: PersistentLedgerFixture[] = [
       {
@@ -1264,7 +1264,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(backend.dispatched).toEqual([]);
     }
   });
@@ -1301,7 +1301,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "escalation_answered",
@@ -1315,7 +1315,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -1329,7 +1329,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S2", output: { kind: "coder", committed: false, commitsAdded: 0 } },
         {
           step: "S8",
-          handoffStatus: "error",
+          handoffStatus: "failed",
           stopSummary: {
             reason: "contract_drift",
             summary: "persisted malformed coder output",
@@ -1342,7 +1342,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary).toMatchObject({
       reason: "contract_drift",
       summary: "persisted malformed coder output",
@@ -1383,7 +1383,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             },
           },
           { step: "S4" },
-          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
           {
             step: "S4",
             event: "escalation_answered",
@@ -1406,7 +1406,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
     }
   });
@@ -1433,7 +1433,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             },
           },
           { step: "S4" },
-          { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+          { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
           {
             step: "S4",
             event: "escalation_answered",
@@ -1448,7 +1448,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(backend.dispatched).toEqual([]);
     }
   });
@@ -1523,7 +1523,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1546,7 +1546,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1600,7 +1600,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1623,7 +1623,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1678,7 +1678,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1701,7 +1701,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 
@@ -1756,7 +1756,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           },
         },
         { step: "S4" },
-        { step: "S8", handoffStatus: "escalate", escalationKind: "decision" },
+        { step: "S8", handoffStatus: "parked", escalationKind: "decision" },
         {
           step: "S4",
           event: "runner_bookkeeping",
@@ -1779,7 +1779,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(["S5:coder", "S6:verify"]);
   });
 });
@@ -1817,7 +1817,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
@@ -1856,7 +1856,7 @@ describe("#369 runner resume/retry review fixes", () => {
             },
           },
         },
-        { step: "S8", handoffStatus: "escalate" },
+        { step: "S8", handoffStatus: "parked" },
         {
           step: "S5",
           event: "escalation_answered",
@@ -1878,7 +1878,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
@@ -1914,7 +1914,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(
       /omitted required disposition/i,
     );
@@ -1952,7 +1952,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2048,7 +2048,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:verify",
@@ -2079,14 +2079,14 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1 } },
         { step: "S4" },
         { step: "S7" },
-        { step: "S8", handoffStatus: "success" },
+        { step: "S8", handoffStatus: "completed" },
       ],
     };
     const backend = new RetryReviewBackend([], resumeState);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual([]);
   });
 
@@ -2131,7 +2131,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     // Process crash path: mechanical redispatch, not runner format court.
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
   });
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
@@ -2172,7 +2172,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process crash path only (not findings-schema court): mechanical budget then stop.
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });

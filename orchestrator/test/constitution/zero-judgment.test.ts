@@ -10,7 +10,7 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     expect(route({ from: "S2", output: {
       kind: "coder", committed: true, commitsAdded: 1,
       escalate: { reason: "", diagnosis: "" },
-    } })).toEqual({ kind: "handoff", status: "escalate" });
+    } })).toEqual({ kind: "handoff", status: "parked" });
   });
 
   it("fails closed on present-but-malformed decision bells (unified #899 court)", () => {

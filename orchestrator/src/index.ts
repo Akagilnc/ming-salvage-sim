@@ -162,15 +162,28 @@ export {
   syncStopSummaryToStageFailure,
 } from "./family/familyTerminal.js";
 export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
-// ── #929 terminal → process exit-code map (driver thin shell) ──────────────
+// #942 public result + OS exit ABI (supersedes #929) — single export path.
+export {
+  PUBLIC_EXIT_CODES,
+  PUBLIC_FAILED_CAUSES,
+  PUBLIC_RUN_RESULTS,
+  LEGACY_929_PUBLIC_STATUS_TOKENS,
+  causeFromStageFailure,
+  exitCodeForPublicResult,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isLegacy929PublicStatusToken,
+  isPublicRunResult,
+  publicResultExitCode,
+  runResultExitCode,
+} from "./publicResult.js";
+export type { PublicFailedCause, PublicRunResult } from "./publicResult.js";
+// Thin TERMINAL_* aliases for older launcher import paths only.
 export {
   TERMINAL_EXIT_CODES,
   TERMINAL_EXIT_STATUSES,
   exitCodeForTerminal,
-  exitProcessForFamilyRun,
-  familyDriverExitCode,
   isTerminalExitStatus,
-  runResultExitCode,
 } from "./terminalExitCode.js";
 export type { TerminalExitStatus } from "./terminalExitCode.js";
 export type {

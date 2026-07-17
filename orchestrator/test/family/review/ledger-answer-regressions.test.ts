@@ -182,7 +182,7 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
     });
 
     // The family parked on #11's decision escalation.
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
     // #10 must reflect the DURABLE merge ledger (merged in a prior invocation),
     // but is not merged by THIS invocation, so it is not mislabeled "skipped"

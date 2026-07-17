@@ -145,7 +145,7 @@ export async function recordLandingActionFailure(
     return classified;
   }
   const failStop = stageFailureStopSummary({
-    status: "merge_failed",
+      status: "merge_failed",
     summary: classified.stopSummary.summary,
     repairHint:
       classified.stopSummary.repairHint ??

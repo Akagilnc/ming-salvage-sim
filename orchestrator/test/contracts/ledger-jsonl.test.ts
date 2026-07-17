@@ -159,7 +159,7 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     // terminal branch via in-memory ledger construction (bypassing disk parse).
     const withNullEk = JSON.stringify({
       step: "S8",
-      handoffStatus: "escalate",
+      handoffStatus: "parked",
       escalationKind: null,
       sessionId: "s",
       prompt_hash: "h",
@@ -168,7 +168,7 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     });
     const withNumEk = JSON.stringify({
       step: "S8",
-      handoffStatus: "escalate",
+      handoffStatus: "parked",
       escalationKind: 42,
       sessionId: "s",
       prompt_hash: "h",
@@ -177,7 +177,7 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     });
     const withBadStrEk = JSON.stringify({
       step: "S8",
-      handoffStatus: "escalate",
+      handoffStatus: "parked",
       escalationKind: "weird",
       sessionId: "s",
       prompt_hash: "h",

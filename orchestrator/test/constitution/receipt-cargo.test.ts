@@ -129,7 +129,7 @@ describe("#877 residual read-word fate forks — survival", () => {
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary?.reason).not.toBe("contract_drift");
     expect(backend.dispatched).toEqual(
       expect.arrayContaining(["S3:verify", "S5:coder", "S6:verify"]),
@@ -147,7 +147,7 @@ describe("#877 residual read-word fate forks — survival", () => {
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
   });
 

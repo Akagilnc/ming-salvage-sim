@@ -391,7 +391,7 @@ describe("#927 pure: route S5 refuse → S6 (never park / escalate)", () => {
           escalate: { reason: "stuck", diagnosis: "needs owner" },
         },
       }),
-    ).toEqual({ kind: "handoff", status: "escalate" });
+    ).toEqual({ kind: "handoff", status: "parked" });
   });
 });
 
@@ -418,7 +418,7 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     });
 
     const result = await runOrchestrator({ issueNumber: 927, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched).toEqual(
       expect.arrayContaining(["S5:coder", "S6:verify"]),
     );
@@ -465,7 +465,7 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     });
 
     const result = await runOrchestrator({ issueNumber: 927, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.s5Count).toBe(2);
     // First S6 saw refuse keys on thin ctx (M3: not dual-written on landing)
     const refuseLanding = backend.firstS6RefuseLanding();
@@ -536,7 +536,7 @@ describe("#927 AC: refuse does not burn iterations (#899 morning death)", () => 
       ],
     });
     const result = await runOrchestrator({ issueNumber: 927, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.s5Count).toBe(1);
     // Worker returned kind:completed with refuse traffic — not failed/retry loop.
     const s5Spec = backend.specs.find((s) => s.id === "S5");
@@ -570,7 +570,7 @@ describe("#927 AC: four legal reasons each reach judge re-adjudicate", () => {
       });
 
       const result = await runOrchestrator({ issueNumber: 927, backend });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(result.status).not.toBe("escalate");
       expect(result.status).not.toBe("error");
 
@@ -629,7 +629,7 @@ describe("#927 AC: S4 dissolved — fixer refuse second gate still reachable", (
       ],
     });
     const result = await runOrchestrator({ issueNumber: 927, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     // Exact agent path: no S4 between continue and fix / re-adjudicate.
     const agentPath = backend.dispatched.filter((d) =>
