@@ -167,6 +167,20 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(ok.kind).toBe("ready");
   });
 
+  it("F2: apply throw maps to typed stop (same court as tight violation)", () => {
+    const route = resolveRouteModels("claude-tight", {});
+    const admitted = admitRelayBaton(route, { slug: "sonnet" }, "S2", {
+      applyFn: () => {
+        throw new Error("synthetic apply boom");
+      },
+    });
+    expect(admitted.kind).toBe("stop");
+    if (admitted.kind === "stop") {
+      expect(admitted.escalation.reason).toBe("relay baton admission failure");
+      expect(admitted.escalation.diagnosis).toMatch(/synthetic apply boom/);
+    }
+  });
+
   it("positive+negative: Coder-Rec restaffs coder; broken mark fails closed", () => {
     const base = resolveRouteModels("normal", {});
     const ok = admitCoderRec(base, "Coder-Rec: grok-4.5 → sol@med\n");

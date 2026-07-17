@@ -2127,6 +2127,154 @@ describe("#686 R2 production seams", () => {
     }
   });
 
+  it("public runOrchestrator: tight-violating relay baton escalates with zero further productive dispatch (ID-002 / R7 F4)", async () => {
+    // Public driver seam (not unit-only admitRelayBaton): claude-tight forbids
+    // claude family; S2 429 beyond T selects sonnet baton → tight re-admit stop.
+    const dir = mkdtempSync(join(tmpdir(), "relay-934-tight-re-admit-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/934-tight-re-admit",
+      base: "main",
+      path: dir,
+    };
+    const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const coderModels: string[] = [];
+    const productiveKinds: string[] = [];
+
+    class TightRelayBackend implements Backend {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → sonnet-5",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      }
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async writeLedger(): Promise<void> {}
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        productiveKinds.push(spec.kind);
+        if (spec.kind === "coder" && spec.id === "S2") {
+          coderModels.push(spec.model);
+          if (spec.model === "grok-4.5") {
+            throw new QuotaWaitForResetError({
+              disposition: {
+                kind: "wait_for_reset",
+                pool: "grok",
+                resetAt,
+                reason: "quota limited (429); wait for reset",
+              },
+              applied: {
+                ledgerEntry: {
+                  event: "quota_wait_for_reset",
+                  pool: "grok",
+                  resetAt: resetAt.toISOString(),
+                  reason: "quota limited (429); wait for reset",
+                  step: "S2",
+                  workerPid: 9001,
+                  ts: NOW.toISOString(),
+                },
+              },
+              pool: "grok",
+            });
+          }
+          // Should never reach a claude-family baton re-dispatch.
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer" || spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: worktree.branch,
+              status: "pushed",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 934,
+        backend: new TightRelayBackend(),
+        relayPools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            resetAt,
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "cursor",
+            status: "dead",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "dead",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["terra@med", "luna@med", "sol@med"],
+          },
+          {
+            id: "claude",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["sonnet-5", "sonnet", "haiku-4.5", "haiku"],
+          },
+        ],
+        now: () => NOW,
+      });
+
+      expect(result.status).toBe("escalate");
+      expect(
+        `${result.errorPackage?.reason ?? ""} ${result.stopSummary?.summary ?? ""}`,
+      ).toMatch(/tight route violation/i);
+      // Wall-hit baton only — no productive re-dispatch after tight refuse.
+      expect(coderModels).toEqual(["grok-4.5"]);
+      expect(coderModels).not.toContain("sonnet");
+      // No reviewer/ship after the refused baton (only the one coder attempt).
+      expect(productiveKinds.filter((k) => k !== "coder")).toEqual([]);
+      expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("P3: no-baton park repairHint is byte-identical to #683", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "relay-686-r2-p3-"));
     try {

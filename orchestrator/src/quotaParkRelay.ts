@@ -43,6 +43,28 @@ function isValidStepId(value: unknown): value is SliceStepId {
  * @param persistClass optional prefix fragment (e.g. `"capacity"`) →
  *   `record_persist_failed: capacity relay_baton_handoff: …`
  */
+/**
+ * #934 R7 N2 — single try/catch vocabulary for required durable ledger writes.
+ * `stateDir` undefined = no-op (in-memory-only callers). Write failure always
+ * surfaces as `record_persist_failed: <classLabel>: …`.
+ */
+async function writeLedgerFailClosed(
+  stateDir: string | undefined,
+  classLabel: string,
+  write: (dir: string) => Promise<void>,
+): Promise<void> {
+  if (stateDir === undefined) return;
+  try {
+    await write(stateDir);
+  } catch (writeErr) {
+    throw new Error(
+      `record_persist_failed: ${classLabel}: ${
+        writeErr instanceof Error ? writeErr.message : String(writeErr)
+      }`,
+    );
+  }
+}
+
 export async function persistRelayBatonHandoff(opts: {
   readonly entry: RelayHandoffLedgerEvent;
   readonly step: SliceStepId;
@@ -72,30 +94,22 @@ export async function persistRelayBatonHandoff(opts: {
     ts: entry.ts,
   };
   // Durable baton first; write failure fails closed (no best-effort in-memory-only).
-  if (stateDir !== undefined) {
-    try {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: entry.ts,
-        },
-        stateDir,
-      );
-    } catch (writeErr) {
-      const classLabel =
-        opts.persistClass !== undefined && opts.persistClass.length > 0
-          ? `${opts.persistClass} relay_baton_handoff`
-          : "relay_baton_handoff";
-      throw new Error(
-        `record_persist_failed: ${classLabel}: ${
-          writeErr instanceof Error ? writeErr.message : String(writeErr)
-        }`,
-      );
-    }
-  }
+  const classLabel =
+    opts.persistClass !== undefined && opts.persistClass.length > 0
+      ? `${opts.persistClass} relay_baton_handoff`
+      : "relay_baton_handoff";
+  await writeLedgerFailClosed(stateDir, classLabel, async (dir) => {
+    await backend.writeLedger(
+      {
+        ...marker,
+        sessionId,
+        prompt_hash: await opts.hashPrompt(undefined, step),
+        branchHEAD: await opts.resolveBranchHEAD(),
+        ts: entry.ts,
+      },
+      dir,
+    );
+  });
   ledger.push(marker);
   return marker;
 }
@@ -143,27 +157,18 @@ export async function parkQuotaWaitForReset(opts: {
   // #934 ID-001 / ID-005: park is only legal when the durable re-entry boundary
   // is established. A writeLedger failure must fail closed — never return a
   // parked/resumable outcome from an in-memory-only marker.
-  if (stateDir !== undefined) {
-    try {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: ledgerEntry.ts,
-        },
-        stateDir,
-      );
-    } catch (writeErr) {
-      // Same vocabulary as {@link persistRelayBatonHandoff} (N1 / #934 R6).
-      throw new Error(
-        `record_persist_failed: quota_wait_for_reset: ${
-          writeErr instanceof Error ? writeErr.message : String(writeErr)
-        }`,
-      );
-    }
-  }
+  await writeLedgerFailClosed(stateDir, "quota_wait_for_reset", async (dir) => {
+    await backend.writeLedger(
+      {
+        ...marker,
+        sessionId,
+        prompt_hash: await opts.hashPrompt(undefined, step),
+        branchHEAD: await opts.resolveBranchHEAD(),
+        ts: ledgerEntry.ts,
+      },
+      dir,
+    );
+  });
   ledger.push(marker);
   const resetHint =
     ledgerEntry.resetAt !== undefined

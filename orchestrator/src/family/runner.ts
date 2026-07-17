@@ -26,7 +26,6 @@
 import { runOrchestrator } from "../runner.js";
 import { mintRunId } from "../runId.js";
 import {
-  applyRelayBatonToRoute,
   familyRelaySlotsForWall,
   knownLiveBillingPoolsFromRoute,
   printableRouteLineup,
@@ -37,7 +36,7 @@ import {
 } from "../modelRoutes.js";
 import {
   admitRouteFromEnv,
-  admitTightRoute,
+  admitRelayBaton,
   admissionRouteFailureDiagnosis,
 } from "../admissionPreflight.js";
 import {
@@ -484,39 +483,43 @@ async function decideFamilyQuotaWall(opts: {
 
   // Relay: APPLY baton onto the REAL family consume slots + re-dispatch.
   // Identity / coder-only apply is hollow and must fail consumed-slot nails.
-  // #934 ID-002 / R6 F1: after any apply (production or test override),
-  // re-satisfy the same tight gate as admission ({@link admitTightRoute} /
-  // {@link admitRelayBaton} composition — no parallel policy court).
-  const applyFn = opts.applyRelayBatonToRoute ?? applyRelayBatonToRoute;
-  const appliedRaw = applyFn(
+  // #934 ID-002 / R7 F2: single admit court ({@link admitRelayBaton}) — same
+  // stop shape as single-slice (apply throw → typed stop; tight fail → stop).
+  // Spec N1 / OUT #942: keep stopSummary.reason = infra_failure until public
+  // ABI cutover; do not invent a parallel route_config_invalid token here.
+  const admitted = admitRelayBaton(
     opts.modelRoute,
     outcome.nextBaton,
     wallStep,
-    { slots: wallSlots },
+    {
+      slots: wallSlots,
+      ...(opts.applyRelayBatonToRoute !== undefined
+        ? { applyFn: opts.applyRelayBatonToRoute }
+        : {}),
+    },
   );
-  const tight = admitTightRoute(appliedRaw);
-  if (tight.kind === "stop") {
-    const diagnosis = tight.escalation.diagnosis;
+  if (admitted.kind === "stop") {
+    const diagnosis = admitted.escalation.diagnosis;
     await opts.familyBackend.appendFamilyLedger({
       status: "worker_dispatched",
       event: "worker_dispatched",
       workerStep: `quota_relay:${opts.phase}`,
-      reason: `tight route violation after relay baton — refuse dispatch: ${diagnosis}`,
+      reason: `relay baton admission refused — refuse dispatch: ${diagnosis}`,
     });
     return buildParkResult(
       {
         reason: "infra_failure",
-        summary: `${tight.escalation.reason}: ${diagnosis}`,
+        summary: `${admitted.escalation.reason}: ${diagnosis}`,
         repairHint:
           "pick a baton/route preset that preserves tight-family invariants, then re-feed",
       },
       {
-        reason: tight.escalation.reason,
+        reason: admitted.escalation.reason,
         diagnosis,
       },
     );
   }
-  const appliedRoute = tight.route;
+  const appliedRoute = admitted.route;
   // Durable family-ledger relay boundary first; write failure fails closed.
   await opts.familyBackend.appendFamilyLedger({
     status: "worker_dispatched",

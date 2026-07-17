@@ -69,8 +69,6 @@ import {
   persistRelayBatonHandoff,
 } from "./quotaParkRelay.js";
 import {
-  applyCoderRecToRoute,
-  applyRelayBatonToRoute,
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
@@ -85,6 +83,7 @@ import {
   admitCoderRec,
   admitRelayBaton,
   admitRouteFromEnv,
+  admitTightRoute,
   admissionRouteFailureDiagnosis,
   isGithubAuthFailure,
 } from "./admissionPreflight.js";
@@ -1485,12 +1484,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   /**
    * Hold a sticky coder seat against Coder-Rec snap-back: rewrite coder
-   * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
-   * when the runnable model actually changed.
+   * (+coderFix), re-admit tight policy (#934 ID-002 / R7 F3), refresh stepSpecs,
+   * invalidate smoke, and retire the session when the runnable model changed.
    */
-  const holdCoderSticky = (slug: string): void => {
-    if (modelRoute.slots.coder === slug) return;
-    modelRoute = withCoderSlot(modelRoute, slug);
+  const holdCoderSticky = (
+    slug: string,
+  ): { kind: "stop"; escalation: Escalation } | undefined => {
+    if (modelRoute.slots.coder === slug) return undefined;
+    const admitted = admitTightRoute(withCoderSlot(modelRoute, slug));
+    if (admitted.kind === "stop") return admitted;
+    modelRoute = admitted.route;
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     if (
@@ -1501,6 +1504,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderSessionId = undefined;
       coderSessionModel = undefined;
     }
+    return undefined;
   };
 
   /**
@@ -1542,19 +1546,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     | undefined
   > => {
     // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
-    // round-threshold quality advance.
+    // round-threshold quality advance. #934 R7 F3: re-admit tight after hold.
     if (stickyRelayCoderSlug !== undefined) {
-      holdCoderSticky(stickyRelayCoderSlug);
-      return undefined;
+      return holdCoderSticky(stickyRelayCoderSlug);
     }
     if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
-        // Pure slot apply recomputes tightFamilyViolations (F2).
-        modelRoute = applyRelayBatonToRoute(
+        // Single apply+admit court (same as live relay baton).
+        const admitted = admitRelayBaton(
           modelRoute,
           { slug: stickyRelayCoderFixSlug },
           "S5",
         );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
         if (
@@ -1570,8 +1575,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
     if (stickyJudgeAdvanceCoderSlug !== undefined) {
-      holdCoderSticky(stickyJudgeAdvanceCoderSlug);
-      return undefined;
+      return holdCoderSticky(stickyJudgeAdvanceCoderSlug);
     }
     // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
     const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
@@ -2722,13 +2726,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #926 — rebuild judge-advanced sticky seat from the latest successful
     // coder_advance row (before resource-relay, which still wins when present).
+    // #934 R7 F3: re-admit tight after sticky re-hold.
     for (let i = resumeLedger.length - 1; i >= 0; i--) {
       const row = resumeLedger[i]!;
       if (row.event === "coder_advance" && typeof row.toModelId === "string") {
         const advanced = lookupCoderRosterEntry(row.toModelId);
         const slug = advanced?.slug ?? row.toModelId;
         stickyJudgeAdvanceCoderSlug = slug;
-        holdCoderSticky(slug);
+        const held = holdCoderSticky(slug);
+        if (held?.kind === "stop") {
+          return await stopForCoderRecTightRoutePolicy(held.escalation);
+        }
         break;
       }
     }
