@@ -1927,8 +1927,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   // exercises RealBackend single-slice reviewer open-count + coder decision-gate
   // at the real sc.run boundary (scripted provider, no LLM).
 
-  // sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-  describe.sequential("#899 single-slice production SO four-case matrix", () => {
+  // #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
+  describe("#899 single-slice production SO four-case matrix", () => {
     const cleanups: string[] = [];
     afterEach(() => {
       while (cleanups.length > 0) {

@@ -191,9 +191,17 @@ export async function runScriptedStructuredOutput(opts: {
   const promptFile = join(repo, "scripted-structured-output.md");
   writeFileSync(promptFile, template.replaceAll("{{TAG}}", opts.tag), "utf8");
 
+  // #962: noSandbox runs on the host; Sandcastle's setup does
+  // `git config --global` (safe.directory / user.*). Point those writes at a
+  // per-run private file under the harness tmpdir so parallel tests never race
+  // on or pollute the real ~/.gitconfig (README provider-env path).
+  const privateGitConfigGlobal = join(repo, ".test-gitconfig");
+
   const result = (await sc.run({
     agent,
-    sandbox: noSandbox(),
+    sandbox: noSandbox({
+      env: { GIT_CONFIG_GLOBAL: privateGitConfigGlobal },
+    }),
     cwd: repo,
     // Absolute path: Sandcastle resolves promptFile against process.cwd().
     promptFile,
