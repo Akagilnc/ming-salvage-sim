@@ -1347,11 +1347,14 @@ export async function runFamily(
         ? await singleSliceBackend.currentCliVersions(modelRoute)
         : {};
     } else {
-    logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
-    currentCliVersions = singleSliceBackend.currentCliVersions
-      ? await singleSliceBackend.currentCliVersions(modelRoute)
-      : {};
-    modelRoute = await singleSliceBackend.smokeModelRoute(modelRoute, currentCliVersions);
+      logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
+      currentCliVersions = singleSliceBackend.currentCliVersions
+        ? await singleSliceBackend.currentCliVersions(modelRoute)
+        : {};
+      modelRoute = await singleSliceBackend.smokeModelRoute(
+        modelRoute,
+        currentCliVersions,
+      );
     }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

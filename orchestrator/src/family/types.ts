@@ -101,6 +101,37 @@ export interface FamilyAdmissionSkippedChild {
 // ─────────────────────────── family ledger ───────────────────────────
 
 /**
+ * Single source of truth for {@link FamilyLedgerEntry.status} (#934 CR R3 S-2).
+ * Type = element of this array; JSONL shape gate builds its Set from the same list.
+ */
+export const FAMILY_LEDGER_STATUS_VALUES = [
+  "merged",
+  "aborted",
+  "shipped",
+  "review_loop_converged",
+  "pr_merged",
+  "post_merge_cleanup",
+  "cmr_reviewed",
+  "cmr_fix_committed",
+  "cmr_passed",
+  "escalated",
+  "child_decision_parked",
+  "escalation_answered",
+  "admission_skipped",
+  "online_review_fix_committed",
+  "online_review_round_retrigger",
+  "worker_dispatched",
+  "route_degraded",
+  /** #919 — judge advanceCoder executed on family coderFix seat. */
+  "coder_advance",
+  /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+  "coder_advance_stay_put",
+] as const;
+
+/** Element type of {@link FAMILY_LEDGER_STATUS_VALUES}. */
+export type FamilyLedgerStatus = (typeof FAMILY_LEDGER_STATUS_VALUES)[number];
+
+/**
  * One append-only family-ledger event (ADR 0022 decision 5).
  *
  * #293 recorded only the minimal `{childIssue, status:"merged"}` per merged
@@ -130,6 +161,8 @@ export interface FamilyLedgerEntry {
   readonly childIssue?: number;
   /**
    * Merge status — the UNBLOCK-PREDICATE field (ADR 0022 decision 6②).
+   * Vocabulary is {@link FAMILY_LEDGER_STATUS_VALUES} (single source; shape gate
+   * reuses the same array). Semantics:
    *   - `"merged"`  — the child's branch is merged into the family base (a live
    *     merge OR a reconcile補账条; both COUNT as merged).
    *   - `"aborted"` — a verify/cmr barrier failed; this PHASE-LEVEL event carries
@@ -149,14 +182,14 @@ export interface FamilyLedgerEntry {
    *     counted as merged (no `childIssue`).
    *   - `"post_merge_cleanup"` — the TERMINAL post-merge cleanup marker (#603).
    *     Written after live verify+act cleanup succeeds. NOT counted as merged.
-  *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
- *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
- *     counted as merged.
- *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
- *     coder-fix worker's independent commit for a CMR finding (#550). NOT counted
- *     as merged.
- *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
- *     CMR pass (#419). NOT counted as merged.
+   *   - `"cmr_reviewed"` — a PHASE-LEVEL audit event recording one red integrated
+   *     CMR review outcome before the runner dispatches coder-fix (#550). NOT
+   *     counted as merged.
+   *   - `"cmr_fix_committed"` — a PHASE-LEVEL audit event recording the separate
+   *     coder-fix worker's independent commit for a CMR finding (#550). NOT counted
+   *     as merged.
+   *   - `"cmr_passed"` — a PHASE-LEVEL audit event recording one green integrated
+   *     CMR pass (#419). NOT counted as merged.
    *   - `"escalated"` — a PHASE-LEVEL family pause/failure marker (#439). Decision
    *     escalations are answerable by a later append-only `escalation_answered`
    *     row; failure escalations are terminal until human/manual repair outside
@@ -173,29 +206,10 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
+   *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
+   *     seat audit (applied vs stay-put).
    */
-  readonly status:
-    | "merged"
-    | "aborted"
-    | "shipped"
-    | "review_loop_converged"
-    | "pr_merged"
-    | "post_merge_cleanup"
-    | "cmr_reviewed"
-    | "cmr_fix_committed"
-    | "cmr_passed"
-    | "escalated"
-    | "child_decision_parked"
-    | "escalation_answered"
-    | "admission_skipped"
-    | "online_review_fix_committed"
-    | "online_review_round_retrigger"
-    | "worker_dispatched"
-    | "route_degraded"
-    /** #919 — judge advanceCoder executed on family coderFix seat. */
-    | "coder_advance"
-    /** #919 — judge advanceCoder unusable; stay on current coderFix. */
-    | "coder_advance_stay_put";
+  readonly status: FamilyLedgerStatus;
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries

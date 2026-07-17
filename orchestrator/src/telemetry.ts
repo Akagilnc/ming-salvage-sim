@@ -950,13 +950,16 @@ export function mentionsHttp429(reasonLower: string): boolean {
 /**
  * Map a free-text failure reason onto a telemetry category.
  *
- * Patterns below are taken from the actual throw/return sites (not invented):
+ * Patterns below are taken from live throw/return sites unless noted historical:
  * - missing sidecar / historical "did not fire its completion signal" logs
- * - HangWithLivePoolError — "hang with live pool"
- * - dispatchWorker idle monitor — "monitored worker idle hang"
+ * - live Sandcastle AgentIdleTimeoutError — "Agent idle for N seconds…"
+ * - historical idle-monitor wording — "idle hang" / "worker idle" (clustering only)
  * - QuotaWaitForResetError — "quota wait for reset"
- * - SelfReportedRelayError — "self-reported blocked" / "phase_complete:"
+ * - SelfReportedRelayError (deleted #937) — historical "self-reported blocked" /
+ *   "phase_complete:" clustering only
  * - signal-kill stamp — "killed by signal" / SIGTERM / SIGKILL
+ *
+ * #937 deleted HangWithLivePoolError — its "hang with live pool" arm is gone.
  *
  * Anything unmatched → `"unclassified"` (raw message kept on the collect row).
  */
@@ -987,16 +990,16 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     return "429-quota";
   }
 
-  // ── hang-idle (HangWithLivePoolError + monitored idle hang + Sandcastle idle) ─
-  // realBackend rethrows AgentIdleTimeoutError as:
+  // ── hang-idle ────────────────────────────────────────────────────────────
+  // Live: realBackend rethrows AgentIdleTimeoutError as
   //   "Agent idle for 600 seconds — no output received. …"
   // (#683 / quotaProbe isAgentIdleTimeoutError message shape).
+  // Historical clustering only: "idle hang" / "worker idle" / "hang-idle"
+  // (pre-#937 monitor wording; HangWithLivePoolError arm deleted).
   if (
     lower.includes("idle hang") ||
     lower.includes("hang-idle") ||
     lower.includes("worker idle") ||
-    lower.includes("monitored worker idle hang") ||
-    lower.includes("hang with live pool") ||
     /agent idle for \d+/.test(lower)
   ) {
     return "hang-idle";
