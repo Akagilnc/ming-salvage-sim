@@ -243,6 +243,8 @@ export function familyWallStepFromQuotaWait(opts: {
   if (opts.phase === "online_review") return "S9";
   if (opts.phase === "merge") return "S1";
   if (opts.phase === "wave") return "S9";
+  // #961 CR R2 — checkpoint is IC court, not ship; never fall through to S7.
+  if (opts.phase === "correctness_checkpoint") return "S9";
   return "S7";
 }
 

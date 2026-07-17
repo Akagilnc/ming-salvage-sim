@@ -925,6 +925,40 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toBe("S9");
   });
 
+  it("C1 pure: correctness_checkpoint bare step → S9 (not S7/ship); slots verify|cmrCorrectness", async () => {
+    // #961 CR R2 — same class as online_review→S7 rewrite: phase default must
+    // not fall through to S7/ship. Checkpoint baton is verify/cmrCorrectness.
+    const { familyWallStepFromQuotaWait } = await import(
+      "../../../src/family/runner.js"
+    );
+    const resetAt = new Date("2026-07-14T14:00:00.000Z");
+    const errNoStep = quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+    const bare = new QuotaWaitForResetError({
+      disposition: errNoStep.disposition,
+      applied: {
+        ledgerEntry: {
+          ...errNoStep.applied.ledgerEntry!,
+          step: undefined as unknown as "S3",
+        },
+      },
+      pool: errNoStep.pool,
+    });
+    const wallStep = familyWallStepFromQuotaWait({
+      err: bare,
+      phase: "correctness_checkpoint",
+    });
+    expect(wallStep).toBe("S9");
+    expect(wallStep).not.toBe("S7");
+    const slots = familyRelaySlotsForWall({
+      phase: "correctness_checkpoint",
+      wallStep,
+    });
+    expect(slots).not.toContain("ship");
+    expect(
+      slots.includes("verify") || slots.includes("cmrCorrectness"),
+    ).toBe(true);
+  });
+
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
