@@ -605,7 +605,15 @@ export function familyRelaySlotsForWall(opts: {
   }
   if (step === "S5") return ["coderFix"];
   if (step === "S7") return ["ship"];
-  if (step === "S9") return ["verify"];
+  if (step === "S9") {
+    // Residual / legacy walls may still stamp S9 for IC checkpoint; do not
+    // rewrite the verify slot when the phase is the correctness court.
+    if (opts.phase === "correctness_checkpoint") {
+      if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
+      return ["cmrCorrectness"];
+    }
+    return ["verify"];
+  }
   if (step === "S10") return ["fixer"];
   if (step === "S12") return ["landing"];
   // Explicit wall roles above. Phase fallbacks never rewrite ship for

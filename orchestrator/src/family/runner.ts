@@ -243,8 +243,11 @@ export function familyWallStepFromQuotaWait(opts: {
   if (opts.phase === "online_review") return "S9";
   if (opts.phase === "merge") return "S1";
   if (opts.phase === "wave") return "S9";
-  // #961 CR R2 — checkpoint is IC court, not ship; never fall through to S7.
-  if (opts.phase === "correctness_checkpoint") return "S9";
+  // #961 / #982: checkpoint is IC court, not ship — never fall through to S7.
+  // Prefer S3 (CMR wall) so familyRelaySlotsForWall + cmrPass rewrites
+  // cmrCorrectness, not verify. Bare S9 would hard-map to the verify slot and
+  // leave the quota-limited CMR slot unchanged on baton (Codex P2).
+  if (opts.phase === "correctness_checkpoint") return "S3";
   return "S7";
 }
 

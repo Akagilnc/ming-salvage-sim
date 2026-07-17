@@ -923,9 +923,10 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toBe("S9");
   });
 
-  it("C1 pure: correctness_checkpoint bare step → S9 (not S7/ship); slots verify|cmrCorrectness", async () => {
-    // #961 CR R2 — same class as online_review→S7 rewrite: phase default must
-    // not fall through to S7/ship. Checkpoint baton is verify/cmrCorrectness.
+  it("C1 pure: correctness_checkpoint bare step → S3 CMR (not S7/ship, not verify-only S9)", async () => {
+    // #961 CR R2 + #982 Codex P2: phase default must not fall through to S7/ship.
+    // Checkpoint baton must rewrite cmrCorrectness — S9 hard-maps to verify and
+    // would leave the quota-limited CMR slot unchanged when step is lost.
     const { familyWallStepFromQuotaWait } = await import(
       "../../../src/family/runner.js"
     );
@@ -938,21 +939,31 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
       pool: errNoStep.pool,
     });
+    bare.cmrPass = "correctness";
     Reflect.deleteProperty(bare.applied.ledgerEntry!, "step");
     const wallStep = familyWallStepFromQuotaWait({
       err: bare,
       phase: "correctness_checkpoint",
     });
-    expect(wallStep).toBe("S9");
+    expect(wallStep).toBe("S3");
     expect(wallStep).not.toBe("S7");
+    expect(wallStep).not.toBe("S9");
     const slots = familyRelaySlotsForWall({
       phase: "correctness_checkpoint",
       wallStep,
+      cmrPass: "correctness",
     });
+    expect(slots).toEqual(["cmrCorrectness"]);
     expect(slots).not.toContain("ship");
+    expect(slots).not.toContain("verify");
+    // Defense in depth: legacy S9 stamp under checkpoint phase still CMR.
     expect(
-      slots.includes("verify") || slots.includes("cmrCorrectness"),
-    ).toBe(true);
+      familyRelaySlotsForWall({
+        phase: "correctness_checkpoint",
+        wallStep: "S9",
+        cmrPass: "correctness",
+      }),
+    ).toEqual(["cmrCorrectness"]);
   });
 
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
