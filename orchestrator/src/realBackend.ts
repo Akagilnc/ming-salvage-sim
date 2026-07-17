@@ -66,7 +66,6 @@ import {
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
-  receiptMaxRetriesForProvider,
   requireTypedTrafficSignal,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -106,6 +105,7 @@ import {
 import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
+  resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
   modelFamilyForSlug,
@@ -2943,30 +2943,30 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     options?: AgentStepRunOptions,
   ): sc.OutputDefinition | undefined {
-    // #934 ID-004 / #937: non-resumable providers (grok/agy) attach maxRetries:0
-    // so malformed SO enters process-root retry, not a dead same-session re-ask.
+    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // S9 online-review must not take JUDGE_RECEIPT.
+    // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
+    // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
+    // a pool rewrite can move a resume-capable slug onto an incapable provider.
     const pool = isBillingPoolDispatchId(options?.billingPool)
       ? options.billingPool
       : undefined;
-    const provider = resolveModelSlugForPool(spec.model, pool).provider;
-    const maxRetries = receiptMaxRetriesForProvider(provider);
-    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
-    // S9 online-review must not take JUDGE_RECEIPT.
+    const resumeCapable = resumeCapableForSlug(spec.model, pool);
     if (isJudgeSeat({ id: spec.id })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
         judgeStationReceiptSchema(),
-        maxRetries,
+        resumeCapable,
       );
     }
     if (spec.role === "reviewer") {
-      return workerReceiptOutput("review", workerReceiptSchema(), maxRetries);
+      return workerReceiptOutput("review", workerReceiptSchema(), resumeCapable);
     }
     if (spec.role === "coder") {
       return coderReceiptOutput(
         coderStationReceiptSchema(),
         CODER_RECEIPT_TAG,
-        maxRetries,
+        resumeCapable,
       );
     }
     return undefined;
@@ -3041,6 +3041,8 @@ export class RealBackend implements Backend {
     readonly typedOutput: sc.OutputDefinition | undefined;
     readonly typedOutputUsed: boolean;
   } {
+    // #955 r7: options.billingPool must reach resumeCapableForSlug (receipt
+    // maxRetries) — same dispatch pool agentForSlug uses for the real agent.
     const typedOutput = this.outputFor(spec, options);
     const singleIterOk =
       opts?.requireSingleIter !== true || spec.maxIter === 1;

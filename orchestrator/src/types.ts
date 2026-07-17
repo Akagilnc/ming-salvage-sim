@@ -566,6 +566,26 @@ export interface CoderAdvanceStayPutEvent {
   readonly ts: string;
 }
 
+/**
+ * #955 — crash/escalate resume dropped the stored session id rather than
+ * hand a foreign or resume-incapable session to the provider.
+ *
+ * Loud mark (ledger + log): identity mismatch vs seat, or seat cannot resume.
+ * Escalation answer still lands; only session continuity is abandoned.
+ */
+export interface SessionContinuityLostEvent {
+  readonly event: "session_continuity_lost";
+  /** Human-readable cause (model_mismatch / provider_incapable / …). */
+  readonly reason: string;
+  /** Model slug that created the stored session, when known from ledger. */
+  readonly fromModelId?: string;
+  /** Seat model slug that would have received the id. */
+  readonly toModelId?: string;
+  /** The dropped session id (never forwarded to the provider). */
+  readonly sessionId?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -575,7 +595,8 @@ export type LedgerBookkeepingEvent =
   | MechanicalRedispatchAttemptEvent
   | RouteDegradedEvent
   | CoderAdvanceEvent
-  | CoderAdvanceStayPutEvent;
+  | CoderAdvanceStayPutEvent
+  | SessionContinuityLostEvent;
 
 /**
  * The structured output of any worker step.
@@ -1358,6 +1379,15 @@ export interface LedgerEntry {
    * provider actually surfaced one.
    */
   readonly sessionId?: string;
+  /**
+   * Model slug that owned this agent-step session (#955).
+   *
+   * Resume truth for the invariant: a stored session id may only re-enter the
+   * same model binding that created it. Written on agent-step ledger rows at
+   * dispatch time (not guessed from the current seat on re-feed). Absent on
+   * runner-action / legacy rows that predate the field.
+   */
+  readonly modelSlug?: string;
   /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
   /** #824 — absolute per-step mechanical dispatch attempt number. */

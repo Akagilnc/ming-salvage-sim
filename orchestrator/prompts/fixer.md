@@ -16,6 +16,8 @@ every in-scope site checked, `file:line` — `fixed` or `already-correct`, givin
 the next reviewer coverage to verify. Record same-class sites noticed outside
 the assigned family base as `file:line` — `out-of-scope observation` for the
 runner; never edit them.
+After the fixing commit lands, push it to the PR branch for bot re-review —
+this loop's submission transport (the worker performs the push).
 The role cargo remains only the JSON body defined below.
 
 ## Required output

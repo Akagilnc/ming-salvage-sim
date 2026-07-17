@@ -62,7 +62,6 @@ import {
   logAndRethrowReceiptFailure,
   mergerReceiptOutput,
   onlineReviewReceiptOutput,
-  receiptMaxRetriesForProvider,
   requireTypedTrafficSignal,
   shipReceiptOutput,
   workerReceiptOutput,
@@ -105,6 +104,7 @@ import {
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
+  resumeCapableForSlug,
 } from "../modelRegistry.js";
 import {
   agentForSlug,
@@ -517,22 +517,26 @@ export class RealFamilyBackend implements FamilyBackend {
    * without spinning a real `sc.run`.
    */
   /** #934 ID-004 / #937: SO maxRetries from provider resumability. */
-  protected receiptMaxRetriesFor(
-    spec: WorkerSpec,
-    ctx?: Pick<DispatchContext, "billingPool">,
-  ): number {
-    const pool = isBillingPoolDispatchId(ctx?.billingPool)
-      ? ctx.billingPool
-      : undefined;
-    return receiptMaxRetriesForProvider(
-      resolveModelSlugForPool(spec.model, pool).provider,
-    );
-  }
 
   protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
     // Effort comes from the registry row for `spec.model` only (#916: no
     // role/soul hard override of reasoning effort at dispatch).
     return agentForSlug(
+      spec.model,
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
+  /**
+   * #955 r7 — receipt maxRetries uses the same (slug, pool) binding as
+   * {@link agentForSpec}. Pool rewrite can move a resume-capable slug onto an
+   * incapable provider; slug-only capability would attach a false maxRetries.
+   */
+  protected resumeCapableForSpec(
+    spec: Pick<WorkerSpec, "model">,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): boolean {
+    return resumeCapableForSlug(
       spec.model,
       isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
     );
@@ -956,9 +960,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: mergerReceiptOutput(
               mergerStationReceiptSchema(),
               MERGER_RECEIPT_TAG,
-              receiptMaxRetriesForProvider(
-                resolveModelSlugForPool(model).provider,
-              ),
+              resumeCapableForSlug(model),
             ),
           });
           // Output.object was attached: absent typed signal → #598, not cargo.
@@ -1719,7 +1721,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
-              this.receiptMaxRetriesFor(spec, ctx),
+              this.resumeCapableForSpec(spec, ctx),
             ),
           });
         } catch (err) {
@@ -1855,7 +1857,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
-              this.receiptMaxRetriesFor(spec, ctx),
+              this.resumeCapableForSpec(spec, ctx),
             ),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
@@ -2183,7 +2185,7 @@ export class RealFamilyBackend implements FamilyBackend {
           output: onlineReviewReceiptOutput(
             onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
-            this.receiptMaxRetriesFor(spec, ctx),
+            this.resumeCapableForSpec(spec, ctx),
           ),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
@@ -2906,8 +2908,8 @@ export class RealFamilyBackend implements FamilyBackend {
       output: shipReceiptOutput(
         shipStationReceiptSchema(),
         SHIP_RECEIPT_TAG,
-        this.receiptMaxRetriesFor(spec, ctx),
-      )
+        this.resumeCapableForSpec(spec, ctx),
+      ),
     });
   }
 
