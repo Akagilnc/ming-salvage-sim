@@ -54,16 +54,11 @@ import {
   scheduleTelemetryEnvironmentStamp,
 } from "./telemetry.js";
 import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
-import {
-  AdoptionPersistFailedError,
-} from "./dispatchRetry.js";
+import { abandonSpawnAfterAdoptionFailure } from "./dispatchRetry.js";
 import {
   dispatchMonitoredCliWorker,
-  isWorkerTerminationFailedError,
   readLogActivity,
   silenceWholeMinutes,
-  terminateSpawnedChild,
-  WorkerTerminationFailedError,
   type MonitoredCliDispatchInput,
   type WorkerMonitorDeps,
 } from "./workerMonitor.js";
@@ -798,32 +793,14 @@ export async function dispatchWorkerWithMonitor(
         try {
           await opts.onMonitorHandleSpawned(handle);
         } catch (error) {
-          // #934 ID-006: exact terminate; unconfirmed exit → worker_termination_failed + PID.
-          // #934 ID-004: adoption failure is non-retryable (AdoptionPersistFailedError).
-          try {
-            await terminateSpawnedChild(child, opts?.monitorDeps, {
-              instanceId: handle.instanceId,
-            });
-          } catch (termErr) {
-            if (isWorkerTerminationFailedError(termErr)) {
-              const base =
-                error instanceof Error ? error.message : String(error);
-              throw new WorkerTerminationFailedError({
-                ...(termErr.pid !== undefined ? { pid: termErr.pid } : {}),
-                instanceId: handle.instanceId,
-                message:
-                  `${base}; worker_termination_failed` +
-                  (termErr.pid !== undefined ? ` pid=${termErr.pid}` : "") +
-                  ` instanceId=${handle.instanceId}`,
-              });
-            }
-          }
-          try {
-            await exitPromise;
-          } catch {
-            // Preserve the original spawn-persist error if child cleanup fails.
-          }
-          throw new AdoptionPersistFailedError(error);
+          // #934 ID-006 / #937 S1: single adoption-failure cleanup court.
+          await abandonSpawnAfterAdoptionFailure({
+            child,
+            exitPromise,
+            adoptionError: error,
+            instanceId: handle.instanceId,
+            monitorDeps: opts?.monitorDeps,
+          });
         }
       }
       const monitorDeps = opts?.monitorDeps;
