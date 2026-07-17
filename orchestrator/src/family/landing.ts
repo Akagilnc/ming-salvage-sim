@@ -357,15 +357,20 @@ export async function runLandingAction(
     }
   }
 
-  // Docs may have advanced family HEAD. Completion markers + resume lookup key
-  // that live HEAD (not the stale pre-doc review_loop_converged OID).
-  const completionHeadOid = await resolveLandingMarkerHead(
-    input.familyBackend,
-    input.familyBase,
-    input.convergedHeadOid,
-  );
+  // Docs may have advanced family HEAD. When docs ran, re-read live HEAD for
+  // completion markers + resume lookup (not the stale pre-doc converged OID).
+  // When docs were skipped (priorMerged already set), entry liveMarkerHead is
+  // already the right key — a second resolve is pure redundancy.
+  const docsRan = priorMerged === undefined;
+  const completionHeadOid = docsRan
+    ? await resolveLandingMarkerHead(
+        input.familyBackend,
+        input.familyBase,
+        input.convergedHeadOid,
+      )
+    : liveMarkerHead;
   if (
-    priorMerged === undefined &&
+    docsRan &&
     completionHeadOid !== input.convergedHeadOid
   ) {
     // Re-stamp so runner's already-converged short path (live HEAD equality)

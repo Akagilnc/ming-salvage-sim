@@ -115,8 +115,10 @@ Rules:
 
 - Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
 - Role cargo never carries escalate — fate is the typed envelope only.
-- Side effects are **done** before you emit completed/`converged` cargo — never
-  a plan for host apply (`threadReplies` / `threadsToResolve` /
-  `deferredIssueUrls` are not part of this cargo contract).
+- Prefer executing side effects yourself before emit. Residual well-typed plan
+  fields (`threadReplies` / `threadsToResolve` / `deferredIssueUrls`) remain
+  legal cargo for the host fail-safe when you cannot finish every effect
+  yourself. Never report `converged:true` with unfinished effects and no
+  residual plan (same dual-owner rule as Ownership above).
 - This seat is single-iteration. Completion is clean exit + legal typed
   envelope / sidecar — no STEP_COMPLETE password.
