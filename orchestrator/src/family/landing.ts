@@ -18,6 +18,7 @@ import {
   fetchPrMergeLiveState,
   githubFieldEquals,
   mergeRecordIfHeadAligned,
+  type MergeRecordAlignment,
   type PrMergeLiveState,
   type PrMergedTerminalRecord,
 } from "../autoMerge.js";
@@ -561,7 +562,7 @@ export async function runLandingAction(
 
     const entryMerged = mergeRecordIfHeadAligned(live, completionHeadOid);
     if (entryMerged.kind === "mismatch") {
-      return mergedHeadMismatchPark(live.headOid, completionHeadOid);
+      return mergedHeadMismatchPark(entryMerged.headOid, completionHeadOid);
     }
     if (entryMerged.kind === "aligned") {
       mergeRecord = entryMerged.record;
@@ -590,11 +591,13 @@ export async function runLandingAction(
         });
       };
 
-      // Std S4 / R2 S1 / R3-G2: repeated live I/O failures (fetchState OR
+      // Std S4 / R2 S1 / R3-G2 / L1: repeated live I/O failures (fetchState OR
       // pollOnce) → decision_gate. Fail-closed per failed round: never assess
-      // readiness or accept MERGED from a stale snapshot/live after I/O death.
+      // readiness from a stale snapshot/live after I/O death — on the next
+      // success path refresh live first (or keep fail-closed until refresh works).
       let consecutiveFetchFailures = 0;
       let consecutivePollFailures = 0;
+      let liveStaleAfterIoFailure = false;
       let snapshot: PrReviewSnapshot | undefined;
       let readiness: ReturnType<typeof assessMergeReadiness> | undefined;
       while (true) {
@@ -603,6 +606,7 @@ export async function runLandingAction(
           consecutivePollFailures = 0;
         } catch (err) {
           consecutivePollFailures += 1;
+          liveStaleAfterIoFailure = true;
           if (consecutivePollFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
             const detail = err instanceof Error ? err.message : String(err);
             return landingCiIoPark(detail, "poll");
@@ -610,6 +614,37 @@ export async function runLandingAction(
           // Fail-closed (R3-G2): do not assess with a prior snapshot this round.
           await sleepPendingCiPollInterval();
           continue;
+        }
+
+        if (liveStaleAfterIoFailure) {
+          try {
+            live = fetchState();
+            consecutiveFetchFailures = 0;
+            liveStaleAfterIoFailure = false;
+          } catch (err) {
+            consecutiveFetchFailures += 1;
+            if (consecutiveFetchFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
+              const detail = err instanceof Error ? err.message : String(err);
+              return landingCiIoPark(detail, "state_fetch");
+            }
+            // Still fail-closed: do not assess with stale live.
+            await sleepPendingCiPollInterval();
+            continue;
+          }
+          const refreshedMerged = mergeRecordIfHeadAligned(
+            live,
+            completionHeadOid,
+          );
+          if (refreshedMerged.kind === "mismatch") {
+            return mergedHeadMismatchPark(
+              refreshedMerged.headOid,
+              completionHeadOid,
+            );
+          }
+          if (refreshedMerged.kind === "aligned") {
+            mergeRecord = refreshedMerged.record;
+            break;
+          }
         }
 
         readiness = assessMergeReadiness(live, snapshot);
@@ -634,8 +669,10 @@ export async function runLandingAction(
         try {
           live = fetchState();
           consecutiveFetchFailures = 0;
+          liveStaleAfterIoFailure = false;
         } catch (err) {
           consecutiveFetchFailures += 1;
+          liveStaleAfterIoFailure = true;
           if (consecutiveFetchFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
             const detail = err instanceof Error ? err.message : String(err);
             return landingCiIoPark(detail, "state_fetch");
@@ -645,7 +682,7 @@ export async function runLandingAction(
         }
         const midMerged = mergeRecordIfHeadAligned(live, completionHeadOid);
         if (midMerged.kind === "mismatch") {
-          return mergedHeadMismatchPark(live.headOid, completionHeadOid);
+          return mergedHeadMismatchPark(midMerged.headOid, completionHeadOid);
         }
         if (midMerged.kind === "aligned") {
           mergeRecord = midMerged.record;
@@ -684,43 +721,67 @@ export async function runLandingAction(
           };
         }
 
-        // R4-CX1: merge exit ≠ live MERGED. Bounded confirm/fetch retries cover
-        // GitHub propagation lag before parking as ambiguous.
-        const confirmOnce =
-          liveHooks?.confirmMerged ??
-          ((expectedHeadOid: string) =>
-            confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
+        // R4-CX1 / L2: merge exit ≠ live MERGED. Bounded confirm retries cover
+        // propagation lag. Production confirm returns three-state alignment so
+        // head-mismatch parks immediately (not opaque not_merged).
+        const confirmAlignment = (
+          expectedHeadOid: string,
+        ): MergeRecordAlignment => {
+          if (liveHooks?.confirmMerged !== undefined) {
+            const record = liveHooks.confirmMerged(expectedHeadOid);
+            return record !== undefined
+              ? { kind: "aligned", record }
+              : { kind: "not_merged" };
+          }
+          return confirmPrMergedLive(
+            sh,
+            familyRepo,
+            prUrl,
+            expectedHeadOid,
+          );
+        };
         for (
           let attempt = 0;
           attempt < LANDING_MERGED_CONFIRM_ATTEMPTS;
           attempt += 1
         ) {
+          let alignment: MergeRecordAlignment;
           try {
-            mergeRecord = confirmOnce(completionHeadOid);
+            alignment = confirmAlignment(completionHeadOid);
           } catch {
-            mergeRecord = undefined;
+            alignment = { kind: "not_merged" };
           }
-          if (mergeRecord === undefined) {
-            try {
-              const after = fetchState();
-              const afterMerged = mergeRecordIfHeadAligned(
-                after,
+          if (alignment.kind === "mismatch") {
+            return mergedHeadMismatchPark(
+              alignment.headOid,
+              completionHeadOid,
+            );
+          }
+          if (alignment.kind === "aligned") {
+            mergeRecord = alignment.record;
+            break;
+          }
+          // not_merged: probe live again (hooks may lag confirm while live
+          // already shows MERGED; also surfaces mismatch the hook cannot express).
+          try {
+            const after = fetchState();
+            const afterMerged = mergeRecordIfHeadAligned(
+              after,
+              completionHeadOid,
+            );
+            if (afterMerged.kind === "mismatch") {
+              return mergedHeadMismatchPark(
+                afterMerged.headOid,
                 completionHeadOid,
               );
-              if (afterMerged.kind === "mismatch") {
-                return mergedHeadMismatchPark(
-                  after.headOid,
-                  completionHeadOid,
-                );
-              }
-              if (afterMerged.kind === "aligned") {
-                mergeRecord = afterMerged.record;
-              }
-            } catch {
-              /* try again / fall through */
             }
+            if (afterMerged.kind === "aligned") {
+              mergeRecord = afterMerged.record;
+              break;
+            }
+          } catch {
+            /* try again / fall through */
           }
-          if (mergeRecord !== undefined) break;
           if (attempt + 1 < LANDING_MERGED_CONFIRM_ATTEMPTS) {
             await sleepPendingCiPollInterval();
           }
@@ -755,20 +816,17 @@ export async function runLandingAction(
   let cleanupOutput: CleanupResult;
 
   try {
-    const liveForCleanup = (() => {
-      try {
-        return fetchState();
-      } catch {
-        return {
-          prNumber: mergeRecord.prNumber,
-          prUrl: mergeRecord.prUrl,
-          state: "MERGED",
-          headOid: mergeRecord.mergedHeadOid,
-          headRefName: mergeRecord.remoteBranchName,
-          mergeStateStatus: "UNKNOWN",
-        };
-      }
-    })();
+    // R5-CX1: mergeRecord already proved MERGED. Never re-fetch live for the
+    // cleanup merge gate — lag OPEN would skip issue close yet still stamp
+    // terminal post_merge_cleanup → resume already_done without closing.
+    const liveForCleanup: PrMergeLiveState = {
+      prNumber: mergeRecord.prNumber,
+      prUrl: mergeRecord.prUrl,
+      state: "MERGED",
+      headOid: mergeRecord.mergedHeadOid,
+      headRefName: mergeRecord.remoteBranchName,
+      mergeStateStatus: "UNKNOWN",
+    };
     cleanupOutput = runPostMergeCleanup({
       sh,
       repo: familyRepo,
@@ -783,9 +841,7 @@ export async function runLandingAction(
         prNumber: liveForCleanup.prNumber,
         prUrl: liveForCleanup.prUrl,
         headRefName: liveForCleanup.headRefName,
-        ...(liveForCleanup.mergeStateStatus !== undefined
-          ? { mergeStateStatus: liveForCleanup.mergeStateStatus }
-          : {}),
+        mergeStateStatus: liveForCleanup.mergeStateStatus,
       },
       ...(liveHooks?.closeIssue !== undefined
         ? { closeIssue: liveHooks.closeIssue }

@@ -27,6 +27,11 @@ import {
 import { landingWorkerSpec } from "../../../src/dispatchWorker.js";
 import { runOnlineReviewLoopStage } from "../../../src/family/onlineReviewLoop.js";
 import {
+  confirmPrMergedLive,
+  mergeRecordIfHeadAligned,
+  type PrMergeLiveState,
+} from "../../../src/autoMerge.js";
+import {
   buildExplicitLandingLiveHooks,
   classifyLandingActionResult,
   LANDING_CI_FETCH_FAILURE_LIMIT,
@@ -1191,6 +1196,161 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(mergeExecuted.n).toBe(1);
   });
 
+  it("POSITIVE R5-CX1: confirmed mergeRecord cleanup ignores lag OPEN live", async () => {
+    // After confirm/mergeRecord proved MERGED, lag OPEN fetchState must not
+    // skip issue close and stamp terminal post_merge_cleanup (resume already_done).
+    const closedIssues: number[] = [];
+    const mergeExecuted = { n: 0 };
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+    backend.ledger.push(
+      { childIssue: 9411, status: "merged", familyHeadAfter: "head-941" },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: STAGE_SHIP.pr!,
+        familyHeadAfter: "head-941",
+      },
+    );
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      familyIssue: 941,
+      resolvedRoute: smokedRoute(),
+      live: {
+        ...liveOpenHooks({ mergeExecuted, closedIssues }),
+        confirmMerged: (expectedHeadOid) => ({
+          prUrl: STAGE_SHIP.pr!,
+          prNumber: 941,
+          remoteBranchName: "family/epic-941",
+          mergedHeadOid: expectedHeadOid,
+          convergedHeadOid: expectedHeadOid,
+        }),
+        // Lag OPEN after confirmed MERGED — cleanup must still close issues.
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "OPEN",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("completed");
+    expect(mergeExecuted.n).toBe(1);
+    expect(closedIssues).toContain(9411);
+    expect(result.leftovers ?? []).not.toContain("pr_not_merged");
+    expect(backend.ledger.some((e) => e.status === "pr_merged")).toBe(true);
+    expect(
+      backend.ledger.some((e) => e.status === "post_merge_cleanup"),
+    ).toBe(true);
+
+    // Terminal cleanup is legitimate only because issues actually closed.
+    const resume = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => {
+          throw new Error("already_done must not re-fetch");
+        },
+        executeMerge: () => {
+          throw new Error("already_done must not re-merge");
+        },
+        closeIssue: () => {
+          throw new Error("already_done must not re-close");
+        },
+      },
+    });
+    expect(resume.ok).toBe(true);
+    expect(resume.terminalState).toBe("already_done");
+  });
+
+  it("NEGATIVE L1: after mid-loop fetch I/O death, refresh live before assess", async () => {
+    // I/O death then CI green must not assess stale CLEAN as ready — re-fetch
+    // live (now BLOCKED) and park ruleset, never merge.
+    let fetchCalls = 0;
+    let pollCalls = 0;
+    let mergeCalls = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => {
+          fetchCalls += 1;
+          if (fetchCalls === 1) {
+            return {
+              prNumber: 941,
+              prUrl: STAGE_SHIP.pr!,
+              state: "OPEN",
+              headOid: "head-941",
+              headRefName: "family/epic-941",
+              mergeStateStatus: "CLEAN",
+            };
+          }
+          if (fetchCalls === 2) {
+            // Mid-loop refresh after first ci_pending assess dies once.
+            throw new Error("transient gh blip");
+          }
+          return {
+            prNumber: 941,
+            prUrl: STAGE_SHIP.pr!,
+            state: "OPEN",
+            headOid: "head-941",
+            headRefName: "family/epic-941",
+            mergeStateStatus: "BLOCKED",
+          };
+        },
+        executeMerge: () => {
+          mergeCalls += 1;
+        },
+        pollSnapshot: async () => {
+          pollCalls += 1;
+          // First poll keeps the CI-pending loop; after I/O death CI is green.
+          return pollCalls === 1 ? PENDING_CI_SNAPSHOT : BASE_SNAPSHOT;
+        },
+        closeIssue: () => {
+          throw new Error("must not close when ruleset blocked");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/ruleset_blocked/);
+    expect(mergeCalls).toBe(0);
+    expect(fetchCalls).toBeGreaterThanOrEqual(3);
+  });
+
   it("POSITIVE: lowercase live MERGED is accepted (shared githubFieldEquals)", async () => {
     const mergeExecuted = { n: 0 };
     const backend = new DispatchCapableBackend(async (spec) => {
@@ -1234,6 +1394,78 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(result.ok).toBe(true);
     expect(mergeExecuted.n).toBe(0); // entry path accepted MERGED, no re-merge
     expect(backend.ledger.some((e) => e.status === "pr_merged")).toBe(true);
+  });
+
+  it("L2 unit: mergeRecordIfHeadAligned / confirmPrMergedLive keep mismatch distinct", () => {
+    const prUrl = "https://github.com/o/r/pull/941";
+    const base: PrMergeLiveState = {
+      prNumber: 941,
+      prUrl,
+      state: "OPEN",
+      headOid: "head-941",
+      headRefName: "family/epic-941",
+      mergeStateStatus: "CLEAN",
+    };
+    expect(mergeRecordIfHeadAligned(base, "head-941")).toEqual({
+      kind: "not_merged",
+    });
+    expect(
+      mergeRecordIfHeadAligned(
+        { ...base, state: "MERGED", headOid: "foreign-head" },
+        "head-941",
+      ),
+    ).toEqual({ kind: "mismatch", headOid: "foreign-head" });
+    const aligned = mergeRecordIfHeadAligned(
+      { ...base, state: "MERGED", headOid: "head-941" },
+      "head-941",
+    );
+    expect(aligned.kind).toBe("aligned");
+    if (aligned.kind === "aligned") {
+      expect(aligned.record.mergedHeadOid).toBe("head-941");
+    }
+
+    // Production confirm must not collapse MERGED+foreign into opaque undefined.
+    const shMismatch = () =>
+      JSON.stringify({
+        number: 941,
+        url: prUrl,
+        state: "MERGED",
+        headRefName: "family/epic-941",
+        headRefOid: "foreign-head",
+        mergeStateStatus: "UNKNOWN",
+      });
+    expect(confirmPrMergedLive(shMismatch, "o/r", prUrl, "head-941")).toEqual({
+      kind: "mismatch",
+      headOid: "foreign-head",
+    });
+
+    const shOpen = () =>
+      JSON.stringify({
+        number: 941,
+        url: prUrl,
+        state: "OPEN",
+        headRefName: "family/epic-941",
+        headRefOid: "head-941",
+        mergeStateStatus: "CLEAN",
+      });
+    expect(confirmPrMergedLive(shOpen, "o/r", prUrl, "head-941")).toEqual({
+      kind: "not_merged",
+    });
+
+    const shAligned = () =>
+      JSON.stringify({
+        number: 941,
+        url: prUrl,
+        state: "MERGED",
+        headRefName: "family/epic-941",
+        headRefOid: "head-941",
+        mergeStateStatus: "UNKNOWN",
+      });
+    const confirmed = confirmPrMergedLive(shAligned, "o/r", prUrl, "head-941");
+    expect(confirmed.kind).toBe("aligned");
+    if (confirmed.kind === "aligned") {
+      expect(confirmed.record.mergedHeadOid).toBe("head-941");
+    }
   });
 
 });

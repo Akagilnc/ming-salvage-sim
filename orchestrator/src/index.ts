@@ -143,7 +143,9 @@ export {
   executePrMergeCommit,
   fetchPrMergeLiveState,
   isPrMergedMarker,
+  mergeRecordIfHeadAligned,
 } from "./autoMerge.js";
+export type { MergeRecordAlignment } from "./autoMerge.js";
 export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
