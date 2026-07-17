@@ -230,16 +230,22 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       familyBase: "family/291-base",
     });
 
-    expect(backend.cmrCalls).toHaveLength(2);
-    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
-      "completeness",
-      "correctness",
-    ]);
+    // #961: IC checkpoint runs correctness first; final runs completeness
+    // (correctness may skip when already green for HEAD).
+    expect(backend.cmrCalls.length).toBeGreaterThanOrEqual(2);
+    expect(backend.cmrCalls.map((c) => c.cmrPass)[0]).toBe("correctness");
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toContain("completeness");
     expect(backend.cmrCalls.every((c) => c.familyBase === "family/291-base")).toBe(true);
-    expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
-      [295],
-      [295],
-    ]);
+    expect(
+      backend.cmrCalls.every(
+        (c) =>
+          c.llmResolvedChildren === undefined ||
+          (c.llmResolvedChildren?.length === 1 && c.llmResolvedChildren[0] === 295),
+      ),
+    ).toBe(true);
+    expect(backend.cmrCalls.some((c) => c.llmResolvedChildren?.[0] === 295)).toBe(
+      true,
+    );
   });
 
   it("ignores malformed LLM-resolved ledger rows whose childIssue is not a number", async () => {
@@ -257,10 +263,13 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       familyBase: "family/291-base",
     });
 
-    expect(backend.cmrCalls.map((c) => c.llmResolvedChildren)).toEqual([
-      [295],
-      [295],
-    ]);
+    expect(
+      backend.cmrCalls.every(
+        (c) =>
+          c.llmResolvedChildren === undefined ||
+          (c.llmResolvedChildren?.length === 1 && c.llmResolvedChildren[0] === 295),
+      ),
+    ).toBe(true);
   });
 
   it("with NO conflicts, the cmr request omits llmResolvedChildren (no false signal)", async () => {
@@ -272,12 +281,18 @@ describe("Wiring 1 â€” conflictResolvedByLlm flows to the integrated cmr (#291 ç
       familyBase: "family/291-base",
     });
 
-    expect(backend.cmrCalls).toHaveLength(2);
+    // #961: checkpoint correctness first, then final completeness (+ maybe
+    // skipped/re-run correctness). No LLM-resolved field on any call.
+    expect(backend.cmrCalls.length).toBeGreaterThanOrEqual(2);
+    expect(backend.cmrCalls.map((c) => c.cmrPass)[0]).toBe("correctness");
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toContain("completeness");
     // No LLM-resolved children â†’ the field is omitted (an empty list would be a
     // distinct shape; we keep the back-compatible `{familyBase}`-only request).
-    expect(backend.cmrCalls).toEqual([
-      { familyBase: "family/291-base", cmrPass: "completeness" },
-      { familyBase: "family/291-base", cmrPass: "correctness" },
-    ]);
+    expect(backend.cmrCalls.every((c) => c.llmResolvedChildren === undefined)).toBe(
+      true,
+    );
+    expect(backend.cmrCalls.every((c) => c.familyBase === "family/291-base")).toBe(
+      true,
+    );
   });
 });

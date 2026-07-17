@@ -283,7 +283,7 @@ export interface FamilyLedgerEntry {
    * on `cmr_passed` audit entries; `merged` / `reconciled` entries omit it because
    * they are per-child, not per-phase.
    */
-  readonly phase?: "wave" | "final";
+  readonly phase?: VerifyCmrPhase;
   /** Which integrated CMR pass this phase-level audit/failure event belongs to. */
   readonly cmrPass?: IntegratedCmrPass;
   /**
@@ -701,8 +701,11 @@ export interface FamilyBackend {
 
 /** What the family verify needs: which phase, and the family base to verify. */
 export interface FamilyVerifyRequest {
-  /** Wave barrier (decision 3④, fail-fast) vs end-of-run 全量 (decision 3⑤). */
-  readonly phase: "wave" | "final";
+  /**
+   * Wave barrier (decision 3④), #961 correctness checkpoint, or end-of-run 全量
+   * (decision 3⑤). RealBackend may scope the suite off this phase.
+   */
+  readonly phase: VerifyCmrPhase;
   /** The family base branch verify runs against. */
   readonly familyBase: string;
   /** Invocation-scoped telemetry identity; omitted by legacy verify callers. */
@@ -784,7 +787,7 @@ export interface IntegratedCmrResult {
  */
 export interface FamilyAbortedEvent {
   /** Which verify barrier was red. */
-  readonly phase: "wave" | "final";
+  readonly phase: VerifyCmrPhase;
   /** Present when a final integrated CMR pass, not verify/ship, is what failed. */
   readonly cmrPass?: IntegratedCmrPass;
   /** The family base at the time of the abort (so the failure is locatable). */
@@ -818,7 +821,7 @@ export interface FamilyEscalation {
   /** Durable escalation semantic; every caller must declare the factual source. */
   readonly escalationKind: "decision" | "failure";
   /** Durable escalation phase; defaults to the final family gate. */
-  readonly phase?: "wave" | "final";
+  readonly phase?: VerifyCmrPhase;
 }
 
 /** What the merger needs to merge one child branch into the family base. */
