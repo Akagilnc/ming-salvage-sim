@@ -96,6 +96,72 @@ def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
     assert all(marker not in (body or "") for body in bodies)
 
 
+def test_883_audience_chat_path_does_not_leave_secret_in_shared_sources(game):
+    """真实召对路径：append_chat_message → create_secret_order 后共享源无密令原话。
+
+    #883 结构隔离：密令正文只进本体表 + 接令者简报；不得以 audience/chat_message
+    行残留在 character_knowledge_sources（单点拒收 kind=secret_order 盖不住此旁路）。
+    """
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    marker = "密令：真实召对密令旁路883，不可外泄"
+
+    db.append_chat_message(assignee.name, state.turn, "user", marker)
+    oid = db.create_secret_order(state, assignee.name, "乙巳密查旁路", marker, [])
+    assert oid > 0
+
+    shared_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    shared_event_bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_events").fetchall()
+    ]
+    brief = db.conn.execute(
+        "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view["public_events"]]
+    )
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
+
+    assert brief is not None
+    assert brief["minister_name"] == assignee.name
+    assert marker in (brief["body"] or "")
+    assert all(marker not in body for body in shared_bodies)
+    assert all(marker not in body for body in shared_event_bodies)
+    assert marker not in other_text
+    assert marker in assignee_text
+
+
+def test_883_shared_write_seam_refuses_body_matching_active_secret_brief(game):
+    """共享写入接缝：正文携带已有密令简报原文时，不得以 audience 等形态落共享源。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    marker = "已存简报原话不得再入共享883"
+
+    oid = db.create_secret_order(state, assignee.name, "密查简报", marker, [])
+    assert oid > 0
+
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": assignee.name}],
+        "audience",
+        "召对",
+        f"臣复述密旨：{marker}",
+        source_id="chat_message:replay-secret",
+    )
+    bodies = [
+        row["body"] or ""
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    assert all(marker not in body for body in bodies)
+
+
 def test_883_shared_archive_bypass_positive_and_negative(game):
     """复审员旁路：共享汇总正负断言——有密令时 raw 报告不得原样入档；无密令时公开文可入。"""
     db, state, content = game
