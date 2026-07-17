@@ -2140,7 +2140,21 @@ export async function runFamily(
               runId,
             }),
         });
-        if (mergeBarrier.kind === "park") return mergeBarrier.result;
+        if (mergeBarrier.kind === "park") {
+          // #938: park result residual-mapped children from childResults before
+          // remaining allSettled peers were flushed — remount after drain so
+          // executed siblings stay honest `ran`, not fake `skipped`.
+          drainRemainingWaveSiblings();
+          const ledgerMerged = await currentMerged(familyBackend);
+          const children = epic.children.map((child) => {
+            const recorded = childResults.find((entry) => entry.issue === child.issue);
+            if (recorded !== undefined) return recorded;
+            return ledgerMerged.has(child.issue)
+              ? { issue: child.issue, status: "already_done" as const }
+              : { issue: child.issue, status: "skipped" as const };
+          });
+          return { ...mergeBarrier.result, children };
+        }
         activeRoute = mergeBarrier.route;
         if (mergeBarrier.relayBilling !== undefined) {
           runRelayBilling = mergeBarrier.relayBilling;

@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import { mergeChild } from "../../../src/family/merger.js";
 import { runFamily } from "../../../src/family/runner.js";
+import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import type {
   Backend,
   IssueMeta,
@@ -545,6 +546,69 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(peer?.status).toBe("ran");
     expect(peer?.status).not.toBe("skipped");
     expect(peer?.branch).toEqual(expect.stringMatching(/11/));
+  });
+
+  it("POSITIVE: merge-phase quota park mid-wave keeps successful wave peer as ran (not skipped)", async () => {
+    // Both siblings allSettled; serial merge of #10 hits QuotaWait → park.
+    // Park residual-maps children — must drain #11 (and #10) first so peers
+    // stay honest `ran`, not fake finalize/park-mapped `skipped`.
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    class QuotaParkOnMergeBackend extends RecordingFamilyBackend {
+      override async mergeChildIntoFamilyBase(
+        child: MergeRequest,
+      ): Promise<MergeResult> {
+        this.mergeOrder.push(child.childIssue);
+        if (child.childIssue === 10) {
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "zai",
+              resetAt,
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "zai",
+                resetAt: resetAt.toISOString(),
+                reason: "quota limited (429); wait for reset",
+                step: "S1",
+                workerPid: 0,
+                ts: "2026-07-14T12:00:00.000Z",
+              },
+            },
+            pool: "zai",
+          });
+        }
+        return { familyHead: `h${child.childIssue}` };
+      }
+    }
+    const familyBackend = new QuotaParkOnMergeBackend();
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new OkChildBackend(),
+      familyBase: "family/938-base",
+      now: () => now,
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    // The merge-target child and the same-wave peer both already ran single-slice.
+    for (const issue of [10, 11] as const) {
+      const child = result.children.find((c) => c.issue === issue);
+      expect(child?.status).toBe("ran");
+      expect(child?.status).not.toBe("skipped");
+      expect(child?.branch).toEqual(expect.stringMatching(new RegExp(String(issue))));
+    }
   });
 
   it("NEGATIVE: production merger has no host still-conflicted re-dispatch loop (ID-016 delete)", () => {
