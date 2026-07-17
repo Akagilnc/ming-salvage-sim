@@ -233,9 +233,12 @@ answer, append ONE JSON line to `family-ledger.jsonl`:
 runner routes the answer into the parked child's own ledger and supplies a
 captured `resumeSessionId` when one exists. The same conversation resumes only
 when Sandcastle captured the session and the provider supports resume. Codex
-and Grok currently disable session capture, so this runtime cannot promise
-same-session continuation for those providers. The canonical target preserves
-the scene/worktree and starts a new invocation/relay when resume is unavailable.
+and Grok both capture sessions natively (Codex via Sandcastle `sc.codex`
+default capture; Grok via #955 sessionStorage). Host-side CMR parallel legs
+still use `--ephemeral` (shared `~/.codex` collision risk); container workers
+do not. When resume is unavailable, the canonical target preserves the
+scene/worktree and starts a new invocation/relay via existing fresh-session
+recovery (#936/#937/#942).
 
 ### 7. Resume semantics
 
