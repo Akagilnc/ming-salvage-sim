@@ -2205,18 +2205,30 @@ export async function runFamily(
   type PendingBarrier = ReturnType<typeof runFamilyBarrierWithQuotaRelay<VerifyCmrResult>>;
   let pendingCorrectnessCheckpoint: PendingBarrier | undefined;
   /**
-   * Await in-flight #961 IC checkpoint. On hard fail, optional
-   * `beforeFailFinalize` runs first so call sites can #938-drain settled wave
-   * siblings into `childResults` before finalize residual-maps them to fake
-   * `skipped` (CORR-C1).
+   * Await in-flight #961 IC checkpoint.
+   * - Hard fail: optional `beforeFailFinalize` runs first so call sites can
+   *   #938-drain settled wave siblings into `childResults` before finalize
+   *   residual-maps them to fake `skipped` (CORR-C1).
+   * - Quota park: park snapshot was built from pre-drain `recordedResults`;
+   *   optional `remountChildrenOnPark` drains + remounts honest children onto
+   *   the park result (CORR-C2; mirrors merge-wall residualChildrenAfterDrain).
    */
   const awaitPendingCorrectnessCheckpoint = async (opts?: {
     readonly beforeFailFinalize?: () => void;
+    readonly remountChildrenOnPark?: () => Promise<FamilyChildResult[]>;
   }): Promise<FamilyRunResult | undefined> => {
     if (pendingCorrectnessCheckpoint === undefined) return undefined;
     const barrier = await pendingCorrectnessCheckpoint;
     pendingCorrectnessCheckpoint = undefined;
-    if (barrier.kind === "park") return attachDiagnostics(barrier.result);
+    if (barrier.kind === "park") {
+      // CORR-C2: drain settled peers then remount — park result's children were
+      // snapshotted without current-wave allSettled siblings still in `ran`.
+      if (opts?.remountChildrenOnPark !== undefined) {
+        const children = await opts.remountChildrenOnPark();
+        return attachDiagnostics({ ...barrier.result, children });
+      }
+      return attachDiagnostics(barrier.result);
+    }
     activeRoute = barrier.route;
     if (barrier.relayBilling !== undefined) {
       runRelayBilling = barrier.relayBilling;
@@ -2447,9 +2459,12 @@ export async function runFamily(
     // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
     // CORR-C1: drain settled current-wave peers before fail-finalize so they
     // stay honest `ran` / `failed`, not residual `skipped`.
+    // CORR-C2: same drain+remount on IC quota-park (park snapshot otherwise
+    // residual-maps executed siblings to fake `skipped`).
     {
       const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint({
         beforeFailFinalize: drainRemainingWaveSiblings,
+        remountChildrenOnPark: residualChildrenAfterDrain,
       });
       if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
     }

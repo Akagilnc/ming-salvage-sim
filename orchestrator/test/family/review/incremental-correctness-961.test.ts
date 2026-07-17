@@ -18,6 +18,7 @@ import {
 import { runFamily } from "../../../src/family/runner.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
+import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
@@ -46,6 +47,30 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+
+/** Within-T QuotaWait so family barrier parks (no live baton needed). */
+function icQuotaParkError(resetAt: Date): QuotaWaitForResetError {
+  return new QuotaWaitForResetError({
+    disposition: {
+      kind: "wait_for_reset",
+      pool: "zai",
+      resetAt,
+      reason: "quota limited (429); wait for reset",
+    },
+    applied: {
+      ledgerEntry: {
+        event: "quota_wait_for_reset",
+        pool: "zai",
+        resetAt: resetAt.toISOString(),
+        reason: "quota limited (429); wait for reset",
+        step: "S9",
+        workerPid: 0,
+        ts: "2026-07-14T12:00:00.000Z",
+      },
+    },
+    pool: "zai",
+  });
+}
 
 function currentRouteFingerprint(): string {
   return modelRouteFingerprint(activeModelRoute());
@@ -431,6 +456,49 @@ describe("#961 spine — incremental IC after batch verify green", () => {
       expect.objectContaining({ issue: 1001, status: "merged" }),
     );
     // Wave2 child allSettled while IC was in flight — must remain honest `ran`.
+    const wave2 = result.children.find((c) => c.issue === 1002);
+    expect(wave2?.status).toBe("ran");
+    expect(wave2?.status).not.toBe("skipped");
+    expect(wave2?.branch).toEqual(expect.stringMatching(/1002/));
+  });
+
+  // CORR-C2 / #961: Wave1 fires IC → Wave2 coding settles → IC throws QuotaWait
+  // park. Park return must drain/remount settled wave siblings (same honesty as
+  // CORR-C1 fail path + merge-wall residualChildrenAfterDrain) so executed
+  // children stay `ran`, not residual-mapped fake `skipped`.
+  it("CORR-C2: IC quota-park after next-wave settle keeps executed sibling as ran (not skipped)", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      }),
+    });
+    const result = await runFamily({
+      epic: TWO_WAVES,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/961-base",
+      now: () => now,
+      verifyCmr: async (input) => {
+        if (input.phase === "wave") return { ok: true, ran: true };
+        if (input.phase === "correctness_checkpoint") {
+          throw icQuotaParkError(resetAt);
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    // Wave1 already merged before IC was fired.
+    expect(result.children.find((c) => c.issue === 1001)).toEqual(
+      expect.objectContaining({ issue: 1001, status: "merged" }),
+    );
+    // Wave2 child allSettled while IC was in flight — must remain honest `ran`.
+    // FamilyChildStatus `skipped` = never-ran; residual-map fake skipped is the bug.
     const wave2 = result.children.find((c) => c.issue === 1002);
     expect(wave2?.status).toBe("ran");
     expect(wave2?.status).not.toBe("skipped");
