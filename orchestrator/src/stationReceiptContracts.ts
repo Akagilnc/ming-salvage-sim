@@ -21,9 +21,10 @@
  * - Positive family: `refused*` (`status: "refused"`, `refusedFindingIdentityKeys`)
  * - Rejected spellings: any envelope key matching `^refuted` (e.g.
  *   `refutedFindingIdentityKeys`) — invented dual-field compatibility is banned
- * - Findings-store terminal flip `refuted` (ADR 0129 / ADR 0130 fixer adjudication)
- *   is a **different layer**: judge kill dispositions use `action: "refute"` here
- *   and later map to that store flip; the envelope traffic signal stays `refused*`
+ * - Findings-store terminal flips `refuted` / `suppressed` (ADR 0129 / #952)
+ *   are a **different layer**: judge dispositions use `action: "refute"` /
+ *   `action: "suppress"` here and later map to those store flips; the envelope
+ *   traffic signal stays `refused*`
  *
  * ## Stations colocated here (no parallel contract directory)
  *
@@ -293,7 +294,7 @@ export function parseFindingDisposition(
   if (action === "live") {
     if (rec.reason !== undefined || rec.evidence !== undefined) {
       return fail(
-        "live disposition must not carry reason/evidence (only kill/refute rows do)",
+        "live disposition must not carry reason/evidence (only refute/suppress terminals do)",
       );
     }
     const parsed = liveDispositionSchema.safeParse(rec);
@@ -393,7 +394,8 @@ export interface JudgeVerdictConverged extends JudgeEnvelopeBase {
 
 /**
  * Continue the fix loop. May carry:
- * - `findingDispositions` — kill (refute+reason+evidence) and live rows
+ * - `findingDispositions` — terminal rows (`refute`→store `refuted`,
+ *   `suppress`→store `suppressed`) plus `live` rows for the fixer open set
  * - `advanceCoder` — suggestion to switch coder roster entry (runner still
  *   owns the stay-put fallback when the target is unusable — #926)
  */

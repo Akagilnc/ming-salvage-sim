@@ -380,8 +380,13 @@ export interface FamilyLedgerEntry {
    */
   readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
   /**
-   * #930 — judge finding disposition table on family court rows (kill + live).
-   * Schema-fixed; runner never parses prose for routing.
+   * #930 / #952 — judge finding disposition table on family court rows
+   * (`refute` / `suppress` / `live`). Schema-fixed; runner never parses prose
+   * for routing. Queryable suppress is the schema row `action: "suppress"`
+   * (evidence + XOR ground) on this table — family transports the T2 schema
+   * for prior-verdict resume, not the single-slice store-status flip shape
+   * (`status: "suppressed"`). Both paths share `projectJudgeContinueBlocking`
+   * for the live open set / terminal flip projection.
    */
   readonly findingDispositions?: ReadonlyArray<
     import("../types.js").JudgeFindingDisposition

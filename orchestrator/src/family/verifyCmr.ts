@@ -1843,6 +1843,12 @@ async function runIntegratedCmrPass(input: {
       : resumeJudgeSessionId;
   const judgeStatusForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.status : undefined;
+  // Schema disposition table (refute/suppress/live) — queryable suppress is
+  // action:"suppress" on this table (#952). Store-status flips
+  // (status:"suppressed") are single-slice ledger shape via
+  // projectJudgeContinueBlocking.terminalDispositions; family reuses that
+  // helper for the live open set (closeFamilyCourtFromJudgeOutput) but
+  // persists the T2 schema here for prior-verdict resume (no dual ABI).
   const judgeDispositionsForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =

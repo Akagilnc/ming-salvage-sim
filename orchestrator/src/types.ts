@@ -1461,11 +1461,12 @@ export interface LedgerEntry {
   /** Optional CMR route leg removed after smoke failure. */
   readonly droppedLeg?: string;
   /**
-   * Finding dispositions persisted at the judge verdict boundary (#925).
+   * Finding dispositions persisted at the judge verdict boundary (#925 / #952).
    *
    * Formerly the S4 review/fix boundary (open-count mechanical station). S4 is
-   * dissolved: S3/S6 judge ledger rows now carry kill→`refuted` flips and
-   * governance data. Not a runner content-classification (信封宪法, ADR 0062).
+   * dissolved: S3/S6 judge ledger rows now carry store terminal flips
+   * (`refute`→`refuted`, `suppress`→`suppressed`) and governance data. Not a
+   * runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
   /** Runner-owned terminal stop reason summary (#450). */
