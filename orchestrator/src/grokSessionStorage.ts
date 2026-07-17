@@ -22,17 +22,7 @@
  * can intercept (spawn-timeout / telemetry git mocks).
  */
 
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import * as fsp from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix } from "node:path";
@@ -56,7 +46,7 @@ const TAR_MAX_BUFFER = 256 * 1024 * 1024;
 
 async function dirExists(path: string): Promise<boolean> {
   try {
-    return (await stat(path)).isDirectory();
+    return (await fsp.stat(path)).isDirectory();
   } catch {
     return false;
   }
@@ -74,19 +64,19 @@ async function assertStagedSessionIntact(dir: string): Promise<void> {
   const historyPath = join(dir, "chat_history.jsonl");
   let history: string;
   try {
-    history = await readFile(historyPath, "utf8");
+    history = await fsp.readFile(historyPath, "utf8");
   } catch {
     throw new Error(
       "grok-cap: integrity failed — staged session missing chat_history.jsonl",
     );
   }
-  await assertJsonlParseable(history, "chat_history.jsonl");
+  assertJsonlParseable(history, "chat_history.jsonl");
 
   await walkSessionTexts(dir, async (filePath, body) => {
     const name = basename(filePath);
     if (name === "chat_history.jsonl") return; // already checked
     if (name.endsWith(".jsonl")) {
-      await assertJsonlParseable(body, name);
+      assertJsonlParseable(body, name);
       return;
     }
     if (name.endsWith(".json")) {
@@ -103,7 +93,8 @@ async function assertStagedSessionIntact(dir: string): Promise<void> {
   });
 }
 
-async function assertJsonlParseable(body: string, label: string): Promise<void> {
+/** Sync JSONL line parser — no I/O (nit N3: drop needless async). */
+function assertJsonlParseable(body: string, label: string): void {
   const lines = body.split("\n");
   let sawRecord = false;
   for (let i = 0; i < lines.length; i++) {
@@ -131,7 +122,7 @@ async function walkSessionTexts(
   dir: string,
   visit: (filePath: string, body: string) => Promise<void>,
 ): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true });
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -139,10 +130,33 @@ async function walkSessionTexts(
       continue;
     }
     if (!/\.(json|jsonl)$/.test(entry.name)) continue;
-    const body = await readFile(p, "utf8");
+    const body = await fsp.readFile(p, "utf8");
     await visit(p, body);
   }
 }
+
+/**
+ * #959 test-only inject for swap-segment failure paths (vitest cannot spy/mock
+ * node:fs/promises rename under ESM). Production leaves defaults; tests must
+ * reset via `.reset()` in afterEach.
+ */
+export const grokSessionAtomicReplaceTestInject = {
+  /** When true, place rename is skipped once and throws after displace. */
+  failPlaceAfterDisplace: false,
+  /**
+   * Optional hook after live target is displaced to backup (e.g. plant a
+   * concurrent winner at `targetDir` so place fails and restore is suppressed).
+   */
+  afterDisplace:
+    null as null | ((ctx: {
+      targetDir: string;
+      backup: string;
+    }) => void | Promise<void>),
+  reset(): void {
+    this.failPlaceAfterDisplace = false;
+    this.afterDisplace = null;
+  },
+};
 
 /**
  * #959 — atomic directory replace on the same volume. Stage is fully written
@@ -155,8 +169,10 @@ async function atomicReplaceDir(
   targetDir: string,
 ): Promise<void> {
   const parent = dirname(targetDir);
-  await mkdir(parent, { recursive: true });
+  await fsp.mkdir(parent, { recursive: true });
   const token = randomBytes(6).toString("hex");
+  // Backup name is unique to this call (pid + token); only this call may
+  // delete it. Never rm another writer's live target.
   const backup = join(
     parent,
     `.${basename(targetDir)}.old-${process.pid}-${token}`,
@@ -164,7 +180,7 @@ async function atomicReplaceDir(
 
   // Fast path: no live target yet.
   try {
-    await rename(sourceDir, targetDir);
+    await fsp.rename(sourceDir, targetDir);
     return;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -180,36 +196,53 @@ async function atomicReplaceDir(
     }
   }
 
-  let displaced = false;
   try {
-    await rename(targetDir, backup);
-    displaced = true;
+    await fsp.rename(targetDir, backup);
   } catch (err) {
     // Another racer may have already moved the live target. Try placing into
     // the vacancy; if the winner already re-created target, leave it alone.
     try {
-      await rename(sourceDir, targetDir);
+      await fsp.rename(sourceDir, targetDir);
       return;
     } catch {
       throw err;
     }
   }
 
+  if (grokSessionAtomicReplaceTestInject.afterDisplace) {
+    await grokSessionAtomicReplaceTestInject.afterDisplace({
+      targetDir,
+      backup,
+    });
+  }
+
   try {
-    await rename(sourceDir, targetDir);
+    if (grokSessionAtomicReplaceTestInject.failPlaceAfterDisplace) {
+      grokSessionAtomicReplaceTestInject.failPlaceAfterDisplace = false;
+      const err = new Error(
+        "injected place failure after displace",
+      ) as NodeJS.ErrnoException;
+      err.code = "EIO";
+      throw err;
+    }
+    await fsp.rename(sourceDir, targetDir);
   } catch (err) {
     // Only restore our backup when nobody else landed a complete tree.
     if (!(await dirExists(targetDir))) {
       try {
-        await rename(backup, targetDir);
+        await fsp.rename(backup, targetDir);
       } catch {
         // Best-effort restore; surface the original place error.
       }
+    } else {
+      // Concurrent winner already recreated live target — our backup is stale.
+      // Drop only the backup this call created (Standards S1 orphan cleanup).
+      await fsp.rm(backup, { recursive: true, force: true }).catch(() => {});
     }
     throw err;
   }
 
-  await rm(backup, { recursive: true, force: true }).catch(() => {});
+  await fsp.rm(backup, { recursive: true, force: true }).catch(() => {});
 }
 
 /** Exact path or path-prefix (`from` / `from/…`); never bare substring. */
@@ -248,16 +281,9 @@ async function rewriteSessionTexts(
   to: string,
 ): Promise<void> {
   if (from === to || from.length === 0) return;
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await rewriteSessionTexts(p, from, to);
-      continue;
-    }
-    if (!/\.(json|jsonl)$/.test(entry.name)) continue;
-    const body = await readFile(p, "utf8");
-    if (!body.includes(from)) continue;
+  // nit N2: reuse walkSessionTexts — one directory walk for json/jsonl files.
+  await walkSessionTexts(dir, async (p, body) => {
+    if (!body.includes(from)) return;
 
     let next: string | undefined;
     try {
@@ -277,9 +303,9 @@ async function rewriteSessionTexts(
       next = rewritten.join("\n");
     }
     if (next !== undefined && next !== body) {
-      await writeFile(p, next);
+      await fsp.writeFile(p, next);
     }
-  }
+  });
 }
 
 /** #884 chokepoint: host tar via execFileAsyncWithTimeout (never bare child_process). */
@@ -338,7 +364,7 @@ export function makeGrokSessionStorage(
     sessionId: string,
   ): Promise<HostSessionLookup> => {
     if (await dirExists(hostRoot)) {
-      for (const bucket of await readdir(hostRoot)) {
+      for (const bucket of await fsp.readdir(hostRoot)) {
         const candidate = join(hostRoot, bucket, sessionId);
         if (await dirExists(candidate)) {
           return { path: candidate, searchedRoot: hostRoot };
@@ -363,7 +389,7 @@ export function makeGrokSessionStorage(
         dir = found.path;
       }
       try {
-        return await readFile(join(dir, "chat_history.jsonl"), "utf8");
+        return await fsp.readFile(join(dir, "chat_history.jsonl"), "utf8");
       } catch {
         return undefined;
       }
@@ -388,13 +414,13 @@ export function makeGrokSessionStorage(
       // Unpack + rewrite + integrity run only under staging; the live dir is
       // swapped in last. Any failure leaves the previous target untouched.
       const parent = dirname(target);
-      await mkdir(parent, { recursive: true });
-      const work = await mkdtemp(join(parent, ".grok-cap-"));
+      await fsp.mkdir(parent, { recursive: true });
+      const work = await fsp.mkdtemp(join(parent, ".grok-cap-"));
       const staging = join(work, "session");
       const tarPath = join(work, "session.tar");
       try {
-        await mkdir(staging);
-        await writeFile(
+        await fsp.mkdir(staging);
+        await fsp.writeFile(
           tarPath,
           Buffer.from(result.stdout.replace(/\s+/g, ""), "base64"),
         );
@@ -406,7 +432,7 @@ export function makeGrokSessionStorage(
         await assertStagedSessionIntact(staging);
         await atomicReplaceDir(staging, target);
       } finally {
-        await rm(work, { recursive: true, force: true });
+        await fsp.rm(work, { recursive: true, force: true });
       }
     },
 
@@ -427,10 +453,10 @@ export function makeGrokSessionStorage(
         rewriteFrom = decodeURIComponent(basename(dirname(src)));
       }
       // Rewrite on a scratch copy — the host store stays untouched.
-      const scratch = await mkdtemp(join(tmpdir(), "grok-res-"));
+      const scratch = await fsp.mkdtemp(join(tmpdir(), "grok-res-"));
       try {
         const copy = join(scratch, "session");
-        await cp(src, copy, { recursive: true });
+        await fsp.cp(src, copy, { recursive: true });
         await rewriteSessionTexts(copy, rewriteFrom, sandboxCwd);
         // Write tar to a file (not stdout buffer) so the #884 utf8 chokepoint
         // can own the host subprocess without encoding:buffer escape hatches.
@@ -439,7 +465,7 @@ export function makeGrokSessionStorage(
           ["-C", copy, "-cf", tarPath, "."],
           "grok-session:tar-create",
         );
-        const tarBytes = await readFile(tarPath);
+        const tarBytes = await fsp.readFile(tarPath);
         const dst = posix.join(sandboxRoot, bucketFor(sandboxCwd), sessionId);
         const push = await sandboxExecWithClock(
           "grok-session:sandbox-import",
@@ -456,7 +482,7 @@ export function makeGrokSessionStorage(
           );
         }
       } finally {
-        await rm(scratch, { recursive: true, force: true });
+        await fsp.rm(scratch, { recursive: true, force: true });
       }
     },
   };
