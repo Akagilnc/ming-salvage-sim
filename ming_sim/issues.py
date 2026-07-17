@@ -7390,11 +7390,20 @@ def apply_score_extraction(
             if disclosed:
                 # Disclosure is the only promotion from the assignee-only
                 # brief into a public knowledge event (#883).
-                db.record_public_knowledge_event(
-                    state, str(order["title"]), sim_note,
-                    source_id=f"secret_order_disclosure:{real_id}:{state.turn}",
-                    commit=commit_now,
-                )
+                # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
+                # event — re-true each month must not mint another public row.
+                disclosure_prefix = f"secret_order_disclosure:{real_id}:"
+                already_disclosed = db.conn.execute(
+                    "SELECT 1 FROM character_knowledge_events "
+                    "WHERE character_name='' AND source_id LIKE ? LIMIT 1",
+                    (f"{disclosure_prefix}%",),
+                ).fetchone()
+                if already_disclosed is None:
+                    db.record_public_knowledge_event(
+                        state, str(order["title"]), sim_note,
+                        source_id=f"{disclosure_prefix}{state.turn}",
+                        commit=commit_now,
+                    )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
             applied_secret_orders.append({
                 "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,

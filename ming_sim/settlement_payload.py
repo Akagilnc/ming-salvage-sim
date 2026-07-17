@@ -156,16 +156,17 @@ def bind_decisions_to_candidate_events(
 def group_secret_orders_for_sim(
     rows: List[Dict[str, object]],
 ) -> Dict[str, List[Dict[str, object]]]:
-    """把密令 DB 行按状态分进中文键两组，作喂 simulator/extractor 的承载形状（#48）。
+    """把密令 DB 行按状态分进中文键两组，作喂 extractor 独立 rail 的承载形状（#48 / #883）。
 
     输入 = db.list_secret_orders 返回的行（含英文 status）；输出 =
     `{"在办": [...], "待核议": [...]}`。英文 status（active/pending_review）只用来分组，
-    **不当字段进 LLM 输入**——否则 simulator 把它照抄进「密旨动向」邸报段，中文游戏里
-    冒出「孙承宗密旨（active）」（本 issue 根因）。条目保留
+    **不当字段进 LLM 输入**（#48：status 不进 LLM——否则下游叙事/UI 会冒出
+    「孙承宗密旨（active）」）。条目保留
     id/minister_name/title/content[:120]/turn_issued/due_turn/progress/sim_note，不含 status。
     done/failed/cancelled 是裁决输出、无注入需求，落到此函数时忽略不进任何组。
 
-    单点改：fan-out 到 simulator 推演、extractor 抽取、恢复存档三处同一承载，形状一致。
+    #883：本分组只喂 personnel_secret extractor 独立 rail；simulator 公共轨不收密令正文，
+    只见 `build_simulator_payload` 派生的扁平 `due_commitments`。恢复存档复用同一承载形状。
     """
     groups: Dict[str, List[Dict[str, object]]] = {"在办": [], "待核议": []}
     bucket = {"active": "在办", "pending_review": "待核议"}

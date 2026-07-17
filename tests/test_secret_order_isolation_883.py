@@ -157,6 +157,47 @@ def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game)
     )
 
 
+def test_883_cross_turn_repeat_disclosed_does_not_mint_duplicate_public_event(game):
+    """跨回合幂等：同一密令多次 disclosed=true 只留一条 secret_order_disclosure 事件。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    oid = db.create_secret_order(state, assignee.name, "密查仓案", "丙寅密查仓案883", [])
+
+    first = issues.apply_score_extraction(
+        db, state,
+        {"secret_order_updates": [
+            {"order_id": oid, "sim_note": "首度公开883", "disclosed": True},
+        ]},
+        content=content,
+    )
+    assert first["secret_order_updates"][0]["disclosed"] is True
+    prefix = f"secret_order_disclosure:{oid}:"
+    after_first = [
+        item for item in db._character_knowledge_events("")
+        if str(item.get("source_id") or "").startswith(prefix)
+    ]
+    assert len(after_first) == 1
+    assert "首度公开883" in (after_first[0].get("body") or "")
+
+    # Advance turn so source_id turn suffix would differ if re-inserted.
+    state.turn = int(state.turn) + 1
+    second = issues.apply_score_extraction(
+        db, state,
+        {"secret_order_updates": [
+            {"order_id": oid, "sim_note": "再次填写泄漏结论883", "disclosed": True},
+        ]},
+        content=content,
+    )
+    assert second["secret_order_updates"][0]["disclosed"] is True
+    after_second = [
+        item for item in db._character_knowledge_events("")
+        if str(item.get("source_id") or "").startswith(prefix)
+    ]
+    assert len(after_second) == 1
+    assert after_second[0]["source_id"] == after_first[0]["source_id"]
+    assert "首度公开883" in (after_second[0].get("body") or "")
+
+
 def test_883_public_llm_contexts_never_preload_secret_orders(game):
     """契约钉 #883：仅 personnel_secret 可读密令；公共 LLM 输入不得预读。"""
     db, state, _content = game
