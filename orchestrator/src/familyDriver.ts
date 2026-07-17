@@ -1221,8 +1221,8 @@ export async function runFamilyDriver(
     clonePath: familyClonePath,
   });
   if (familyScene.kind === "corrupted") {
-    return {
-      status: "failed", cause: "resume_state_invalid",
+    return failedFamilyResult({
+      cause: "resume_state_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: "resume state invalid",
@@ -1234,7 +1234,7 @@ export async function runFamilyDriver(
           "repair or clear the resident family ledger/worksite before re-entry",
       }),
       children: [],
-    };
+    });
   }
   if (familyScene.kind === "resident") {
     const terminal = planFamilyTerminalReplay(
@@ -1251,8 +1251,8 @@ export async function runFamilyDriver(
   const admitted = admitRouteFromEnv();
   if (admitted.kind === "stop") {
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
-    return {
-      status: "failed", cause: "route_config_invalid",
+    return failedFamilyResult({
+      cause: "route_config_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1264,7 +1264,7 @@ export async function runFamilyDriver(
           "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
       }),
       children: [],
-    };
+    });
   }
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
@@ -1588,14 +1588,6 @@ export {
   runResultExitCode,
 } from "./publicResult.js";
 export type { PublicRunResult } from "./publicResult.js";
-// Thin TERMINAL_* aliases for older launcher import paths.
-export {
-  TERMINAL_EXIT_CODES,
-  TERMINAL_EXIT_STATUSES,
-  exitCodeForTerminal,
-  isTerminalExitStatus,
-} from "./terminalExitCode.js";
-export type { TerminalExitStatus } from "./terminalExitCode.js";
 
 /**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the

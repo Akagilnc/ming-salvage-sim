@@ -1199,8 +1199,8 @@ async function ensureLandingForResume(input: {
         : {}),
     };
   }
-  return {
-    status: "failed", cause: "landing_worker_failed",
+  return failedFamilyResult({
+    cause: "landing_worker_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
     failedPhase: "final",
@@ -1209,7 +1209,7 @@ async function ensureLandingForResume(input: {
     ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
       : {}),
-  };
+  });
 }
 
 function latestVerifiedCmrHead(
@@ -1519,8 +1519,8 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
-    return {
-      status: "failed", cause: "route_config_invalid",
+    return failedFamilyResult({
+      cause: "route_config_invalid",
       familyBase: input.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1536,7 +1536,7 @@ export async function runFamily(
       input.epic.admissionSkipped.length > 0
         ? { admissionSkipped: input.epic.admissionSkipped }
         : {}),
-    };
+    });
   }
   let modelRoute: ResolvedModelRoute = admitted.route;
   if (input.admittedRoute === undefined && typeof singleSliceBackend.smokeModelRoute !== "function") {
@@ -1546,8 +1546,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "failed", cause: "route_smoke_failed",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: reason },
       stopSummary: infraFailureStopSummary({
@@ -1555,7 +1555,7 @@ export async function runFamily(
         repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
       }),
       children,
-    };
+    });
   }
   let currentCliVersions: Readonly<Record<string, string | undefined>> = {};
   try {
@@ -1579,8 +1579,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "failed", cause: "route_smoke_failed",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
       stopSummary: infraFailureStopSummary({
@@ -1588,7 +1588,7 @@ export async function runFamily(
         repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
       }),
       children,
-    };
+    });
   }
   const degradation = input.admittedRoute ?? degradeOptionalRouteSmokeFailures(modelRoute);
   modelRoute = degradation.route;
@@ -1598,8 +1598,8 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
-    return {
-      status: "failed", cause: "route_smoke_failed",
+    return failedFamilyResult({
+      cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
       stopSummary: infraFailureStopSummary({
@@ -1607,7 +1607,7 @@ export async function runFamily(
         repairHint: "rerun the route smoke or repair the selected model×pipe",
       }),
       children,
-    };
+    });
   }
   const routeLedger = degradation.dropped.length > 0
     ? await familyBackend.readFamilyLedger()

@@ -178,14 +178,6 @@ export {
   runResultExitCode,
 } from "./publicResult.js";
 export type { PublicFailedCause, PublicRunResult } from "./publicResult.js";
-// Thin TERMINAL_* aliases for older launcher import paths only.
-export {
-  TERMINAL_EXIT_CODES,
-  TERMINAL_EXIT_STATUSES,
-  exitCodeForTerminal,
-  isTerminalExitStatus,
-} from "./terminalExitCode.js";
-export type { TerminalExitStatus } from "./terminalExitCode.js";
 export type {
   ChildSlice,
   ConflictResolveRequest,
