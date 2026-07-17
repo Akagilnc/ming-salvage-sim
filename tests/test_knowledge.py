@@ -112,7 +112,7 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     db.register_character_knowledge_source(
         state,
         [{"character_id": knower.name, "tier": "主办"}],
-        "secret_order",
+        "private_matter",
         "密查",
         secret_marker,
         source_id="test:durable-secret",
@@ -150,7 +150,7 @@ def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
     db.register_character_knowledge_source(
         state,
         [{"character_id": knower.name, "tier": "主办"}],
-        "secret_order",
+        "private_matter",
         "密查",
         "原始密事",
         source_id="test:rewritten-secret",
@@ -181,7 +181,7 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     db.register_character_knowledge_source(
         state,
         [{"character_id": knower.name, "tier": "主办"}],
-        "secret_order",
+        "private_matter",
         "密查",
         secret_marker,
         source_id="test:unmirrored-source",
@@ -216,7 +216,7 @@ def test_chapter_public_counterpart_keeps_only_independent_public_sources(game):
     db.register_character_knowledge_source(
         state,
         [{"character_id": knower.name, "tier": "主办"}],
-        "secret_order", "密查", "受限来源标记",
+        "private_matter", "密查", "受限来源标记",
         source_id="test:chapter-restricted", excluded_names=[excluded.name],
     )
 
@@ -322,8 +322,8 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     secret = "仅经手人可知的密令细节"
     public = "本月公开政务"
     db.register_character_knowledge_source(
-        state, [{"character_id": participant}], "secret_order", "密令", secret,
-        source_id="secret_order:test-write-boundary",
+        state, [{"character_id": participant}], "private_matter", "密令", secret,
+        source_id="restricted:test-write-boundary",
     )
     db.record_public_knowledge_event(state, "公开事项", public, source_id="public:test-write-boundary")
 
@@ -343,8 +343,8 @@ def test_character_added_after_archive_cannot_read_old_participant_source(game):
     participant = next(iter(content.characters))
     secret = "旧档中仅经手人可知的密令细节"
     db.register_character_knowledge_source(
-        state, [{"character_id": participant}], "secret_order", "密令", secret,
-        source_id="secret_order:test-late-reader-boundary",
+        state, [{"character_id": participant}], "private_matter", "密令", secret,
+        source_id="restricted:test-late-reader-boundary",
     )
     db.save_turn_report(
         state, f"聚合转述：{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn),

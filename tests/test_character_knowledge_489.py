@@ -24,7 +24,7 @@ def test_chapter_aggregate_never_projects_paraphrased_restricted_source(game):
     db, state, content = game
     knower, excluded = list(content.characters.values())[:2]
     db.register_character_knowledge_source(
-        state, [{"character_id": knower.name}], "secret_order", "密查", "原始密事",
+        state, [{"character_id": knower.name}], "private_matter", "密查", "原始密事",
         source_id="test:chapter-secret", excluded_names=[excluded.name],
     )
     db.save_chapter_memory(state, "朝局", "宫中有人暗中安排了不应知晓的事务。")
@@ -329,7 +329,7 @@ def test_turn_report_projects_public_and_secret_items_per_character(game):
     public_marker = "MIXED_REPORT_PUBLIC_MARKER_490"
     db.record_public_knowledge_event(
         state, "密事来源", secret_marker,
-        source_id="secret_order:mixed-report",
+        source_id="restricted:mixed-report",
         excluded_names=[minister.name],
     )
     db.record_public_knowledge_event(
@@ -479,16 +479,16 @@ def test_excluded_participant_event_is_not_visible_to_excluded_character(game):
     db.record_character_participation(
         state,
         [minister.name],
-        "secret_order",
+        "private_matter",
         "密查亏空",
         "查户部旧账",
-        source_id="secret_order:excluded",
+        source_id="restricted:excluded",
         excluded_names=[minister.name],
     )
 
     view = db.get_character_knowledge(state, minister.name)
 
-    assert not any(item["source_id"] == "secret_order:excluded" for item in view["events"])
+    assert not any(item["source_id"] == "restricted:excluded" for item in view["events"])
 
 
 def test_secret_blacklist_survives_later_public_projection(game):
@@ -659,9 +659,9 @@ def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
     db, state, content = game
     people = [c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩")]
     participant, allowed, excluded = people[:3]
-    source_id = "secret_order:public-disclosure-roster"
+    source_id = "restricted:public-disclosure-roster"
     db.register_character_knowledge_source(
-        state, [{"character_id": participant.name}], "secret_order", "密查", "旧密令",
+        state, [{"character_id": participant.name}], "private_matter", "密查", "旧密令",
         source_id=source_id,
     )
     db.record_public_knowledge_event(
@@ -809,17 +809,17 @@ def test_event_office_blacklist_matches_current_office_name(game):
     db.register_character_knowledge_source(
         state,
         [{"character_id": minister.name}],
-        "secret_order",
+        "private_matter",
         "仅瞒礼部尚书",
         "不可宣示",
-        source_id="secret_order:office-name",
+        source_id="restricted:office-name",
         excluded_targets={"offices": [minister.office]},
     )
 
     view = db.get_character_knowledge(state, minister.name)
 
     assert not any(
-        item["source_id"] == "secret_order:office-name"
+        item["source_id"] == "restricted:office-name"
         for item in view["events"]
     )
 
@@ -863,12 +863,12 @@ def test_knowledge_titles_restore_without_persistence_truncation(game):
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
     title = "密令长标题" * 20
     db.register_character_knowledge_source(
-        state, [{"character_id": minister.name}], "secret_order", title, "内容", "secret_order:long-title",
+        state, [{"character_id": minister.name}], "private_matter", title, "内容", "restricted:long-title",
     )
     db.record_public_knowledge_event(state, title, "公开内容", source_id="public:long-title")
 
     source = db.conn.execute(
-        "SELECT title FROM character_knowledge_sources WHERE source_id='secret_order:long-title'"
+        "SELECT title FROM character_knowledge_sources WHERE source_id='restricted:long-title'"
     ).fetchone()["title"]
     public_event = db.conn.execute(
         "SELECT title FROM character_knowledge_events WHERE source_id='public:long-title'"
