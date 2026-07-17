@@ -30,8 +30,8 @@ import {
 } from "../telemetry.js";
 import {
   dispatchMonitoredCliWorker,
+  logSilenceWholeMinutes,
   readLogActivity,
-  silenceWholeMinutes,
   waitForChildExit,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
@@ -329,12 +329,10 @@ export async function dispatchFamilyWorkerWithMonitor(
       if (monitorHandle !== undefined) {
         const lastActivity = readLogActivity(monitorHandle);
         if (lastActivity !== undefined) {
-          const quietMin = silenceWholeMinutes(lastActivity.mtimeMs);
-          if (quietMin > 0) {
-            console.info(
-              `[orchestrator] family worker ${spec.id} silence_whole_minutes=${quietMin}`,
-            );
-          }
+          logSilenceWholeMinutes(
+            `family worker ${spec.id}`,
+            lastActivity.mtimeMs,
+          );
         }
       }
       const exitCode = race.kind === "exit" ? race.exitCode : null;

@@ -128,20 +128,38 @@ export function admitCoderRec(
 }
 
 /**
- * #934 ID-002 / R6 F1 — after a relay baton rewrites the final route, re-satisfy
+ * Pure apply seam for {@link admitRelayBaton}. Production defaults to
+ * {@link applyRelayBatonToRoute}; family/tests may inject a compatible override
+ * so apply throws and slot rewrites share one admit court (not half-court).
+ */
+export type AdmitRelayBatonApplyFn = (
+  route: ResolvedModelRoute,
+  baton: { readonly slug: string },
+  wallStep: StepId,
+  opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
+) => ResolvedModelRoute;
+
+/**
+ * #934 ID-002 / R7 F2 — after a relay baton rewrites the final route, re-satisfy
  * the same tight gate as admission before any further dispatch. Pure apply is
  * {@link applyRelayBatonToRoute}; this is apply + admit, not a second policy court.
+ * Apply throws map to typed stop (same shape as tight violation) — never escape
+ * as uncaught exceptions on the family half-court path.
  */
 export function admitRelayBaton(
   route: ResolvedModelRoute,
   baton: { readonly slug: string },
   wallStep: StepId = "S2",
-  opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
+  opts?: {
+    readonly slots?: ReadonlyArray<ModelRouteSlot>;
+    readonly applyFn?: AdmitRelayBatonApplyFn;
+  },
 ): AdmissionRouteResult {
   try {
-    return admitTightRoute(
-      applyRelayBatonToRoute(route, baton, wallStep, opts),
-    );
+    const apply = opts?.applyFn ?? applyRelayBatonToRoute;
+    const applyOpts =
+      opts?.slots !== undefined ? { slots: opts.slots } : undefined;
+    return admitTightRoute(apply(route, baton, wallStep, applyOpts));
   } catch (err) {
     return {
       kind: "stop",

@@ -987,6 +987,96 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 
+  it("public family: tight-violating relay baton escalates with zero further productive dispatch (ID-002 / R7 F4)", async () => {
+    // claude-tight forbids claude family. Final CMR wall on sol beyond T with
+    // only sonnet live → baton re-admit stops; no second barrier dispatch.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    const childBackend = new ChildBackend({
+      epicBody: "Coder-Rec: grok-4.5 → sol@med → sonnet-5",
+    });
+
+    let finalCalls = 0;
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/934-tight",
+      now: () => now,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "cursor",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [] as string[],
+        },
+        {
+          id: "zai",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [] as string[],
+        },
+        {
+          id: "codex-5h",
+          status: "limited",
+          resetAt,
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: [
+            "terra@med",
+            "luna@med",
+            "sol@med",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+          ],
+        },
+        {
+          id: "claude",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["sonnet-5", "sonnet", "haiku-4.5", "haiku"],
+        },
+      ],
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          finalCalls += 1;
+          // Wall on completeness (sol on claude-tight). QuotaPoolId is grok/zai only;
+          // pool id only drives park/relay table currentPool, not the wall model.
+          throw quotaWaitError({
+            resetAt,
+            pool: "grok",
+            step: "S3",
+            cmrPass: "completeness",
+          });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(1);
+    expect(result.status).toBe("escalated");
+    expect(
+      `${result.stopSummary.summary} ${result.escalation?.diagnosis ?? ""} ${result.escalation?.reason ?? ""}`,
+    ).toMatch(/tight route violation|relay baton admission/i);
+    // OUT #942: keep infra_failure stopSummary.reason until public ABI cutover.
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+  });
+
   it("NEGATIVE #906: broken Coder-Rec on family path must not silent-default", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);

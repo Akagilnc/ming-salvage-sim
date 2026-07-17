@@ -236,6 +236,23 @@ export function silenceWholeMinutes(
 }
 
 /**
+ * #934 R7 N3 — single observational silence log line for single-slice + family.
+ * Never kill/retry/relay/park/fail — console only.
+ */
+export function logSilenceWholeMinutes(
+  label: string,
+  lastActivityMs: number,
+  nowMs: number = Date.now(),
+): void {
+  const quietMin = silenceWholeMinutes(lastActivityMs, nowMs);
+  if (quietMin > 0) {
+    console.info(
+      `[orchestrator] ${label} silence_whole_minutes=${quietMin}`,
+    );
+  }
+}
+
+/**
  * Wait for a monitored child to leave the process table (#934 ID-006 / R6 F5).
  * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
  * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.

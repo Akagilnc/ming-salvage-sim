@@ -81,6 +81,7 @@ export type {
 } from "./telemetry.js";
 export {
   dispatchMonitoredCliWorker,
+  logSilenceWholeMinutes,
   monitorHandleFromLedger,
   poolIdForWorker,
   readLogActivity,

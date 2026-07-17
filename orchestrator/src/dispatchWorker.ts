@@ -56,8 +56,8 @@ import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import { abandonSpawnAfterAdoptionFailure } from "./dispatchRetry.js";
 import {
   dispatchMonitoredCliWorker,
+  logSilenceWholeMinutes,
   readLogActivity,
-  silenceWholeMinutes,
   waitForChildExit,
   type MonitoredCliDispatchInput,
   type WorkerMonitorDeps,
@@ -793,12 +793,7 @@ export async function dispatchWorkerWithMonitor(
       // Pure observation — never kill/retry/relay/park/fail.
       const lastActivity = readLogActivity(handle, monitorDeps);
       if (lastActivity !== undefined) {
-        const quietMin = silenceWholeMinutes(lastActivity.mtimeMs);
-        if (quietMin > 0) {
-          console.info(
-            `[orchestrator] worker ${spec.id} silence_whole_minutes=${quietMin}`,
-          );
-        }
+        logSilenceWholeMinutes(`worker ${spec.id}`, lastActivity.mtimeMs);
       }
       const exitCode = race.kind === "exit" ? race.exitCode : null;
       const killSignal = race.kind === "killed" ? race.signal : null;
