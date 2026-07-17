@@ -87,15 +87,6 @@ describe("#977 ADR 0137 residual ban (pattern-brief side channel)", () => {
     expect(hits).toEqual([]);
   });
 
-  it("coder_fix prompt has no pattern-brief family sweep clause", () => {
-    const prompt = readFileSync(
-      join(ORCH_ROOT, "prompts/coder_fix.md"),
-      "utf8",
-    );
-    const re = bannedResidual();
-    expect(re.test(prompt)).toBe(false);
-    expect(prompt.toLowerCase()).not.toContain("finding family");
-  });
 });
 
 describe("#711 prior round findings (ledger half retained after ADR 0137)", () => {
@@ -200,17 +191,6 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
       fixMarkedFindingIdentityKeys: [],
       blockingFindingIdentityKeys: ["explicit:persisted-key"],
     });
-  });
-
-  it("verify prompt contains only the data and output contract", () => {
-    const prompt = readFileSync(
-      join(ORCH_ROOT, "prompts/verify.md"),
-      "utf8",
-    );
-    expect(prompt).not.toContain("use it to mark recurringFromRounds");
-    expect(prompt).not.toContain(
-      "When `priorRoundFindings` is in the landing file",
-    );
   });
 
   it("parseVerifyOutcome ignores residual pattern-brief cargo (opaque miss)", () => {

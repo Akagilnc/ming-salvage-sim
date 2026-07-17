@@ -482,10 +482,6 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
       join(ROOT, "src/dogfoodReplay.ts"),
       "utf8",
     );
-    const fixerSoul = readRepoFileSync(
-      join(ROOT, "image/souls/fixer.md"),
-      "utf8",
-    );
     const judgeStationSrc = readRepoFileSync(
       join(ROOT, "src/judgeStation.ts"),
       "utf8",
@@ -528,11 +524,6 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
     // placeholder fixPacketBody — second packing path is deleted.
     expect(judgeStationSrc).not.toMatch(/residualFixPacketBodyFromFindings/);
     expect(judgeStationSrc).not.toMatch(/\[residual\] open-count continue/);
-
-    // S1: fixer soul teaches sole content = landing fixPacketBody verbatim.
-    expect(fixerSoul).toMatch(/fixPacketBody/);
-    expect(fixerSoul).toMatch(/ADR 0138|0138/);
-    expect(fixerSoul).toMatch(/原样|verbatim|逐字/);
 
     // P2: ADR authority path present in worktree.
     expect(

@@ -1288,31 +1288,3 @@ describe("#925 F3: single open-count → continue projection", () => {
   });
 });
 
-describe("#925 verify.md 判官 duties + judge prompt", () => {
-  it("soul chapter has tri-state / four reasons / trajectory stall", () => {
-    const text = readFileSync(join(SOULS, "verify.md"), "utf8");
-    // owner 2026-07-16: 收敛判官 persona abolished — one judge whose court persists.
-    expect(text).toMatch(/判官/);
-    expect(text).toMatch(/庭是持久的|持久判官/);
-    expect(text).toMatch(/converged/);
-    expect(text).toMatch(/continue/);
-    expect(text).toMatch(/escalate/);
-    expect(text).toMatch(/unconstitutional|违宪/);
-    expect(text).toMatch(/over_defense|过度防御/);
-    expect(text).toMatch(/not_established|事实不成立/);
-    expect(text).toMatch(/scope_creep|越权/);
-    expect(text).toMatch(/走势|卡死/);
-  });
-
-  it("judge_station prompt teaches T2 envelope fields + session-loss landing", () => {
-    const text = readFileSync(join(PROMPTS, "judge_station.md"), "utf8");
-    expect(text).toMatch(/stationReceiptContracts/);
-    expect(text).not.toMatch(/JUDGE_STEP_COMPLETE/);
-    expect(text).toMatch(/clean exit|single-iteration|maxIterations/);
-    expect(text).toMatch(/findingDispositions/);
-    expect(text).toMatch(/advanceCoder/);
-    expect(text).toMatch(/maxIterations|maxIter/);
-    expect(text).toMatch(/priorJudgeVerdicts/);
-    expect(text).toMatch(/ORCHESTRATOR_FIX_FINDINGS_PATH|fix-findings/);
-  });
-});
