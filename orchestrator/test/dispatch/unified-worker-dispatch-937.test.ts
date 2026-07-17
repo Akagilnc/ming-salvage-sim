@@ -364,6 +364,130 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(killed).toEqual([]);
   });
 
+  it("POSITIVE: public runOrchestrator — long quiet CLI worker completes without host kill (ID-007)", async () => {
+    // #937 AC: public ignition/driver proof — not only the helper.
+    // Production wire: runOrchestrator → dispatchWorkerWithMonitor → CLI spawn.
+    // Silence must never invent host kill; process exit alone yields completed.
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+    type PersistentLedgerEntry = import("../../src/types.js").PersistentLedgerEntry;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type WorkerSpec = import("../../src/types.js").WorkerSpec;
+
+    const dir = mkdtempSync(join(tmpdir(), "orch-937-public-silence-"));
+    tempDirs.push(dir);
+    const worktree: WorktreeHandle = {
+      branch: "feat/937-public-silence",
+      base: "main",
+      path: dir,
+    };
+    const cliExitCodes: Array<number | null> = [];
+    const processKillSpy = vi.spyOn(process, "kill").mockImplementation(
+      ((_pid: number, _sig?: NodeJS.Signals | number) => true) as typeof process.kill,
+    );
+
+    const backend = {
+      async smokeModelRoute(route: never): Promise<never> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route as never, async () => ({
+          cliVersion: "test",
+        })) as never;
+      },
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      },
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5",
+        };
+      },
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      },
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async writeLedger(_entry: PersistentLedgerEntry): Promise<void> {},
+      // Only S2 takes the monitored CLI path (long quiet child); other agent
+      // seats fall through to dispatchWorker so the public run can complete.
+      resolveCliMonitorDispatch: (
+        spec: WorkerSpec,
+      ): CliMonitorSpawnSpec | undefined => {
+        if (spec.id !== "S2") return undefined;
+        return {
+          command: process.execPath,
+          // Quiet wall well past former idle tiers; host must wait for exit only.
+          args: ["-e", "setTimeout(() => {}, 250)"],
+          logDir: dir,
+          poolId: "grok-build",
+          stepId: "S2",
+          readInstanceId: () => "public-silence-instance",
+        };
+      },
+      awaitMonitoredCliWorker: async (
+        _handle: unknown,
+        exitCode: number | null,
+      ): Promise<WorkerResult> => {
+        cliExitCodes.push(exitCode);
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.id === "S2") {
+          // Must not be used for S2 when CLI path is active.
+          return {
+            kind: "failed",
+            reason: "S2 must use resolveCliMonitorDispatch path",
+          };
+        }
+        if (spec.id === "S3" || spec.kind === "reviewer" || spec.role === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+    } as unknown as Backend;
+
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 937,
+        backend,
+        now: () => new Date("2026-07-10T12:00:00.000Z"),
+      });
+      expect(result.status).toBe("success");
+      // Quiet child exited 0 on its own — not signal-killed (exitCode null).
+      expect(cliExitCodes).toContain(0);
+      expect(cliExitCodes.every((c) => c === 0)).toBe(true);
+      // Host never process.kill'd the quiet worker for silence (ID-007).
+      // Adoption-failure is the only remaining host-kill seam; this path had none.
+      const killArgs = processKillSpy.mock.calls.map((c) => c[1]);
+      expect(killArgs.every((sig) => sig === undefined || sig === 0)).toBe(true);
+    } finally {
+      processKillSpy.mockRestore();
+    }
+  });
+
   it("POSITIVE: parkOrRelayQuotaWall prefers same-model other live pool first (ID-008)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-937-park-order-"));
     tempDirs.push(dir);

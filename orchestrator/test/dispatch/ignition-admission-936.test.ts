@@ -752,6 +752,26 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
+  it("discoverFamilyResidentScene: shape-garbage JSONL lines fail closed (S-3)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-shape-garbage-"));
+    try {
+      // JSON.parse succeeds for null/{} but those are not FamilyLedgerEntry.
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        "null\n{}\n42\n",
+        "utf8",
+      );
+      writeFileSync(join(ledgerDir, "family-base-start-head"), "abc\n", "utf8");
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("corrupted");
+      if (scene.kind === "corrupted") {
+        expect(scene.reason).toMatch(/corrupt family ledger|not a valid FamilyLedgerEntry/i);
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
   it("discoverFamilyResidentScene: no ledger → fresh; planFamilyTerminalReplay non-terminal → undefined", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-fresh-"));
     try {
@@ -976,6 +996,45 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(result.escalation.diagnosis).toMatch(/codex\/gpt-5\.4/);
       expect(result.escalation.diagnosis).toMatch(/claude\/opus/);
       expect(result.escalation.diagnosis).toMatch(/;/);
+    }
+  });
+
+  it("admitPlannedRouteSmoke success unions dropped inventory across unique coder routes (S-4)", async () => {
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+    // Distinct coders → two unique smokes. First route fully green (empty dropped);
+    // second drops optional agy. Pre-fix `return results[0]!` would discard B's
+    // dropped inventory; union must retain it.
+    const routeA = resolveRouteModels("normal", { coder: "gpt-5.6-terra" });
+    const routeB = resolveRouteModels("normal", { coder: "opus" });
+    expect(routeA.slots.coder).not.toBe(routeB.slots.coder);
+
+    const backend = {
+      async smokeModelRoute(route: ResolvedModelRoute) {
+        return smokeRouteModels(route, async ({ slug }) => {
+          // Only the second unique lineup drops optional agy.
+          if (route.slots.coder === routeB.slots.coder && slug === "agy") {
+            throw new Error("agy unavailable on second coder lineup");
+          }
+          return { cliVersion: "test-cli" };
+        });
+      },
+    } as unknown as Backend;
+
+    const result = await admitPlannedRouteSmoke(backend, [routeA, routeB]);
+    expect(result.kind).toBe("ready");
+    if (result.kind === "ready") {
+      // Primary route is first unique coder lineup.
+      expect(result.route.slots.coder).toBe(routeA.slots.coder);
+      // Dropped inventory must include the non-primary route's optional drop.
+      expect(result.dropped).toEqual(
+        expect.arrayContaining([
+          {
+            slug: "agy",
+            reason: "agy unavailable on second coder lineup",
+          },
+        ]),
+      );
+      expect(result.dropped.length).toBeGreaterThanOrEqual(1);
     }
   });
 

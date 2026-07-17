@@ -183,7 +183,7 @@ import {
 } from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
-import { recordFamilyEscalated } from "./ledger.js";
+import { parseFamilyLedgerJsonl, recordFamilyEscalated } from "./ledger.js";
 import { shipOutcomeFromResult } from "../shipOutcome.js";
 import {
   configureTelemetryFromWorkerImage,
@@ -582,11 +582,8 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const ledger = raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyLedgerEntry);
-    return ledger;
+    // #934 S-3: per-line shape gate (not bare JSON.parse cast).
+    return parseFamilyLedgerJsonl(raw);
   }
 
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
@@ -1276,9 +1273,9 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch (err) {
       if (isFileNotFound(err)) return false;
       const d = err instanceof Error ? err.message : String(err);
-      // Keep both #934 ("package.json probe failed") and #939 phrasing for tests.
+      // #934 CR: one canonical reason token (no dual-era parenthetical).
       throw new Error(
-        `family verify: package.json probe failed (failed to probe package.json) at "${path}": ${d}`,
+        `family verify: package.json probe failed at "${path}": ${d}`,
       );
     }
   }

@@ -216,5 +216,23 @@ export async function admitPlannedRouteSmoke(
       },
     };
   }
-  return results[0]!;
+  // All ready: keep a deterministic primary route (first unique coder lineup)
+  // but union every route's dropped optional-leg inventory so multi-route
+  // admission does not silently discard non-primary smoke degradation (#934 S-4).
+  const ready = results as Array<
+    Extract<RouteSmokeAdmission, { readonly kind: "ready" }>
+  >;
+  const primary = ready[0]!;
+  const droppedByKey = new Map<string, { readonly slug: string; readonly reason: string }>();
+  for (const result of ready) {
+    for (const dropped of result.dropped) {
+      const key = `${dropped.slug}\0${dropped.reason}`;
+      if (!droppedByKey.has(key)) droppedByKey.set(key, dropped);
+    }
+  }
+  return {
+    kind: "ready",
+    route: primary.route,
+    dropped: [...droppedByKey.values()],
+  };
 }
