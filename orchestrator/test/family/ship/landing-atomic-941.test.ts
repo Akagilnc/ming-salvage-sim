@@ -570,11 +570,14 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
           mergeExecuted += 1;
         },
         confirmMerged: (expectedHeadOid) => ({
-          prUrl: STAGE_SHIP.pr!,
-          prNumber: 941,
-          remoteBranchName: "family/epic-941",
-          mergedHeadOid: expectedHeadOid,
-          convergedHeadOid: expectedHeadOid,
+          kind: "aligned" as const,
+          record: {
+            prUrl: STAGE_SHIP.pr!,
+            prNumber: 941,
+            remoteBranchName: "family/epic-941",
+            mergedHeadOid: expectedHeadOid,
+            convergedHeadOid: expectedHeadOid,
+          },
         }),
         pollSnapshot: async () => ({
           ...BASE_SNAPSHOT,
@@ -1102,11 +1105,14 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
           mergeExecuted.n += 1;
         },
         confirmMerged: (expectedHeadOid) => ({
-          prUrl: STAGE_SHIP.pr!,
-          prNumber: 941,
-          remoteBranchName: "family/epic-941",
-          mergedHeadOid: expectedHeadOid,
-          convergedHeadOid: expectedHeadOid,
+          kind: "aligned" as const,
+          record: {
+            prUrl: STAGE_SHIP.pr!,
+            prNumber: 941,
+            remoteBranchName: "family/epic-941",
+            mergedHeadOid: expectedHeadOid,
+            convergedHeadOid: expectedHeadOid,
+          },
         }),
         pollSnapshot: async () => ({
           ...BASE_SNAPSHOT,
@@ -1168,14 +1174,17 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
           confirmCalls += 1;
           // First attempts lag as OPEN; last attempt within bound confirms.
           if (confirmCalls < LANDING_MERGED_CONFIRM_ATTEMPTS) {
-            return undefined;
+            return { kind: "not_merged" as const };
           }
           return {
-            prUrl: STAGE_SHIP.pr!,
-            prNumber: 941,
-            remoteBranchName: "family/epic-941",
-            mergedHeadOid: expectedHeadOid,
-            convergedHeadOid: expectedHeadOid,
+            kind: "aligned" as const,
+            record: {
+              prUrl: STAGE_SHIP.pr!,
+              prNumber: 941,
+              remoteBranchName: "family/epic-941",
+              mergedHeadOid: expectedHeadOid,
+              convergedHeadOid: expectedHeadOid,
+            },
           };
         },
         // Keep fetchState OPEN so only confirmMerged drives success.
@@ -1231,11 +1240,14 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       live: {
         ...liveOpenHooks({ mergeExecuted, closedIssues }),
         confirmMerged: (expectedHeadOid) => ({
-          prUrl: STAGE_SHIP.pr!,
-          prNumber: 941,
-          remoteBranchName: "family/epic-941",
-          mergedHeadOid: expectedHeadOid,
-          convergedHeadOid: expectedHeadOid,
+          kind: "aligned" as const,
+          record: {
+            prUrl: STAGE_SHIP.pr!,
+            prNumber: 941,
+            remoteBranchName: "family/epic-941",
+            mergedHeadOid: expectedHeadOid,
+            convergedHeadOid: expectedHeadOid,
+          },
         }),
         // Lag OPEN after confirmed MERGED — cleanup must still close issues.
         fetchState: () => ({
