@@ -128,6 +128,15 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
         "能力增至50",
         "能力涨至80",
         "忠诚恢复至50",
+        # Aspect 了 after change verbs (mirror 至/到).
+        "能力提升了70",
+        "能力降低了20",
+        "能力提高了50",
+        "士气升高了80",
+        "训练回落了40",
+        # Stative 处在 peers 维持在/保持在.
+        "忠诚处在40左右",
+        "能力处在70",
     ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
@@ -148,6 +157,29 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
     assert "拨银三万两" in mixed_cn
     assert "已过六个月" in mixed_cn
     assert "三十" not in mixed_cn
+
+
+def test_p4_guard_keeps_lawful_chinese_prose_and_military_counts():
+    """Chinese-numeral score matching must not over-redact idioms or unit counts.
+
+    Bare 十/一 inside qualitative prose (十分出众 / 一尘不染) and military
+    countables (一营) are not abstract scores; exact scores 约七十 / 只有三十
+    still redline via complete score expressions.
+    """
+    for lawful in (
+        "能力十分出众",
+        "操守一尘不染",
+        "军力只有一营",
+        "士气十分高涨",
+        "能力出众的3名将领奉命整训",
+        "火器营新募3000人",
+    ):
+        rendered = safe_historical_text(lawful)
+        assert "已略去" not in rendered, (lawful, rendered)
+        assert rendered == lawful
+
+    for injected in ("能力约七十", "忠诚只有三十", "军心降低到三十"):
+        assert "已略去" in safe_historical_text(injected), injected
 
 
 def test_qualitative_audience_text_rejects_multi_number_stem_compounds():
