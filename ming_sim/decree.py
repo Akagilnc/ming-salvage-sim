@@ -1461,13 +1461,10 @@ def resolve_decisions_phase2(
         return result.report
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
-    # #48 恢复端闭环：HITL 续跑直接复用存档的 narrative + simulator_payload（不重推演），
-    # extractor 实际从 simulator_payload 读密令分组（module 模式剔除补充上下文里的副本）。
-    # 故把分组承载归一成 dict——新档原样、旧 list 形状 ctx 就地重分组——再喂下游，使新
-    # extractor prompt（读 secret_orders.在办/待核议）在旧档恢复时也不漏抽密令副作用/结案。
+    # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
+    # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
+    # （_recovered_grouped 归一 list/dict）；simulator_payload 是公共轨，不含密令正文。
     sim_payload = ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {}
-    if isinstance(sim_payload.get("secret_orders"), list):
-        sim_payload = {**sim_payload, "secret_orders": _recovered_grouped(sim_payload["secret_orders"])}
     # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
     # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
     ctx_source = _provenance_from_stored(ctx.get("source"))
