@@ -132,6 +132,10 @@ class FamilyTelemetryBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<{ familyHead: string }> {
     throw new Error("family telemetry dual-run uses an empty epic (no children)");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
 
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);

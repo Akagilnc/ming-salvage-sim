@@ -166,6 +166,10 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(e);
   }
@@ -423,6 +427,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
         async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
           throw new Error("resume must not re-merge");
         }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
         async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
           this.ledger.push(e);
         }
@@ -489,6 +497,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("incomplete resume must not merge a failed child");
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }
@@ -540,6 +552,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("unanswered escalated resume must not merge");
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }

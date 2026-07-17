@@ -112,6 +112,10 @@ class CapableFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -205,6 +209,10 @@ class BareFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

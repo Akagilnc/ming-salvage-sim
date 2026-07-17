@@ -1,4 +1,4 @@
-# Online review verify worker (#600)
+# Online review verify worker (#600 / #940 / #934 ID-012)
 
 Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`)
 
@@ -9,6 +9,26 @@ Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`)
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before reviewing.
+
+## Ownership (worker-executed; not a host cargo plan)
+
+You own **finding judgment AND GitHub side effects** on this seat:
+
+1. Read live review state from the landing snapshot / `gh` as needed.
+2. Judge each finding (`fix` / `reject` / `defer`).
+3. **Execute** the side effects yourself **before** self-reporting disposition:
+   - evidence-bearing thread **replies** (`gh api` comment on the review thread)
+   - thread **resolve** after a fresh re-check confirms the fix
+   - **deferred** tracking issues for `defer` findings
+4. Only after those side effects succeed, self-report the judge three-state via
+   role cargo (`converged`) + typed envelope. If a required side effect cannot
+   complete, raise via the typed envelope (`status:"escalate"`) — do **not**
+   report `converged:true` with unfinished effects, and do **not** emit a cargo
+   "plan" of replies/resolves for the host to apply (host side-effect module is
+   deleted; cargo plan fields are not a wire).
+
+Shared GitHub retry helpers (if present in the image) are for your mechanical
+calls only — the host loop never applies reply/resolve/deferred from cargo.
 
 ## Required output
 
@@ -40,7 +60,8 @@ never a fate signal on this envelope.
 
 Write verify cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set (sidecar is cargo
 transport). You may also emit opaque `<verify>` cargo JSON for the same body.
-Shape of the cargo:
+Shape of the cargo — **disposition + fixer landing only** (no host side-effect
+plan fields):
 
 ```json
 {"converged": true}
@@ -53,8 +74,6 @@ or, when findings remain:
   "converged": false,
   "findingDispositions": [],
   "fixMarkedFindingIdentityKeys": [],
-  "threadReplies": [],
-  "threadsToResolve": [],
   "findingFamilies": [
     {
       "family": "pattern-name",
@@ -91,5 +110,8 @@ Rules:
 
 - Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
 - Role cargo never carries escalate — fate is the typed envelope only.
+- Side effects are **done** before you emit completed/`converged` cargo — never
+  a plan for host apply (`threadReplies` / `threadsToResolve` /
+  `deferredIssueUrls` are not part of this cargo contract).
 - This seat is single-iteration. Completion is clean exit + legal typed
   envelope / sidecar — no STEP_COMPLETE password.

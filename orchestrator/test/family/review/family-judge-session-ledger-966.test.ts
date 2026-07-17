@@ -140,6 +140,10 @@ class FamilyJudgeLedgerBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -473,5 +477,66 @@ describe("#966 family judge session from ledger", () => {
     });
     expect(runs).toHaveLength(1);
     expect(runs[0]!.resumeSession).toBeUndefined();
+  });
+
+  it("grok seat production runCmrWorker honors ledger resumeSession (true grok agent)", async () => {
+    // #966 AC: "grok 席位真 resume" — not only fake backend recording + default
+    // codex sandbox path. Dispatch model is grok-4.5 (resume-capable via #955),
+    // production runCmrWorker → sandbox options carry resumeSession + grok agent.
+    const route = await grokCmrRoute();
+    const spec = cmrWorkerSpec("resume", "completeness", route);
+    expect(spec.model).toBe(GROK_SLUG);
+    expect(resumeCapableForSlug(spec.model)).toBe(true);
+
+    const repo = realRepo966();
+    const runs: Array<Parameters<typeof sc.run>[0]> = [];
+    class Backend extends RealFamilyBackend {
+      public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
+        return this.runCmrWorker(workerSpec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        // Grok seat preflight requires grokAuthDir (providerAuth.grok).
+        return {
+          grokAuthDir: mkDir("966-grok-auth-"),
+          providerAuth: { claude: false, grok: true, agy: false },
+        };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runs.push(options);
+        return {
+          branch: "fb",
+          stdout: "",
+          commits: [],
+          iterations: [{ sessionId: ROUND1_SESSION }],
+          output: { station: "judge", status: "converged" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("966-grok-resume-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    await be.run(spec, {
+      familyBase: "fb",
+      cmrPass: "completeness",
+      resumeSessionId: ROUND1_SESSION,
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.resumeSession).toBe(ROUND1_SESSION);
+    // Production agent binding is the real grok provider (not codex sandbox default).
+    expect(runs[0]!.agent?.name).toBe("grok");
+    expect(typeof runs[0]!.agent?.sessionStorage?.captureToHost).toBe("function");
+    expect(typeof runs[0]!.agent?.sessionStorage?.resumeIntoSandbox).toBe(
+      "function",
+    );
   });
 });

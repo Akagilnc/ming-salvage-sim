@@ -20,7 +20,8 @@ export async function mergeChild(
 
   let result: MergeResult;
   if (deterministic.conflicted === true) {
-    const resolved = await backend.resolveMergeConflict!({
+    // Required seam (#934 ID-010 / #938): no optional `?` + non-null assert.
+    const resolved = await backend.resolveMergeConflict({
       childIssue: request.childIssue,
       childBranch: request.childBranch,
       ...(request.runId !== undefined ? { runId: request.runId } : {}),
