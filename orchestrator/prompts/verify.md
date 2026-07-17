@@ -10,9 +10,11 @@ If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before reviewing.
 
-## Ownership (worker-executed; not a host cargo plan)
+## Ownership (worker-executed first; host fail-safe applicator)
 
-You own **finding judgment AND GitHub side effects** on this seat:
+You own **finding judgment** on this seat and should execute GitHub side effects
+yourself before self-reporting. The host also applies remaining cargo plan fields
+as a fail-safe so reply/resolve/deferred still land when you only emit the plan:
 
 1. Read live review state from the landing snapshot / `gh` as needed.
 2. Judge each finding (`fix` / `reject` / `defer`).
@@ -20,15 +22,16 @@ You own **finding judgment AND GitHub side effects** on this seat:
    - evidence-bearing thread **replies** (`gh api` comment on the review thread)
    - thread **resolve** after a fresh re-check confirms the fix
    - **deferred** tracking issues for `defer` findings
-4. Only after those side effects succeed, self-report the judge three-state via
-   role cargo (`converged`) + typed envelope. If a required side effect cannot
-   complete, raise via the typed envelope (`status:"escalate"`) — do **not**
-   report `converged:true` with unfinished effects, and do **not** emit a cargo
-   "plan" of replies/resolves for the host to apply (host side-effect module is
-   deleted; cargo plan fields are not a wire).
+4. Only after those side effects succeed (or when you must hand a residual plan to
+   the host fail-safe), self-report the judge three-state via role cargo
+   (`converged`) + typed envelope. If a required side effect cannot complete and
+   you cannot leave a well-typed plan the host can apply, raise via the typed
+   envelope (`status:"escalate"`) — do **not** report `converged:true` with
+   unfinished effects and no residual plan.
 
-Shared GitHub retry helpers (if present in the image) are for your mechanical
-calls only — the host loop never applies reply/resolve/deferred from cargo.
+Shared GitHub retry helpers (if present in the image) are for mechanical calls.
+Host fail-safe applies well-typed `threadReplies` / `threadsToResolve` /
+`deferredIssueUrls` cargo before accepting mergeable.
 
 ## Required output
 
@@ -60,8 +63,8 @@ never a fate signal on this envelope.
 
 Write verify cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set (sidecar is cargo
 transport). You may also emit opaque `<verify>` cargo JSON for the same body.
-Shape of the cargo — **disposition + fixer landing only** (no host side-effect
-plan fields):
+Shape of the cargo — disposition + fixer landing, plus optional host fail-safe
+plan fields when residual effects remain:
 
 ```json
 {"converged": true}
@@ -74,6 +77,8 @@ or, when findings remain:
   "converged": false,
   "findingDispositions": [],
   "fixMarkedFindingIdentityKeys": [],
+  "threadReplies": [{"threadId": "…", "body": "…"}],
+  "threadsToResolve": ["…"],
   "findingFamilies": [
     {
       "family": "pattern-name",

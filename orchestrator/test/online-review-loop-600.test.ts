@@ -2487,7 +2487,8 @@ describe("#600 r26 runner-owned isRecheck", () => {
         },
         dispatchFixer: async () => fixerCommitted(),
         dispatchDocRelease: async () => true,
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
         resolveFixCommitSha: async (envelopeFixSha) => {
           // #940: envelope SHA is host-owned via resolveFixCommitSha only
           // (applySideEffects deleted; worker owns GitHub side effects).
@@ -2550,7 +2551,8 @@ describe("#600 r26 runner-owned isRecheck", () => {
         },
         dispatchFixer: async () => fixerCommitted(),
         dispatchDocRelease: async () => true,
-        retriggerAfterFix: () => {},
+                applySideEffects: (_landing, verify) => verify,
+      retriggerAfterFix: () => {},
       },
     );
 
@@ -2606,6 +2608,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerCommitted(),
       dispatchDocRelease: async (_landing) => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2641,6 +2644,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerNotFixed();
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(fixerCalls).toBe(0);
@@ -2683,6 +2687,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerCommitted();
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2725,6 +2730,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerCommitted();
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result.ok).toBe(true);
@@ -2748,6 +2754,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerCommitted(),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(landingBranch).toBe("family/epic-600");
@@ -2781,6 +2788,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerCommitted();
       },
       dispatchDocRelease: async (_landing) => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2824,6 +2832,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerCommitted();
       },
       dispatchDocRelease: async (_landing) => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2860,6 +2869,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerNotFixed(),
       dispatchDocRelease: async (_landing) => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
@@ -2876,6 +2886,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       }),
       dispatchFixer: async () => fixerNotFixed(),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(stageResult.stopSummary).toEqual(
@@ -2897,6 +2908,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => fixerCommitted(),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {
         throw new Error("retriggerBotsAndPoll: gh api failed");
       },
@@ -2924,6 +2936,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => fixerCommitted(),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2945,6 +2958,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerCommitted(),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2966,6 +2980,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("dispatchFamilyReviewWorker: fixer residue unsafe");
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -3005,6 +3020,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {
         retriggerCalls += 1;
       },
@@ -3050,6 +3066,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
@@ -3092,6 +3109,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return malformed;
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {
         throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
       },
@@ -3171,6 +3189,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         expect(envelopeFixSha).toBe("family-landed-sha");
@@ -3204,6 +3223,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerNotFixed();
       },
       dispatchDocRelease: async (_landing) => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     // Deep self-check R8: do not dispatch fixer with empty fix marks on CI red

@@ -1948,10 +1948,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("drops dead host side-effect plan fields and malformed optional cargo", async () => {
+  it("decodes well-typed host side-effect plan fields; drops malformed optional cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    // #940 / ID-012: threadReplies / threadsToResolve / deferredIssueUrls are
-    // not host-applied cargo — decoder must not surface them even when well-typed.
+    // Correctness K1: host fail-safe applicator needs plan cargo decoded when
+    // well-typed; malformed values stay dropped (not crash).
     expect(
       mod.parseVerifyOutcome(
         `<verify>${JSON.stringify({
@@ -1961,7 +1961,13 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
           deferredIssueUrls: ["https://github.com/o/r/issues/1"],
         })}</verify>`,
       ),
-    ).toEqual({ kind: "verify", converged: true });
+    ).toEqual({
+      kind: "verify",
+      converged: true,
+      threadReplies: [{ threadId: "t1", body: "fixed" }],
+      threadsToResolve: ["t1"],
+      deferredIssueUrls: ["https://github.com/o/r/issues/1"],
+    });
     expect(
       mod.parseVerifyOutcome(
         `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
