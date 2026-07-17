@@ -27,7 +27,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -103,18 +102,9 @@ class DispatchBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement the thing",
-    };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
 
   async runStep(): Promise<StepOutput> {
     this.legacyRunStepCount += 1;
@@ -1167,13 +1157,6 @@ describe("#796 Coder-Rec host dispatch", () => {
         body: this.coderRecBody,
       };
     }
-
-    override async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-      return {
-        ...(await super.fetchIssueSnapshot(issueNumber)),
-        body: this.coderRecBody,
-      };
-    }
   }
 
   it("dispatches every Coder-Rec token with the host required by its registered provider", async () => {
@@ -1278,7 +1261,6 @@ describe("#796 Coder-Rec host dispatch", () => {
               reason: "quota limited (429); wait for reset",
             },
             applied: {
-              killed: false,
               ledgerEntry: {
                 event: "quota_wait_for_reset",
                 pool: "grok",
@@ -1289,8 +1271,7 @@ describe("#796 Coder-Rec host dispatch", () => {
                 ts: "2026-07-10T12:00:00.000Z",
               },
             },
-            pool: "grok",
-            probe: { kind: "quota_limited" },
+            pool: "grok"
           });
         }
         return super.dispatchWorker(spec, ctx);

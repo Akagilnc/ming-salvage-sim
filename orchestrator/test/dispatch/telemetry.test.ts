@@ -38,7 +38,6 @@ vi.mock("node:child_process", async (importOriginal) => {
         gitExecControl.timeoutOptions.push(options);
         gitExecControl.releaseHungGit = () => {
           callback(Object.assign(new Error("git timed out"), {
-            killed: true,
             signal: "SIGTERM",
           }), "", "");
         };
@@ -1320,26 +1319,19 @@ describe("#786 telemetry pure helpers", () => {
     }
   });
 
-  it("buildDispatchStamp records Coder-Rec order from issue body when present", () => {
+  it("buildDispatchStamp does not copy deleted snapshot/Coder-Rec court", () => {
     const stamp = buildDispatchStamp({
       legId: "leg-1",
       spec: baseSpec({ model: "grok-4.5" }),
-      ctx: {
-        issueSnapshot: {
-          number: 786,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med\n\nbody",
-          comments: [],
-          agentBrief: "",
-        },
-      },
+      ctx: {},
       dispatchedAt: "2026-07-11T00:00:00.000Z",
       now: () => "2026-07-11T00:00:00.000Z",
     });
-    expect(stamp.issue).toBe(786);
+    expect(stamp.issue).toBeNull();
     expect(stamp.coderRec).not.toBeNull();
     expect(stamp.coderRec?.selected).toBe("grok-4.5");
-    expect(stamp.coderRec?.order?.length).toBeGreaterThan(0);
-    expect(stamp.coderRec?.wasFallback).toBe(false);
+    expect(stamp.coderRec?.order).toBeNull();
+    expect(stamp.coderRec?.wasFallback).toBeNull();
   });
 
   it("buildEnvironmentStamp reuses route-smoke cliVersions", () => {
@@ -1430,8 +1422,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { runId: ledgerDir, stateDir: ledgerDir, modelRoute: route },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-786-existing-env",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -1460,8 +1450,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { runId: "run-809-throw", stateDir: ledgerDir, modelRoute: route },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-809-resolve-throw",
           sleepMs: (ms: number) =>
@@ -1486,8 +1474,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     ) as Backend;
     const route = smokedRoute();
     const dispatchOptions = {
-      idleThresholdMs: 60_000,
-      pollIntervalMs: 20,
       monitorDeps: {
         readInstanceId: () => "test-instance-809",
         sleepMs: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 20))),
@@ -1553,8 +1539,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir, modelRoute: smokedRoute() },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-786-receiver-bound",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -1589,8 +1573,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir, modelRoute: smokedRoute() },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-786-joinable-env",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -1681,8 +1663,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
         { stateDir: ledgerDir },
         undefined,
         {
-          idleThresholdMs: 60_000,
-          pollIntervalMs: 5_000,
           monitorDeps: {
             readInstanceId: () => "test-instance-786-env-after-handle",
             sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
@@ -1739,8 +1719,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       undefined,
       {
         // Keep idle far above the instant-exit child so the exit race wins.
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-786",
           // Real short sleep so the event loop can deliver child 'exit'.
@@ -1814,9 +1792,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir },
       undefined,
       {
-        idleThresholdMs: 60_000,
         // Long poll would miss growth if we only watched post-baseline deltas.
-        pollIntervalMs: 5_000,
         monitorDeps: {
           readInstanceId: () => "test-instance-786-quick",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5))),
@@ -1848,21 +1824,19 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(dispatchedMs).toBeLessThanOrEqual(completedMs);
   });
 
-  it("collect stamps hang-idle category when idle monitor kills the worker", async () => {
+  it("collect stamps result terminal when monitored worker exits cleanly (#937 no idle kill)", async () => {
     const dir = tempDir("orch-786-hang-");
     const ledgerDir = join(dir, ".ledger-786");
 
     const backend = {
       resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
-        command: process.execPath,
-        // Sleep long enough that idle threshold 0 fires.
-        args: ["-e", "setTimeout(() => {}, 5000)"],
+        command: process.platform === "win32" ? "cmd" : "true",
+        args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
         logDir: dir,
         poolId: "zai",
         stepId: "S2",
         readInstanceId: () => "test-instance-hang",
       }),
-      handleMonitoredWorkerIdle: async () => "hang" as const,
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
         kind: "completed",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -1870,26 +1844,21 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     } as unknown as Backend;
 
     const killed: number[] = [];
-    await expect(
-      dispatchWorkerWithMonitor(
-        backend,
-        workerSpec(),
-        { stateDir: ledgerDir },
-        undefined,
-        {
-          idleThresholdMs: 0,
-          pollIntervalMs: 1,
-          monitorDeps: {
-            readInstanceId: () => "test-instance-hang",
-            killPid: (pid) => killed.push(pid),
-            isPidAlive: (pid) => pid > 0 && !killed.includes(pid),
-            listChildPids: () => [],
-            readParentPid: () => undefined,
-            sleepMs: async () => {},
-          },
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir },
+      undefined,
+      {
+        monitorDeps: {
+          readInstanceId: () => "test-instance-hang",
+          killPid: (pid) => killed.push(pid),
+          sleepMs: async () => {},
         },
-      ),
-    ).rejects.toThrow(/idle hang/);
+      },
+    );
+    expect(outcome.result.kind).toBe("completed");
+    expect(killed).toEqual([]);
 
     const records = readTelemetryRecords(ledgerDir);
     const dispatch = records.find((r) => r.phase === "dispatch");
@@ -1899,8 +1868,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect((dispatch as TelemetryDispatchRecord).legId).toBe(
       (collect as TelemetryCollectRecord).legId,
     );
-    expect((collect as TelemetryCollectRecord).terminal).toBe("thrown");
-    expect((collect as TelemetryCollectRecord).errorCategory).toBe("hang-idle");
+    expect((collect as TelemetryCollectRecord).terminal).toBe("completed");
   });
 
   it("signal-killed CLI leg without sidecar stamps killed; with sidecar honors real result", async () => {
@@ -1936,8 +1904,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-kill",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -1997,8 +1963,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir2 },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-kill-sc",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -2101,8 +2065,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-ts",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
@@ -2172,8 +2134,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
         { stateDir: ledgerDir },
         undefined,
         {
-          idleThresholdMs: 60_000,
-          pollIntervalMs: 20,
           monitorDeps: {
             readInstanceId: () => "test-instance-failopen",
             sleepMs: (ms) =>
@@ -2276,8 +2236,6 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       { stateDir: ledgerDir },
       undefined,
       {
-        idleThresholdMs: 60_000,
-        pollIntervalMs: 20,
         monitorDeps: {
           readInstanceId: () => "test-instance-orphan-recover",
           sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),

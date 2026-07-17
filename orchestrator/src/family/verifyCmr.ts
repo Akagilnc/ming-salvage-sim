@@ -2,57 +2,22 @@
  * verify-cmr — the family verify + integrated-cmr HOOK seam (ADR 0022 decision
  * 3④/⑤/⑥, #293 seam 4).
  *
- * #293 立 the seam ONLY: a no-op hook the family spine calls at TWO points ADR
- * 0022 decision 3 names —
+ * Production export is the real hook body (default for the family spine — not a
+ * success no-op). The spine calls it at TWO points ADR 0022 decision 3 names —
  *   - the per-wave barrier (decision 3④: run family verify, typecheck + unit
  *     tests, fail-fast — a red wave aborts BEFORE 排下一波), and
  *   - after all waves merge (decision 3⑤/⑥: the end-of-run 全量 verify + the
  *     load-bearing integrated cross-model cmr that catches 跨片接缝; the native
  *     pipeline has zero review).
- * The `phase` field tells #296 which of the two it is running.
+ * The `phase` field tells which of the two is running.
  *
- * #293 keeps it a NO-OP so the spine wiring is proven (the hook is called at BOTH
- * points, with the context #296 needs, and the spine acts on `ok`) without
- * pulling verify/cmr into this slice — exactly the "本片不处理冲突、不跑 verify/cmr"
- * scope (#293 = the four seams, not their behaviour).
- *
- * #296 FILLS the hook body behind this SAME signature (it never rewrites the
- * family main loop — the spine already (a) passes the phase + context, (b)
- * fails-fast on `ok === false` at the wave barrier, (c) makes the failure
- * observable in the result):
- *   - "wave"  → run the family verify (typecheck + unit tests) against the family
- *     base; RED ⇒ `{ok:false}` (the spine aborts before the next wave) + an
- *     `aborted` ledger event (decision 3④/5).
- *   - "final" → run the FULL verify; green ⇒ run the two ADR 0030 integrated-cmr
- *     passes as ordered runner-dispatched boundaries: Step 5 completeness first,
- *     Step 6 correctness only after completeness passes. Each pass is a clean CMR
- *     reviewer over the current full family diff and returns a TERMINAL review
- *     verdict (`converged` | blocking findings | `escalate`). Blocking findings
- *     return to this runner, which records the review, dispatches a separate
- *     coder-fix worker for persistent repair commits, then dispatches a fresh CMR
- *     re-review over the current full diff. A malformed reviewer envelope follows
- *     the same fixed topology with its raw artifact paths as fixer cargo. A worker-
- *     pressed escalation is transported unchanged; process crashes stop before
- *     ship. `verifyCmr` owns pass ordering and the ADR0032 strong-leg
- *     / required-leg degradation floor. #875 demolished the accounting court
- *     (leg-accounting death, claimed-fixed coverage audit, disposition-enum kill):
- *     envelope prose no longer aborts a live run. #930: family court closure is
- *     the shared T2 judge tri-state (converged|continue|escalate) — residual
- *     open-count is boundary-only transport (never a second closer). Three-channel
- *     routing stays (exit / judge status / decision gate) plus real infra durable abort.
- *
- * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
- * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
- * familyBase, familyBackend}`). A backend that implements NONE of them — the #293
- * no-op default, the existing fakes — has no `runFamilyVerify`, so the hook returns
- * the nothing-ran no-op `{ok:true, ran:false}` and the spine's existing default
- * path stays untouched (zero regression). A backend that CAN verify but is missing
- * a required downstream final-barrier capability (cmr / PR) is the DIFFERENT case:
- * a real verify ran, so the hook fails-safe to `{ok:false, ran:true}` with a
- * stage-named gate (`stageGate("cmr_failed"|"ship_failed"|…)` per #922) rather
- * than a false `success`. The `aborted`/escalate SCHEMA
- * (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's (decision
- * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
+ * Wave = verify fail-fast; final = full verify then ordered
+ * completeness/correctness CMR courts, coder-fix on blocking findings, then
+ * ship. #939: `runFamilyVerify` is a required capability (no success no-op).
+ * Missing CMR/ship after a real verify fails-safe to stage-named red (not success).
+ * Family court closure is the shared T2 judge tri-state; residual open-count is
+ * boundary-only transport. Three-channel routing stays (exit / judge status /
+ * decision gate) plus real infra durable abort.
  */
 
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
@@ -179,6 +144,7 @@ import {
 } from "../stopSummary.js";
 import type {
   FamilyBackend,
+  FamilyLedgerEntry,
   FamilyVerifyResult,
   IntegratedCmrPass,
 } from "./types.js";
@@ -210,15 +176,9 @@ export interface VerifyCmrInput {
   /** The family base branch verify runs against / cmr reviews. */
   readonly familyBase: string;
   /**
-   * The family seam #296 reaches the verify / integrated-cmr / open-PR / aborted
-   * / escalate capabilities through (all OPTIONAL `FamilyBackend` methods). A
-   * backend with NO `runFamilyVerify` yields the nothing-ran no-op `{ok:true,
-   * ran:false}`; one that verifies green but lacks a required downstream capability
-   * fails-safe to `{ok:false, ran:true}` with a stage-named gate
-   * (`cmr_failed` / `ship_failed` / … per #922). The CONCRETE
-   * `aborted`/escalate schema (`FamilyLedgerEntry` widening + the escalate/resume
-   * machine) is #298's (ADR 0022 decision 5, "字段级 JSON 留 TDD"); #296 only CALLS
-   * `recordAborted` / `escalateFamily`.
+   * Family seam: verify is required (#939). Missing CMR/ship after a real verify
+   * fails-safe to a stage-named red gate (not a success no-op). The CONCRETE
+   * `aborted`/escalate schema is #298's; #296 only CALLS those seams.
    */
   readonly familyBackend: FamilyBackend;
   /** Invocation-scoped telemetry identity minted by runFamily. */
@@ -283,9 +243,9 @@ export interface VerifyCmrResult {
    */
   readonly ok: boolean;
   /**
-   * Whether any real verify/cmr work actually ran. `false` ⇒ the no-op path (the
-   * backend lacks the capability — a #293-era backend), so a `{ok:true, ran:false}`
-   * is honestly "nothing verified", NOT a claimed pass.
+   * Whether any real verify/cmr work actually ran. Missing-capability fail-closed
+   * paths still report `ran:true` with a stage-named `failedStatus` so the spine
+   * never confuses absence with a green pass.
    */
   readonly ran: boolean;
   /**
@@ -296,9 +256,6 @@ export interface VerifyCmrResult {
    */
   readonly failedStatus?: FamilyStageFailureStatus;
 }
-
-/** The no-op verdict: the backend has no verify capability (the #293 default). */
-const NOOP: VerifyCmrResult = { ok: true, ran: false };
 
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
@@ -314,7 +271,7 @@ async function runFamilyVerifyOrAbort(input: {
   readonly familyIssue?: number;
 }): Promise<VerifyCmrResult | undefined> {
   const { phase, familyBase, familyBackend, familyHeadAfter } = input;
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify!({
+  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
     phase,
     familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
@@ -1540,6 +1497,53 @@ export async function runFamilyOnlineReviewLoop(input: {
   }
 }
 
+/**
+ * Reconstruct durable process-root attempts already consumed for a family
+ * worker step (#934 ID-004 / #937). Mirrors single-slice
+ * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
+ * failure markers for this workerStep, stop at any non-spawn boundary so a
+ * later successful phase does not inherit an earlier crash streak.
+ */
+export function mechanicalRedispatchAttemptsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  workerStep: string,
+): number {
+  let durableAttempts = 0;
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    const attempt = entry.mechanicalRedispatchAttempt;
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.workerStep === workerStep &&
+      typeof attempt === "number" &&
+      Number.isSafeInteger(attempt) &&
+      attempt >= 1
+    ) {
+      durableAttempts = Math.max(durableAttempts, attempt);
+      continue;
+    }
+    // Spawn adoption / advisory git telemetry: worker_dispatched without a
+    // retry counter — skip so inter-retry spawn rows do not reset the streak.
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.mechanicalRedispatchAttempt === undefined
+    ) {
+      continue;
+    }
+    // Any other durable fact (phase success, escalate, merge, …) is a budget
+    // boundary for this workerStep.
+    break;
+  }
+  return durableAttempts;
+}
+
+function familyWorkerStepKey(
+  spec: Parameters<typeof dispatchFamilyWorker>[1],
+  ctx: Parameters<typeof dispatchFamilyWorker>[2],
+): string {
+  return `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`;
+}
+
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
@@ -1554,6 +1558,14 @@ async function dispatchOrAbort(
     // session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS — every role,
     // read-only and write-capable alike. Every RESOLVED result (failed / malformed /
     // completed / escalated) is DEFERRED to this gate's own rich terminal handling.
+    // #934 ID-004: durable mechanical_redispatch markers bind the budget across
+    // process re-entry (same contract as single-slice runner.ts).
+    const workerStep = familyWorkerStepKey(spec, ctx);
+    const ledger = await familyBackend.readFamilyLedger();
+    const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
+      ledger,
+      workerStep,
+    );
     return await withMechanicalRetry(
       spec,
       ctx,
@@ -1569,18 +1581,14 @@ async function dispatchOrAbort(
             {
               onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
                 opts?.onMonitorHandle?.(handle);
-                // Persist before waiting for the child: a hung family worker
-                // must be resumable/judgable from the durable family ledger.
-                try {
-                  await familyBackend.appendFamilyLedger({
-                    status: "worker_dispatched",
-                    event: "worker_dispatched",
-                    monitorHandle: handle,
-                  });
-                } catch {
-                  // Best-effort only. The spawned
-                  // worker remains governed by its verified monitor handle.
-                }
+                // #934 ID-006 / #937: adoption/persist failure terminates the
+                // exact ChildProcess via dispatchFamilyWorkerWithMonitor —
+                // rethrow so terminateSpawnedChild runs (no best-effort swallow).
+                await familyBackend.appendFamilyLedger({
+                  status: "worker_dispatched",
+                  event: "worker_dispatched",
+                  monitorHandle: handle,
+                });
               },
             },
           );
@@ -1593,6 +1601,7 @@ async function dispatchOrAbort(
         return workerResult!;
       },
       {
+        attemptsAlreadyUsed,
         onFailure: async (outcome, attempt) => {
           const reason =
             "result" in outcome
@@ -1605,7 +1614,7 @@ async function dispatchOrAbort(
           await familyBackend.appendFamilyLedger({
             status: "worker_dispatched",
             event: "worker_dispatched",
-            workerStep: `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`,
+            workerStep,
             mechanicalRedispatchAttempt: attempt,
             reason,
           });
@@ -2384,13 +2393,11 @@ async function runIntegratedCmrPass(input: {
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
- * Reaches verify / cmr / PR / abort / escalate as OPTIONAL `FamilyBackend`
- * methods: a backend with NO verify capability degrades to the nothing-ran `NOOP`
- * (the spine's #293 default path stays green); one that verifies green but lacks a
- * required downstream capability fails-safe via stage-named `stageGate(...)`
- * (`cmr_failed` / `ship_failed` / … — never a false success). Surfaces a red
- * barrier purely via the returned `ok`; the spine acts on it (it is never
- * rewritten here).
+ * Missing `runFamilyVerify` fails closed (`verify_failed` — #939 / ID-011). A
+ * backend that verifies green but lacks a required downstream capability
+ * fails-safe via stage-named `stageGate(...)` (`cmr_failed` / `ship_failed` / …
+ * — never a false success). Surfaces a red barrier purely via the returned `ok`;
+ * the spine acts on it (it is never rewritten here).
  */
 export async function runVerifyCmr(
   input: VerifyCmrInput,
@@ -2416,12 +2423,11 @@ export async function runVerifyCmr(
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
   };
 
-  // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
-  if (familyBackend.runFamilyVerify === undefined) return NOOP;
-
   // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
   //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is
-  //    not silently dropped, and return `{ok:false}` (decision 3④/5). ──
+  //    not silently dropped, and return `{ok:false}` (decision 3④/5).
+  //    #939: verify is a required capability on FamilyBackend (type-level) —
+  //    no optional success no-op path. ──
   const verifyFailed = await runFamilyVerifyOrAbort({
     phase,
     familyBase,
@@ -2473,7 +2479,7 @@ export async function runVerifyCmr(
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
     const stopSummary = stageFailureStopSummary({
       status: "cmr_failed",
-      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+      summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}`,
       repairHint: "repair the CMR route environment and rerun the family barrier",
     });
     await familyBackend.recordAborted?.({

@@ -20,7 +20,7 @@
  * The container / real-LLM paths (createSandbox/run/resumeSession) are #256's
  * MANUAL smoke (a real container + a real model + a real `gh` is required), NOT
  * the zero-container automated suite. So this file is split:
- *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
+ *   - PURE host-side logic — gh metadata parsing, the auth-mount path
  *     construction, the prompt-content hash, the failedStep attribution, the
  *     resume error fallback decision — is
  *     factored into exported, dependency-light functions
@@ -32,12 +32,6 @@
  * importable and testable without ever starting Docker.
  *
  * ── Manual-smoke checklist additions (integ-cmr 256 r2) ─────────────────────
- *   - F3 clean-room snapshot leak: after S1 `writeSnapshot`, assert the snapshot
- *     is git-ignored in the resident worktree — run, inside the worktree:
- *       `git check-ignore .orchestrator-snapshot.json`  → must print the path
- *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
- *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
- *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  *   - r3 worktree_base_stale: with the local `main` deliberately behind
  *     `origin/main` (e.g. `git reset --hard origin/main~1` on the working clone's
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
@@ -132,6 +126,7 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { readMetadataWithRetry } from "./admissionPreflight.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -258,16 +253,6 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
-import {
-  handleIdleThreshold,
-  QuotaWaitForResetError,
-  resolveSandboxIdleAfterQuotaProbe,
-  runPoolProbe,
-  withIdleQuotaProbeDisposition,
-  type HandleIdleThresholdResult,
-  type QuotaPoolId,
-  type QuotaProbeResult,
-} from "./quotaProbe.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -284,8 +269,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
   ReviewFixRefuseRecord,
@@ -308,11 +291,7 @@ import {
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
-
-/** The heading that marks an (optional) `## Agent Brief` section — the
- *  most-authoritative part of the spec when present, but not required. */
-const AGENT_BRIEF_HEADING = "## Agent Brief";
+// ── gh issue → IssueMeta parsing ────────────────────────────────────────────
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
 
@@ -368,13 +347,35 @@ export function isClosedIssue(json: GhIssueJson): boolean {
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
  * against — PRD #244 S0).
+ *
+ * #934 / trust boundary: when `trustedAuthor` is supplied, issue body is only
+ * exposed for Coder-Rec when the issue author matches repo owner (same
+ * executable-instruction seam as family `readIssueBody`).
  */
 export function buildIssueMeta(
   issueNumber: number,
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  opts?: { readonly trustedAuthor?: string },
 ): IssueMeta {
+  const rawBody = typeof json.body === "string" ? json.body : undefined;
+  let body = rawBody;
+  if (body !== undefined && opts?.trustedAuthor !== undefined) {
+    const authorLogin =
+      (typeof json.author?.login === "string" ? json.author.login : undefined) ??
+      (typeof json.user?.login === "string" ? json.user.login : undefined) ??
+      "";
+    const auth = checkExecutableInstructionSource({
+      sourceKind: "issue body",
+      instructionKind: "Coder-Rec",
+      trustedAuthor: opts.trustedAuthor,
+      candidateAuthor: authorLogin,
+    });
+    if (!auth.accepted) {
+      body = undefined;
+    }
+  }
   return {
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
@@ -384,57 +385,12 @@ export function buildIssueMeta(
       .filter((d) => d.state !== "closed")
       .map((d) => d.number),
     // #767: body is cheap (unlike comments) and lets S0 parse Coder-Rec.
-    ...(typeof json.body === "string" ? { body: json.body } : {}),
+    ...(body !== undefined ? { body } : {}),
   };
-}
-
-function actorLogin(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-): string {
-  return carrier?.author?.login ?? carrier?.user?.login ?? "";
 }
 
 function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
-}
-
-/**
- * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
- * repo-owner-authored carriers count; among those, later comments supersede
- * earlier comments and the body. Returns "" when no trusted brief is present —
- * that is a valid slice, not an S0 gate.
- */
-export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
-  // Priority order, LOWEST first: the issue body is the fallback, then comments
-  // in order (newest last). A later carrier overwrites an earlier one, so the
-  // LAST brief-bearing COMMENT wins over both earlier comments and the body
-  // (a re-issued brief supersedes the original) — the body only stands when no
-  // comment carries a brief.
-  const carriers = [
-    { text: json.body ?? "", author: json, sourceKind: "issue body" },
-    ...(json.comments ?? []).map((c) => ({
-      text: c.body ?? "",
-      author: c,
-      sourceKind: "issue comment",
-    })),
-  ];
-  let brief = "";
-  for (const carrier of carriers) {
-    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
-    const sourceCheck = checkExecutableInstructionSource({
-      sourceKind: carrier.sourceKind,
-      instructionKind: "Agent Brief",
-      trustedAuthor: ownerLogin,
-      candidateAuthor: actorLogin(carrier.author),
-    });
-    if (sourceCheck.accepted) {
-      brief = carrier.text;
-    }
-  }
-  return brief;
 }
 
 export interface ExecutableInstructionSourceCheck {
@@ -510,126 +466,51 @@ export function parseSubIssueCount(parsed: { subIssues?: unknown }): number {
 
 /**
  * Parse the native `blocked_by` dependency list from a CONFIRMED API response
- * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array). Keeps only
- * entries with a numeric `number` + string `state`; tolerates a non-array /
- * malformed value by returning `[]` (a future/odd shape must not crash the gate).
+ * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array).
  *
- * IMPORTANT (integ-cmr 256 r2, F2): this is the CONFIRMED-empty path only. The
- * caller does NOT swallow a thrown `gh`/transport error into `[]` — a failed
- * query fails CLOSED (routes to S0 backend error → S8(error)), because returning
- * `[]` on a transient failure would let a blocked-by-open issue slip past the S0
- * gate and run from a stale base missing upstream changes.
+ * Fail-closed (#934 ID-003 / #936): a non-array body or any malformed entry
+ * throws a deterministic schema error — never soft-decodes to "no blockers"
+ * (would admit a child as unblocked). Transport/`gh`/JSON-parse failures stay
+ * on the caller. Only a confirmed empty array is the legal no-dependency result.
  */
 export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter(
-      (d): d is { number: number; state: string } =>
-        typeof d?.number === "number" && typeof d?.state === "string",
-    )
-    .map((d) => ({ number: d.number, state: d.state }));
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `blocked_by schema error: expected array, got ${
+        parsed === null ? "null" : typeof parsed
+      }`,
+    );
+  }
+  const out: GhBlockedBy[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const d = parsed[i];
+    if (
+      d !== null &&
+      typeof d === "object" &&
+      typeof (d as { number?: unknown }).number === "number" &&
+      typeof (d as { state?: unknown }).state === "string"
+    ) {
+      out.push({
+        number: (d as { number: number }).number,
+        state: (d as { state: string }).state,
+      });
+      continue;
+    }
+    throw new Error(
+      `blocked_by schema error: malformed entry at index ${i}`,
+    );
+  }
+  return out;
 }
 
 /**
- * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
- * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
- * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the host-written snapshot keeps the audit/resume artifact contract-complete.
- * The worker's execution context is still the live issue it fetches in-container
- * via gh using the runner-injected issue/repo env.
- */
-export function buildIssueSnapshotMeta(
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-): IssueSnapshotMeta {
-  return {
-    title: json.title ?? "",
-    state: json.state ?? "",
-    labels: (json.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
-    subIssueCount,
-    blockedBy: blockedBy.map((d) => ({ number: d.number, state: d.state })),
-  };
-}
-
-/**
- * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
- * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the host-side snapshot is
- * contract-complete (#244 S1 names native metadata as a snapshot element).
- */
-export function buildIssueSnapshot(
-  issueNumber: number,
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-  ownerLogin: string,
-): IssueSnapshot {
-  return {
-    number: json.number ?? issueNumber,
-    body: json.body ?? "",
-    bodyAuthorLogin: actorLogin(json),
-    comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
-    trustedOwnerLogin: ownerLogin,
-    agentBrief: extractAgentBrief(json, ownerLogin),
-    nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
-  };
-}
-
-// ── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-/**
- * The host-fetched clean-room snapshot file, written into the resident worktree
- * as read-only context for the agent. It must NEVER be committed: with
- * `branchStrategy:{type:'head'}` a coder's `git add -A` would otherwise stage it
- * into the reviewed/pushed branch (polluting the shipped artifact). The Backend
- * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
- */
-export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
-
-/**
- * Idempotently ensure `pattern` is present as its own line in a git
- * `info/exclude` file's content. Returns the new content (existing + the pattern
- * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
- * is already an exact line (so repeated S1 resume writes never duplicate it).
+ * Git ref to cut a fresh worktree from (integ-cmr 256 r3 + #936 / #934 ID-009).
  *
- * Pure (string assembly) so the leak-guard decision is unit-tested without git.
- */
-export function ensureExcluded(existing: string, pattern: string): string {
-  const lines = existing.split("\n").map((l) => l.trim());
-  if (lines.includes(pattern)) return existing;
-  // Append on its own line; preserve a trailing newline so the file stays
-  // newline-terminated regardless of the prior content's shape.
-  const base = existing.length === 0 || existing.endsWith("\n")
-    ? existing
-    : existing + "\n";
-  return `${base}${pattern}\n`;
-}
-
-/**
- * The git ref to cut a fresh slice worktree FROM (integ-cmr 256 r3,
- * worktree_base_stale).
- *
- * `ensureBaseRef` runs `git fetch origin <base>`, which updates
- * `refs/remotes/origin/<base>` (and FETCH_HEAD) but does NOT move the local
- * `refs/heads/<base>`. So deriving with the bare local `<base>` could cut from a
- * stale local branch behind upstream — violating #244's "从 main 派生 =
- * up-to-date" invariant and diverging from the spike's explicit
- * `git worktree add … origin/main`. When the fetch succeeded, cut from
- * `origin/<base>` (the just-refreshed remote-tracking ref); only when the fetch
- * failed (offline / a local-only base with no remote) fall back to the local
- * `<base>` so the cut is never blocked.
- *
- * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
- * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
- * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
- * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
- * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
- * a `fetch` that happened to resolve it) can never shadow the local family base
- * carrying this run's accumulated waves (agy R1). A standalone single-slice run
- * leaves `localOnly` false, so its `main` cut is byte-identical to before
- * (`origin/main` when fetched, local fallback otherwise).
+ * - `localOnly` (family base): always the bare local ref.
+ * - fetch succeeded: `origin/<base>` (just-refreshed remote-tracking).
+ * - fetch failed with a configured remote: throw — never fall back to a
+ *   stale local base.
+ * - fetch failed with no remote (local-only source): bare local ref.
  *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
@@ -637,9 +518,17 @@ export function cutRefFor(
   base: string,
   fetchedOk: boolean,
   localOnly = false,
+  opts: { readonly hasRemote?: boolean } = {},
 ): string {
   if (localOnly) return base;
-  return fetchedOk ? `origin/${base}` : base;
+  if (fetchedOk) return `origin/${base}`;
+  if (opts.hasRemote === true) {
+    throw new Error(
+      `git fetch origin ${base} failed; refusing stale local base fallback ` +
+        `(#936 / #934 ID-009). Repair network/remote and retry.`,
+    );
+  }
+  return base;
 }
 
 /**
@@ -797,6 +686,8 @@ export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
+/** #937 ephemeral relay brief rendered at dispatch (not a worktree file). */
+export const SANDBOX_RELAY_BRIEF_ENV = "ORCHESTRATOR_RELAY_BRIEF";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -825,45 +716,13 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  *
- * #683: when this timer DOES fire (or an external monitor hits idle first),
- * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
- * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
+ * #937 / #934 ID-007: when this Sandcastle timer DOES fire it is a hard-clock
+ * failure only — host silence never probes quota, parks, kills, or relays.
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
-/**
- * #683 context threaded beside Sandcastle run options for the internal-timeout
- * fallback. The live CLI monitor owns the normal idle disposition.
- * (Sandcastle does not know this field).
- *
- * `workerPid` is optional at the call site — production dispatch paths leave it
- * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
- * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
- * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
- *
- * 429 fallback semantic: by the time Sandcastle surfaces
- * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
- * fallback may park a quota wall, but never owns hang-kill; live worker kills
- * belong exclusively to the #684 monitor handle.
- */
-export interface QuotaProbeRunContext {
-  /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
-  readonly modelRef: string;
-  readonly step?: StepId;
-  /**
-   * OS pid of the worker process when known. Prefer leaving unset — production
-   * captures it from the sandbox handle mid-run (#684 monitor handle companion).
-   */
-  readonly workerPid?: number;
-  /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
-  readonly worktreePath?: string;
-  readonly issueNumber?: number;
-}
-
-/** Sandcastle run options + optional #683 idle quota-probe context. */
-export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0] & {
-  readonly quotaProbe?: QuotaProbeRunContext;
-};
+/** Sandcastle run options used by production agent-sandbox entry. */
+export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0];
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.
@@ -2111,14 +1970,16 @@ export class RealBackend implements Backend {
    * disk, and guarded to be an independent `.git` before construction succeeds.
    */
   private readonly workingRepo: string;
+  private workingRepoReady = false;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.validateSoulsDir();
-    this.workingRepo = this.buildOrReuseClone();
-    this.assertIndependentClone();
+    const home = this.opts.home ?? homedir();
+    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
+    this.workingRepo = clonePathFor(home, slug, this.opts.runKey);
   }
 
   /**
@@ -2141,7 +2002,15 @@ export class RealBackend implements Backend {
    * every git op anchors on it instead of the driver-supplied source.
    */
   workingRepoPath(): string {
+    this.ensureWorkingRepo();
     return this.workingRepo;
+  }
+
+  private ensureWorkingRepo(): void {
+    if (this.workingRepoReady) return;
+    this.buildOrReuseClone();
+    this.assertIndependentClone();
+    this.workingRepoReady = true;
   }
 
   /**
@@ -2387,9 +2256,7 @@ export class RealBackend implements Backend {
    * separately, AFTER the clone exists.
    */
   protected buildOrReuseClone(): string {
-    const home = this.opts.home ?? homedir();
-    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
-    const clonePath = clonePathFor(home, slug, this.opts.runKey);
+    const clonePath = this.workingRepo;
     if (!this.cloneDirExists(clonePath)) {
       // Multi-phase S1-adjacent: a clone failure must abort construction loudly
       // (不启动), not silently leave a half-built or missing working repo.
@@ -2489,8 +2356,8 @@ export class RealBackend implements Backend {
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
-   * #884: every subprocess wait carries a clock (default 120s).
-   * Host one-shot with clock only (no auto-retry — #884 clocks / #879 owns leg retry).
+   * #884: every subprocess wait carries a clock (default 120s). Admission wraps
+   * GitHub metadata reads in the shared transient-only retry seam.
    */
   protected sh(file: string, args: string[], cwd?: string): string {
     return shWithClock(file, args, {
@@ -2519,27 +2386,48 @@ export class RealBackend implements Backend {
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
-    const json = this.phase("S0", "fetchIssueView", () => {
-      // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
-      // comments — that would trigger gh's paginated preloadIssueComments for
-      // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
-      // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
-      // before the first worker dispatch.
-      const raw = this.sh("gh", [
+    let json: GhIssueJson | undefined;
+    let subIssueCount: number | undefined;
+    let blockedBy: GhBlockedBy[] | undefined;
+    const errors: string[] = [];
+    try {
+      json = this.phase("S0", "fetchIssueView", () => {
+      // S0 reads the gate fields + body + author (#767 Coder-Rec, #934 trust
+      // boundary). It does NOT pull comments — that would trigger gh's
+      // paginated preloadIssueComments for no S0 consumer (#329 perf). Body
+      // alone is cheap; author gates executable Coder-Rec input.
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
         "--repo",
         this.opts.repo,
         "--json",
-        "number,labels,state,body",
-      ]);
+        "number,labels,state,body,author",
+      ]));
       return JSON.parse(raw) as GhIssueJson;
+      });
+    } catch (err) {
+      errors.push(`issue view: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      subIssueCount = this.fetchSubIssueCount(issueNumber);
+    } catch (err) {
+      errors.push(`sub-issues: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      blockedBy = this.fetchBlockedBy(issueNumber);
+    } catch (err) {
+      errors.push(`blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (errors.length > 0 || json === undefined || subIssueCount === undefined || blockedBy === undefined) {
+      throw new Error(
+        `S0 issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`,
+      );
+    }
+    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount, {
+      trustedAuthor: this.ownerLogin,
     });
-    // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber);
-    const blockedBy = this.fetchBlockedBy(issueNumber);
-    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
   }
 
   /**
@@ -2579,7 +2467,7 @@ export class RealBackend implements Backend {
    */
   private fetchSubIssueCount(issueNumber: number, step: StepId = "S0"): number {
     return this.phase(step, "fetchSubIssueCount", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2587,7 +2475,7 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "subIssues",
-      ]);
+      ]));
       const parsed = JSON.parse(raw) as { subIssues?: unknown };
       // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
       // not an array — read the count off that shape (integ-cmr 256 r1, F1).
@@ -2596,62 +2484,29 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
-   * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
-   * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
-   * let a blocked-by-OPEN issue (the pinned S0 three-way reject) run from a stale
-   * base missing upstream changes. `parseBlockedBy` still returns [] for a
-   * CONFIRMED empty/non-array response (the genuinely-empty case).
+   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2 + #934 ID-003).
+   * A thrown gh / transport / JSON-parse / schema error propagates via
+   * `phase("S0", …)` → S8(error), NOT a no-blockers ([]) default — failing open
+   * is the riskier leak: it would let a blocked-by-OPEN issue run from a stale
+   * base missing upstream changes. Only a confirmed empty array is no-deps.
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
     return this.phase(step, "fetchBlockedBy", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]);
+      ]));
       return parseBlockedBy(JSON.parse(raw));
     });
   }
 
-  // ── S1: full snapshot (host gh) ────────────────────────────────────────────
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body. This
-    // preserves the host-side audit/resume artifact; the worker still live-fetches
-    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
-    // 正文 + native metadata").
-    const json = this.phase("S1", "fetchIssueView", () => {
-      const raw = this.sh("gh", [
-        "issue",
-        "view",
-        String(issueNumber),
-        "--repo",
-        this.opts.repo,
-        "--json",
-        "number,title,state,author,body,labels,comments",
-      ]);
-      return JSON.parse(raw) as GhIssueJson;
-    });
-    // The native sub-issue + blocked_by summaries (the same ones S0 reads via the
-    // GraphQL/REST API) complete the snapshot's native metadata. A thrown
-    // gh/transport/parse error propagates → the runner's S1 error termination,
-    // attributed to S1 (not S0) for the US#30 error package.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
-    const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(
-      issueNumber,
-      json,
-      blockedBy,
-      subIssueCount,
-      this.ownerLogin,
-    );
-  }
-
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
+  // #936 / #934 ID-002: snapshot dual court deleted; workers live-fetch truth.
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
+    this.ensureWorkingRepo();
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
     // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
@@ -2696,15 +2551,16 @@ export class RealBackend implements Backend {
     // slice from whatever the clone happened to be checked out on — the #244
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
-    // first (best-effort: a fetch failure must not block a local-only base).
+    // first. A configured origin must refresh successfully; only a source with
+    // no origin may use a local-only base.
     //
     // integ-cmr 256 r3 (worktree_base_stale): `git fetch origin <base>` updates
     // refs/remotes/origin/<base>, NOT the local refs/heads/<base>. Deriving with
     // the bare local `<base>` after a fetch could still cut from a stale local
     // branch behind upstream. So when the fetch refreshed the remote ref, cut
     // from `origin/<base>` (matching the spike's `git worktree add … origin/main`
-    // and the up-to-date invariant); fall back to the local `<base>` only when
-    // the fetch failed (offline / local-only base). The WorktreeHandle.base field
+    // and the up-to-date invariant); use local `<base>` only when no origin is
+    // configured. The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
@@ -2714,8 +2570,11 @@ export class RealBackend implements Backend {
     // harness path (base="main", no `familyBase` option) keeps the fetch +
     // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
+    const hasRemote =
+      typeof this.opts.remote === "string" && this.opts.remote.trim() !== "";
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk, localOnly);
+    // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
+    const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
@@ -2777,89 +2636,37 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Refresh the base ref so the slice is cut from an up-to-date `base`, and
-   * REPORT whether the fetch succeeded so {@link cutRefFor} can choose the
-   * origin/<base> remote-tracking ref vs the local fallback (integ-cmr 256 r3,
-   * worktree_base_stale). Sandcastle notes the caller is responsible for the
-   * ref's currency (d.ts:211); a `git fetch` failure (offline / local-only base)
-   * must NOT block worktree creation, so this is best-effort and returns false
-   * on any fault (the caller then derives from the local `<base>`).
+   * Refresh the base ref so the slice is cut from an up-to-date `base`.
+   * Returns whether the fetch succeeded so {@link cutRefFor} can choose
+   * `origin/<base>` vs local-only / fail-closed (integ-cmr 256 r3 + #936 ID-009).
    */
   private ensureBaseRef(base: string): boolean {
     try {
       this.sh("git", ["fetch", "origin", base], this.workingRepo);
       return true;
     } catch {
-      // offline or a local-only base ⇒ proceed with the local ref.
       return false;
     }
   }
 
-  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
-    try {
-      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
-    } catch {
-      // no worktrees / git error ⇒ none existing.
-      return undefined;
-    }
-  }
-
-  // ── S1: write the snapshot into the worktree (clean-room) ──────────────────
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    // F3 — git-ignore the snapshot BEFORE writing it, so a coder's `git add -A`
-    // can never stage the host-fetched clean-room snapshot into the reviewed /
-    // pushed branch (branchStrategy:{type:'head'} commits in place). The
-    // per-worktree info/exclude is the right scope: it is local to this resident
-    // worktree, needs no checked-in change to the target repo, and survives the
-    // agent run. Best-effort: an exclude failure must not block the (still
-    // useful) snapshot write — but it is attempted first so the common path is
-    // always covered.
-    this.excludeFromGit(worktree, SNAPSHOT_FILENAME);
-    const target = join(worktree.path, SNAPSHOT_FILENAME);
-    writeFileSync(target, JSON.stringify(snapshot, null, 2), "utf8");
-  }
-
   /**
-   * Add `pattern` to the repo's git `info/exclude` (idempotent via
-   * {@link ensureExcluded}), so a `git add -A`/`git add .` in the resident
-   * worktree never stages it (F3). `git rev-parse --git-path info/exclude` run
-   * inside a linked worktree resolves to the SHARED common-dir exclude
-   * (git keeps `info/exclude` in the common git dir, not per-worktree) — that is
-   * fine and intended here: every slice excludes the SAME snapshot filename, and
-   * {@link ensureExcluded} is idempotent, so concurrent slices appending the same
-   * pattern never duplicate or conflict. Best-effort: a git/fs fault here must
-   * not block the snapshot write itself (the checked-in root `.gitignore` belt
-   * still covers the common case).
+   * Resident worktree discovery (#936 / #934 ID-009).
+   * Discovery failure must NOT create a second worktree — propagate loud.
+   * Empty porcelain (no worktrees) is success → undefined (typed fresh).
    */
-  private excludeFromGit(worktree: WorktreeHandle, pattern: string): void {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
+    let out: string;
     try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktree.path,
+      out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
+    } catch (err) {
+      throw new Error(
+        `worktree discovery failed for issue #${issueNumber}; refusing to create ` +
+          `a second worksite (#936 / #934 ID-009): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
       );
-      const abs = excludePath.startsWith("/")
-        ? excludePath
-        : join(worktree.path, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // No exclude file yet (or info/ missing) — start from empty + mkdir.
-      }
-      const next = ensureExcluded(existing, pattern);
-      if (next !== existing) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, next, "utf8");
-      }
-    } catch {
-      // Best-effort: a divergent git layout must not block the snapshot write.
-      // The root .gitignore (checked-in belt) still covers the common case.
     }
+    return resolveExistingWorktreeFromPorcelain(out, issueNumber);
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
@@ -3074,6 +2881,9 @@ export class RealBackend implements Backend {
     }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
+    }
+    if (options?.relayBrief !== undefined && options.relayBrief.length > 0) {
+      env[SANDBOX_RELAY_BRIEF_ENV] = options.relayBrief;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
@@ -3438,15 +3248,7 @@ export class RealBackend implements Backend {
       // S3/S6 use T2 judge station-receipt; residual/legacy reviewer role uses
       // open-count schema; coder uses T2 station-receipt (cargo siblings
       // passthrough — no cargo-shape re-ask).
-      ...(typedOutputUsed ? { output: typedOutput } : {}),
-      // #683 fallback context for Sandcastle's own internal timeout only. The
-      // normal live-worker path is dispatched through the #684 monitor.
-      quotaProbe: {
-        modelRef: spec.model,
-        step: spec.id,
-        worktreePath: worktree.path,
-        issueNumber,
-      },
+      ...(typedOutputUsed ? { output: typedOutput } : {})
       });
     } catch (err) {
       // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
@@ -3499,14 +3301,7 @@ export class RealBackend implements Backend {
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
         // Resume is single-iter; attach the same traffic-signal Output.object policy.
-        ...(typedOutputUsed ? { output: typedOutput } : {}),
-        // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-        quotaProbe: {
-          modelRef: spec.model,
-          step: spec.id,
-          worktreePath: worktree.path,
-          issueNumber,
-        },
+        ...(typedOutputUsed ? { output: typedOutput } : {})
       });
       return this.stepResultFromRun(
         result,
@@ -3538,46 +3333,9 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Live sandbox-handle worker pid captured during the current
-   * {@link runAgentSandbox} call. Cleared on entry/exit. Tests (and future
-   * #684 monitor wiring) call {@link noteActiveSandboxWorkerPid} while the
-   * sandbox handle is still live — before Sandcastle release.
-   */
-  private activeSandboxWorkerPid: number | undefined;
-
-  /**
-   * Record the OS pid from the live sandbox handle so hang kill after idle
-   * probe has a real target. No-op for non-positive / non-integer values.
-   */
-  protected noteActiveSandboxWorkerPid(pid: number): void {
-    if (Number.isInteger(pid) && pid > 0) {
-      this.activeSandboxWorkerPid = pid;
-    }
-  }
-
-  /** Resolve worker pid: explicit context → live sandbox handle → 0. */
-  protected resolveWorkerPid(ctx: QuotaProbeRunContext): number {
-    if (ctx.workerPid !== undefined && ctx.workerPid > 0) return ctx.workerPid;
-    if (
-      this.activeSandboxWorkerPid !== undefined &&
-      this.activeSandboxWorkerPid > 0
-    ) {
-      return this.activeSandboxWorkerPid;
-    }
-    return 0;
-  }
-
-  /**
    * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
-   * override THIS method (or {@link runAgentSandbox}). Production idle/quota
-   * disposition lives in {@link runAgentSandbox} so a full override of that
-   * method intentionally bypasses #683 only when the test owns the whole path.
-   *
-   * Implementations that own a live sandbox handle MUST call
-   * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
-   * while the handle is still alive (before teardown) so hang kill has a real
-   * target. Public Sandcastle types do not expose handle.pid — capture is the
-   * invoker's responsibility (#684 monitor handle is the durable companion).
+   * override THIS method (or {@link runAgentSandbox}). Host process ownership is
+   * the ChildProcess handle (#937 / ID-006); silence is observational only.
    */
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
@@ -3587,58 +3345,17 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Production agent-sandbox entry (#683/#909). Runs Sandcastle, and on idle
-   * timeout probes the worker's quota pool BEFORE hang disposition via the
-   * shared {@link withIdleQuotaProbeDisposition} (same path family uses):
-   *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
-   *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
-   *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
-   *     no-op here; live hang kill is owned by the #684 monitor handle path)
+   * Production agent-sandbox entry (#937 / #934 ID-007). Runs Sandcastle only.
+   * Host/provider silence must not trigger quota probe, park, kill, or relay —
+   * Sandcastle AgentIdleTimeout rethrows as a genuine hard-clock failure
+   * without idle→quota disposition. Explicit typed 429/capacity still enter
+   * park/relay via their live constructors elsewhere.
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe, ...scOptions } = options;
-    this.activeSandboxWorkerPid = undefined;
-    try {
-      return await withIdleQuotaProbeDisposition({
-        quotaProbe,
-        run: () => this.invokeSandcastleRun(scOptions),
-        resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
-      });
-    } finally {
-      this.activeSandboxWorkerPid = undefined;
-    }
-  }
-
-  /**
-   * #683 production idle disposition entry. Callable from runAgentSandbox (on
-   * Sandcastle idle timeout) and from any external monitor that owns the idle
-   * threshold. Overridable only for host I/O seams (probe / kill / ledger).
-   */
-  protected async resolveIdleAfterQuotaProbe(
-    ctx: QuotaProbeRunContext,
-  ): Promise<HandleIdleThresholdResult> {
-    return resolveSandboxIdleAfterQuotaProbe({
-      modelRef: ctx.modelRef,
-      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      workerPid: this.resolveWorkerPid(ctx),
-      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
-      now: () => this.idleNow(),
-    });
-  }
-
-  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
-  protected idleNow(): Date {
-    return new Date();
-  }
-
-  /**
-   * Pool probe used after idle threshold (#683). Default = real
-   * {@link runPoolProbe}; tests stub three outcomes.
-   */
-  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
-    return runPoolProbe(pool);
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return await this.invokeSandcastleRun(options);
   }
 
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */
@@ -3691,42 +3408,42 @@ export class RealBackend implements Backend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  /**
-   * #683: probe at the live #684 monitor threshold. The monitor owns the
-   * verified pid-tree kill; this backend only applies the quota state machine
-   * and records a wait row when the pool returns 429.
-   */
-  async handleMonitoredWorkerIdle(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
-    const result = await handleIdleThreshold({
-      // #686: a same-model relay may have changed provider/billing pool. Probe
-      // the active dispatch pool carried by the runner whenever it is present.
-      modelRef: ctx.billingPool ?? spec.model,
-      worker: { pid: handle.pid, step: spec.id },
-      actions: {
-        killPidTree: () => undefined,
-        // Runner parkQuotaWaitForReset writes the single durable marker with
-        // real audit fields — avoid a second placeholder write here.
-        recordLedger: async () => undefined,
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
-    });
-    if (result.disposition.kind === "wait_for_reset") {
-      throw new QuotaWaitForResetError(result);
-    }
-    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
-  }
-
-  // ── #255: detect resume residue ────────────────────────────────────────────
+  // ── #255 / #936: detect resume residue ─────────────────────────────────────
+  // ID-005: typed fresh only when BOTH worksite and ledger are absent. A
+  // resident worksite without a readable ledger is corrupted residue — throw so
+  // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
+  // misclassify partial residue as fresh.
+  // #937: handleMonitoredWorkerIdle deleted — silence is observational only
+  // (ID-007); no monitored-dispatch idle probe/kill/relay caller remains.
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
+    if (!this.cloneDirExists(this.workingRepo)) return undefined;
+    this.ensureWorkingRepo();
     const existing = this.findExistingWorktree(issueNumber);
-    if (existing === undefined) return undefined;
+    if (existing === undefined) {
+      const orphanStateDir = join(
+        this.workingRepo,
+        ".sandcastle",
+        "worktrees",
+        `.ledger-${issueNumber}`,
+      );
+      if (existsSync(orphanStateDir)) {
+        throw new Error(
+          `resident ledger exists without a worksite for #${issueNumber} ` +
+            `(ledger=${orphanStateDir}); refusing to treat partial residue as fresh ` +
+            `(#936 / #934 ID-005)`,
+        );
+      }
+      return undefined;
+    }
     const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
-    if (ledger === undefined) return undefined;
+    if (ledger === undefined) {
+      throw new Error(
+        `resident worksite exists without readable ledger for #${issueNumber} ` +
+          `(worktree=${existing.path}, expected ledger=${stateDir}); ` +
+          `refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+      );
+    }
     const worktree = { branch: existing.branch, base: "main", path: existing.path };
     return { worktree, stateDir, ledger };
   }

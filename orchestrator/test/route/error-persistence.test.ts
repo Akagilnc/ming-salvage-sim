@@ -23,7 +23,6 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -40,7 +39,7 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-const SNAPSHOT: IssueSnapshot = {
+const SNAPSHOT = {
   number: 244,
   body: "issue body",
   comments: [],
@@ -79,13 +78,9 @@ class SpyBackend implements Backend {
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }
-  async fetchIssueSnapshot(_n: number): Promise<IssueSnapshot> {
-    return SNAPSHOT;
-  }
   async prepareWorktree(_n: number, _b: string): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(_w: WorktreeHandle, _s: IssueSnapshot): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepIds.push(spec.id);
     if (spec.role === "coder") {
@@ -144,19 +139,22 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     expect(persistedSteps).toContain("S7");
   });
 
-  it("S1 writeSnapshot throw (after worktree prepared) → persisted ledger contains S1 and S8", async () => {
-    // The worktree IS prepared (stateDir resolvable), so even though S1's
-    // writeSnapshot fails, the error termination must persist.
+  it("S1 prepareWorktree success → subsequent S2 ledger writes use post-worktree stateDir", async () => {
+    // #936: snapshot dual court deleted. After worktree exists, productive
+    // step failures persist to the sibling stateDir.
     const backend = new SpyBackend();
-    backend.writeSnapshot = async () => {
-      throw new Error("ENOSPC: no space left on device");
+    backend.runStep = async (spec) => {
+      if (spec.id === "S2") throw new Error("coder boom");
+      return spec.role === "coder"
+        ? { kind: "coder", committed: true, commitsAdded: 1 }
+        : { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persistedSteps).toContain("S1");
+    expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
   });
 

@@ -27,6 +27,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +36,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sc from "@ai-hero/sandcastle";
+// Production discovery used by public ignition resolveVerifyCwd (#939).
+import { discoverSubprojects } from "../../../src/familyDriver.js";
 import {
   MERGER_SOUL,
   cmrOutcomeFromResult,
@@ -446,8 +449,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional install first (by construction), then project's scripts.
     // (installDeps chooses "ci" or "install" based on whether lockfile exists at the cwd path.)
     expect(calls[0].file).toBe("npm");
@@ -476,9 +482,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
 
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
       "npm run typecheck",
       "npm test",
@@ -518,10 +527,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     // Note: pass verifyCwd=proj so run reaches install+scripts (isNode true by override).
     // We do NOT override depsInstalled (it no longer exists).
-    await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: proj }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Install MUST run (first) even though node_modules existed + manifest mutated post-wave.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -555,8 +567,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional install first (even if node_modules "existed"), then web's scripts.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -588,6 +603,28 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls).toEqual([]); // nothing installed, nothing run
   });
 
+  it("ID-011: package.json probe operational error (ELOOP) fails closed — never soft-skip as non-Node", async () => {
+    // existsSync returns false on ELOOP; the old isNodeProject then treated the
+    // project as non-Node and legally skipped verify. Probe must throw instead.
+    const root = trackTempDir("verify-eloop-");
+    const loopPath = join(root, "package.json");
+    symlinkSync(loopPath, loopPath);
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        throw new Error("verify commands must not run after probe failure");
+      }
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+    const backend = new SpyBackend(
+      opts(root, { resolveVerifyCwd: () => undefined }),
+    );
+    await expect(backend.runVerifyForTest()).rejects.toThrow(
+      /package\.json probe failed|ELOOP|too many levels/i,
+    );
+  });
+
   it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", async () => {
     // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
     // (package.json at root, no subproject) skip verify entirely. Restore the
@@ -608,9 +645,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
-    await new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional: install first, then test.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -639,6 +679,99 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     await expect(
       new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/not-node" })).runVerifyForTest(),
     ).rejects.toThrow(/not a Node project/i);
+  });
+
+  it("#939 ID-011: package.json parse operational error fails closed — never empty-command success", async () => {
+    // Production packageScripts used to catch read/parse errors and return [] →
+    // zero-command pseudo-success. Malformed manifest must fail verify.
+    const proj = trackTempDir("verify-op-err-");
+    writeFileSync(join(proj, "package.json"), "{not-valid-json");
+    const npmCalls: string[] = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[]): string {
+        if (file === "npm") npmCalls.push(args.join(" "));
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after package.json operational error");
+      }
+    }
+    const result = await new SpyBackend(
+      opts("/clone/root", { verifyCwd: proj }),
+    ).runFamilyVerify({ phase: "final", familyBase: "family/293-base" });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/parse package\.json|failed to parse/i);
+    expect(npmCalls).toEqual([]);
+  });
+
+  it("#939 ID-011: successful empty scripts is legal skip (no install, no npm, ok:true)", async () => {
+    // Only a successful read that confirms no typecheck/build/test scripts may skip.
+    const proj = trackTempDir("verify-empty-scripts-");
+    writeFileSync(
+      join(proj, "package.json"),
+      JSON.stringify({ name: "empty-scripts", version: "0.0.0", scripts: { dev: "echo hi" } }),
+    );
+    const npmCalls: string[] = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[]): string {
+        if (file === "npm") npmCalls.push(args.join(" "));
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run on legal empty command set");
+      }
+    }
+    await expect(
+      new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runFamilyVerify({
+        phase: "final",
+        familyBase: "family/293-base",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(npmCalls).toEqual([]);
+  });
+
+  it("#939 ID-011 negative: unreadable package.json (missing after Node check) fails closed", async () => {
+    // isNodeProject can be true while a subsequent read fails (race / override).
+    // That is operational error, not legal empty.
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override isNodeProject(): boolean {
+        return true;
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after package.json read failure");
+      }
+    }
+    const missing = join(trackTempDir("verify-missing-pkg-"), "no-such-dir");
+    const result = await new SpyBackend(
+      opts("/clone/root", { verifyCwd: missing }),
+    ).runFamilyVerify({ phase: "wave", familyBase: "family/293-base" });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/failed to read package\.json/i);
+  });
+
+  it("#939 ID-011: invalid scripts shape fails closed (not Object.keys empty skip)", async () => {
+    const proj = trackTempDir("verify-scripts-shape-");
+    writeFileSync(
+      join(proj, "package.json"),
+      JSON.stringify({ name: "bad", version: "0.0.0", scripts: ["test"] }),
+    );
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override async installDeps(): Promise<void> {
+        throw new Error("installDeps must not run after scripts shape error");
+      }
+    }
+    const result = await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runFamilyVerify({
+      phase: "final",
+      familyBase: "family/293-base",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.errorPackage?.reason).toMatch(/scripts.*must be an object/i);
   });
 
   it("familyBaseStartHead returns the recorded start head", async () => {
@@ -2685,6 +2818,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["build", "test"];
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     const backend = new LongVerifyBackend(
       opts("/clone/root", { verifyCwd: "/clone/root/web" }),
@@ -2694,6 +2828,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       phase: "final",
       familyBase: "family/293-base",
     })).resolves.toEqual({ ok: true });
+    await backend.waitForStamps();
 
     expect(commands.filter((command) => command.file === "npm")).toEqual([
       {
@@ -3023,6 +3158,27 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
     ]);
   });
 
+  it("#934: legacy escalation off-shape / invalid JSON fails closed (no silent cast)", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      "not-json-at-all\n",
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await expect(b.readEscalations()).rejects.toThrow(/not valid JSON|fail closed/i);
+
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({ reason: 42 })}\n`,
+      "utf8",
+    );
+    await expect(b.readEscalations()).rejects.toThrow(
+      /not a valid FamilyEscalationRecord shape|fail closed/i,
+    );
+  });
+
   it("orders legacy escalations before newer ledger answers so migration can reopen", async () => {
     const o = opts(trackRepo());
     mkdirSync(o.ledgerDir, { recursive: true });
@@ -3146,13 +3302,8 @@ describe("resolveImageTag / DEFAULT_IMAGE_TAG pin (#372 R2)", () => {
 });
 
 /**
- * #909 — family sandbox path must share single-slice idle → quota-probe
- * disposition (wait/relay on 429; do not kill the leg as hang).
- *
- * Seams:
- *   1. RealFamilyBackend.runAgentSandbox + quotaProbe → QuotaWaitForResetError
- *   2. Production family call sites thread quotaProbe (ship via runAgentSandbox)
- *   3. Shared helper only — no second cloned catch body
+ * #909/#937 — family sandbox shares single-slice silence contract (ID-007):
+ * Sandcastle idle rethrows without quota probe/park. Explicit 429 is separate.
  */
 describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   function idleTimeoutError(): Error {
@@ -3165,21 +3316,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   }
 
   class FamilyIdleBackend extends RealFamilyBackend {
-    public probeResult: import("../../../src/quotaProbe.js").QuotaProbeResult = {
-      kind: "ok",
-    };
     public sandcastleReached = false;
-    public lastQuotaProbe: import("../../../src/realBackend.js").AgentSandboxRunOptions["quotaProbe"];
-
-    protected override idleNow(): Date {
-      return new Date("2026-07-08T12:00:00.000Z");
-    }
-
-    protected override async runQuotaProbe(): Promise<
-      import("../../../src/quotaProbe.js").QuotaProbeResult
-    > {
-      return this.probeResult;
-    }
 
     protected override async invokeSandcastleRun(
       options: Parameters<typeof sc.run>[0],
@@ -3187,14 +3324,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
       this.sandcastleReached = true;
       void options;
       throw idleTimeoutError();
-    }
-
-    protected override async runAgentSandbox(
-      options: import("../../../src/realBackend.js").AgentSandboxRunOptions,
-    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-      this.lastQuotaProbe = options.quotaProbe;
-      expect(options.quotaProbe?.workerPid).toBeUndefined();
-      return super.runAgentSandbox(options);
     }
 
     public exposeRunAgentSandbox(
@@ -3217,102 +3346,39 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     return new FamilyIdleBackend(opts(trackRepo()));
   }
 
-  it("429 via family runAgentSandbox → QuotaWaitForResetError; no hang kill", async () => {
+  it("family runAgentSandbox idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt,
-      detail: "429 wall",
-    };
-
-    let thrown: unknown;
-    try {
-      await backend.exposeRunAgentSandbox({
-        name: "family-coder-fix",
+    await expect(
+      backend.exposeRunAgentSandbox({
+        name: "family-idle",
         idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
+        cwd: "/tmp",
+        sandbox: {} as never,
+        agent: {} as never,
         maxIterations: 1,
         branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "coder_fix.md"),
-        quotaProbe: {
-          modelRef: "zai/glm-5.2",
-          step: "S5",
-          worktreePath: "/tmp/family",
-          issueNumber: 909,
-        },
-      });
-    } catch (err) {
-      thrown = err;
-    }
-
-    expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
-    const qw = thrown as InstanceType<typeof QuotaWaitForResetError>;
+        promptFile: "x.md",
+      }),
+    ).rejects.toThrow(/Agent idle for 600/);
     expect(backend.sandcastleReached).toBe(true);
-    expect(qw.applied.ledgerEntry).toMatchObject({
-      event: "quota_wait_for_reset",
-      resetAt: "2026-07-08T16:10:00.000Z",
-      step: "S5",
-    });
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "zai/glm-5.2",
-      step: "S5",
-      issueNumber: 909,
-    });
-  });
-
-  it("probe ok via family Sandcastle fallback rethrows idle (fail-safe hang)", async () => {
-    const backend = makeFamilyIdleBackend();
-    backend.probeResult = { kind: "ok" };
-
     await expect(
       backend.exposeRunAgentSandbox({
-        name: "family-cmr",
+        name: "family-idle",
         idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
+        cwd: "/tmp",
+        sandbox: {} as never,
+        agent: {} as never,
         maxIterations: 1,
         branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "integrated_cmr_correctness.md"),
-        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
+        promptFile: "x.md",
       }),
-    ).rejects.toThrow(/Agent idle for 600/);
+    ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
-  it("without quotaProbe context, idle error rethrows with no probe", async () => {
-    const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-    };
-
-    await expect(
-      backend.exposeRunAgentSandbox({
-        name: "family-ship",
-        idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
-        maxIterations: 1,
-        branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "family_ship.md"),
-        quotaProbe: undefined,
-      }),
-    ).rejects.toThrow(/Agent idle for 600/);
-  });
-
-  it("shipContainerRun routes through runAgentSandbox with quotaProbe", async () => {
+  it("shipContainerRun idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-      detail: "429",
-    };
 
     await expect(
       backend.exposeShipContainerRun({
@@ -3329,15 +3395,27 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         soul: "ship",
         toolchain: [],
       }),
-    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    ).rejects.toThrow(/Agent idle for 600/);
 
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.6-terra",
-      step: "S7",
-    });
+    await expect(
+      backend.exposeShipContainerRun({
+        id: "S7",
+        kind: "ship",
+        role: "coder",
+        host: "codex",
+        session: "fresh",
+        contextRetention: "clean",
+        skill: "gstack-ship",
+        promptFile: "family_ship.md",
+        maxIter: 1,
+        model: "gpt-5.6-terra",
+        soul: "ship",
+        toolchain: [],
+      }),
+    ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
-  it("family + single-slice both call shared withIdleQuotaProbeDisposition (no second clone)", () => {
+  it("family + single-slice delete idle→quota machinery (#937 ID-007)", () => {
     const familySrc = readFileSync(
       join(here, "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
       "utf8",
@@ -3346,14 +3424,31 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
       join(here, "..", "..", "..", "src", "realBackend.ts"),
       "utf8",
     );
-    expect(familySrc).toMatch(/withIdleQuotaProbeDisposition/);
-    expect(realSrc).toMatch(/withIdleQuotaProbeDisposition/);
-    // Family must not re-clone the idle-name catch body beside the shared helper.
-    const familyCatchBody = familySrc.slice(
-      familySrc.indexOf("protected async runAgentSandbox"),
-      familySrc.indexOf("protected async resolveIdleAfterQuotaProbe"),
+    const probeSrc = readFileSync(
+      join(here, "..", "..", "..", "src", "quotaProbe.ts"),
+      "utf8",
     );
-    expect(familyCatchBody).toMatch(/withIdleQuotaProbeDisposition/);
-    expect(familyCatchBody).not.toMatch(/isAgentIdleTimeoutError/);
+    expect(familySrc).not.toMatch(/resolveIdleAfterQuotaProbe/);
+    expect(realSrc).not.toMatch(/resolveIdleAfterQuotaProbe/);
+    expect(familySrc).not.toMatch(/withIdleQuotaProbeDisposition/);
+    expect(realSrc).not.toMatch(/withIdleQuotaProbeDisposition/);
+    expect(probeSrc).not.toMatch(/function handleIdleThreshold/);
+    expect(probeSrc).not.toMatch(/function withIdleQuotaProbeDisposition/);
+    expect(probeSrc).not.toMatch(/function resolveSandboxIdleAfterQuotaProbe/);
+    expect(familySrc).toMatch(/protected async runAgentSandbox/);
+    expect(realSrc).toMatch(/protected async runAgentSandbox/);
+  });
+});
+
+describe("#939 discoverSubprojects directory op-errors", () => {
+  it("readdir operational failure throws (never degrades to [])", () => {
+    const missing = join(trackTempDir("disc-missing-"), "no-such");
+    // #934 CR: single canonical token `failed to readdir subprojects`.
+    expect(() => discoverSubprojects(missing)).toThrow(/failed to readdir subprojects/i);
+  });
+
+  it("successful empty top-level (no child package.json) returns []", () => {
+    const empty = trackTempDir("disc-empty-");
+    expect(discoverSubprojects(empty)).toEqual([]);
   });
 });

@@ -8,7 +8,11 @@ import {
 } from "./autoMerge.js";
 import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
 import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
-import type { Sh } from "./familyDriver.js";
+import {
+  decodeSubIssueEntry,
+  decodeSubIssueNodes,
+  type Sh,
+} from "./familyDriver.js";
 import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
@@ -89,24 +93,6 @@ export function shouldCloseParentIssue(
   );
 }
 
-function subIssueNodes(parsed: unknown): unknown[] {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed === null || typeof parsed !== "object") return [];
-  const sub = (parsed as { subIssues?: unknown }).subIssues;
-  if (sub === null || typeof sub !== "object") return [];
-  const nodes = (sub as { nodes?: unknown }).nodes;
-  return Array.isArray(nodes) ? nodes : [];
-}
-
-function parseLiveSubIssue(node: unknown): LiveSubIssue | undefined {
-  if (node === null || typeof node !== "object") return undefined;
-  const number = (node as { number?: unknown }).number;
-  const state = (node as { state?: unknown }).state;
-  if (typeof number !== "number" || !Number.isFinite(number)) return undefined;
-  if (typeof state !== "string" || state.trim().length === 0) return undefined;
-  return { number, state };
-}
-
 /** Paginated native sub-issues (per_page=100, page until short). */
 export function fetchPaginatedSubIssues(
   sh: Sh,
@@ -119,10 +105,19 @@ export function fetchPaginatedSubIssues(
       "api",
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
-    const nodes = subIssueNodes(JSON.parse(raw));
-    for (const node of nodes) {
-      const parsed = parseLiveSubIssue(node);
-      if (parsed !== undefined) all.push(parsed);
+    const nodes = decodeSubIssueNodes(JSON.parse(raw));
+    // Capture page base before push-during-loop so indices stay contiguous
+    // (all.length + i mid-loop yields 0,2,4… after each push).
+    const pageOffset = all.length;
+    for (let i = 0; i < nodes.length; i++) {
+      const index = pageOffset + i;
+      const entry = decodeSubIssueEntry(nodes[i], index);
+      if (entry.state === undefined) {
+        throw new Error(
+          `sub_issues entry schema error: sub_issue[${index}]: missing or empty state`,
+        );
+      }
+      all.push({ number: entry.number, state: entry.state });
     }
     if (nodes.length < 100) break;
   }

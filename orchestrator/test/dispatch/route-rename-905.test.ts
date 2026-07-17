@@ -27,7 +27,7 @@ import {
 } from "../../src/modelRegistry.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 import { barePingArgv } from "../../src/realBackend.js";
-import { poolForModelRef, probeConfigForPool, runPoolProbe } from "../../src/quotaProbe.js";
+import { poolForModelRef } from "../../src/quotaProbe.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const orchestratorRoot = join(here, "..", "..");
@@ -270,11 +270,7 @@ describe("#905 residual opencode eviction + zai fail-closed", () => {
     );
   });
 
-  it("never spawns the opencode binary from quota probe paths", async () => {
-    // Retired pool → fail-safe error; no runCommand hook remains to spawn.
-    const result = await runPoolProbe("opencode-go", {});
-    expect(result.kind).toBe("error");
-    expect(probeConfigForPool("opencode-go").kind).toBe("none");
+  it("never spawns the opencode binary from quota probe paths", () => {
     // Historical model refs no longer route to a live opencode-go probe pool.
     expect(poolForModelRef("opencode-go/glm-5.2")).not.toBe("opencode-go");
     expect(poolForModelRef("kimi-k2")).not.toBe("opencode-go");
@@ -284,12 +280,11 @@ describe("#905 residual opencode eviction + zai fail-closed", () => {
       "utf8",
     );
     expect(probeSrc).not.toMatch(/runOpencodePongProbe/);
-    // No argv spawn of the bare opencode binary (probe-table only).
     expect(probeSrc).not.toMatch(/\bopencode\s+run\b/);
     expect(probeSrc).not.toMatch(/--dangerously-skip-permissions/);
-    // Dep surface: no injectable shell runner for a PONG path.
     expect(probeSrc).not.toMatch(/runCommand\??:/);
     expect(probeSrc).not.toMatch(/opencodeGoModel/);
+    expect(probeSrc).not.toMatch(/function runPoolProbe/);
   });
 });
 

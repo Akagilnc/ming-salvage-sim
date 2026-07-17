@@ -22,7 +22,6 @@ import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -56,14 +55,10 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.ran.push(issueNumber);
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
@@ -72,6 +67,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -108,6 +107,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     let refetched = 0;
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: staleEpic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -144,6 +144,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
         issue: 291,
         children: [
@@ -194,6 +195,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: staleEpic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -226,6 +228,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
       familyBackend,
       singleSliceBackend: childBackend,
@@ -263,6 +266,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     let refetched = 0;
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: staleEpic,
       familyBackend,
       singleSliceBackend: childBackend,
@@ -293,6 +297,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     };
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend: new FakeFamilyBackend(),
       singleSliceBackend: childBackend,
@@ -326,6 +331,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     });
     const childBackend = new ChildBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 291, children: [] }, // stale/empty cache
       familyBackend,
       singleSliceBackend: childBackend,

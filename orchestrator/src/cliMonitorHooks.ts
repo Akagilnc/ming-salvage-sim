@@ -1,13 +1,15 @@
 /**
- * #684 — shared helpers so RealBackend / RealFamilyBackend can participate in
- * the production monitored CLI dispatch path (resolveCliMonitorDispatch +
+ * #684 / #937 — shared helpers so RealBackend / RealFamilyBackend can participate
+ * in the production monitored CLI dispatch path (resolveCliMonitorDispatch +
  * awaitMonitoredCliWorker).
  *
  * Production shape: parent spawns a host-side bridge child via
  * {@link dispatchMonitoredCliWorker}; the child re-enters `dispatchWorker` /
  * `dispatchFamilyWorker` with `ORCHESTRATOR_CLI_MONITOR_CHILD=1` so the hooks
  * short-circuit and the existing container seam does the work. The parent holds
- * the monitor handle (pid/log/pool/instance) for hang judgment and kill.
+ * the exact ChildProcess / monitor handle (pid/log/pool/instance) for
+ * observational log last-activity and adoption-failure terminateSpawnedChild
+ * only — no host idle kill / silence sentencing (#937 / #934 ID-006/007).
  * #928: completion is exit code + legal result sidecar — no completionSignal.
  */
 
@@ -170,6 +172,7 @@ export function buildCliMonitorSpawnSpec(input: {
  *
  * #928 / ADR 0131: completion requires clean exit **and** a legal sidecar.
  * Exit 0 without a usable sidecar must not masquerade as `completed`.
+ * Non-zero/null exit must not honor a `completed` sidecar either.
  */
 export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
@@ -198,6 +201,16 @@ export function workerResultFromMonitorSidecar(
         ) {
           const quotaErr = tryParseQuotaWaitForResetBridge(parsed.reason);
           if (quotaErr !== undefined) throw quotaErr;
+        }
+        // ADR 0131 completion = exit 0 ∧ legal sidecar. A completed claim on
+        // non-zero/null exit is incomplete regardless of sidecar shape.
+        if (parsed.kind === "completed" && exitCode !== 0) {
+          return {
+            kind: "failed",
+            reason:
+              `monitored CLI worker ${handle.stepId} exited ${exitCode ?? "null"} ` +
+              `with a completed sidecar (clean exit required; pool=${handle.poolId})`,
+          };
         }
         return parsed;
       }

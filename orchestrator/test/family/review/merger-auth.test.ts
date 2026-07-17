@@ -218,8 +218,36 @@ describe("correctness N3 — merger agy mount + fail-closed", () => {
   });
 
   it("runMergerAgent fail-closes when merger family is agy and OAuth is absent", async () => {
-    // Force merger slot to the registry agy slug without provisioning token.
-    vi.stubEnv("ORCHESTRATOR_MERGER_MODEL", "agy");
+    // #936: no MERGER_MODEL env — force agy via custom route preset path.
+    const { writeFileSync, mkdtempSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "merger-agy-preset-"));
+    const path = join(dir, "route-presets.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        "agy-merger": {
+          slots: {
+            coder: "gpt-5.6-terra",
+            coderFix: "gpt-5.6-terra",
+            ship: "sonnet",
+            merger: "agy",
+            cmrCompleteness: "gpt-5.6-sol",
+            cmrCorrectness: "gpt-5.6-sol",
+            verify: "gpt-5.6-sol",
+            fixer: "sonnet",
+            cleanup: "sonnet",
+            docRelease: "sonnet",
+          },
+          legCollections: {
+            cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+          },
+        },
+      }),
+    );
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "agy-merger");
     const emptyHome = mkDir("merger-agy-empty-");
     const be = new AuthBackend(baseOpts({ home: emptyHome }));
     const outcome = await be.run({

@@ -9,7 +9,6 @@ import * as verifyCmr from "../../../src/family/verifyCmr.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -41,13 +40,9 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(_spec: StepSpec): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -55,6 +50,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   head = "family-base-0";
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -195,6 +194,7 @@ describe("#603 requirePostMergeCleanupForAlreadyDone — deterministic host path
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,

@@ -9,18 +9,21 @@
  * ledger threading — no Sandcastle, no Docker, no LLM.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepResult,
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const WT: WorktreeHandle = {
   branch: "feat/244-orchestrator-issue-256",
@@ -59,13 +62,9 @@ class SeamExtensionBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-    return { number: n, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WT;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput | StepResult> {
     const output: StepOutput =
       spec.role === "coder"
@@ -152,14 +151,13 @@ describe("#256 true-value ledger — content prompt_hash + SHA branchHEAD", () =
     expect(s2.branchHEAD).toBe("f".repeat(40));
   });
 
-  it("falls back to name: hash + branch name when no true-value helpers exist", async () => {
+  it("falls back to name: hash and omits branchHEAD when no Git helper exists", async () => {
     const backend = new SeamExtensionBackend(true, false);
     // do NOT enable true-value helpers
     await runOrchestrator({ issueNumber: 256, backend });
     const s2 = backend.persisted.find((e) => e.step === "S2")!;
     expect(s2.prompt_hash.startsWith("name:")).toBe(true);
-    // branchHEAD falls back to the branch name (v0.1 behaviour preserved).
-    expect(s2.branchHEAD).toBe(WT.branch);
+    expect(s2).not.toHaveProperty("branchHEAD");
   });
 
   it("runner-action steps hash the step id (name:) — they have no promptFile", async () => {
@@ -169,5 +167,44 @@ describe("#256 true-value ledger — content prompt_hash + SHA branchHEAD", () =
     const s0 = backend.persisted.find((e) => e.step === "S0")!;
     // S0 has no promptFile → name hash even with readPromptContent present.
     expect(s0.prompt_hash.startsWith("name:")).toBe(true);
+  });
+
+  it("#934 ID-015: readPromptContent throw → name: fallback + warn (public runOrchestrator)", async () => {
+    const backend = new SeamExtensionBackend(true, true);
+    backend.enableTrueValue();
+    backend.readPromptContent = async () => {
+      throw new Error("prompt unreadable");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await runOrchestrator({ issueNumber: 256, backend });
+    expect(result.status).toBe("success");
+    const s2 = backend.persisted.find((e) => e.step === "S2")!;
+    expect(s2.prompt_hash.startsWith("name:")).toBe(true);
+    expect(
+      warn.mock.calls.some((c) =>
+        String(c[0] ?? "").includes("optional prompt content read failed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("#934 ID-015: worktreeHead throw → omit branchHEAD + warn; result unchanged", async () => {
+    const backend = new SeamExtensionBackend(true, true);
+    backend.enableTrueValue();
+    backend.worktreeHead = async () => {
+      throw new Error("rev-parse blew up");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await runOrchestrator({ issueNumber: 256, backend });
+    expect(result.status).toBe("success");
+    const s2 = backend.persisted.find((e) => e.step === "S2")!;
+    // Legal degrade: omit branchHEAD, do not invent a branch-name fallback.
+    expect(s2).not.toHaveProperty("branchHEAD");
+    // Content hash still works (prompt path independent of HEAD read).
+    expect(s2.prompt_hash.startsWith("content:")).toBe(true);
+    expect(
+      warn.mock.calls.some((c) =>
+        String(c[0] ?? "").includes("optional branchHEAD read failed"),
+      ),
+    ).toBe(true);
   });
 });

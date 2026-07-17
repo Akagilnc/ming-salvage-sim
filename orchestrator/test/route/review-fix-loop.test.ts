@@ -14,7 +14,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -120,13 +119,9 @@ class RetryReviewBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2117,13 +2112,9 @@ describe("#369 runner resume/retry review fixes", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return WORKTREE;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
         if ((spec.role === "reviewer" || spec.role === "verify")) {
@@ -2139,7 +2130,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process crash path: mechanical redispatch, not runner format court.
-    expect(backend.reviewerAttempts).toBe(3);
+    expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(result.status).toBe("error");
   });
 
@@ -2164,13 +2155,9 @@ describe("#369 runner resume/retry review fixes", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return WORKTREE;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if ((spec.role === "reviewer" || spec.role === "verify")) {
           this.reviewerAttempts += 1;
@@ -2264,13 +2251,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep() {
         observedLanding = JSON.parse(
           readFileSync(
@@ -2361,13 +2344,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep(_spec, _worktree, options) {
         observedLanding = options?.fixFindingsLanding;
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2435,13 +2414,9 @@ describe("#369 legacy S5 landing file", () => {
       async fetchIssueMeta() {
         throw new Error("not expected");
       },
-      async fetchIssueSnapshot() {
-        throw new Error("not expected");
-      },
       async prepareWorktree() {
         throw new Error("not expected");
       },
-      async writeSnapshot() {},
       async runStep(_spec, _worktree, options) {
         observedMount = options?.fixFindingsLanding;
         observedLanding = JSON.parse(

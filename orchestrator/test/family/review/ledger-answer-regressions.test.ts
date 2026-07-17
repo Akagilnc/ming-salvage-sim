@@ -30,7 +30,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -78,13 +77,9 @@ class EscalatingChildBackend implements Backend {
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec, worktree?: WorktreeHandle): Promise<StepOutput> {
     const issue = worktree !== undefined ? this.issueOfWorktree(worktree) : -1;
     this.runStepCalls.push({ issue, step: spec.id });
@@ -115,6 +110,10 @@ class EscalatingChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   private head = "family-base-0";
@@ -157,6 +156,7 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,

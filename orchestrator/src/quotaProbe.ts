@@ -1,26 +1,15 @@
 /**
- * #683 — runner 额度探针：idle 超阈先探 429 再判 hang。
+ * #683 / #937 — explicit quota wait-for-reset (typed 429 wall).
  *
- * 额度墙外观与 hang 不可区分（进程活着、stdout 静默）。人肉 runner 的规程
- * （#440 交接手册第 0 步）是 idle 报警后先 curl/PONG 探针再判死；本模块把该
- * 决策固化为可测状态机：
- *
- *   idle 超阈 → run pool probe →
- *     429/limit  → wait_for_reset（不杀进程、不 abort、ledger 记重置时刻）
- *     探针通过  → hang（只杀该实例 pid 树）
- *     网络错误  → fail-safe hang（≠ 429；不无限等待）
- *
- * 探针本身可注入（单测打桩三种结果）；真探针实现（curl zai chat）是
- * 可选生产路径，不阻塞状态机验收。#686 在 wait_for_reset 处置点分叉
- * park vs relay（三段式，见 relayDispatch / quotaPoolTable）。
+ * Host silence never probes pools or invents quota fate (ID-007). This module
+ * owns pool id mapping, durable wait-for-reset ledger rows, bridge
+ * serialize/parse of QuotaWaitForResetError, and idle-error classification
+ * for telemetry only. #686 parks vs relays at wait_for_reset.
  *
  * #905 r2: opencode-go PONG path retired — no process spawn of `opencode`.
- * Historical pool id may still appear on ledger rows; probe kind is `none`.
  */
 
 import type { StepId } from "./types.js";
-import { withProviderTimeout } from "./externalCall.js";
-import { withLegTransientRetry } from "./legTransientRetry.js";
 
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
@@ -56,54 +45,13 @@ function isBridgeStepId(value: unknown): value is StepId {
   return typeof value === "string" && BRIDGE_STEP_IDS.has(value);
 }
 
-/**
- * Per-pool probe kind (config follows the route/model table companion).
- *   - zai_chat      — minimal chat completions request
- *   - grok_tbd      — reserved (SuperGrok probe not yet codified)
- *   - none          — no probe registered → treat as probe error (fail-safe hang)
- *
- * #905 r2: former OpenCode PONG kind removed — orchestrator never spawns that CLI.
- */
-export type PoolProbeKind = "zai_chat" | "grok_tbd" | "none";
-
-export interface PoolProbeConfig {
+/** Explicit quota wall disposition (never invented from host silence). */
+export type IdleDisposition = {
+  readonly kind: "wait_for_reset";
   readonly pool: QuotaPoolId;
-  readonly kind: PoolProbeKind;
-  /** One-line human description of how this pool is probed. */
-  readonly description: string;
-}
-
-/**
- * Result of a quota probe. Callers inject stubs in tests; production code runs
- * the real probe via {@link runPoolProbe} (or its own fetch/exec).
- */
-export type QuotaProbeResult =
-  | { readonly kind: "ok" }
-  | {
-      readonly kind: "quota_limited";
-      /** Parsed reset instant when the 429 body carries one. */
-      readonly resetAt?: Date;
-      readonly detail?: string;
-    }
-  | {
-      readonly kind: "error";
-      /** Network / spawn / unexpected failure (NOT a 429). */
-      readonly cause: string;
-    };
-
-/** What the runner should do after idle-threshold + probe. */
-export type IdleDisposition =
-  | {
-      readonly kind: "hang";
-      readonly reason: string;
-      readonly pool: QuotaPoolId;
-    }
-  | {
-      readonly kind: "wait_for_reset";
-      readonly pool: QuotaPoolId;
-      readonly resetAt?: Date;
-      readonly reason: string;
-    };
+  readonly resetAt?: Date;
+  readonly reason: string;
+};
 
 /**
  * Append-only ledger row when a worker is parked on a quota wall (#683).
@@ -120,61 +68,9 @@ export interface QuotaWaitForResetLedgerEvent {
   readonly ts: string;
 }
 
-/** Actions the disposition applier needs from the runner host. */
-export interface IdleHangActions {
-  /** Kill only this worker's pid tree (never global pgrep/pkill -f). */
-  readonly killPidTree: (pid: number) => void | Promise<void>;
-  /** Persist the wait-for-reset ledger row. */
-  readonly recordLedger: (
-    entry: QuotaWaitForResetLedgerEvent,
-  ) => void | Promise<void>;
-  /** Clock injection for tests. */
-  readonly now?: () => Date;
-}
-
-export interface IdleWorkerHandle {
-  /** OS pid of the worker process (monitor handle; see also #684). */
-  readonly pid: number;
-  readonly step?: StepId;
-}
-
+/** Applied ledger side of an explicit quota wait-for-reset (bridge / park). */
 export interface ApplyIdleDispositionResult {
-  readonly killed: boolean;
   readonly ledgerEntry?: QuotaWaitForResetLedgerEvent;
-}
-
-// ── per-pool config (route-table companion) ──────────────────────────────────
-
-const POOL_PROBE_CONFIG: Readonly<Record<QuotaPoolId, PoolProbeConfig>> = {
-  zai: {
-    pool: "zai",
-    kind: "zai_chat",
-    description:
-      "POST minimal chat/completions to api.z.ai; 429 body carries 北京时间 reset clock",
-  },
-  "opencode-go": {
-    pool: "opencode-go",
-    // #905 r2: transport retired; keep id for ledger/history, probe = none
-    // (fail-safe hang) so idle never spawns the opencode binary.
-    kind: "none",
-    description:
-      "opencode-go transport evicted (#905); no live probe — fail-safe hang on idle",
-  },
-  grok: {
-    pool: "grok",
-    kind: "grok_tbd",
-    description: "SuperGrok pool probe TBD; until codified, treat as fail-safe hang on idle",
-  },
-  unknown: {
-    pool: "unknown",
-    kind: "none",
-    description: "no registered pool probe for this model slug",
-  },
-};
-
-/** Look up the probe config for a pool (always defined, including `unknown`). */
-export function probeConfigForPool(pool: QuotaPoolId): PoolProbeConfig {
-  return POOL_PROBE_CONFIG[pool];
 }
 
 /**
@@ -208,42 +104,6 @@ export function poolForModelRef(modelRef: string): QuotaPoolId {
   return "unknown";
 }
 
-// ── state machine ───────────────────────────────────────────────────────────
-
-/**
- * After idle threshold fires, decide hang vs wait-for-reset from the probe
- * result. Pure: no I/O, no kill.
- */
-export function decideIdleAfterProbe(
-  pool: QuotaPoolId,
-  probe: QuotaProbeResult,
-): IdleDisposition {
-  if (probe.kind === "quota_limited") {
-    return {
-      kind: "wait_for_reset",
-      pool,
-      resetAt: probe.resetAt,
-      reason:
-        probe.detail !== undefined && probe.detail.length > 0
-          ? `quota limited (429); wait for reset: ${probe.detail}`
-          : "quota limited (429); wait for reset",
-    };
-  }
-  if (probe.kind === "error") {
-    return {
-      kind: "hang",
-      pool,
-      reason: `idle threshold exceeded; quota probe error (fail-safe hang): ${probe.cause}`,
-    };
-  }
-  // probe.kind === "ok"
-  return {
-    kind: "hang",
-    pool,
-    reason: "idle threshold exceeded; quota probe ok",
-  };
-}
-
 /** Build the ledger-visible wait-for-reset row (ISO resetAt when known). */
 export function buildQuotaWaitForResetLedgerEntry(input: {
   readonly pool: QuotaPoolId;
@@ -267,238 +127,9 @@ export function buildQuotaWaitForResetLedgerEntry(input: {
 }
 
 /**
- * Apply an idle disposition:
- *   - hang           → kill the worker pid tree; no wait-for-reset ledger row
- *   - wait_for_reset → do NOT kill; record ledger (pool + resetAt)
- */
-export async function applyIdleDisposition(
-  disposition: IdleDisposition,
-  worker: IdleWorkerHandle,
-  actions: IdleHangActions,
-): Promise<ApplyIdleDispositionResult> {
-  if (disposition.kind === "hang") {
-    await actions.killPidTree(worker.pid);
-    return { killed: true };
-  }
-
-  const now = actions.now?.() ?? new Date();
-  const ledgerEntry = buildQuotaWaitForResetLedgerEntry({
-    pool: disposition.pool,
-    resetAt: disposition.resetAt,
-    reason: disposition.reason,
-    step: worker.step,
-    workerPid: worker.pid,
-    now,
-  });
-  await actions.recordLedger(ledgerEntry);
-  return { killed: false, ledgerEntry };
-}
-
-// ── zai 429 body parsing ────────────────────────────────────────────────────
-
-/**
- * Parse a zai (智谱/z.ai coding paas) 429 body for the reset wall-clock.
- * Bodies quote 北京时间 (Asia/Shanghai, UTC+8); convert to a UTC Date.
- *
- * Recognises forms like `2026-07-09 00:10:00` or `2026-07-09T00:10:00`.
- */
-export function parseZaiResetAt(body: string): Date | undefined {
-  if (body.length === 0) return undefined;
-  // YYYY-MM-DD[ T]HH:MM:SS — first match is the reset clock in practice.
-  const m = body.match(
-    /(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/,
-  );
-  if (m === null) return undefined;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  const hour = Number(m[4]);
-  const minute = Number(m[5]);
-  const second = m[6] !== undefined ? Number(m[6]) : 0;
-  // Reject out-of-range components before Date.UTC — otherwise e.g.
-  // month=99 / day=99 rolls into a plausible-looking valid Date.
-  if (
-    !Number.isFinite(year) ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31 ||
-    hour < 0 ||
-    hour > 23 ||
-    minute < 0 ||
-    minute > 59 ||
-    second < 0 ||
-    second > 59
-  ) {
-    return undefined;
-  }
-  // Asia/Shanghai = UTC+8 year-round (no DST).
-  const utcMs = Date.UTC(year, month - 1, day, hour - 8, minute, second);
-  const d = new Date(utcMs);
-  return Number.isNaN(d.getTime()) ? undefined : d;
-}
-
-// ── optional production probe runners (injectable I/O) ──────────────────────
-
-export interface PoolProbeDeps {
-  /** HTTP fetch used by the zai probe. Defaults to global fetch. */
-  readonly fetch?: typeof fetch;
-  /** zai API key. Defaults to env ZAI_API_KEY / GLM_KEY. */
-  readonly zaiApiKey?: string;
-  /** Model id for the zai minimal chat (default glm-5.2). */
-  readonly zaiModel?: string;
-  /** Wall-clock budget for a single probe. */
-  readonly timeoutMs?: number;
-}
-
-const ZAI_CHAT_URL = "https://api.z.ai/api/coding/paas/v4/chat/completions";
-const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
-
-/**
- * Run the registered probe for `pool`. Network/CLI errors surface as
- * `{kind:"error"}` (fail-safe hang), never as infinite wait.
- * Quota is **status/exit only** — HTTP **429** (zai) or we do not invent
- * quota from body/stdout keywords (owner: 只看返回码，无视 body).
- *
- * Production convenience — unit tests inject {@link QuotaProbeResult} directly
- * into {@link decideIdleAfterProbe} and do not need this.
- */
-export async function runPoolProbe(
-  pool: QuotaPoolId,
-  deps: PoolProbeDeps = {},
-): Promise<QuotaProbeResult> {
-  const cfg = probeConfigForPool(pool);
-  switch (cfg.kind) {
-    case "zai_chat":
-      return runZaiChatProbe(deps);
-    case "grok_tbd":
-      return {
-        kind: "error",
-        cause: "grok pool probe not yet codified (kind=grok_tbd)",
-      };
-    case "none":
-      return {
-        kind: "error",
-        cause: `no quota probe registered for pool "${pool}"`,
-      };
-  }
-}
-
-async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
-  const key =
-    deps.zaiApiKey ??
-    process.env.ZAI_API_KEY ??
-    process.env.GLM_KEY ??
-    "";
-  if (key.length === 0) {
-    return { kind: "error", cause: "zai probe missing API key (ZAI_API_KEY/GLM_KEY)" };
-  }
-  const fetchFn = deps.fetch ?? fetch;
-  const model = deps.zaiModel ?? "glm-5.2";
-  const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-  try {
-    // #884 clock on provider fetch; #879 leg retry only for transport/5xx.
-    return await withLegTransientRetry(async () => {
-      const { status, body } = await withProviderTimeout(
-        "probe:zai",
-        async (signal) => {
-          const res = await fetchFn(ZAI_CHAT_URL, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${key}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model,
-              messages: [{ role: "user", content: "p" }],
-              max_tokens: 4,
-            }),
-            signal,
-          });
-          const text = await res.text();
-          return { status: res.status, body: text };
-        },
-        { timeoutMs },
-      );
-      // Status only: 429 → quota; 5xx → transient retry; other non-2xx → error.
-      // Never scan body for "quota"/"rate limit" (Codex P2 disposition: ignore body).
-      if (status === 429) {
-        return {
-          kind: "quota_limited" as const,
-          resetAt: parseZaiResetAt(body),
-          detail: body.slice(0, 500),
-        };
-      }
-      if (status >= 500 && status <= 599) {
-        throw Object.assign(
-          new Error(`zai probe HTTP ${status}: ${body.slice(0, 200)}`),
-          { status },
-        );
-      }
-      if (status < 200 || status >= 300) {
-        return {
-          kind: "error" as const,
-          cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
-        };
-      }
-      return { kind: "ok" as const };
-    });
-  } catch (err) {
-    const cause = err instanceof Error ? err.message : String(err);
-    return { kind: "error", cause };
-  }
-}
-
-// ── production idle gate (the seam RealBackend must call) ───────────────────
-
-export interface HandleIdleThresholdInput {
-  /** Route/model slug — mapped to a quota pool via {@link poolForModelRef}. */
-  readonly modelRef: string;
-  readonly worker: IdleWorkerHandle;
-  readonly actions: IdleHangActions;
-  /**
-   * Injected probe (unit tests). Production defaults to
-   * {@link runPoolProbe}(pool, probeDeps).
-   */
-  readonly probe?: (pool: QuotaPoolId) => Promise<QuotaProbeResult>;
-  readonly probeDeps?: PoolProbeDeps;
-}
-
-export interface HandleIdleThresholdResult {
-  readonly disposition: IdleDisposition;
-  readonly applied: ApplyIdleDispositionResult;
-  readonly pool: QuotaPoolId;
-  readonly probe: QuotaProbeResult;
-}
-
-/**
- * Production idle gate (#683): idle threshold already fired → probe the worker's
- * pool → hang (kill pid tree) | wait_for_reset (preserve + ledger).
- *
- * This is the single composition RealBackend must invoke on Sandcastle
- * `AgentIdleTimeoutError` (and that any external monitor should call). Pure
- * helpers alone are not enough — the runner path must go through here.
- */
-export async function handleIdleThreshold(
-  input: HandleIdleThresholdInput,
-): Promise<HandleIdleThresholdResult> {
-  const pool = poolForModelRef(input.modelRef);
-  const probe =
-    input.probe !== undefined
-      ? await input.probe(pool)
-      : await runPoolProbe(pool, input.probeDeps);
-  const disposition = decideIdleAfterProbe(pool, probe);
-  const applied = await applyIdleDisposition(
-    disposition,
-    input.worker,
-    input.actions,
-  );
-  return { disposition, applied, pool, probe };
-}
-
-/**
  * Detect Sandcastle's idle-timeout failure. `AgentIdleTimeoutError` is not on
  * the package's public export surface, so we match by tagged name / message.
+ * Classification only (telemetry) — silence never triggers quota probe/park.
  */
 export function isAgentIdleTimeoutError(err: unknown): boolean {
   if (err === null || typeof err !== "object") return false;
@@ -513,28 +144,28 @@ export function isAgentIdleTimeoutError(err: unknown): boolean {
 }
 
 /**
- * Raised when idle → quota probe returned 429/limit: step must be parked for
- * quota reset, not failed/hung.
+ * Raised on an **explicit** typed 429/quota wall (bridge sidecar / live
+ * constructors). Must not be invented from host silence (ID-007).
  *
- * Semantics (R2): Sandcastle's withSandbox has typically already released the
- * sandbox by the time this surfaces, so "do not kill the worker process" is
- * often already true by construction. The load-bearing contract is that the
- * **runner** must NOT treat this as S8(error) / run abort — consume it via the
- * existing park machinery (ledger `quota_wait_for_reset` + status escalate),
- * same family as CI-pending parks. Auto re-dispatch after reset is #686.
+ * The runner parks via ledger `quota_wait_for_reset` + status escalate — never
+ * S8(error). Auto re-dispatch after reset is #686.
  */
 export class QuotaWaitForResetError extends Error {
   readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
   readonly applied: ApplyIdleDispositionResult;
   readonly pool: QuotaPoolId;
   /**
-   * Family integrated-CMR wall role when the idle/429 happened on a pass worker.
+   * Family integrated-CMR wall role when the 429 happened on a pass worker.
    * Set by the family dispatch layer so relay rewrites only the hit CMR slot
    * (correctness N2 — never both).
    */
   cmrPass?: "completeness" | "correctness";
 
-  constructor(result: HandleIdleThresholdResult) {
+  constructor(result: {
+    readonly disposition: IdleDisposition;
+    readonly applied: ApplyIdleDispositionResult;
+    readonly pool: QuotaPoolId;
+  }) {
     if (result.disposition.kind !== "wait_for_reset") {
       throw new Error(
         "QuotaWaitForResetError requires a wait_for_reset disposition",
@@ -647,9 +278,6 @@ export function tryParseQuotaWaitForResetBridge(
       now = parsedTs;
     }
   }
-  const probeDetail =
-    typeof payload.probeDetail === "string" ? payload.probeDetail : undefined;
-
   const ledgerEntry = buildQuotaWaitForResetLedgerEntry({
     pool,
     resetAt: disposition.resetAt,
@@ -660,15 +288,8 @@ export function tryParseQuotaWaitForResetBridge(
   });
   return new QuotaWaitForResetError({
     disposition,
-    applied: { killed: false, ledgerEntry },
+    applied: { ledgerEntry },
     pool,
-    probe: {
-      kind: "quota_limited",
-      ...(disposition.resetAt !== undefined
-        ? { resetAt: disposition.resetAt }
-        : {}),
-      detail: probeDetail ?? reasonText,
-    },
   });
 }
 
@@ -679,78 +300,4 @@ export function isQuotaWaitForResetError(err: unknown): err is QuotaWaitForReset
       typeof err === "object" &&
       (err as { readonly name?: unknown }).name === "QuotaWaitForResetError")
   );
-}
-
-/**
- * #683/#909 — single shared Sandcastle-idle → quota-probe disposition.
- *
- * Both single-slice {@code RealBackend.runAgentSandbox} and family
- * {@code RealFamilyBackend.runAgentSandbox} MUST route through this helper so a
- * 429/limit idle is rethrown as {@link QuotaWaitForResetError} (park/wait), not
- * treated as a hang kill of the worker leg. Do not clone this catch on either
- * track.
- *
- * {@code quotaProbe} absent ⇒ idle errors rethrow unchanged (no probe).
- */
-export async function withIdleQuotaProbeDisposition<T>(input: {
-  readonly quotaProbe:
-    | {
-        readonly modelRef: string;
-        readonly step?: StepId;
-        readonly workerPid?: number;
-        readonly worktreePath?: string;
-        readonly issueNumber?: number;
-      }
-    | undefined;
-  readonly run: () => Promise<T>;
-  readonly resolveIdle: (ctx: {
-    readonly modelRef: string;
-    readonly step?: StepId;
-    readonly workerPid?: number;
-    readonly worktreePath?: string;
-    readonly issueNumber?: number;
-  }) => Promise<HandleIdleThresholdResult>;
-}): Promise<T> {
-  try {
-    return await input.run();
-  } catch (err) {
-    if (!isAgentIdleTimeoutError(err) || input.quotaProbe === undefined) {
-      throw err;
-    }
-    const result = await input.resolveIdle(input.quotaProbe);
-    if (result.disposition.kind === "wait_for_reset") {
-      throw new QuotaWaitForResetError(result);
-    }
-    throw err;
-  }
-}
-
-/**
- * #683/#909 shared idle → probe composition for Sandcastle fallback (and any
- * backend that already owns pid resolution). Both RealBackend and
- * RealFamilyBackend call this so the handleIdleThreshold wiring is not a
- * near-clone on each track. Durable park ledger stays runner-owned.
- */
-export async function resolveSandboxIdleAfterQuotaProbe(input: {
-  readonly modelRef: string;
-  readonly step?: StepId;
-  readonly workerPid: number;
-  readonly runQuotaProbe: (pool: QuotaPoolId) => Promise<QuotaProbeResult>;
-  readonly now?: () => Date;
-}): Promise<HandleIdleThresholdResult> {
-  return handleIdleThreshold({
-    modelRef: input.modelRef,
-    worker: {
-      pid: input.workerPid,
-      ...(input.step !== undefined ? { step: input.step } : {}),
-    },
-    actions: {
-      // Live monitor owns verified pid-tree kill; Sandcastle fallback is post-release.
-      killPidTree: () => undefined,
-      // Runner parkQuotaWaitForReset writes the single durable marker.
-      recordLedger: async () => undefined,
-      ...(input.now !== undefined ? { now: input.now } : {}),
-    },
-    probe: (pool) => input.runQuotaProbe(pool),
-  });
 }

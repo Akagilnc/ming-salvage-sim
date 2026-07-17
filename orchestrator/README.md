@@ -21,12 +21,12 @@ reads worker prose or completion evidence**:
 
 1. **exit code** — process life or death; only a real process failure enters
    the mechanical retry lane.
-2. **reviewer self-declared blocking open-count** — `0` closes the current review gate;
-   `>0` follows the fixed topology defined only in #869. This README does not
-   restate the intermediate repair/verification/finalization route, and the
-   runner never derives or reconciles the number. Each review Action marks
-   blocking and non-blocking terminal under its versioned review authority;
-   only the former belongs in this count.
+2. **judge self-declared tri-state** — `converged | continue | escalate`
+   (ADR 0131 channel (b) / ADR 0132 / #925 / #930 / #934 ID-006). The runner
+   follows the fixed topology in #869 only; it never derives status from
+   findings text, severity, or array length. Historical residual open-count
+   paper may still appear on legacy seats and projects once at the typed
+   boundary into the same judge machine — it is **not** a second live channel.
 3. **worker-raised decision gate** — relayed to the human unchanged; the runner
    never presses or interprets the gate itself.
 
@@ -61,9 +61,9 @@ Canonical corollaries are locked by positive routing tests under
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
 - **Completion = clean exit + legal sidecar / typed envelope (#928 / ADR 0131).**
   `*_STEP_COMPLETE` passwords and `completionSignal` fields are retired. All
-  seats are single-iteration (`maxIter=1`); monitor liveness is heartbeat / log
-  growth only (PR #917). Exit 0 without a usable sidecar must not masquerade as
-  completed.
+  seats are single-iteration (`maxIter=1`); host monitor silence is observational
+  only (log last-activity whole minutes — never kill/retry/relay/park; #937).
+  Exit 0 without a usable sidecar must not masquerade as completed.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
    runner dispatches ship again. The worker verifies whether the branch's exact
    delivery already exists and returns success without duplicate push, PR, or
@@ -143,9 +143,8 @@ console.log(JSON.stringify(result, null, 2));
 
 Full option contract: `FamilyDriverOptions` JSDoc in `src/familyDriver.ts`.
 Existing driver to crib from: `~/.sc-orchestrator/run-485/driver-485.mjs`.
-Include the 485 guard (refuse to start if `ORCHESTRATOR_CODER_MODEL` is set)
-whenever per-issue Coder-Rec should pick the coder — omit it only when you
-deliberately pin one coder for the whole run.
+Per-issue Coder-Rec and the selected route preset are the staffing inputs;
+deleted per-slot environment variables are ignored.
 
 **Resuming a PRIOR lineage vs starting fresh (check before writing the
 driver):** `ledgerDir` + `familyBase` ARE the run lineage. If this epic was
@@ -178,15 +177,8 @@ don't trust the preset name.
 
 ```bash
 cd ~/.sc-orchestrator/run-<EPIC>
-ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS="gpt-5.6-sol,opus" \
-  node driver-<EPIC>.mjs >> run.log 2>&1
+node driver-<EPIC>.mjs >> run.log 2>&1
 ```
-
-`ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` here is an OVERRIDE example, not
-mandatory: the `normal` preset's own legs are codex sol + claude opus + agy;
-the override above drops the agy leg (use it when agy quota is dead). Omit
-the variable to take the preset's legs. Add further route/slot env overrides
-from the table below as needed.
 
 Rules of engagement:
 
@@ -204,7 +196,8 @@ Rules of engagement:
   for MERGING orchestrator changes, not for launching).
 
 Startup is fail-closed: if the route smoke fails, the run records an
-`infra_failure` escalation, skips every child, and exits 0 — read the
+`infra_failure` escalation, skips every child, and exits **10**
+(`escalated` / pre-#942 process codes — see `terminalExitCode.ts`) — read the
 `stopSummary` in `run.log` for the reason.
 
 ### 5. Monitor
@@ -217,14 +210,13 @@ Startup is fail-closed: if the route smoke fails, the run records an
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
 
-**Current legacy runtime only:** the driver process itself is quiet between
-phase boundaries, so a silent half-hour with a running container can be normal
-work. The current monitor uses worker-log idleness (> 15 min without growth)
-and a worker-local PID kill before relaying onto the surviving drift. This is
-not the canonical contract: Sandcastle owns idle timeout / hang cancel after the
-agent stream goes quiet, Policy owns relay/wait/decision, and #898 removes the
-PID-based path. #928: completion is clean exit + legal sidecar (heartbeat-only
-liveness; no completion-signal password).
+**Worker silence (#937 / #934 ID-007):** a quiet half-hour with a running
+container can be normal work. Host-side silence reporting reuses existing
+dispatch/agent-stream/worker-log last-activity and is observational only —
+it never probes quota, kills a PID tree, retries, relays, parks, or fails.
+Process ownership is the exact ChildProcess / process-group handle at spawn
+(adoption-failure cleanup only; no idle kill / spawn-ack wall clock). #928:
+completion is clean exit + legal sidecar (no completion-signal password).
 
 ### 6. Decision gates (parks) and answers
 
@@ -253,17 +245,15 @@ durable row. Children already merged re-admit as `already_done`; retry budgets
 carry over (no fresh windfall); completed mutating steps (ship) short-circuit
 on their durable completion records instead of re-dispatching.
 
-## Routes and per-role model selection
+## Routes and model selection
 
-Every role slot is independently overridable. Precedence (#916):
+Staffing is resolved before worksite creation:
 
-```
-per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
-  → config file preset (sole table: config/route-presets.json, or
-    ORCHESTRATOR_ROUTE_PRESETS_PATH; missing custom path falls back to the
-    shipped factory JSON only — no in-code twin table)
-  → leg-collection env override (ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS)
-  → startup route smoke validates the FINAL lineup, slot by slot
+```text
+config file preset (sole table: config/route-presets.json, selected by
+ORCHESTRATOR_ROUTE; ORCHESTRATOR_ROUTE_PRESETS_PATH may select another table)
+  → owner-authored issue Coder-Rec for coder/coderFix
+  → startup host bare-ping smoke validates the FINAL lineup (unique models)
 ```
 
 Pure model swaps: edit `config/route-presets.json` (or point
@@ -282,24 +272,8 @@ Presets (factory content of `config/route-presets.json`):
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
-reality, then fine-tune single slots:
-
-| slot | env var |
-| --- | --- |
-| coder | `ORCHESTRATOR_CODER_MODEL` |
-| coderFix | `ORCHESTRATOR_CODER_FIX_MODEL` |
-| ship | `ORCHESTRATOR_SHIP_MODEL` |
-| merger | `ORCHESTRATOR_MERGER_MODEL` |
-| cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
-| cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
-| verify (judge: S3/S6 + verify station) | `ORCHESTRATOR_VERIFY_MODEL` |
-| delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
-| cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
-| docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
-| cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
-
-`ORCHESTRATOR_REVIEWER_MODEL` is **retired** (#923). Setting it fails closed with a
-migration hint to `ORCHESTRATOR_VERIFY_MODEL` (never silently ignored).
+reality. Change the preset table for deliberate non-coder lineup changes; use
+Coder-Rec for a planned issue's coder order.
 
 Role vocabulary worth keeping straight:
 
@@ -324,14 +298,14 @@ Roster conventions (from the exam/marathon evidence, 2026-07):
 
 ## Route smoke (startup gate)
 
-Before any real work each selected model×pipe must prove it can act inside the
-container: the smoke prompt carries a random `{{NONCE}}` (sandcastle substitutes
-`{{KEY}}` placeholders from `promptArgs` — placeholders in
-`prompts/route-smoke.md` are load-bearing). The worker must print exactly that
-nonce to stdout; no shell command or evidence file is part of the contract. A
-regression test drives the real rendering and a text-only-obedient agent, plus a
-negative case proving a value-less prompt fails. Any slot failing smoke =
-fail-closed startup escalation; nothing mutates.
+Before any real work each selected model must prove host bare-ping auth
+(#884 / #934 ID-003) — one-shot host CLI per unique model×pipe, empty workspace,
+no container/tool loop. The smoke prompt carries a random `{{NONCE}}`
+(placeholders in `prompts/route-smoke.md` are load-bearing). The CLI must print
+exactly that nonce to stdout; no shell command or evidence file is part of the
+contract. A regression test drives the real rendering and a text-only-obedient
+agent, plus a negative case proving a value-less prompt fails. Any required
+smoke failing = fail-closed startup escalation (exit 10); nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
@@ -349,8 +323,9 @@ the SuperGrok CLI (`provider: "grok"`).
 Exact gate order and repair re-entry live only in #869. This README records the
 role boundaries:
 
-- Per-slice coder, reviewer and fixer are independent workers. The reviewer
-  reports its own blocking unresolved open-count; the runner never reads the findings or
+- Per-slice coder, reviewer and fixer are independent workers. Review closure is
+  the judge tri-state (`converged | continue | escalate`); residual open-count
+  paper is historical transport only. The runner never reads findings text or
   checks the repair.
 - Integrated completeness and correctness remain distinct professional review
   actions over the assembled delivery base (a single slice branch or family
@@ -427,8 +402,8 @@ time-to-first-token.
 
 | scenario | what the stamp means | error bound |
 | --- | --- | --- |
-| Long-running worker | Idle monitor poll that first sees `log size > baseline` | ≈ `pollIntervalMs` (default **250ms** in `dispatchWorker`) |
-| Quick-exit (exit wins race before any poll sees growth) | One-shot post-exit reconcile re-read | ≈ **process exit time** (may be much later than true first byte) |
+| Long-running worker | One-shot / post-exit reconcile that first sees `log size > baseline` | ≈ process-exit granularity after #937 (no idle poll race) |
+| Quick-exit | One-shot post-exit reconcile re-read | ≈ **process exit time** (may be much later than true first byte) |
 | No post-marker growth by collect time | Field is `null` | — |
 
 Consumers computing "time-to-first-output" as
@@ -489,4 +464,4 @@ replacement Actions and Sandcastle controls land.
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
-| worker looks hung (legacy path) | the current monitor judges by heartbeat / log idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs (#928: no completion-signal password) | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
+| worker looks hung | host silence is observational only (#937) — no idle kill / PID-tree; capacity/quota walls still park or relay via durable ledger + ephemeral baton brief (no `.relay-focus.md`); completion is clean exit + legal sidecar (#928) | wait for process exit / typed outcome; on explicit 429/capacity use the existing park/relay owner; never invent hang-kill from log quiet |

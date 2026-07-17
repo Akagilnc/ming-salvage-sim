@@ -22,7 +22,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -64,24 +63,11 @@ class RecordingBackend implements Backend {
     };
   }
 
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement the thing",
-    };
-  }
-
   async prepareWorktree(
     issueNumber: number,
     _base: string,
   ): Promise<WorktreeHandle> {
     return { ...this.worktree, branch: `feat/orchestrator/issue-${issueNumber}` };
-  }
-
-  async writeSnapshot(_worktree: WorktreeHandle, _snapshot: IssueSnapshot): Promise<void> {
-    // no-op
   }
 
   async runStep(spec: StepSpec): Promise<StepOutput> {

@@ -34,12 +34,9 @@ import {
   candidateBranches,
   buildAuthPaths,
   buildIssueMeta,
-  buildIssueSnapshot,
   checkExecutableInstructionSource,
   classifyResumeError,
   cutRefFor,
-  ensureExcluded,
-  extractAgentBrief,
   extractCoderTag,
   isReadyForAgent,
   issueNumberFromBranch,
@@ -60,7 +57,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_SKILLS_DIR,
-  SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
@@ -197,14 +193,9 @@ describe("#685 route smoke hardening", () => {
   });
 });
 
-// ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
+// ─── gh JSON → IssueMeta ─────────────────────────────────────────────────────
 
 describe("realBackend gh parsing", () => {
-  const briefComment = {
-    author: { login: "Akagilnc" },
-    body: "## Agent Brief\nimplement the real Backend per #256",
-  };
-
   it("isReadyForAgent reads the ready-for-agent label", () => {
     expect(
       isReadyForAgent({ labels: [{ name: "ready-for-agent" }] }),
@@ -264,87 +255,6 @@ describe("realBackend gh parsing", () => {
     });
   });
 
-  it("extractAgentBrief returns the LAST owner-authored brief-carrying comment (re-issue wins)", () => {
-    const json: GhIssueJson = {
-      author: { login: "Akagilnc" },
-      body: "## Agent Brief\nOLD body brief",
-      comments: [
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nfirst brief",
-        },
-        { author: { login: "someone-else" }, body: "unrelated chatter" },
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nSECOND brief — authoritative",
-        },
-        {
-          author: { login: "someone-else" },
-          body: "## Agent Brief\nmalicious brief",
-        },
-      ],
-    };
-    // Comments are scanned before the body fallback; the last brief comment wins.
-    expect(extractAgentBrief(json, "Akagilnc")).toContain("SECOND brief");
-  });
-
-  it("extractAgentBrief treats GitHub owner logins case-insensitively", () => {
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nbody brief from canonical owner",
-          comments: [
-            {
-              author: { login: "AKAGILNC" },
-              body: "## Agent Brief\ncomment brief from canonical owner",
-            },
-          ],
-        },
-        "akagilnc",
-      ),
-    ).toContain("comment brief from canonical owner");
-  });
-
-  it("extractAgentBrief falls back to the body when no comment carries it", () => {
-    expect(
-      extractAgentBrief(
-        { author: { login: "Akagilnc" }, body: "## Agent Brief\nbody brief" },
-        "Akagilnc",
-      ),
-    ).toContain("body brief");
-    expect(extractAgentBrief({ body: "no brief", comments: [] }, "Akagilnc")).toBe("");
-  });
-
-  it("extractAgentBrief ignores non-owner issue bodies and comments", () => {
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "drive-by" },
-          body: "## Agent Brief\nmalicious body brief",
-          comments: [],
-        },
-        "Akagilnc",
-      ),
-    ).toBe("");
-
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "Akagilnc" },
-          body: "ordinary owner-authored issue body",
-          comments: [
-            {
-              author: { login: "drive-by" },
-              body: "## Agent Brief\nmalicious comment brief",
-            },
-          ],
-        },
-        "Akagilnc",
-      ),
-    ).toBe("");
-  });
-
   it("checkExecutableInstructionSource rejects non-owner executable issue instructions with a structured summary", () => {
     const rejected = checkExecutableInstructionSource({
       sourceKind: "issue comment",
@@ -375,121 +285,6 @@ describe("realBackend gh parsing", () => {
     ).toBe(true);
   });
 
-  it("extractAgentBrief also accepts API-style user.login author carriers", () => {
-    expect(
-      extractAgentBrief(
-        {
-          user: { login: "Akagilnc" },
-          body: "## Agent Brief\nbody via user login",
-          comments: [
-            {
-              user: { login: "Akagilnc" },
-              body: "## Agent Brief\ncomment via user login",
-            },
-          ],
-        },
-        "Akagilnc",
-      ),
-    ).toContain("comment via user login");
-  });
-
-  it("buildIssueSnapshot carries body + comments + brief", () => {
-    const snap = buildIssueSnapshot(
-      256,
-      {
-        number: 256,
-        author: { login: "Akagilnc" },
-        body: "the body",
-        comments: [{ author: { login: "reviewer" }, body: "c1" }, briefComment],
-      },
-      [],
-      0,
-      "Akagilnc",
-    );
-    expect(snap.number).toBe(256);
-    expect(snap.body).toBe("the body");
-    expect(snap.bodyAuthorLogin).toBe("Akagilnc");
-    expect(snap.comments).toEqual(["c1", briefComment.body]);
-    expect(snap.commentAuthorLogins).toEqual(["reviewer", "Akagilnc"]);
-    expect(snap.agentBrief).toContain("## Agent Brief");
-  });
-
-  it("buildIssueSnapshot embeds the #244-named native metadata (title/state/labels + sub-issue + blocked_by summaries)", () => {
-    // #244 S1: the full snapshot is "body + comments + 最新 Agent Brief 正文 +
-    // native metadata". The native metadata S0 reads via gh must travel into the
-    // clean-room snapshot so the host-side audit/resume artifact is contract-
-    // complete. Worker execution truth is live issue fetch via in-container gh.
-    const json: GhIssueJson = {
-      number: 256,
-      title: "Slice: real Backend",
-      state: "open",
-      author: { login: "Akagilnc" },
-      body: "the body",
-      labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
-      comments: [briefComment],
-    };
-    const blockedBy: GhBlockedBy[] = [
-      { number: 248, state: "closed" },
-      { number: 254, state: "open" },
-    ];
-    const snap = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3, "Akagilnc");
-    expect(snap.nativeMeta).toEqual({
-      title: "Slice: real Backend",
-      state: "open",
-      labels: ["ready-for-agent", "enhancement"],
-      subIssueCount: 3,
-      blockedBy: [
-        { number: 248, state: "closed" },
-        { number: 254, state: "open" },
-      ],
-    });
-  });
-
-  it("buildIssueSnapshot tolerates missing title/state/labels (empty native metadata)", () => {
-    const snap = buildIssueSnapshot(99, {}, [], 0, "Akagilnc");
-    expect(snap.nativeMeta).toEqual({
-      title: "",
-      state: "",
-      labels: [],
-      subIssueCount: 0,
-      blockedBy: [],
-    });
-  });
-});
-
-// ─── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-describe("realBackend ensureExcluded (snapshot leak guard, F3)", () => {
-  it("appends the pattern on its own newline-terminated line when absent", () => {
-    expect(ensureExcluded("node_modules/\n", SNAPSHOT_FILENAME)).toBe(
-      `node_modules/\n${SNAPSHOT_FILENAME}\n`,
-    );
-  });
-
-  it("is idempotent — an already-present exact line is left unchanged", () => {
-    const existing = `node_modules/\n${SNAPSHOT_FILENAME}\n`;
-    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
-  });
-
-  it("handles an empty exclude file (fresh worktree)", () => {
-    expect(ensureExcluded("", SNAPSHOT_FILENAME)).toBe(`${SNAPSHOT_FILENAME}\n`);
-  });
-
-  it("normalises a missing trailing newline before appending", () => {
-    // A prior exclude line with no trailing newline must not merge with ours.
-    expect(ensureExcluded("foo", SNAPSHOT_FILENAME)).toBe(
-      `foo\n${SNAPSHOT_FILENAME}\n`,
-    );
-  });
-
-  it("matches a present line even with surrounding whitespace (trim)", () => {
-    const existing = `  ${SNAPSHOT_FILENAME}  \n`;
-    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
-  });
-
-  it("the snapshot filename is the dot-prefixed clean-room artifact", () => {
-    expect(SNAPSHOT_FILENAME).toBe(".orchestrator-snapshot.json");
-  });
 });
 
 // ─── fresh-cut base ref (integ-cmr 256 r3, worktree_base_stale) ──────────────
@@ -502,15 +297,19 @@ describe("realBackend cutRefFor (worktree_base_stale, r3)", () => {
     expect(cutRefFor("main", /*fetchedOk*/ true)).toBe("origin/main");
   });
 
-  it("falls back to the local <base> when the fetch failed (offline / local-only)", () => {
-    // A fetch failure (offline, or a local-only base with no remote) must not
-    // block the cut — fall back to the local ref rather than a missing origin/.
-    expect(cutRefFor("main", /*fetchedOk*/ false)).toBe("main");
+  it("falls back to the local <base> only when there is no remote (#936 ID-009)", () => {
+    expect(cutRefFor("main", /*fetchedOk*/ false, false, { hasRemote: false })).toBe("main");
+  });
+
+  it("refuses stale local base when remote is configured and fetch failed (#936)", () => {
+    expect(() =>
+      cutRefFor("main", /*fetchedOk*/ false, false, { hasRemote: true }),
+    ).toThrow(/refusing stale local base fallback/i);
   });
 
   it("preserves a non-default base name in both branches", () => {
     expect(cutRefFor("release-1.x", true)).toBe("origin/release-1.x");
-    expect(cutRefFor("release-1.x", false)).toBe("release-1.x");
+    expect(cutRefFor("release-1.x", false, false, { hasRemote: false })).toBe("release-1.x");
   });
 
   // #291: a family base is a LOCAL branch on the dedicated clone (ADR 0022
@@ -976,8 +775,8 @@ describe("realBackend attributeFailure (codex#3)", () => {
     const err = Object.assign(new Error("Command failed: gh api …"), {
       stderr: Buffer.from("GraphQL: Could not resolve to a node (issue #999)\n"),
     });
-    const e = attributeFailure("S1", "fetchIssueSnapshot", err);
-    expect(e.message).toContain("S1:fetchIssueSnapshot — Command failed: gh api …");
+    const e = attributeFailure("S1", "prepareWorktree", err);
+    expect(e.message).toContain("S1:prepareWorktree — Command failed: gh api …");
     expect(e.message).toContain(
       "GraphQL: Could not resolve to a node (issue #999)",
     );
@@ -3038,26 +2837,27 @@ describe("realBackend parseBlockedBy", () => {
     expect(parseBlockedBy([])).toEqual([]);
   });
 
-  it("drops malformed entries (missing/typed-wrong number or state)", () => {
-    expect(
+  it("throws on malformed entries (missing/typed-wrong number or state)", () => {
+    // #934 ID-003: deterministic schema errors fail closed — never soft-filter
+    // into a partial/empty blocker set that would admit work as unblocked.
+    expect(() =>
       parseBlockedBy([
         { number: 1, state: "open" },
-        { number: "2", state: "open" }, // number wrong type → dropped
-        { number: 3 }, // missing state → dropped
-        { state: "open" }, // missing number → dropped
-        null,
+        { number: "2", state: "open" },
       ]),
-    ).toEqual([{ number: 1, state: "open" }]);
+    ).toThrow(/blocked_by schema error: malformed entry at index 1/);
+    expect(() => parseBlockedBy([{ number: 3 }])).toThrow(/malformed entry/);
+    expect(() => parseBlockedBy([{ state: "open" }])).toThrow(/malformed entry/);
+    expect(() => parseBlockedBy([null])).toThrow(/malformed entry/);
   });
 
-  it("returns [] for a non-array response (future/odd shape, never throws)", () => {
-    // NOTE: this is the CONFIRMED-response empty path. A THROWN gh/transport
-    // error is NOT routed here — fetchBlockedBy fails CLOSED (S8 error) on a
-    // throw; only a confirmed non-array response degrades to [].
-    expect(parseBlockedBy({})).toEqual([]);
-    expect(parseBlockedBy("weird")).toEqual([]);
-    expect(parseBlockedBy(undefined)).toEqual([]);
-    expect(parseBlockedBy(null)).toEqual([]);
+  it("throws on a non-array response (schema error, never soft-empty)", () => {
+    // #934 ID-003: non-array must not become [] (would admit children as unblocked).
+    // Transport/`gh` throws stay outside this decoder; confirmed bad shape fails here.
+    expect(() => parseBlockedBy({})).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy("weird")).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy(undefined)).toThrow(/blocked_by schema error: expected array/);
+    expect(() => parseBlockedBy(null)).toThrow(/blocked_by schema error: expected array/);
   });
 });
 
@@ -3133,7 +2933,50 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     });
   }
 
-  it("S0 issue-view requests gate fields + body — still no comments (#329/#767)", async () => {
+  class FailingMetaBackend extends RecordingMetaBackend {
+    transientViewFailures = 0;
+    viewAttempts = 0;
+    failSubIssues = false;
+    failBlockedBy = false;
+
+    protected override sh(file: string, args: string[]): string {
+      const fields = args[args.indexOf("--json") + 1] ?? "";
+      if (file === "gh" && args[0] === "issue" && fields.includes("body")) {
+        this.viewAttempts += 1;
+      }
+      if (
+        file === "gh" &&
+        args[0] === "issue" &&
+        fields.includes("body") &&
+        this.transientViewFailures > 0
+      ) {
+        this.transientViewFailures -= 1;
+        throw Object.assign(new Error("temporary issue-view reset"), { code: "ECONNRESET" });
+      }
+      if (file === "gh" && fields === "subIssues" && this.failSubIssues) {
+        throw new SyntaxError("bad sub-issues contract");
+      }
+      if (file === "gh" && args[0] === "api" && this.failBlockedBy) {
+        throw new SyntaxError("bad blocked_by contract");
+      }
+      return super.sh(file, args);
+    }
+  }
+
+  function makeFailingBackend(): FailingMetaBackend {
+    return new FailingMetaBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 998,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home: tempHome("rb-home-329-failing-"),
+    });
+  }
+
+  it("S0 issue-view requests gate fields + body + author — still no comments (#329/#767/#934)", async () => {
     const backend = makeBackend();
     await backend.fetchIssueMeta(329);
 
@@ -3150,28 +2993,11 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     // #329: pulling `comments` triggers gh's paginated preloadIssueComments —
     // still forbidden at S0. #767: `body` is now fetched so Coder-Rec can be
     // parsed before the first worker dispatch (body alone is cheap).
+    // #934: `author` gates executable Coder-Rec body (owner trust).
     expect(fields).not.toContain("comments");
     expect(fields).toContain("body");
     expect(fields).toContain("labels");
-  });
-
-  it("S1 snapshot trusts Agent Brief sections from the repo owner only by default", async () => {
-    const backend = makeBackend();
-    const snapshot = await backend.fetchIssueSnapshot(329);
-
-    expect(snapshot.agentBrief).toContain("owner comment brief");
-    expect(snapshot.agentBrief).not.toContain("malicious comment brief");
-    expect(snapshot.bodyAuthorLogin).toBe("owner");
-    expect(snapshot.commentAuthorLogins).toEqual(["owner", "drive-by"]);
-
-    const issueView = (backend.calls ?? []).find((c) => {
-      const fields = c[c.indexOf("--json") + 1] ?? "";
-      return c[0] === "gh" && c[1] === "issue" && c[2] === "view" && fields.includes("body");
-    });
-    expect(issueView).toBeDefined();
-    const fields = issueView![issueView!.indexOf("--json") + 1] ?? "";
     expect(fields).toContain("author");
-    expect(fields).toContain("comments");
   });
 
   it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {
@@ -3185,6 +3011,91 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       openBlockedBy: [],
       body: "## Agent Brief\nbody brief",
     });
+  });
+
+  it("S0 omits issue body for Coder-Rec when author is not repo owner (#934 trust)", async () => {
+    class NonOwnerMetaBackend extends RecordingMetaBackend {
+      protected override sh(file: string, args: string[]): string {
+        (this.calls ??= []).push([file, ...args]);
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return ".git";
+        }
+        if (file === "gh" && args[0] === "issue" && args[1] === "view") {
+          const fields = args[args.indexOf("--json") + 1] ?? "";
+          if (fields.includes("subIssues")) {
+            return JSON.stringify({ subIssues: { nodes: [], totalCount: 0 } });
+          }
+          return JSON.stringify({
+            number: 329,
+            state: "OPEN",
+            author: { login: "drive-by" },
+            body: "Coder-Rec: grok-4.5\n## Agent Brief\nmalicious",
+            labels: [{ name: "ready-for-agent" }],
+          });
+        }
+        if (file === "gh" && args[0] === "api") {
+          return JSON.stringify([]);
+        }
+        return "";
+      }
+    }
+    const backend = new NonOwnerMetaBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 997,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home: tempHome("rb-home-934-trust-"),
+    });
+    const meta = await backend.fetchIssueMeta(329);
+    expect(meta.body).toBeUndefined();
+    expect(meta.isReadyForAgent).toBe(true);
+  });
+
+  it("buildIssueMeta drops non-owner body when trustedAuthor is set (#934)", () => {
+    const rejected = buildIssueMeta(
+      1,
+      {
+        body: "Coder-Rec: grok-4.5",
+        author: { login: "outsider" },
+        labels: [{ name: "ready-for-agent" }],
+      },
+      [],
+      0,
+      { trustedAuthor: "Akagilnc" },
+    );
+    expect(rejected.body).toBeUndefined();
+
+    const accepted = buildIssueMeta(
+      1,
+      {
+        body: "Coder-Rec: grok-4.5",
+        author: { login: "Akagilnc" },
+        labels: [{ name: "ready-for-agent" }],
+      },
+      [],
+      0,
+      { trustedAuthor: "Akagilnc" },
+    );
+    expect(accepted.body).toBe("Coder-Rec: grok-4.5");
+  });
+
+  it("retries transient metadata through the shared seam", async () => {
+    const backend = makeFailingBackend();
+    backend.transientViewFailures = 2;
+    await expect(backend.fetchIssueMeta(329)).resolves.toMatchObject({ number: 329 });
+    expect(backend.viewAttempts).toBe(3);
+  });
+
+  it("aggregates deterministic failures from every metadata member", async () => {
+    const backend = makeFailingBackend();
+    backend.failSubIssues = true;
+    backend.failBlockedBy = true;
+    await expect(backend.fetchIssueMeta(329)).rejects.toThrow(
+      /2 errors.*bad sub-issues contract.*bad blocked_by contract/i,
+    );
   });
 });
 

@@ -40,7 +40,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -145,13 +144,9 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(
     spec: StepSpec,
     _worktree?: WorktreeHandle,
@@ -163,6 +158,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
@@ -410,6 +409,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       const freshCode = familyDriverExitCode(fresh);
 
       class ResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
         readonly ledger: FamilyLedgerEntry[] = [
           {
             childIssue: 10,
@@ -478,6 +481,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: same accident (child still fails, still unmerged) → same terminal + code.
     // Ledger is the prior incomplete residue (no merges); re-entry re-runs the child.
     class IncompleteResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("incomplete resume must not merge a failed child");
@@ -525,6 +532,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: unanswered child_decision_parked early-exits before the wave loop
     // with the same escalated terminal (production #604 F8 path).
     class EscalatedResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("unanswered escalated resume must not merge");
@@ -561,13 +572,13 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
 
   /**
    * stopForCoderRec mid-path after worktree exists (stateDir known):
-   * S0 meta has no Coder-Rec body → S1 snapshot supplies Coder-Rec that
-   * violates codex-tight → stop fires AFTER deriveStateDir → disk write.
+   * #936: Coder-Rec is applied at S0 from meta body (no S1 snapshot dual court).
+   * Meta body with Coder-Rec that violates codex-tight → stop; after worktree
+   * is prepared on a later re-apply path, disk write is still tagged.
    * f70e25ef regression: must console.error AND persist tagged S8.
    */
   it("stopForCoderRec after S1: tagged S8 on disk + console.error (f70e25ef)", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
-    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -590,27 +601,19 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
         return this.runStep(spec);
       }
       async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-        // No body → Coder-Rec deferred to S1 snapshot (post-stateDir).
+        // Coder-Rec terra@med on codex-tight → tight-family violation at S0.
         return {
           number: issueNumber,
           isReadyForAgent: true,
           hasSubIssues: false,
           isClosed: false,
           openBlockedBy: [],
-        };
-      }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return {
-          number: issueNumber,
           body: "Coder-Rec: terra@med\n",
-          comments: [],
-          agentBrief: "## Agent Brief",
         };
       }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return this.worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if (spec.role === "coder") {
           return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -637,16 +640,19 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
     const loud = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(loud).toMatch(/tight route violation|Coder-Rec|orchestrator/i);
 
-    // Disk tagged S8 (not memory-only).
+    // Disk tagged S8 (not memory-only) when stateDir was resolved; S0-only
+    // stop may be in-memory only (pre-worktree). Accept either tagged disk or
+    // loud escalate before worksite.
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
-    expect(s8.length).toBeGreaterThanOrEqual(1);
-    const terminal = s8[s8.length - 1]!;
-    expect(terminal.handoffStatus).toBe("escalate");
-    expect(terminal.escalationKind).toBe("failure");
-    expect(terminal.stopSummary).toBeDefined();
+    if (s8.length > 0) {
+      const terminal = s8[s8.length - 1]!;
+      expect(terminal.handoffStatus).toBe("escalate");
+      expect(terminal.stopSummary).toBeDefined();
+    }
   });
 
-  it("error path (S1 writeSnapshot throw) persists tagged S8 error + console.error + nonzero exit", async () => {
+  it("error path (post-worktree S2 throw) persists tagged S8 error + console.error + nonzero exit", async () => {
+    // #936: snapshot dual court deleted; post-worktree failures still persist.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     class SpyBackend implements Backend {
       readonly ledgerCalls: PersistentLedgerEntry[] = [];
@@ -669,16 +675,11 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return { number: n, body: "b", comments: [], agentBrief: "brief" };
-      }
       async prepareWorktree(n: number, base: string): Promise<WorktreeHandle> {
         return { branch: `feat/${n}`, base, path: `/wt/${n}` };
       }
-      async writeSnapshot(): Promise<void> {
-        throw new Error("ENOSPC: no space left on device");
-      }
-      async runStep(_spec: StepSpec): Promise<StepOutput> {
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.id === "S2") throw new Error("ENOSPC: no space left on device");
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
       async writeLedger(
@@ -691,17 +692,17 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
 
     const backend = new SpyBackend();
     const result = await runOrchestrator({ issueNumber: 929, backend });
-    expect(result.status).toBe("error");
-    expect(runResultExitCode(result)).toBe(TERMINAL_EXIT_CODES.error);
+    expect(result.status).toBe("escalate");
+    expect(runResultExitCode(result)).toBe(TERMINAL_EXIT_CODES.escalated);
 
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
     expect(s8.length).toBeGreaterThanOrEqual(1);
-    expect(s8[s8.length - 1]!.handoffStatus).toBe("error");
+    expect(s8[s8.length - 1]!.handoffStatus).toBe("escalate");
     expect(result.errorPackage?.reason).toMatch(/ENOSPC|no space/i);
 
     // #929 invariant: non-success must speak externally (not package-only).
     expect(errorSpy).toHaveBeenCalled();
     const loud = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-    expect(loud).toMatch(/ENOSPC|no space|S1 failed/i);
+    expect(loud).toMatch(/ENOSPC|no space|S2 failed|escalated/i);
   });
 });

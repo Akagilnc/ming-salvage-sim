@@ -1,9 +1,10 @@
 /**
  * #296 — the verify-cmr HOOK BODY (ADR 0022 decision 3④/⑤/⑥/4).
  *
- * #293 立 the seam (a no-op called at the wave barrier + end-of-run, with phase +
- * context, the spine acting on `ok`). #296 fills the BODY behind that same
- * `runVerifyCmr(input)` signature — it never touches the spine call sites:
+ * Production default is the real `runVerifyCmr` (not a success no-op). The spine
+ * calls it at the wave barrier + end-of-run with phase + context and acts on
+ * `ok`. This module is that body behind the same `runVerifyCmr(input)` signature
+ * — it never rewrites the spine call sites:
  *
  *   - "wave" phase  → family verify (typecheck + unit tests), FAIL-FAST: red ⇒
  *                     `{ok:false}` (spine aborts before the next wave) + an
@@ -15,14 +16,16 @@
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached through the
  * `FamilyBackend` seam (the input the frozen spine passes is `{phase, familyBase,
- * familyBackend}`), as OPTIONAL methods — a backend that does not implement them
- * (the #293 no-op default) yields the no-op `{ok:true, ran:false}`, so the spine's
- * existing default path is untouched. Everything is driven by a zero-container
- * fake — no real codex / container / push.
+ * familyBackend}`). Missing `runFamilyVerify` fails closed (`verify_failed`).
+ * Tests inject stubs only when needed. Zero-container fakes — no real codex /
+ * container / push.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import {
+  mechanicalRedispatchAttemptsFromFamilyLedger,
+  runVerifyCmr,
+} from "../../../src/family/verifyCmr.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
@@ -194,6 +197,10 @@ function currentRouteFingerprint(): string {
  * still has no verify/cmr/ship dispatch capability.
  */
 class BareFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
@@ -437,11 +444,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
+    // #936: slot/CMR env overrides deleted — fingerprint the preset route only.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus");
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["gpt-5.6-sol"] }),
     });
 
     const result = await runVerifyCmr({
@@ -1490,14 +1497,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 });
 
-describe("#296 verify-cmr hook body — graceful no-op when the backend lacks the capability", () => {
-  it("a #293-era backend WITHOUT runFamilyVerify yields the no-op {ok:true, ran:false} (spine default path untouched)", async () => {
+describe("#296 verify-cmr hook body — required verify capability (#939)", () => {
+  it("BareFamilyBackend with explicit green verify yields ok:true, ran:true (no success no-op)", async () => {
+    // #939 deleted the optional missing-capability success NOOP. Fakes must
+    // implement runFamilyVerify; a green verify is real work (ran:true).
+    // Type-level required capability replaces HEAD's runtime-missing fail-closed
+    // test (which needed optional `runFamilyVerify?`).
     const result = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/291-base",
       familyBackend: new BareFamilyBackend(),
     });
-    expect(result).toEqual({ ok: true, ran: false });
+    expect(result).toEqual({ ok: true, ran: true });
   });
 
   it("a backend with verify but WITHOUT cmr (final phase) FAILS-SAFE to ok:false — it does NOT report a pass the 承重闸 never ran", async () => {
@@ -1553,6 +1564,85 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       ran: true,
       failedStatus: "cmr_failed",
     });
+  });
+});
+
+// ═══════════════════ durable family mechanical redispatch budget (#934) ═══════════════════
+
+describe("#934 family mechanical redispatch budget reconstruction", () => {
+  it("reads trailing failure markers for the workerStep (crash re-entry continues budget)", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "cmr:completeness",
+        mechanicalRedispatchAttempt: 1,
+        reason: "boom-1",
+      },
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        // spawn adoption between retries — no attempt counter
+      },
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "cmr:completeness",
+        mechanicalRedispatchAttempt: 4,
+        reason: "boom-4",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "cmr:completeness"),
+    ).toBe(4);
+  });
+
+  it("resets budget after a later non-marker phase outcome (no inherit across success)", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "coder",
+        mechanicalRedispatchAttempt: 3,
+        reason: "old streak",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+      },
+    ];
+    expect(mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "coder")).toBe(0);
+  });
+
+  it("does not count a different workerStep's markers", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "ship",
+        mechanicalRedispatchAttempt: 5,
+        reason: "ship crash",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "cmr:correctness"),
+    ).toBe(0);
+    expect(mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "ship")).toBe(5);
+  });
+
+  it("exhausted durable budget equals MAX_DISPATCH_ATTEMPTS", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "verify",
+        mechanicalRedispatchAttempt: MAX_DISPATCH_ATTEMPTS,
+        reason: "last attempt failed",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "verify"),
+    ).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 
@@ -1718,7 +1808,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               reason: "quota limited (429); wait for reset",
             },
             applied: {
-              killed: false,
               ledgerEntry: {
                 event: "quota_wait_for_reset",
                 pool: "zai",
@@ -1729,8 +1818,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
                 ts: "2026-07-08T12:00:00.000Z",
               },
             },
-            pool: "zai",
-            probe: { kind: "quota_limited", resetAt, detail: "429" },
+            pool: "zai"
           });
         }
         return {
@@ -1781,7 +1869,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               reason: "quota limited (429); wait for reset",
             },
             applied: {
-              killed: false,
               ledgerEntry: {
                 event: "quota_wait_for_reset",
                 pool: "zai",
@@ -1792,8 +1879,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
                 ts: "2026-07-08T12:00:00.000Z",
               },
             },
-            pool: "zai",
-            probe: { kind: "quota_limited", resetAt, detail: "429" },
+            pool: "zai"
           });
         }
         return {

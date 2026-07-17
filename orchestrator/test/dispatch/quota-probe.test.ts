@@ -1,54 +1,32 @@
 /**
- * #683 — runner 额度探针：idle 超阈先探 429 再判 hang（额度墙 ≠ hang）。
+ * #683 / #937 — explicit quota wait-for-reset + silence-not-fate (ID-007).
  *
- * Seams under test (from issue AC):
- *   1. decideIdleAfterProbe — 探针三种结果 → hang | wait_for_reset
- *   2. applyIdleDisposition — hang 只杀句柄 pid 树；429 不杀、写 ledger
- *   3. buildQuotaWaitForResetLedgerEntry — ledger 外显含 pool + resetAt
- *   4. pool probe config (per-pool, keyed off model/route slug)
- *   5. RealBackend.runAgentSandbox idle path — production seam (must NOT be
- *      hand-composed helpers only; bites if runner forgets to wire the probe)
- *
- * Probes are STUBBED — no real network/CLI in unit tests.
+ * Seams under test:
+ *   1. bridge serialize/parse of QuotaWaitForResetError
+ *   2. buildQuotaWaitForResetLedgerEntry
+ *   3. poolForModelRef
+ *   4. RealBackend Sandcastle idle rethrows without quota probe
+ *   5. runner park on explicit 429 (not abort)
  */
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it, vi } from "vitest";
+
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 import {
-  RealBackend,
-  type AgentSandboxRunOptions,
-} from "../../src/realBackend.js";
-import {
-  applyIdleDisposition,
   buildQuotaWaitForResetLedgerEntry,
-  decideIdleAfterProbe,
-  handleIdleThreshold,
   isAgentIdleTimeoutError,
-  parseZaiResetAt,
   poolForModelRef,
-  probeConfigForPool,
   QuotaWaitForResetError,
-  runPoolProbe,
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
-  withIdleQuotaProbeDisposition,
-  type IdleDisposition,
   type QuotaPoolId,
-  type QuotaProbeResult,
 } from "../../src/quotaProbe.js";
 import { runOrchestrator } from "../../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
-  ResumeState,
   StepOutput,
-  StepSpec,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -65,7 +43,6 @@ describe("#683 bridge-child quota wall serialization", () => {
         reason: "quota limited (429); wait for reset",
       },
       applied: {
-        killed: false,
         ledgerEntry: {
           event: "quota_wait_for_reset",
           pool: "zai",
@@ -76,8 +53,7 @@ describe("#683 bridge-child quota wall serialization", () => {
           ts: "2026-07-10T12:00:00.000Z",
         },
       },
-      pool: "zai",
-      probe: { kind: "quota_limited", resetAt, detail: "429" },
+      pool: "zai"
     });
     const reason = serializeQuotaWaitForResetBridge(err);
     const restored = tryParseQuotaWaitForResetBridge(reason);
@@ -130,132 +106,7 @@ describe("#683 bridge-child quota wall serialization", () => {
   });
 });
 
-describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
-  it("probe ok (额度通) → hang：走既有 hang 处置", () => {
-    const probe: QuotaProbeResult = { kind: "ok" };
-    const d = decideIdleAfterProbe("zai", probe);
-    expect(d).toEqual({
-      kind: "hang",
-      reason: "idle threshold exceeded; quota probe ok",
-      pool: "zai",
-    });
-  });
 
-  it("probe quota_limited (429) → wait_for_reset，携带 resetAt，不判 hang", () => {
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    const probe: QuotaProbeResult = {
-      kind: "quota_limited",
-      resetAt,
-      detail: "rate limit: resets at 2026-07-09 00:10:00",
-    };
-    const d = decideIdleAfterProbe("zai", probe);
-    expect(d.kind).toBe("wait_for_reset");
-    if (d.kind !== "wait_for_reset") return;
-    expect(d.pool).toBe("zai");
-    expect(d.resetAt).toEqual(resetAt);
-    expect(d.reason).toMatch(/quota|429|limit/i);
-  });
-
-  it("probe error (网络错误等) ≠ 429 → fail-safe hang，不无限等待", () => {
-    const probe: QuotaProbeResult = {
-      kind: "error",
-      cause: "ECONNREFUSED 127.0.0.1:1",
-    };
-    const d = decideIdleAfterProbe("opencode-go", probe);
-    expect(d).toEqual({
-      kind: "hang",
-      reason: "idle threshold exceeded; quota probe error (fail-safe hang): ECONNREFUSED 127.0.0.1:1",
-      pool: "opencode-go",
-    });
-  });
-});
-
-describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
-  it("hang → kill only the worker pid tree; no wait-for-reset ledger row", async () => {
-    const killed: number[] = [];
-    const ledger: unknown[] = [];
-    const disposition: IdleDisposition = {
-      kind: "hang",
-      reason: "idle threshold exceeded; quota probe ok",
-      pool: "grok",
-    };
-    const result = await applyIdleDisposition(
-      disposition,
-      { pid: 4242, step: "S2" },
-      {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
-        recordLedger: async (entry) => {
-          ledger.push(entry);
-        },
-        now: () => new Date("2026-07-08T12:00:00.000Z"),
-      },
-    );
-    expect(result.killed).toBe(true);
-    expect(killed).toEqual([4242]);
-    expect(ledger).toEqual([]);
-    expect(result.ledgerEntry).toBeUndefined();
-  });
-
-  it("wait_for_reset → does NOT kill worker; records ledger with pool + resetAt", async () => {
-    const killed: number[] = [];
-    const ledger: unknown[] = [];
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    const disposition: IdleDisposition = {
-      kind: "wait_for_reset",
-      pool: "zai",
-      resetAt,
-      reason: "quota limited (429); wait for reset",
-    };
-    const result = await applyIdleDisposition(
-      disposition,
-      { pid: 7777, step: "S5" },
-      {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
-        recordLedger: async (entry) => {
-          ledger.push(entry);
-        },
-        now: () => new Date("2026-07-08T12:00:00.000Z"),
-      },
-    );
-    expect(result.killed).toBe(false);
-    expect(killed).toEqual([]);
-    expect(result.ledgerEntry).toEqual({
-      event: "quota_wait_for_reset",
-      pool: "zai",
-      resetAt: "2026-07-08T16:10:00.000Z",
-      reason: "quota limited (429); wait for reset",
-      step: "S5",
-      workerPid: 7777,
-      ts: "2026-07-08T12:00:00.000Z",
-    });
-    expect(ledger).toEqual([result.ledgerEntry]);
-  });
-
-  it("wait_for_reset without parseable resetAt still records ledger (resetAt omitted)", async () => {
-    const disposition: IdleDisposition = {
-      kind: "wait_for_reset",
-      pool: "opencode-go",
-      reason: "quota limited; reset time unknown",
-    };
-    const result = await applyIdleDisposition(
-      disposition,
-      { pid: 9, step: "S3" },
-      {
-        killPidTree: vi.fn(),
-        recordLedger: vi.fn(),
-        now: () => new Date("2026-07-08T12:00:00.000Z"),
-      },
-    );
-    expect(result.killed).toBe(false);
-    expect(result.ledgerEntry?.resetAt).toBeUndefined();
-    expect(result.ledgerEntry?.pool).toBe("opencode-go");
-    expect(result.ledgerEntry?.event).toBe("quota_wait_for_reset");
-  });
-});
 
 describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
   it("serializes resetAt as ISO and surfaces pool/reason/step/pid", () => {
@@ -291,180 +142,6 @@ describe("#905 opencode-go probe retired", () => {
   });
 });
 
-describe("#683 per-pool probe config (配置随 route / model)", () => {
-  it("zai pool → minimal chat probe", () => {
-    const cfg = probeConfigForPool("zai");
-    expect(cfg.pool).toBe("zai");
-    expect(cfg.kind).toBe("zai_chat");
-  });
-
-  it("opencode-go pool → none (transport retired #905; no spawn)", () => {
-    const cfg = probeConfigForPool("opencode-go");
-    expect(cfg.pool).toBe("opencode-go");
-    expect(cfg.kind).toBe("none");
-  });
-
-  it("grok pool → TBD probe kind (reserved)", () => {
-    const cfg = probeConfigForPool("grok");
-    expect(cfg.pool).toBe("grok");
-    expect(cfg.kind).toBe("grok_tbd");
-  });
-
-  it("model ref maps to pool (route-table companion)", () => {
-    const cases: ReadonlyArray<[string, QuotaPoolId]> = [
-      ["zai/glm-5.2", "zai"],
-      ["glm-5.2", "zai"],
-      // #905 r2: opencode-go / kimi refs no longer map to a live probe pool.
-      ["opencode-go/glm-5.2", "unknown"],
-      ["opencode-go/deepseek-v4-flash", "unknown"],
-      ["opencode-go/kimi-k2.7-code", "unknown"],
-      ["kimi-k2", "unknown"],
-      ["grok-build", "grok"],
-      ["grok-composer-2.5-fast", "grok"],
-      ["sonnet", "unknown"],
-      ["gpt-5.5", "unknown"],
-    ];
-    for (const [ref, pool] of cases) {
-      expect(poolForModelRef(ref), ref).toBe(pool);
-    }
-  });
-
-  it("guards non-string / empty modelRef before trim → unknown", () => {
-    expect(poolForModelRef("")).toBe("unknown");
-    expect(poolForModelRef("   ")).toBe("unknown");
-    // Untyped / unexpected callers may pass non-strings at runtime.
-    expect(poolForModelRef(null as unknown as string)).toBe("unknown");
-    expect(poolForModelRef(undefined as unknown as string)).toBe("unknown");
-    expect(poolForModelRef(42 as unknown as string)).toBe("unknown");
-  });
-});
-
-describe("#683 parseZaiResetAt (北京时间 → ISO UTC)", () => {
-  it("parses 北京时间 wall-clock from 429 body into UTC Date", () => {
-    // 2026-07-09 00:10:00 Asia/Shanghai = 2026-07-08T16:10:00.000Z
-    const body =
-      '{"error":{"code":"1113","message":"余额不足或配额耗尽，将于 2026-07-09 00:10:00 重置"}}';
-    const reset = parseZaiResetAt(body);
-    expect(reset?.toISOString()).toBe("2026-07-08T16:10:00.000Z");
-  });
-
-  it("returns undefined when body has no reset clock", () => {
-    expect(parseZaiResetAt("rate limited")).toBeUndefined();
-    expect(parseZaiResetAt("")).toBeUndefined();
-  });
-
-  it("rejects out-of-range calendar components (no Date.UTC rollover)", () => {
-    // Regex matches, but month/day/hour/min/sec are not real calendar values.
-    // Without range guards, Date.UTC rolls these into a plausible-looking Date.
-    expect(parseZaiResetAt("reset at 9999-99-99 99:99:99")).toBeUndefined();
-    expect(parseZaiResetAt("2026-13-01 00:00:00")).toBeUndefined();
-    expect(parseZaiResetAt("2026-07-32 00:00:00")).toBeUndefined();
-    expect(parseZaiResetAt("2026-07-09 24:00:00")).toBeUndefined();
-    expect(parseZaiResetAt("2026-07-09 00:60:00")).toBeUndefined();
-    expect(parseZaiResetAt("2026-07-09 00:00:60")).toBeUndefined();
-  });
-});
-
-describe("#683 quota = status/exit only (ignore body keywords)", () => {
-  it("2xx body with rate-limit text is still ok (no body court)", async () => {
-    for (const body of ["rate-limit exceeded", "Too Many Requests", "quota"]) {
-      const result = await runPoolProbe("zai", {
-        zaiApiKey: "test-key",
-        fetch: async () =>
-          new Response(body, { status: 200, statusText: "OK" }),
-      });
-      expect(result.kind, body).toBe("ok");
-    }
-  });
-
-  it("403 + quota body is error, not quota_limited (status only)", async () => {
-    const result = await runPoolProbe("zai", {
-      zaiApiKey: "test-key",
-      fetch: async () =>
-        new Response("quota exceeded / rate limit", {
-          status: 403,
-          statusText: "Forbidden",
-        }),
-    });
-    expect(result.kind).toBe("error");
-  });
-
-  it("#884: HTTP 5xx retries ×2 even when body mentions quota", async () => {
-    let fetches = 0;
-    const result = await runPoolProbe("zai", {
-      zaiApiKey: "test-key",
-      timeoutMs: 200,
-      fetch: async () => {
-        fetches += 1;
-        return new Response("upstream quota / rate limit text in 503 body", {
-          status: 503,
-          statusText: "Service Unavailable",
-        });
-      },
-    });
-    expect(result.kind).toBe("error");
-    expect(fetches).toBe(3);
-    expect(result.kind === "error" ? result.cause : "").toMatch(
-      /503|exhaust|probe:zai/i,
-    );
-  });
-
-  it("#884: HTTP 429 → quota_limited once (no retry)", async () => {
-    let fetches = 0;
-    const result = await runPoolProbe("zai", {
-      zaiApiKey: "test-key",
-      fetch: async () => {
-        fetches += 1;
-        return new Response("anything", {
-          status: 429,
-          statusText: "Too Many Requests",
-        });
-      },
-    });
-    expect(result.kind).toBe("quota_limited");
-    expect(fetches).toBe(1);
-  });
-
-  it("#905: opencode-go probe is none — error without any process spawn", async () => {
-    const result = await runPoolProbe("opencode-go", {});
-    expect(result.kind).toBe("error");
-    expect(result.kind === "error" ? result.cause : "").toMatch(
-      /no quota probe registered|opencode-go/i,
-    );
-  });
-});
-
-describe("#683 handleIdleThreshold (production composition)", () => {
-  it("composes pool map → probe → decide → apply (429 preserves pid)", async () => {
-    const killed: number[] = [];
-    const ledger: unknown[] = [];
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    const out = await handleIdleThreshold({
-      modelRef: "zai/glm-5.2",
-      worker: { pid: 1001, step: "S2" },
-      actions: {
-        killPidTree: (pid) => {
-          killed.push(pid);
-        },
-        recordLedger: (entry) => {
-          ledger.push(entry);
-        },
-        now: () => new Date("2026-07-08T12:00:00.000Z"),
-      },
-      probe: async () => ({
-        kind: "quota_limited",
-        resetAt,
-        detail: "429",
-      }),
-    });
-    expect(out.pool).toBe("zai");
-    expect(out.disposition.kind).toBe("wait_for_reset");
-    expect(out.applied.killed).toBe(false);
-    expect(killed).toEqual([]);
-    expect(ledger).toHaveLength(1);
-  });
-});
-
 describe("#683 isAgentIdleTimeoutError", () => {
   it("matches Sandcastle idle tag/name/message shapes", () => {
     expect(
@@ -479,275 +156,37 @@ describe("#683 isAgentIdleTimeoutError", () => {
   });
 });
 
-describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)", () => {
-  function idleErr(): Error {
-    return Object.assign(new Error("Agent idle for 600 seconds — no output received."), {
-      name: "AgentIdleTimeoutError",
-      _tag: "AgentIdleTimeoutError",
-    });
-  }
 
-  it("429 after idle → QuotaWaitForResetError", async () => {
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    await expect(
-      withIdleQuotaProbeDisposition({
-        quotaProbe: { modelRef: "zai/glm-5.2", step: "S2" },
-        run: async () => {
-          throw idleErr();
-        },
-        resolveIdle: async () => ({
-          disposition: {
-            kind: "wait_for_reset",
-            pool: "zai",
-            resetAt,
-            reason: "quota limited (429); wait for reset",
-          },
-          applied: {
-            killed: false,
-            ledgerEntry: {
-              event: "quota_wait_for_reset",
-              pool: "zai",
-              resetAt: resetAt.toISOString(),
-              reason: "quota limited (429); wait for reset",
-              step: "S2",
-              workerPid: 0,
-              ts: "2026-07-08T12:00:00.000Z",
-            },
-          },
-          pool: "zai",
-          probe: { kind: "quota_limited", resetAt, detail: "429" },
-        }),
-      }),
-    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+describe("#683/#937 RealBackend Sandcastle idle — no quota probe fate (ID-007)", () => {
+  it("source no longer exports idle→quota composition helpers", () => {
+    const src = readFileSync(
+      new URL("../../src/quotaProbe.ts", import.meta.url),
+      "utf8",
+    );
+    const realSrc = readFileSync(
+      new URL("../../src/realBackend.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).not.toMatch(/function handleIdleThreshold/);
+    expect(src).not.toMatch(/function withIdleQuotaProbeDisposition/);
+    expect(src).not.toMatch(/function resolveSandboxIdleAfterQuotaProbe/);
+    expect(src).not.toMatch(/function decideIdleAfterProbe/);
+    expect(src).not.toMatch(/function applyIdleDisposition/);
+    expect(realSrc).not.toMatch(/resolveIdleAfterQuotaProbe/);
+    expect(realSrc).not.toMatch(/withIdleQuotaProbeDisposition\s*\(/);
+    // Production entry still exists and only invokes Sandcastle.
+    expect(realSrc).toMatch(/protected async runAgentSandbox/);
+    expect(realSrc).toMatch(/invokeSandcastleRun/);
   });
 
-  it("probe hang disposition rethrows original idle error", async () => {
-    const original = idleErr();
-    await expect(
-      withIdleQuotaProbeDisposition({
-        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
-        run: async () => {
-          throw original;
-        },
-        resolveIdle: async () => ({
-          disposition: {
-            kind: "hang",
-            pool: "unknown",
-            reason: "idle threshold exceeded; quota probe ok",
-          },
-          applied: { killed: false },
-          pool: "unknown",
-          probe: { kind: "ok" },
-        }),
-      }),
-    ).rejects.toBe(original);
-  });
-
-  it("non-idle errors bypass the probe", async () => {
-    let resolved = false;
-    await expect(
-      withIdleQuotaProbeDisposition({
-        quotaProbe: { modelRef: "zai/glm-5.2" },
-        run: async () => {
-          throw new Error("ECONNREFUSED");
-        },
-        resolveIdle: async () => {
-          resolved = true;
-          throw new Error("should not probe");
-        },
-      }),
-    ).rejects.toThrow(/ECONNREFUSED/);
-    expect(resolved).toBe(false);
+  it("poolForModelRef still maps model refs for explicit quota park", () => {
+    expect(poolForModelRef("zai/glm-5.2")).toBe("zai");
+    expect(poolForModelRef("grok-4.5")).toBe("grok");
+    expect(poolForModelRef("opencode-go/glm-5.2")).toBe("unknown");
+    expect(poolForModelRef("")).toBe("unknown");
   });
 });
 
-describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor path)", () => {
-  const testHome = mkdtempSync(join(tmpdir(), "orchestrator-auth-683-"));
-  afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-  /**
-   * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
-   * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
-   * is dispatchWorkerWithMonitor + handleMonitoredWorkerIdle (see integration).
-   * workerPid is captured from the sandbox handle during invoke (not hand-stuffed).
-   */
-  const here = dirname(fileURLToPath(import.meta.url));
-  const realPromptsDir = join(here, "..", "..", "prompts");
-  const realSoulsDir = join(here, "..", "..", "image", "souls");
-
-  const WORKTREE = {
-    branch: "feat/orchestrator/issue-683",
-    base: "main",
-    path: "/tmp/worktree/issue-683",
-  } as const;
-
-  // Models must be registered in MODEL_SLUG_REGISTRY (agentForSlug preflight).
-  // Pool is stubbed via runQuotaProbe — model slug only needs to be a live registry entry.
-  // Post-#764: gpt-5.5 is retired from the live allowlist; use gpt-5.6-terra.
-  const coderSpec: StepSpec = {
-    id: "S2",
-    role: "coder",
-    promptFile: "coder_implement.md",
-    model: "gpt-5.6-terra",
-    maxIter: 1,
-    soul: "coder",
-    toolchain: [],
-  };
-
-  class DispatchIdleBackend extends RealBackend {
-    public killed: number[] = [];
-    public probeResult: QuotaProbeResult = { kind: "ok" };
-    public sandcastleReached = false;
-    /** Simulated OS pid of the in-sandbox agent process (from sandbox handle). */
-    public sandboxHandlePid = 4242;
-    public lastQuotaProbe: AgentSandboxRunOptions["quotaProbe"];
-
-    protected override cloneDirExists(): boolean {
-      return true;
-    }
-
-    protected override sh(file: string, args: string[]): string {
-      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
-        return ".git";
-      }
-      return "";
-    }
-
-    protected override idleNow(): Date {
-      return new Date("2026-07-08T12:00:00.000Z");
-    }
-
-    protected override async preflightToolchainTool(): Promise<void> {
-      // skip docker preflight
-    }
-
-    protected override async runQuotaProbe(
-      _pool: QuotaPoolId,
-    ): Promise<QuotaProbeResult> {
-      return this.probeResult;
-    }
-
-    /**
-     * Simulate Sandcastle owning a live sandbox handle with a real agent pid,
-     * then firing AgentIdleTimeoutError (sandbox release follows either way).
-     * Production path notes the handle pid via {@link noteActiveSandboxWorkerPid}
-     * — callers must NOT pass workerPid in quotaProbe options.
-     */
-    protected override async invokeSandcastleRun(
-      options: Parameters<RealBackend["invokeSandcastleRun"]>[0],
-    ): Promise<never> {
-      this.sandcastleReached = true;
-      // Capture pid from the live sandbox handle BEFORE release (R2 P1-1).
-      this.noteActiveSandboxWorkerPid(this.sandboxHandlePid);
-      void options;
-      throw Object.assign(
-        new Error(
-          "Agent idle for 600 seconds — no output received. Consider increasing the idle timeout with --idle-timeout.",
-        ),
-        { name: "AgentIdleTimeoutError", _tag: "AgentIdleTimeoutError" },
-      );
-    }
-
-    protected override async runAgentSandbox(
-      options: AgentSandboxRunOptions,
-    ): Promise<Awaited<ReturnType<typeof import("@ai-hero/sandcastle").run>>> {
-      // Assert production call sites never hand-fill workerPid (R2 regression bite).
-      this.lastQuotaProbe = options.quotaProbe;
-      expect(options.quotaProbe?.workerPid).toBeUndefined();
-      return super.runAgentSandbox(options);
-    }
-  }
-
-  function makeBackend(): DispatchIdleBackend {
-    return new DispatchIdleBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 683,
-      repo: "owner/name",
-      imageName: "ming-worker:test",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      home: testHome,
-    });
-  }
-
-  it("429 via runStep → QuotaWaitForResetError + applied ledger; pid tree NOT killed", async () => {
-    const backend = makeBackend();
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt,
-      detail: "429 wall",
-    };
-    backend.sandboxHandlePid = 1001;
-
-    let thrown: unknown;
-    try {
-      await backend.runStep(coderSpec, WORKTREE);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
-    const qw = thrown as QuotaWaitForResetError;
-    expect(backend.sandcastleReached).toBe(true);
-    expect(backend.killed).toEqual([]);
-    // Durable write is owned by runner park — backend only fills applied.
-    expect(qw.applied.ledgerEntry).toMatchObject({
-      event: "quota_wait_for_reset",
-      resetAt: "2026-07-08T16:10:00.000Z",
-      workerPid: 1001,
-      step: "S2",
-    });
-    // Production quotaProbe context carries model/step but not a hand-filled pid.
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.6-terra",
-      step: "S2",
-      issueNumber: 683,
-    });
-    expect(backend.lastQuotaProbe?.workerPid).toBeUndefined();
-  });
-
-  it("probe pass via Sandcastle fallback rethrows without backend-local kill", async () => {
-    const backend = makeBackend();
-    backend.probeResult = { kind: "ok" };
-    backend.sandboxHandlePid = 1002;
-
-    await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
-    expect(backend.killed).toEqual([]);
-  });
-
-  it("network error via Sandcastle fallback rethrows without backend-local kill", async () => {
-    const backend = makeBackend();
-    backend.probeResult = { kind: "error", cause: "ETIMEDOUT" };
-    backend.sandboxHandlePid = 1003;
-
-    await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
-    expect(backend.killed).toEqual([]);
-  });
-
-  it("without quotaProbe context, idle error rethrows with no probe side effects", async () => {
-    const backend = makeBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-    };
-    // Bypass runStep and call runAgentSandbox without quotaProbe.
-    await expect(
-      // @ts-expect-error test access to protected method
-      backend.runAgentSandbox({
-        name: "S2-coder",
-        idleTimeoutSeconds: 600,
-        cwd: WORKTREE.path,
-        sandbox: {} as AgentSandboxRunOptions["sandbox"],
-        agent: {} as AgentSandboxRunOptions["agent"],
-        maxIterations: 1,
-        branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "coder_implement.md"),
-        quotaProbe: undefined,
-      }),
-    ).rejects.toThrow(/Agent idle for 600/);
-    expect(backend.killed).toEqual([]);
-  });
-});
 
 describe("#683 runner park: 429 parks step via existing park machinery (not abort)", () => {
   /**
@@ -785,13 +224,9 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
         openBlockedBy: [],
       };
     }
-    async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-      return { number: n, body: "body", comments: [], agentBrief: "" };
-    }
     async prepareWorktree(): Promise<WorktreeHandle> {
       return WORKTREE;
     }
-    async writeSnapshot(): Promise<void> {}
     async runStep(): Promise<StepOutput> {
       // Prefer dispatchWorker path below.
       return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -804,23 +239,15 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
       if (spec.kind === "coder" && spec.id === "S2") {
         this.coderDispatches += 1;
         const resetAt = new Date("2026-07-08T16:10:00.000Z");
-        // Simulate RealBackend.runAgentSandbox 429 disposition (already applied).
-        const applied = await applyIdleDisposition(
-          {
-            kind: "wait_for_reset",
-            pool: "zai",
-            resetAt,
-            reason: "quota limited (429); wait for reset",
-          },
-          { pid: this.sandboxHandlePid, step: "S2" },
-          {
-            killPidTree: () => {
-              throw new Error("429 path must not kill");
-            },
-            recordLedger: () => {},
-            now: () => new Date("2026-07-08T12:00:00.000Z"),
-          },
-        );
+        // Explicit typed 429 wall (not host silence → probe).
+        const ledgerEntry = buildQuotaWaitForResetLedgerEntry({
+          pool: "zai",
+          resetAt,
+          reason: "quota limited (429); wait for reset",
+          step: "S2",
+          workerPid: this.sandboxHandlePid,
+          now: new Date("2026-07-08T12:00:00.000Z"),
+        });
         throw new QuotaWaitForResetError({
           disposition: {
             kind: "wait_for_reset",
@@ -828,13 +255,8 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
             resetAt,
             reason: "quota limited (429); wait for reset",
           },
-          applied,
+          applied: { ledgerEntry },
           pool: "zai",
-          probe: {
-            kind: "quota_limited",
-            resetAt,
-            detail: "429",
-          },
         });
       }
       if (spec.kind === "reviewer" || spec.id === "S3" || spec.id === "S6") {
@@ -928,6 +350,36 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
     // Step was parked — must not have advanced to S3.
     expect(result.stepLedger.some((e) => e.step === "S3" && e.event === undefined)).toBe(
       false,
+    );
+  });
+
+  it("429 park writeLedger failure → status error via errorTermination (not raw rejection)", async () => {
+    class QuotaParkWriteFailBackend extends QuotaParkBackend {
+      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "quota_wait_for_reset") {
+          throw new Error("ENOSPC disk full on quota park");
+        }
+        await super.writeLedger(entry);
+      }
+    }
+    const backend = new QuotaParkWriteFailBackend();
+    // Must resolve (not reject) — mirror capacity persist-fail path.
+    const result = await runOrchestrator({
+      issueNumber: 683,
+      backend,
+      relayPools: [
+        {
+          id: "zai",
+          status: "limited",
+          resetAt: new Date("2026-07-08T16:10:00.000Z"),
+          parkThresholdMs: 30 * 60 * 1000,
+          models: ["grok-4.5"],
+        },
+      ],
+    });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason ?? "").toMatch(
+      /record_persist_failed: quota_wait_for_reset:.*ENOSPC disk full on quota park/,
     );
   });
 });

@@ -16,6 +16,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
@@ -117,7 +118,9 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(
       backend.ledger.some(
         (e) =>
@@ -149,7 +152,9 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(
       backend.ledger.some(
         (e) =>
@@ -184,7 +189,9 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(backend.ledger).not.toContainEqual(
       expect.objectContaining({
         status: "aborted",
@@ -212,6 +219,8 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
   });
 });

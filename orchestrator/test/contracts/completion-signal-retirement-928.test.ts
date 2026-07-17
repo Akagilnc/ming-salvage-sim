@@ -27,7 +27,7 @@ import { STATION_IDS } from "../../src/stationReceiptContracts.js";
 import type { WorkerMonitorHandle, WorkerSpec } from "../../src/types.js";
 import {
   validateMonitorHandle,
-  isWorkerIdle,
+  silenceWholeMinutes,
   readLogActivity,
 } from "../../src/workerMonitor.js";
 
@@ -160,6 +160,36 @@ describe("#928 completion-signal retirement", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it("non-zero exit with completed sidecar cannot masquerade as completed", () => {
+      const dir = mkdtempSync(join(tmpdir(), "orch-928-exit1-completed-"));
+      try {
+        const resultPath = join(dir, "S2.result.json");
+        writeFileSync(
+          resultPath,
+          JSON.stringify({
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          }),
+          "utf8",
+        );
+        const result = workerResultFromMonitorSidecar(
+          baseHandle({
+            pid: process.pid,
+            logPath: join(dir, "S2.log"),
+            resultPath,
+          }),
+          1,
+        );
+        expect(result.kind).toBe("failed");
+        if (result.kind === "failed") {
+          expect(result.reason).toMatch(/clean exit required/i);
+        }
+        expect(isMissingMonitorSidecarResult(result)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("monitor liveness is heartbeat/log activity only", () => {
@@ -171,7 +201,7 @@ describe("#928 completion-signal retirement", () => {
       expect(validateMonitorHandle(handle)).toBe(true);
     });
 
-    it("idle judgment still uses log growth only (PR #917 mechanism)", () => {
+    it("log activity is observational; silenceWholeMinutes never invents kill (#937)", () => {
       const dir = mkdtempSync(join(tmpdir(), "orch-928-idle-"));
       try {
         const logPath = join(dir, "worker.log");
@@ -180,9 +210,10 @@ describe("#928 completion-signal retirement", () => {
         const first = readLogActivity(handle);
         expect(first).toBeDefined();
         writeFileSync(logPath, "line1\nline2\n", "utf8");
-        expect(isWorkerIdle(handle, 60_000, first!)).toBe(false);
-        const stale = readLogActivity(handle)!;
-        expect(isWorkerIdle(handle, 0, stale)).toBe(true);
+        const second = readLogActivity(handle)!;
+        expect(second.sizeBytes).toBeGreaterThan(first!.sizeBytes);
+        expect(silenceWholeMinutes(second.mtimeMs - 30_000, second.mtimeMs)).toBe(0);
+        expect(silenceWholeMinutes(second.mtimeMs - 120_000, second.mtimeMs)).toBe(2);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

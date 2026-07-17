@@ -30,6 +30,10 @@ import type { FamilyBackend, FamilyLedgerEntry } from "../../../src/family/types
 
 /** A zero-IO fake family backend that keeps the ledger in memory. */
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly appended: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
     return { familyHead: "head" };
