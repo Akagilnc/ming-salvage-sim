@@ -249,7 +249,7 @@ on their durable completion records instead of re-dispatching.
 
 Staffing is resolved before worksite creation:
 
-```
+```text
 config file preset (sole table: config/route-presets.json, selected by
 ORCHESTRATOR_ROUTE; ORCHESTRATOR_ROUTE_PRESETS_PATH may select another table)
   → owner-authored issue Coder-Rec for coder/coderFix

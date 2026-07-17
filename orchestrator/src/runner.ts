@@ -3415,17 +3415,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // external quota reset (ID-001 park) — never invent terminal from
             // candidate exhaustion (#926 / ID-008).
             if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
-              return await parkQuotaWaitForReset({
-                step,
-                err: parkErr,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-              });
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err: parkErr,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
             }
             if (step === "S5") {
               // #926: return result to persistent judge (S5→S6). Noop fix
@@ -3469,7 +3480,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 if (stay !== "break") return stay;
                 break;
               }
-              return await parkQuotaWaitForReset({
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
+            }
+            // parkOrRelayQuotaWall may throw on required ledger writes; surface
+            // via errorTermination so runOrchestrator returns S8, not rejects.
+            let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+            try {
+              outcome = await parkOrRelayQuotaWall({
                 step,
                 err,
                 ledger,
@@ -3479,29 +3517,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 resolveBranchHEAD,
                 hashPrompt: (promptFile, s) =>
                   hashPrompt(promptFile, s, backend),
-              });
-            }
-            const outcome = await parkOrRelayQuotaWall({
-              step,
-              err,
-              ledger,
-              stateDir,
-              sessionId,
-              backend,
-              resolveBranchHEAD,
-              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
-              worktreePath: worktree?.path,
-              currentModelId: modelIdForWallStep(step),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              // #909 production live path: route-smoke knownLive for quota walls.
-              pools: resolveRelayPools(
+                worktreePath: worktree?.path,
+                currentModelId: modelIdForWallStep(step),
                 currentPool,
-                err.disposition.resetAt,
-                true,
-              ),
-              now: relayNow(),
-            });
+                rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                // #909 production live path: route-smoke knownLive for quota walls.
+                pools: resolveRelayPools(
+                  currentPool,
+                  err.disposition.resetAt,
+                  true,
+                ),
+                now: relayNow(),
+              });
+            } catch (writeErr) {
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
+            }
             if (outcome.kind === "park") {
               if (isReviewFixSeat) {
                 const stay = await applyReviewFixStayPut(
