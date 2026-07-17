@@ -8331,12 +8331,13 @@ class GameDB:
         turn: int,
         payload: Optional[Mapping[str, object]] = None,
     ) -> Dict[str, object]:
-        """Production non-create seam: pin latest held user when oral exists (#976).
+        """Pin latest held user for production non-create **更新** (#976).
 
-        ``stage_pending_action`` only auto-pins 新建 (pure-public non-create must
-        not invent bloodline).  Session/tools production paths call this so a
-        live held oral line is explicit pin → commit classify → withheld, never
-        settle-release into shared character_knowledge_sources.
+        ``stage_pending_action`` only auto-pins 新建.  Non-create pure-public
+        must not invent bloodline (催办/记进展/提交核议 leave pin unset).
+        Callers that rewrite order body (extract「更新」) attach pin so the oral
+        decree withholds and never settle-releases into shared
+        character_knowledge_sources.
         """
         out: Dict[str, object] = dict(payload or {})
         if self._parse_origin_chat_message_id(out) is not None:
