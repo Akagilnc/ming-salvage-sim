@@ -1,6 +1,16 @@
 /** #942/#934 ID-001 public result + OS exit ABI (supersedes #929). */
 
-import type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+/** Diagnostic stage tokens (stopSummary / failedStatus) — not public ABI. */
+export const FAMILY_STAGE_FAILURE_STATUSES = [
+  "verify_failed",
+  "cmr_failed",
+  "ship_failed",
+  "online_review_failed",
+  "merge_failed",
+  "cleanup_failed",
+] as const;
+export type FamilyStageFailureStatus =
+  (typeof FAMILY_STAGE_FAILURE_STATUSES)[number];
 
 export const PUBLIC_RUN_RESULTS = ["completed", "parked", "failed"] as const;
 export type PublicRunResult = (typeof PUBLIC_RUN_RESULTS)[number];
@@ -38,6 +48,7 @@ export const PUBLIC_EXIT_CODES: Readonly<Record<PublicRunResult, number>> = {
   failed: 1,
 };
 
+/** #929 public tokens — fail-closed, no dual-read (ID-005). Stage list composed once. */
 export const LEGACY_929_PUBLIC_STATUS_TOKENS = [
   "success",
   "already_done",
@@ -45,16 +56,14 @@ export const LEGACY_929_PUBLIC_STATUS_TOKENS = [
   "incomplete",
   "error",
   "escalate",
-  "verify_failed",
-  "cmr_failed",
-  "ship_failed",
-  "online_review_failed",
-  "merge_failed",
-  "cleanup_failed",
+  ...FAMILY_STAGE_FAILURE_STATUSES,
 ] as const;
 
 const PUBLIC_RESULT_SET: ReadonlySet<string> = new Set(PUBLIC_RUN_RESULTS);
 const LEGACY_929_SET: ReadonlySet<string> = new Set(LEGACY_929_PUBLIC_STATUS_TOKENS);
+const STAGE_FAILURE_SET: ReadonlySet<string> = new Set(
+  FAMILY_STAGE_FAILURE_STATUSES,
+);
 
 const STAGE_CAUSE: Readonly<Record<FamilyStageFailureStatus, PublicFailedCause>> = {
   verify_failed: "verification_failed",
@@ -69,6 +78,12 @@ export function isPublicRunResult(value: unknown): value is PublicRunResult {
   return typeof value === "string" && PUBLIC_RESULT_SET.has(value);
 }
 
+export function isFamilyStageFailureStatus(
+  value: unknown,
+): value is FamilyStageFailureStatus {
+  return typeof value === "string" && STAGE_FAILURE_SET.has(value);
+}
+
 export function isLegacy929PublicStatusToken(value: unknown): boolean {
   return typeof value === "string" && LEGACY_929_SET.has(value);
 }
@@ -77,17 +92,17 @@ export function exitCodeForPublicResult(status: PublicRunResult | string): numbe
   return isPublicRunResult(status) ? PUBLIC_EXIT_CODES[status] : PUBLIC_EXIT_CODES.failed;
 }
 
-export function familyDriverExitCode(
+/** Canonical public OS exit helper (single-slice + family). */
+export function publicResultExitCode(
   result: { readonly status: string } | string,
 ): number {
   return exitCodeForPublicResult(typeof result === "string" ? result : result.status);
 }
 
-export function runResultExitCode(
-  result: { readonly status: string } | string,
-): number {
-  return familyDriverExitCode(result);
-}
+/** Thin alias — family launchers / driver naming. */
+export const familyDriverExitCode = publicResultExitCode;
+/** Thin alias — single-slice entry naming. */
+export const runResultExitCode = publicResultExitCode;
 
 export function exitProcessForFamilyRun(
   result: { readonly status: string },
@@ -95,7 +110,7 @@ export function exitProcessForFamilyRun(
     process.exit(code);
   },
 ): number {
-  const code = familyDriverExitCode(result);
+  const code = publicResultExitCode(result);
   exitFn(code);
   return code;
 }
@@ -105,3 +120,5 @@ export function causeFromStageFailure(
 ): PublicFailedCause {
   return STAGE_CAUSE[stage];
 }
+
+

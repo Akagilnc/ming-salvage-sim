@@ -27,6 +27,8 @@ import type {
 } from "../../src/family/types.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 import {
+  FAMILY_STAGE_FAILURE_STATUSES as STAGE_STATUSES_FROM_PUBLIC,
+  LEGACY_929_PUBLIC_STATUS_TOKENS,
   PUBLIC_EXIT_CODES,
   PUBLIC_FAILED_CAUSES,
   PUBLIC_RUN_RESULTS,
@@ -36,6 +38,7 @@ import {
   familyDriverExitCode,
   isLegacy929PublicStatusToken,
   isPublicRunResult,
+  publicResultExitCode,
   runResultExitCode,
 } from "../../src/publicResult.js";
 import { planFamilyTerminalReplay } from "../../src/familyDriver.js";
@@ -107,6 +110,16 @@ describe("#942 pure public result + OS map (ID-001)", () => {
     expect(isLegacy929PublicStatusToken("completed")).toBe(false);
     expect(isLegacy929PublicStatusToken("parked")).toBe(false);
     expect(isLegacy929PublicStatusToken("failed")).toBe(false);
+  });
+
+  it("LEGACY_929 composes FAMILY_STAGE_FAILURE_STATUSES (N1, no re-list drift)", () => {
+    for (const stage of STAGE_STATUSES_FROM_PUBLIC) {
+      expect(LEGACY_929_PUBLIC_STATUS_TOKENS).toContain(stage);
+      expect(isLegacy929PublicStatusToken(stage)).toBe(true);
+    }
+    expect(publicResultExitCode({ status: "completed" })).toBe(0);
+    expect(familyDriverExitCode({ status: "completed" })).toBe(0);
+    expect(runResultExitCode({ status: "completed" })).toBe(0);
   });
 });
 
@@ -260,13 +273,16 @@ describe("#942 public family results (ID-001)", () => {
 
   it.each(
     FAMILY_STAGE_FAILURE_STATUSES.map((s) => [s] as const),
-  )("stage failure %s → public failed + ID-001 cause + OS 1", async (status) => {
+  )("stage failure %s → public failed + ID-001 cause + OS 1 (ID-014 audit map)", async (status) => {
     const result = await familyStageFail(status);
     expect(result.status).toBe("failed");
     expect(result.cause).toBe(causeFromStageFailure(status));
+    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
     expect(familyDriverExitCode(result)).toBe(1);
-    // Diagnostic stage token may still live on stopSummary — not as public status.
+    // ID-014: stage diagnostic stays on stopSummary.reason; public status is failed only.
     expect(result.status).not.toBe(status);
+    expect(result.stopSummary.reason).toBe(status);
+    expect(isPublicRunResult(result.stopSummary.reason)).toBe(false);
   });
 
   it("decision park → parked + OS 2", async () => {
@@ -395,7 +411,7 @@ describe("#942 public single-slice results (ID-001)", () => {
     vi.restoreAllMocks();
   });
 
-  it("stopForCoderRec tight violation → failed + nonzero OS 1", async () => {
+  it("stopForCoderRec tight violation → failed + route_config_invalid + OS 1", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -438,11 +454,13 @@ describe("#942 public single-slice results (ID-001)", () => {
 
     const result = await runOrchestrator({ issueNumber: 942, backend: new SpyBackend() });
     expect(result.status).toBe("failed");
+    expect(result.cause).toBe("route_config_invalid");
+    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
     expect(runResultExitCode(result)).toBe(1);
     expect(errorSpy).toHaveBeenCalled();
   });
 
-  it("post-worktree S2 throw → failed + OS 1 + loud console.error", async () => {
+  it("post-worktree S2 throw → failed + runner_internal_error + OS 1", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     class SpyBackend implements Backend {
       readonly ledgerCalls: PersistentLedgerEntry[] = [];
@@ -483,10 +501,369 @@ describe("#942 public single-slice results (ID-001)", () => {
     const backend = new SpyBackend();
     const result = await runOrchestrator({ issueNumber: 942, backend });
     expect(result.status).toBe("failed");
+    expect(result.cause).toBe("runner_internal_error");
+    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
     expect(runResultExitCode(result)).toBe(1);
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
     expect(s8.length).toBeGreaterThanOrEqual(1);
     expect(s8[s8.length - 1]!.handoffStatus).toBe("failed");
     expect(errorSpy).toHaveBeenCalled();
   });
+
+  it("happy path → completed + OS 0 (N3)", async () => {
+    class HappyBackend implements Backend {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(n: number, base: string): Promise<WorktreeHandle> {
+        return { branch: `feat/${n}`, base, path: `/wt/${n}` };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 942,
+      backend: new HappyBackend(),
+    });
+    expect(result.status).toBe("completed");
+    expect(result.cause).toBeUndefined();
+    expect(runResultExitCode(result)).toBe(0);
+    expect(publicResultExitCode(result)).toBe(0);
+  });
+
+  it("decision park → parked + OS 2 (N3)", async () => {
+    class ParkBackend implements Backend {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(n: number, base: string): Promise<WorktreeHandle> {
+        return { branch: `feat/${n}`, base, path: `/wt/${n}` };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.id === "S2") {
+          const stuck: Escalation = {
+            reason: "Design-level ambiguity",
+            diagnosis: "Product decision required before coding can continue.",
+          };
+          return {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: stuck,
+          };
+        }
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 942,
+      backend: new ParkBackend(),
+    });
+    expect(result.status).toBe("parked");
+    expect(result.cause).toBeUndefined();
+    expect(runResultExitCode(result)).toBe(2);
+  });
+
+  it("corrupted resident scene → failed + resume_state_invalid (M1)", async () => {
+    class CorruptedBackend implements Backend {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<ResumeState> {
+        throw new Error("ledger JSONL unreadable");
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(): Promise<IssueMeta> {
+        throw new Error("must not fetch meta on corrupted scene");
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        throw new Error("must not prepare worktree on corrupted scene");
+      }
+      async runStep(_spec: StepSpec): Promise<StepOutput> {
+        throw new Error("must not dispatch on corrupted scene");
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 942,
+      backend: new CorruptedBackend(),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.cause).toBe("resume_state_invalid");
+    expect(runResultExitCode(result)).toBe(1);
+  });
 });
+
+// ── ID-005 fail-closed for #929 durable tokens at real public entry ────────
+
+describe("#942 ID-005 #929 durable handoff tokens fail closed at runOrchestrator", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  const legacyTokens = [
+    "success",
+    "error",
+    "escalate",
+    "already_done",
+    "incomplete",
+    "escalated",
+  ] as const;
+
+  function worktree(): WorktreeHandle {
+    return {
+      branch: "feat/942-legacy",
+      base: "main",
+      path: "/resident/worktrees/issue-942-legacy",
+    };
+  }
+
+  function resumeWithHandoff(handoffStatus: string): ResumeState {
+    return {
+      worktree: worktree(),
+      stateDir: "/resident/state/issue-942-legacy",
+      ledger: [
+        {
+          step: "S0",
+          sessionId: "s0",
+          prompt_hash: "h0",
+          branchHEAD: "abc",
+          ts: "2026-07-17T00:00:00.000Z",
+        },
+        {
+          step: "S8",
+          sessionId: "s8",
+          prompt_hash: "h8",
+          branchHEAD: "abc",
+          ts: "2026-07-17T00:00:01.000Z",
+          // Cast: durable residue may still carry pre-cutover tokens.
+          handoffStatus: handoffStatus as PersistentLedgerEntry["handoffStatus"],
+        },
+      ],
+    };
+  }
+
+  class LegacyResumeBackend implements Backend {
+    constructor(private readonly resume: ResumeState) {}
+    prepareCount = 0;
+    runStepIds: string[] = [];
+    async smokeModelRoute(route: any) {
+      const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    }
+    async findResumeState(): Promise<ResumeState> {
+      return this.resume;
+    }
+    async resumeSession(spec: StepSpec): Promise<StepOutput> {
+      return this.runStep(spec);
+    }
+    async fetchIssueMeta(): Promise<IssueMeta> {
+      throw new Error("must not admit on terminal legacy residue");
+    }
+    async prepareWorktree(): Promise<WorktreeHandle> {
+      this.prepareCount += 1;
+      return worktree();
+    }
+    async runStep(spec: StepSpec): Promise<StepOutput> {
+      this.runStepIds.push(spec.id);
+      if (spec.role === "coder") {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      return { kind: "judge", status: "converged" };
+    }
+    async writeLedger(): Promise<void> {}
+  }
+
+  it.each(legacyTokens.map((t) => [t] as const))(
+    "handoffStatus=%s → public failed + resume_state_invalid (no dual-read)",
+    async (token) => {
+      const backend = new LegacyResumeBackend(resumeWithHandoff(token));
+      const result = await runOrchestrator({ issueNumber: 942, backend });
+      expect(result.status).toBe("failed");
+      expect(result.cause).toBe("resume_state_invalid");
+      expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+      expect(runResultExitCode(result)).toBe(1);
+      // No dual-read to completed/parked.
+      expect(result.status).not.toBe("completed");
+      expect(result.status).not.toBe("parked");
+      expect(backend.prepareCount).toBe(0);
+      expect(backend.runStepIds).toEqual([]);
+    },
+  );
+
+  it("current-schema failed handoff re-feeds failed with cause (not legacy dual-read)", async () => {
+    const backend = new LegacyResumeBackend(resumeWithHandoff("failed"));
+    const result = await runOrchestrator({ issueNumber: 942, backend });
+    expect(result.status).toBe("failed");
+    expect(result.cause).toBeDefined();
+    expect(PUBLIC_FAILED_CAUSES).toContain(result.cause);
+    expect(result.cause).not.toBeUndefined();
+    expect(runResultExitCode(result)).toBe(1);
+    expect(backend.runStepIds).toEqual([]);
+  });
+
+  it("current-schema completed handoff re-feeds completed/0", async () => {
+    const backend = new LegacyResumeBackend(resumeWithHandoff("completed"));
+    const result = await runOrchestrator({ issueNumber: 942, backend });
+    expect(result.status).toBe("completed");
+    expect(result.cause).toBeUndefined();
+    expect(runResultExitCode(result)).toBe(0);
+    expect(backend.runStepIds).toEqual([]);
+  });
+});
+
+// ── ID-014 / ID-015 proofs at public entry ─────────────────────────────────
+
+describe("#942 ID-014 / ID-015 public-entry proofs", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("ID-015: optional branchHEAD read failure warns + omits; public completed holds", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    class BranchHeadFailBackend implements Backend {
+      readonly ledgerCalls: PersistentLedgerEntry[] = [];
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(n: number, base: string): Promise<WorktreeHandle> {
+        return { branch: `feat/${n}`, base, path: `/wt/${n}` };
+      }
+      async worktreeHead(): Promise<string> {
+        throw new Error("git rev-parse failed (simulated)");
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        this.ledgerCalls.push(entry);
+      }
+    }
+
+    const backend = new BranchHeadFailBackend();
+    const result = await runOrchestrator({
+      issueNumber: 942,
+      backend,
+    });
+    expect(result.status).toBe("completed");
+    expect(runResultExitCode(result)).toBe(0);
+    // Optional truth: branchHEAD omitted on failure (never empty string).
+    for (const entry of backend.ledgerCalls) {
+      if ("branchHEAD" in entry) {
+        expect(entry.branchHEAD === undefined || entry.branchHEAD.length > 0).toBe(
+          true,
+        );
+        expect(entry.branchHEAD).not.toBe("");
+      }
+    }
+    // Legal degrade path should not flip public result.
+    expect(result.cause).toBeUndefined();
+    expect(warnSpy.mock.calls.length + errorSpy.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("ID-015: optional CMR leg smoke fail degrades; family still completed/0", async () => {
+    // Real public runFamily entry: required smoke passes, optional agy fails →
+    // degradeOptionalRouteSmokeFailures drops the leg; public result stays completed.
+    class OptionalAgyFailChild extends ChildBackend {
+      override async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async (entry: { readonly slug: string }) => {
+          if (entry.slug === "agy") {
+            throw new Error("agy optional leg unavailable");
+          }
+          return { cliVersion: "test" };
+        });
+      }
+    }
+
+    const familyBackend = new FakeFamilyBackend();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new OptionalAgyFailChild(),
+      familyBase: "family/942-base",
+      verifyCmr: async () => ({ ok: true, ran: true }),
+    });
+    expect(result.status).toBe("completed");
+    expect(familyDriverExitCode(result)).toBe(0);
+    // Degrade audit lands as route_degraded diagnostics — not public failed.
+    const degradedRows = familyBackend.ledger.filter(
+      (e) => e.event === "route_degraded" || e.status === "route_degraded",
+    );
+    expect(degradedRows.length).toBeGreaterThanOrEqual(1);
+    expect(degradedRows.some((r) => r.droppedLeg === "agy")).toBe(true);
+    expect(result.cause).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
