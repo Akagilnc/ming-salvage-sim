@@ -362,6 +362,8 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
       },
     });
     expect(result.status).toBe("failed");
+    if (result.status !== "failed") throw new Error("expected failed");
+    expect(result.cause).toBe("issue_metadata_unavailable");
     expect(result.escalation?.diagnosis).toMatch(/blocked_by schema error|issue metadata unavailable/i);
     expect(cloneCalls).toBe(0);
   });

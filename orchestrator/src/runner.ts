@@ -894,12 +894,13 @@ function lastReviewerStep(
  *   1. Empty ledger              → resume from S0 (treat as a fresh run).
  *   2. The last agent output escalated AND a later escalation_answered row exists
  *      → resume THAT step in its original session (resumeSession + sessionId).
- *      Without the appended answer, report the prior escalate terminal status.
+ *      Without the appended answer, report the prior parked/failed terminal status.
  *   3. The prior run reached a terminal handoff that is NOT being re-opened
  *      (S8 entry, or the last step routes straight to a handoff) → report that
- *      handoff's TRUE status (success / error / escalate) — never a hardcoded
- *      success. The S8 entry carries `handoffStatus` (#255); when the terminal
- *      status must be inferred (a crash before the S8 write), route() gives it.
+ *      handoff's TRUE public status (completed | parked | failed) — never a
+ *      hardcoded completed. The S8 entry carries `handoffStatus` (#255); when the
+ *      terminal status must be inferred (a crash before the S8 write), route()
+ *      gives it.
  *   4. Otherwise (crash mid-run) → continue from `route()`'s successor of the
  *      last recorded step, with a fresh dispatch.
  */
@@ -2302,11 +2303,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   /**
-   * Build an S8(status=error) termination from the failing step + caught error.
+   * Build an S8 public-failed termination from the failing step + caught error.
    *
    * #3: records BOTH the failing step and the terminal S8 in the in-memory
    * ledger AND persists them (best-effort) to the sibling state dir, so a
-   * resume reading the PERSISTED ledger sees the error termination instead of
+   * resume reading the PERSISTED ledger sees the failed termination instead of
    * the failing step + S8 vanishing.
    *
    * PRE-WORKTREE failures are an unpersistable special case (integ-cmr base r2,
@@ -2317,8 +2318,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
-   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (after
-   * stateDir is fixed) and later steps persist their error termination.
+   * public failed, but NOTHING is persisted. Only POST-worktree S1 (after
+   * stateDir is fixed) and later steps persist their failed termination.
    * So this contract does NOT promise "every S1 throw is persisted" — only
    * post-worktree ones.
    */
@@ -2917,9 +2918,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
-  // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
-  // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
-  // keeps the absence of any "数到 N 就停" cap explicit (US#18).
+  // public handoff (completed|parked|failed). ADR 0030 makes the per-slice
+  // review/fix loop visible in S3/S4/S5/S6, but still rejects a blind round
+  // cap; a `for (;;)` keeps the absence of any "数到 N 就停" cap explicit (US#18).
   orchestratorStepLoop: for (;;) {
     if (!routeSmokeChecked && step !== "S0") {
       const smokeResult = await ensureRouteSmoke();
@@ -2991,7 +2992,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
           // the resume contract needs a worktree's sibling dir). errorTermination
           // records the in-memory S8 and persists only if stateDir is resolved.
-          return await errorTermination("S0", err);
+          // #942 / #934 ID-001: live metadata throw is issue_metadata_unavailable
+          // (not the default runner_internal_error).
+          return await errorTermination("S0", err, {
+            cause: "issue_metadata_unavailable",
+          });
         }
 
         if (meta.isClosed) {
