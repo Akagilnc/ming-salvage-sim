@@ -8287,6 +8287,91 @@ class GameDB:
             return None
         return int(row["id"]) if row is not None else None
 
+    def _parse_origin_chat_message_id(
+        self, payload: Optional[Mapping[str, object]],
+    ) -> Optional[int]:
+        """Coerce pending/API ``origin_chat_message_id`` to a positive int pin."""
+        if not payload:
+            return None
+        raw = payload.get("origin_chat_message_id")
+        if raw is None:
+            return None
+        try:
+            mid = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return mid if mid > 0 else None
+
+    def _resolve_secret_oral_pins(
+        self,
+        state: GameState,
+        *,
+        origin_chat_message_id: Optional[int] = None,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
+        origin_minister_name: Optional[str] = None,
+        assignee_name: Optional[str] = None,
+    ) -> List[int]:
+        """Resolve oral-decree chat pins for secret-order classification (#976).
+
+        Prefer explicit stage/API pins; if none, auto-capture latest held user for
+        speaker then assignee so direct mutations still withhold the oral line.
+        """
+        pinned_ids: List[int] = []
+        if origin_chat_message_ids is not None:
+            for raw in origin_chat_message_ids:
+                try:
+                    mid = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if mid > 0 and mid not in pinned_ids:
+                    pinned_ids.append(mid)
+        if origin_chat_message_id is not None:
+            try:
+                mid = int(origin_chat_message_id)
+            except (TypeError, ValueError):
+                mid = 0
+            if mid > 0 and mid not in pinned_ids:
+                pinned_ids.append(mid)
+        if not pinned_ids:
+            for name in dict.fromkeys(
+                n for n in (
+                    str(origin_minister_name or "").strip(),
+                    str(assignee_name or "").strip(),
+                ) if n
+            ):
+                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
+                if mid is not None and mid not in pinned_ids:
+                    pinned_ids.append(mid)
+        return pinned_ids
+
+    def _classify_secret_order_audience(
+        self,
+        state: GameState,
+        order_id: int,
+        minister_name: str,
+        title: str,
+        body: str,
+        *,
+        origin_minister_name: Optional[str] = None,
+        origin_chat_message_id: Optional[int] = None,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
+        commit: bool = True,
+    ) -> None:
+        """Brief upsert + pin-mode oral withhold/release (create and non-create isomorphic)."""
+        pins = self._resolve_secret_oral_pins(
+            state,
+            origin_chat_message_id=origin_chat_message_id,
+            origin_chat_message_ids=origin_chat_message_ids,
+            origin_minister_name=origin_minister_name,
+            assignee_name=minister_name,
+        )
+        self.upsert_secret_order_brief(
+            state, int(order_id), minister_name, title, body,
+            origin_minister_name=origin_minister_name,
+            origin_chat_message_ids=pins,
+            commit=commit,
+        )
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
@@ -8639,15 +8724,7 @@ class GameDB:
                 # pa["minister_name"] = audience speaker who captured the oral
                 # decree; may differ from final assignee (跨人承办).
                 # Stage-time pin: do not re-guess max(held) after confirm utterance.
-                origin_mid_raw = payload.get("origin_chat_message_id")
-                origin_mid: Optional[int] = None
-                if origin_mid_raw is not None:
-                    try:
-                        origin_mid = int(origin_mid_raw)
-                    except (TypeError, ValueError):
-                        origin_mid = None
-                    if origin_mid is not None and origin_mid <= 0:
-                        origin_mid = None
+                origin_mid = self._parse_origin_chat_message_id(payload)
                 order_id = self.create_secret_order(
                     state, assignee, title, content_text, tags, deadline_months=deadline,
                     excluded_names=excluded, excluded_offices=excluded_offices,
@@ -8662,6 +8739,10 @@ class GameDB:
                 return order_id is not None
             if oid is None:
                 return False
+            # Non-create secret_order: stage already pinned origin_chat_message_id;
+            # consume it at commit so oral decree is withheld (同构新建分类).
+            origin_mid = self._parse_origin_chat_message_id(payload)
+            origin_speaker = str(pa.get("minister_name") or "") or None
             if pa["action"] == "更新":
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
                 return self.update_secret_order_by_id(
@@ -8670,18 +8751,48 @@ class GameDB:
                     str(payload.get("new_content") or ""),
                     tags=None, deadline_months=deadline,
                     registry=registry,
+                    origin_minister_name=origin_speaker,
+                    origin_chat_message_id=origin_mid,
                 )
             if pa["action"] == "催办":
                 deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
+                order = self.get_secret_order(int(oid))
+                if order is not None:
+                    self._classify_secret_order_audience(
+                        state, int(oid), str(order["minister_name"]),
+                        str(order.get("title") or ""), str(order.get("content") or ""),
+                        origin_minister_name=origin_speaker,
+                        origin_chat_message_id=origin_mid,
+                    )
                 return True
             if pa["action"] == "提交核议":
-                return self.submit_secret_order_for_review(
+                ok = self.submit_secret_order_for_review(
                     int(oid), str(payload.get("claim") or ""), state.year, state.period)
+                if ok:
+                    order = self.get_secret_order(int(oid))
+                    if order is not None:
+                        self._classify_secret_order_audience(
+                            state, int(oid), str(order["minister_name"]),
+                            str(order.get("title") or ""), str(order.get("content") or ""),
+                            origin_minister_name=origin_speaker,
+                            origin_chat_message_id=origin_mid,
+                        )
+                return ok
             if pa["action"] == "记进展":
-                return self.update_secret_order_progress(
+                ok = self.update_secret_order_progress(
                     int(oid), str(payload.get("note") or ""), state.year, state.period)
+                if ok:
+                    order = self.get_secret_order(int(oid))
+                    if order is not None:
+                        self._classify_secret_order_audience(
+                            state, int(oid), str(order["minister_name"]),
+                            str(order.get("title") or ""), str(order.get("content") or ""),
+                            origin_minister_name=origin_speaker,
+                            origin_chat_message_id=origin_mid,
+                        )
+                return ok
         if pa["kind"] == "consort" and pa["action"] == "调教":
             skill = str(payload.get("skill") or "")
             trait = str(payload.get("trait") or "")
@@ -10645,38 +10756,12 @@ class GameDB:
              json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
         self.conn.commit()
-        # Pin oral-decree provenance before classification. Prefer caller pin
-        # (pending stage); else auto-capture latest held user for speaker/assignee
-        # so direct create still withholds the oral line without max-after-confirm.
-        pinned_ids: List[int] = []
-        if origin_chat_message_ids is not None:
-            for raw in origin_chat_message_ids:
-                try:
-                    mid = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0:
-                    pinned_ids.append(mid)
-        if origin_chat_message_id is not None:
-            try:
-                mid = int(origin_chat_message_id)
-            except (TypeError, ValueError):
-                mid = 0
-            if mid > 0 and mid not in pinned_ids:
-                pinned_ids.append(mid)
-        if not pinned_ids:
-            assignee_name = str(minister_name or "").strip()
-            origin_name = str(origin_minister_name or "").strip()
-            for name in dict.fromkeys(
-                n for n in (origin_name, assignee_name) if n
-            ):
-                mid = self._latest_held_user_chat_message_id(name, int(state.turn))
-                if mid is not None and mid not in pinned_ids:
-                    pinned_ids.append(mid)
-        self.upsert_secret_order_brief(
+        # Classification event (brief + pin-mode withhold): same seam as non-create.
+        self._classify_secret_order_audience(
             state, int(cur.lastrowid), minister_name, title, content,
             origin_minister_name=origin_minister_name,
-            origin_chat_message_ids=pinned_ids,
+            origin_chat_message_id=origin_chat_message_id,
+            origin_chat_message_ids=origin_chat_message_ids,
         )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
@@ -10717,13 +10802,21 @@ class GameDB:
         tags: Optional[List[str]] = None,
         deadline_months: int = 0,
         registry=None,
+        *,
+        origin_minister_name: Optional[str] = None,
+        origin_chat_message_id: Optional[int] = None,
+        origin_chat_message_ids: Optional[Iterable[int]] = None,
     ) -> bool:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
         返回是否更新（id 存在且状态为 active）。
 
         与 upsert_secret_order 的区别：upsert 按「该大臣最新 active」改，会话动作「更新」已解析出
         确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
-        tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。"""
+        tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。
+
+        Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
+        classification seam as create so non-create audience updates withhold口谕.
+        """
         row = self.conn.execute(
             "SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?", (int(order_id),)
         ).fetchone()
@@ -10766,8 +10859,12 @@ class GameDB:
                     (persisted_title, content, tags_json, json.dumps(excluded_names, ensure_ascii=False),
                      json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
-            self.upsert_secret_order_brief(
-                state, int(order_id), str(row["minister_name"]), persisted_title, content, commit=False,
+            self._classify_secret_order_audience(
+                state, int(order_id), str(row["minister_name"]), persisted_title, content,
+                origin_minister_name=origin_minister_name,
+                origin_chat_message_id=origin_chat_message_id,
+                origin_chat_message_ids=origin_chat_message_ids,
+                commit=False,
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
