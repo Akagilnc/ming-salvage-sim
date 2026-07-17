@@ -802,8 +802,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
 // ─── #919 D: ship production T2 envelope SO four-case matrix ────────────────
 // Ship attaches shipStationReceiptSchema on SHIP_RECEIPT_TAG; cargo (status/pr)
 // stays opaque sidecar. Four-case crosses production runShipWorker + real sc.run.
-// sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-describe.sequential("#919 ship production T2 envelope SO four-case", () => {
+// #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
+describe("#919 ship production T2 envelope SO four-case", () => {
   function shipFourCaseBackend(opts: {
     emissions: ReadonlyArray<{ body: string }>;
     sessionId: string;
