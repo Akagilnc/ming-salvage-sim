@@ -6805,6 +6805,9 @@ class GameDB:
         ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
         ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
         ``chat_messages`` 本表，不依赖共享投影即时可见。
+
+        Empty ``minister_name`` is allowed for non-audience bookkeeping rows but
+        cannot be projected (release parks them as withheld — see N2).
         """
         cur = self.conn.execute(
             "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
@@ -10146,27 +10149,39 @@ class GameDB:
             self.conn.commit()
 
     def _withhold_assignee_user_audience_origin(
-        self, minister_name: str, *, commit: bool = True,
+        self, state: GameState, minister_name: str, *, commit: bool = True,
     ) -> None:
         """Classify secret-origin audience bloodline for one assignee (#976).
 
         Structural rule (provenance, not content matching): emperor ``user``
-        chat with this assignee is secret-origin bloodline — never released
-        (shared or private events).  Zero-overlap LLM 润稿 is covered because
-        identity is message role + assignee, not text needles.
+        chat in the secret-origin window is never released (shared or private
+        events).  Zero-overlap LLM 润稿 is covered by role+assignee identity.
 
-        Minister/assistant held rows for the same assignee are not withheld
-        here: after the brief exists, ``release_held_audience_knowledge`` sends
-        them to the private track only (never shared), so 臣领密旨-class acks
-        cannot residual in character_knowledge_sources.
+        Scope (S1, not all-history):
+        - All still-``held`` user rows for this assignee (any turn) — covers
+          T-hold → T+N create without settle, and same-turn origin.
+        - Already projected (``released``/``private``) user rows only inside
+          the open settle window ``turn >= state.turn - 1`` — retains the
+          accepted cost of pulling back just-publicized origin across one
+          settle boundary; does **not** yank unrelated older pure-public
+          召对 that other ministers already saw.
+
+        Minister/assistant held rows are not withheld here: after the brief
+        exists, ``release_held_audience_knowledge`` sends them private-only.
         """
         name = str(minister_name or "").strip()
         if not name:
             return
+        # Previous + current turn: post-settle advance leaves origin at turn-1.
+        bound_turn = max(0, int(state.turn) - 1)
         try:
             rows = self.conn.execute(
-                "SELECT id FROM chat_messages WHERE minister_name=? AND role='user'",
-                (name,),
+                "SELECT id FROM chat_messages "
+                "WHERE minister_name=? AND role='user' AND ("
+                "  knowledge_status='held'"
+                "  OR (knowledge_status IN ('released', 'private') AND turn >= ?)"
+                ")",
+                (name, bound_turn),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
@@ -10178,8 +10193,8 @@ class GameDB:
                 "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
                 (mid,),
             )
-        # Provenance cleanup if anything leaked before classification (should
-        # be empty under hold-first; id-based, never content match).
+        # Provenance cleanup if anything leaked before classification (id-based,
+        # never content match). Empty under pure hold-first.
         self._delete_shared_knowledge_source_ids(source_ids, commit=False)
         if commit:
             self.conn.commit()
@@ -10191,25 +10206,29 @@ class GameDB:
         message_id: int,
         minister_name: str,
         content: str,
+        origin_turn: Optional[int] = None,
         commit: bool = False,
     ) -> str:
         """Single projection seam for one held audience row (#976 DRY).
 
-        Returns the resulting knowledge_status: ``private`` (active secret
-        assignee — participation events only) or ``released`` (shared track).
+        Stamps knowledge with the message's original ``origin_turn`` (not the
+        release-time state.turn).  Returns knowledge_status: ``private``
+        (active secret assignee) or ``released`` (shared track).
         """
         source_id = f"chat_message:{int(message_id)}"
         minister = str(minister_name or "").strip()
         body = str(content or "")
+        proj_turn = int(origin_turn if origin_turn is not None else state.turn)
+        proj_state = state if proj_turn == int(state.turn) else replace(state, turn=proj_turn)
         if self._is_active_secret_order_assignee(minister):
             self.record_character_participation(
-                state, [minister], "audience", "召对", body,
+                proj_state, [minister], "audience", "召对", body,
                 source_id=source_id, commit=False,
             )
             status = "private"
         else:
             self.record_participation_record(
-                state,
+                proj_state,
                 {"participants": [minister], "title": "召对", "body": body},
                 kind="audience", source_id=source_id, commit=False,
             )
@@ -10237,13 +10256,13 @@ class GameDB:
         try:
             if name_filter:
                 rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, role, content FROM chat_messages "
+                    "SELECT id, minister_name, turn, content FROM chat_messages "
                     "WHERE knowledge_status='held' AND minister_name=? ORDER BY id",
                     (name_filter,),
                 ).fetchall()
             else:
                 rows = self.conn.execute(
-                    "SELECT id, minister_name, turn, role, content FROM chat_messages "
+                    "SELECT id, minister_name, turn, content FROM chat_messages "
                     "WHERE knowledge_status='held' ORDER BY id",
                 ).fetchall()
         except sqlite3.OperationalError:
@@ -10256,11 +10275,18 @@ class GameDB:
             mid = int(row["id"])
             minister = str(row["minister_name"] or "").strip()
             content = str(row["content"] or "")
+            origin_turn = int(row["turn"] or state.turn)
             if not minister:
+                # N2: empty minister_name cannot be projected; park as withheld
+                # so the row does not remain stuck in held forever.
+                self.conn.execute(
+                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
+                    (mid,),
+                )
                 continue
             self._project_audience_chat_message(
                 state, message_id=mid, minister_name=minister, content=content,
-                commit=False,
+                origin_turn=origin_turn, commit=False,
             )
             released += 1
         if commit:
@@ -10341,7 +10367,7 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
-        self._withhold_assignee_user_audience_origin(minister_name, commit=False)
+        self._withhold_assignee_user_audience_origin(state, minister_name, commit=False)
         # Release pure-public held rows (other ministers; non-withheld).
         self.release_held_audience_knowledge(commit=False)
         if commit:
