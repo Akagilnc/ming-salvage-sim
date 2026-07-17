@@ -2318,7 +2318,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(receipt.safeParse({
       findingsCount: 0,
       findings: [],
-      findingFamilies: [{ identityKeys: ["c|l|q"] }],
+      evidencePaths: ["cmr/review.json"],
     }).success).toBe(true);
   });
 

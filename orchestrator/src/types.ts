@@ -405,7 +405,6 @@ export interface JudgeResult {
   readonly successfulLegs?: readonly string[];
   readonly skippedLegs?: readonly CmrSkippedLeg[];
   readonly evidencePaths?: readonly string[];
-  readonly findingFamilies?: readonly FindingFamily[];
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
@@ -793,14 +792,6 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
-/** Cross-round finding family synthesis (#711). */
-export interface FindingFamily {
-  readonly family: string;
-  readonly members: ReadonlyArray<string>;
-  readonly recurringFromRounds: ReadonlyArray<number>;
-  readonly brief: string;
-}
-
 /** Prior-round finding snapshot forwarded to judge workers (#711). */
 export interface PriorRoundFindingSnapshot {
   readonly round: number;
@@ -944,8 +935,6 @@ export interface WorkerLandingPayload {
   }>;
   /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
-  /** Family fixer / child S5 coder-fix: pattern briefs from prior judge worker. */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   /** Family cleanup: host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
@@ -1157,8 +1146,6 @@ export interface CmrResult {
    * family never mints continue from findingsCount; court fail-louds residual.
    */
   readonly findingsCount?: number;
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: readonly FindingFamily[];
   /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
@@ -1252,8 +1239,6 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
 }
 
 /**
@@ -1825,7 +1810,6 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
-  readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
   /**
    * #686 / ADR 0124 — billing pool for this dispatch. Selects the real

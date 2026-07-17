@@ -30,10 +30,6 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import {
-  FIX_FOCUS_LANDING_FILE,
-  formatFixFocusMarkdown,
-} from "./findingFamilies.js";
 import { findingIdentityKeys } from "./findings.js";
 import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
 import {
@@ -175,43 +171,6 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
     // Best effort only: the file is still useful to the worker even if this is
     // a non-git fixture path. Real git worktrees get the exclude entry.
   }
-}
-
-function writeFixFocusLandingFile(
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
-  const needsFixFocus =
-    landing?.findingFamilies !== undefined &&
-    landing.findingFamilies.length > 0 &&
-    (spec.kind === "fixer" ||
-      (spec.kind === "coder" &&
-        (spec.id === "S5" || ctx.blockingFindingIdentityKeys !== undefined)));
-  if (!needsFixFocus || ctx.worktree === undefined) {
-    return undefined;
-  }
-  if (!existsSync(ctx.worktree.path)) return undefined;
-
-  const landingPath =
-    ctx.stateDir !== undefined
-      ? join(ctx.stateDir, "fix-focus.md")
-      : join(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
-  if (ctx.stateDir !== undefined) {
-    mkdirSync(ctx.stateDir, { recursive: true });
-  } else {
-    ensureGitExcluded(ctx.worktree.path, FIX_FOCUS_LANDING_FILE);
-  }
-  writeFileSync(
-    landingPath,
-    `${formatFixFocusMarkdown(landing.findingFamilies!)}\n`,
-    "utf8",
-  );
-  return {
-    path: landingPath,
-    sandboxPath: FIX_FOCUS_LANDING_FILE,
-    cleanup: ctx.stateDir === undefined,
-  };
 }
 
 function writeFixFindingsLandingFile(
@@ -497,7 +456,6 @@ export async function legacyDispatchWorker(
   const stepSpec = workerSpecToStepSpec(spec);
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
-  const fixFocusLanding = writeFixFocusLandingFile(spec, ctx, landing);
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {
@@ -507,25 +465,14 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
-  const fixFocusOptions =
-    fixFocusLanding !== undefined
-      ? {
-          fixFocusLanding: {
-            path: fixFocusLanding.path,
-            sandboxPath: fixFocusLanding.sandboxPath,
-          },
-        }
-      : undefined;
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
     fixFindingsOptions !== undefined ||
-    fixFocusOptions !== undefined ||
     outcomeLanding !== undefined ||
     ctx.billingPool !== undefined ||
     ctx.relayBrief !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
-          ...(fixFocusOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
           ...(ctx.billingPool !== undefined
             ? { billingPool: ctx.billingPool }
@@ -567,9 +514,6 @@ export async function legacyDispatchWorker(
       rmSync(join(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
         force: true,
       });
-    }
-    if (fixFocusLanding?.cleanup) {
-      rmSync(fixFocusLanding.path, { force: true });
     }
   }
   const { output, sessionId } = normalizeStepReturn(ret);

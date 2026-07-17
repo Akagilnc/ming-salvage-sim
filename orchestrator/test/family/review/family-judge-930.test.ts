@@ -322,21 +322,14 @@ describe("#930 pure family judge closure", () => {
       output: {
         station: "judge",
         status: "converged",
-        findingFamilies: [
-          {
-            family: "open-pattern",
-            members: [FINDING_KEY],
-            recurringFromRounds: [1],
-            brief: "cargo rides",
-          },
-        ],
+        skippedLegs: [{ slug: "gpt-leg", reason: "quota" }],
       },
     });
     expect(outcome.kind).toBe("judge");
     if (outcome.kind !== "judge") return;
     expect(outcome.status).toBe("converged");
-    // S3: findingFamilies not dropped on kind:judge path.
-    expect(outcome.findingFamilies?.[0]?.family).toBe("open-pattern");
+    // S3: skippedLegs cargo siblings ride on the kind:judge path.
+    expect(outcome.skippedLegs?.[0]?.slug).toBe("gpt-leg");
   });
 
   it("shared unusable residual paper is the sole family residual fail-loud shape", () => {
@@ -679,7 +672,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
 
   it("S1: typed station:judge continues/converges without open-count decode", async () => {
     // Live production traffic is kind:judge tri-state — not findingsCount.
-    // S3: findingFamilies cargo siblings ride on the judge envelope.
+    // S3: skippedLegs cargo siblings ride on the judge envelope.
     let cRound = 0;
     const backend = new FamilyJudgeBackend({
       completeness: (round) => {
@@ -693,14 +686,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
                 { identityKey: FINDING_KEY, action: "live" },
               ],
               findings: [FINDING],
-              findingFamilies: [
-                {
-                  family: "open-pattern",
-                  members: [FINDING_KEY],
-                  recurringFromRounds: [1],
-                  brief: "still open after fix",
-                },
-              ],
+              skippedLegs: [{ slug: "gpt-leg", reason: "quota" }],
             } as JudgeResult,
             "judge-typed-live",
           );

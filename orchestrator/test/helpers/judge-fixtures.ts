@@ -134,7 +134,6 @@ export function liveCmrJudgeContinue(
     readonly reason?: string;
     readonly claimedFixedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
-    readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
   },
 ): JudgeResult {
   const count = opts?.findingsCount;
@@ -166,9 +165,6 @@ export function liveCmrJudgeContinue(
       : {}),
     ...(opts?.priorFindingDispositions !== undefined
       ? { priorFindingDispositions: opts.priorFindingDispositions }
-      : {}),
-    ...(opts?.findingFamilies !== undefined
-      ? { findingFamilies: opts.findingFamilies }
       : {}),
   } as JudgeResult;
 }
@@ -216,9 +212,6 @@ export function legacyCmrScriptToWorkerOutput(
         ? { priorFindingDispositions: cmr.priorFindingDispositions }
         : {}),
       ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-      ...(cmr.findingFamilies !== undefined
-        ? { findingFamilies: cmr.findingFamilies }
-        : {}),
     });
   }
 
