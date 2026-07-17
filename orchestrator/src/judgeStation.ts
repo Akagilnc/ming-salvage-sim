@@ -732,6 +732,16 @@ export function closeFamilyCourtFromJudgeOutput(
   // Accept any worker / fixture shape; only kind:"judge" is a family closer.
   // `unknown` keeps callers free of WorkerOutput index-signature fights.
   output: unknown,
+  /**
+   * #952 R7-C1: prior findings-store statuses (identityKey → status) so
+   * terminal→terminal morphs fail at the shared write point. Family production
+   * builds this from ledger prior schema dispositions (refute→refuted,
+   * suppress→suppressed) via {@link storeStatusByIdentityFromDispositions}.
+   * Absent → treat as open (backward compat for pure unit tests / first write).
+   */
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
 ): FamilyJudgeClosure {
   if (
     output === null ||
@@ -769,12 +779,16 @@ export function closeFamilyCourtFromJudgeOutput(
         : undefined;
       const fixPacketBody =
         typeof rec.fixPacketBody === "string" ? rec.fixPacketBody : undefined;
-      const projected = projectJudgeContinueBlocking({
-        status: "continue",
-        findingDispositions: dispositions,
-        findings,
-        ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
-      });
+      // #952 R7-C1: thread real prior store `from` (mirrors runner/residual R6-C2).
+      const projected = projectJudgeContinueBlocking(
+        {
+          status: "continue",
+          findingDispositions: dispositions,
+          findings,
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
+        },
+        currentStoreStatusByIdentity,
+      );
       // #952: 0 live + non-empty terminal flips = court closed (like converged).
       // True empty continue stays `continue` with empty open set for the M1 gate.
       if (projected !== undefined && isTerminalOnlyContinue(projected)) {
