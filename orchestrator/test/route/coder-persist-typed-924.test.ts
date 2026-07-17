@@ -254,8 +254,8 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
   });
 });
 
-// sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-describe.sequential("#924 coder station-receipt Output.object (T2 schema)", () => {
+// #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
+describe("#924 coder station-receipt Output.object (T2 schema)", () => {
   const cleanups: string[] = [];
   afterEach(() => {
     while (cleanups.length > 0) {
@@ -311,8 +311,8 @@ describe.sequential("#924 coder station-receipt Output.object (T2 schema)", () =
   });
 
   it("rejects illegal traffic shapes at the SO schema boundary (negative)", () => {
-    // Pure schema pin — does not race on sc.run / ~/.gitconfig. Bad shapes are
-    // what Sandcastle re-asks; the bad→good case above proves native re-ask.
+    // Pure schema pin — no sc.run. Bad shapes are what Sandcastle re-asks;
+    // the bad→good case above proves native re-ask.
     const schema = coderStationReceiptSchema();
     expect(schema.safeParse({ committed: true, commitsAdded: 1 }).success).toBe(
       false,
