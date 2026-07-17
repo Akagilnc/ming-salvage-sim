@@ -116,9 +116,10 @@ function assertStageTerminal(
   result: FamilyRunResult,
   status: FamilyStageFailureStatus,
 ): void {
-  expect(result.status).toBe(status);
+  // #942: public status is failed; stage token remains diagnostic on stopSummary.
+  expect(result.status).toBe("failed");
   expect(result.stopSummary.reason).toBe(status);
-  expect(isFamilyStageFailureStatus(result.status)).toBe(true);
+  expect(isFamilyStageFailureStatus(result.stopSummary.reason)).toBe(true);
 }
 
 describe("#922 pure terminal helpers", () => {
@@ -161,7 +162,7 @@ describe("#922 pure terminal helpers", () => {
       },
     });
     expect(park).toEqual({
-      kind: "escalated",
+      kind: "parked",
       stopSummary: {
         reason: "decision_gate_park",
         summary: "ship needs human",
@@ -180,7 +181,7 @@ describe("#922 pure terminal helpers", () => {
       },
     });
     expect(park).toEqual({
-      status: "escalated",
+      status: "parked",
       stopSummary: {
         reason: "decision_gate_park",
         summary: "merge needs human",
@@ -196,7 +197,7 @@ describe("#922 pure terminal helpers", () => {
         repairHint: "unblock merge",
       },
     });
-    expect(merge.status).toBe("merge_failed");
+    expect(merge.status).toBe("failed");
     expect(merge.stopSummary.reason).toBe("merge_failed");
     expect(merge.stopSummary.summary).toBe("auto-merge blocked");
 
@@ -207,7 +208,7 @@ describe("#922 pure terminal helpers", () => {
         summary: "bots stuck",
       },
     });
-    expect(online.status).toBe("online_review_failed");
+    expect(online.status).toBe("failed");
     expect(online.stopSummary.reason).toBe("online_review_failed");
     expect(online.stopSummary.summary).toBe("bots stuck");
   });
@@ -224,7 +225,11 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/922-base",
       verifyCmr: async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-        if (input.phase === "wave") return { ok: true, ran: true };
+        // #961: wave + incremental IC checkpoint green; final barrier is the
+        // stage-named terminal under test.
+        if (input.phase === "wave" || input.phase === "correctness_checkpoint") {
+          return { ok: true, ran: true };
+        }
         await input.familyBackend.appendFamilyLedger({
           status: "aborted",
           event: "aborted",
@@ -304,7 +309,8 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       // Real runVerifyCmr — no injection.
     });
     assertStageTerminal(result, "cmr_failed");
-    expect(result.failedPhase).toBe("final");
+    // #961: missing CMR fails the incremental IC checkpoint first.
+    expect(result.failedPhase).toBe("correctness_checkpoint");
   });
 });
 

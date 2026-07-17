@@ -130,7 +130,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("committed:false with commitsAdded:2 advances to reviewer", async () => {
@@ -144,7 +144,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("missing commitsAdded continues", async () => {
@@ -158,7 +158,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("non-integer commitsAdded (1.5) continues", async () => {
@@ -172,7 +172,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("negative commitsAdded (-1) remains advisory on a white run", async () => {
@@ -186,7 +186,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("non-number commitsAdded ('1') continues", async () => {
@@ -200,13 +200,13 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("regression: committed:true with commitsAdded:1 proceeds to S7 local handoff", async () => {
     const backend = new SpyBackend(); // default: true/1
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("regression: committed:false with commitsAdded:0 advances to S3", async () => {
@@ -220,7 +220,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
         : { kind: "judge", status: "converged" };
     };
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.runStepIds).toContain("S3");
   });
 });
@@ -239,7 +239,7 @@ describe("C: S1 pre-worktree failures are an unpersistable special case", () => 
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S1");
     expect(backend.ledgerCalls).toHaveLength(0);
     expect(result.stepLedger.map((e) => e.step)).toContain("S8");
@@ -258,7 +258,7 @@ describe("C: S1 pre-worktree failures are an unpersistable special case", () => 
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persisted).toContain("S2");
     expect(persisted).toContain("S8");
@@ -291,7 +291,7 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     // The persisted ledger must still record the failing step S2 (best-effort
     // re-persist) — not vanish because recordFailingStep:false skipped it.
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
@@ -348,7 +348,7 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     // The white run advances through review and local handoff; the failing operation is
     // still the S8 ledger write, not a fabricated S2 court.
     expect(result.errorPackage?.failedStep).not.toBe("S7");
@@ -368,7 +368,7 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     // The S8 ledger write is what failed.
     expect(result.errorPackage?.failedStep).toBe("S8");
   });

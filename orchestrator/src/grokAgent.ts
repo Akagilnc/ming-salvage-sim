@@ -42,7 +42,8 @@ export interface GrokAgentOptions {
  * Stateful mapper from grok headless `streaming-json` lines to sandcastle
  * ParsedStreamEvent.
  *
- * Documented event shapes (host probe 2026-07-11, grok 0.2.93):
+ * Documented event shapes (host probe 2026-07-11; stream shape stable through
+ * the #964 pin @xai-official/grok@0.2.102):
  *   {"type":"text","data":"…"}
  *   {"type":"thought","data":"…"}
  *   {"type":"end","stopReason":"…","sessionId":"…"}
@@ -59,7 +60,8 @@ export interface GrokAgentOptions {
  * committed:false. Chunks now emit text events only and accumulate; the
  * single result event is emitted on `end` with the full turn (codex parity,
  * whose CLI emits one final result record natively). Liveness is heartbeat /
- * log growth only — not a password string in the stream.
+ * log growth only — not a password string in the stream. Non-JSON lines are
+ * ignored (no auth/device-code keyword tripwire — #964).
  */
 export function createGrokStreamParser(): (line: string) => Array<
   | { type: "text"; text: string }
@@ -155,8 +157,10 @@ export function grokAgent(
         : "";
       const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
       // Prompt via stdin + --prompt-file /dev/stdin avoids the Linux 128KB
-      // argv limit (same motivation as codex/pi stdin prompts). Host probe
-      // confirmed this path works on grok 0.2.93.
+      // argv limit (same motivation as codex/pi stdin prompts). Headless-only:
+      // never `grok login` / device-auth (#964). Auth death is the CLI's native
+      // non-interactive fail ("Not signed in" on pin ≥0.2.102) → AgentError →
+      // owning Action typed failure (not an interactive wait).
       return {
         command:
           `grok --prompt-file /dev/stdin --output-format streaming-json` +

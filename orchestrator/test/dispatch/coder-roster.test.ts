@@ -544,11 +544,11 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         // (reviewer-observed progress) so the no-progress bound does not fire
         // before the post-threshold S5 advance. S6#3: close.
         if (attempt === 0) {
-          return { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 };
+          return { kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body" };
         }
         if (attempt === 1) {
           return {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -556,7 +556,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         }
         if (attempt === 2) {
           return {
-            kind: "reviewer", findings: [{ ...blockingFinding, severity: "medium" }], findingsCount: 1,
+            kind: "reviewer", findings: [{ ...blockingFinding, severity: "medium" }], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -588,7 +588,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S3", {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
           }),
           ledgerEntry("S4"),
           ledgerEntry("S5", {
@@ -597,7 +597,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -609,7 +609,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer", findings: [mediumBlocking], findingsCount: 1,
+            kind: "reviewer", findings: [mediumBlocking], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -638,7 +638,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
   });
 
@@ -648,7 +648,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
 
     const result = await runOrchestrator({ issueNumber: 767, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.coderModels).toEqual(["gpt-5.6-terra"]);
   });
 
@@ -667,7 +667,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new TightRouteBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/tight route violation.*coder=.*gpt-5\.6-terra/i);
     expect(backend.coderModels).toEqual([]);
@@ -680,7 +680,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       "- **Coder-Rec: grok-4.5 → sol@med**\n",
     );
     const result = await runOrchestrator({ issueNumber: 899, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
     expect(backend.coderModels).not.toContain("sonnet");
   });
@@ -701,7 +701,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     }
     const backend = new SolSameModelBackend("Coder-Rec: sol@med\n");
     const result = await runOrchestrator({ issueNumber: 899, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.coderModels[0]).toBe("gpt-5.6-sol");
     expect(backend.cmrReviewOnSmoke).toContain("gpt-5.6-sol");
   });
@@ -710,7 +710,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecBackend("Please set Coder-Rec carefully.\n");
     const result = await runOrchestrator({ issueNumber: 906, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/Coder-Rec/i);
     expect(backend.coderModels).toEqual([]);
@@ -723,7 +723,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       "Coder-Rec: totally-bogus → also-fake\n",
     );
     const result = await runOrchestrator({ issueNumber: 906, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/totally-bogus/);
     for (const id of CODER_ROSTER.map((e) => e.id)) {
@@ -740,7 +740,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       "Coder-Rec: totally-bogus → also-fake\n",
     );
     const result = await runOrchestrator({ issueNumber: 906, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/totally-bogus|Coder-Rec/i);
     expect(backend.coderModels).toEqual([]);
@@ -751,7 +751,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // First smoke must already see the Coder-Rec coder — not the route preset
     // (sonnet) that would force a full re-smoke after applyCoderRecSelection.
     expect(backend.smokedCoderSlugs[0]).toBe("grok-4.5");
@@ -769,7 +769,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecResumeAfterS5Backend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // ADR 0132: completed S6 rounds on the restored ledger do not rotate models.
     expect(backend.coderModels[0]).toBe("grok-4.5");
   });
@@ -783,7 +783,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     }
     const backend = new MetaThrowBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // #936: no snapshot fallback — continue with route preset coder.
     expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
   });
@@ -799,7 +799,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     try {
       const backend = new BothRefetchThrowBackend();
       const result = await runOrchestrator({ issueNumber: 767, backend });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       // Coder-Rec is optional: continue with the route preset coder (normal → terra).
       expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
       expect(info).toHaveBeenCalledWith(
@@ -816,7 +816,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.events).not.toContain("smoke:gpt-5.6-terra");
     expect(backend.events).not.toContain("dispatch:gpt-5.6-terra");
     expect(backend.coderModels.every((m) => m === "grok-4.5")).toBe(true);
@@ -826,7 +826,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     // Multi-round S6 path must not rotate the coder model (ADR 0132 / #919 CR).
     const s6Count = backend.ledgerWrites.filter((e) => e.step === "S6").length;

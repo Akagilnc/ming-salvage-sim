@@ -4,6 +4,26 @@
 
 ## [未发布]
 
+## [0.33.0.0] — 2026-07-17
+
+### Added
+- **#942 公共结果 ABI 切齐**：`completed` / `parked` / `failed` 与 OS exit 0/2/1 原子切换；失败必带 cause。
+- **#952 typed `suppress` disposition**：内部终态 `suppressed`；写入点校验合法状态跳转；terminal-only continue 关庭。
+- **#961 family Integrated Correctness 增量 checkpoint**（ADR 0139）：波次 verify 绿后全量 IC 并行子 coding；`lastCorrectnessConvergedHead` 庭记忆；Runner 不准入。
+- **#964 grok 运行中 auth 失效 → typed failure**：禁止 headless device-auth 挂起；fail-fast 探针。
+- **#977 拆除 pattern-brief 旁路信道**（ADR 0137）。
+- **#978 判词即包**（ADR 0138）：`fixPacketBody` 唯一送修正文路径；缺 body 响亮失败。
+- **#979 fixer 同链 resume**：同 findings 链复用 fixer session；`cmr_passed` 截断链界。
+- **#981 grok-cap 忽略 AppleDouble / `.DS_Store`**：侧车不炸会话 integrity。
+
+### Fixed
+- Family CMR completeness：suppress-only 收敛、residual 不合成 fixPacketBody、family close 穿真实 store `from`。
+- Family CMR correctness：IC hard-fail / quota-park 前 drain 本波 allSettled siblings，禁止假 `skipped`。
+- #978/#952/#961/#964/#979/#981 切片 CR 多轮与 family base 插队合入。
+
+### Changed
+- Judge/fixer souls 对齐 ADR 0138 与 #979 resume 证词；merge main 时保留 family 侧 ADR 正文。
+
 ## [0.32.0.0] — 2026-07-17
 
 ### Added

@@ -15,14 +15,19 @@
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
+import type { PublicFailedCause } from "./publicResult.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 // Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
 import type {
   JudgeFindingDisposition,
   JudgeVerdictStatus,
 } from "./stationReceiptContracts.js";
+// Single source for findings-store status tokens (#952 / ADR 0129).
+import type { FindingStoreStatus } from "./findingsStateStore.js";
 
 export type { JudgeFindingDisposition, JudgeVerdictStatus };
+export type { FindingStoreStatus };
+export type { PublicFailedCause };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -105,8 +110,8 @@ export type StepRole =
   | "cleanup"
   | "landing";
 
-/** Terminal handoff status (ADR 0018 / PRD #244 route table). */
-export type HandoffStatus = "success" | "escalate" | "error";
+/** Public handoff: completed | parked | failed (#942 / ID-001). */
+export type HandoffStatus = "completed" | "parked" | "failed";
 
 // ───────────────────────────── step spec ─────────────────────────────
 
@@ -232,6 +237,12 @@ export interface Finding {
  * the runner no longer reads a route field to decide a finding's fate.
  * `accepted_suppressed` remains as the governance carrier for accepted
  * suppression (source/scope/bounded reopen).
+ *
+ * Vocabulary boundary (#952 4b): this is the **CMR reviewer governance seam**
+ * (`FindingDispositionKind` / priorFindingDispositions). It is **not** the
+ * judge disposition `action: "suppress"` nor the findings-store terminal
+ * `suppressed` (see `stationReceiptContracts.ts` + `findingsStateStore.ts`).
+ * Two seams, two vocabularies — do not alias or invent a third silent token.
  */
 export type FindingDispositionKind = "accepted_suppressed";
 
@@ -249,25 +260,29 @@ export interface FindingDispositionEvidence {
   readonly boundedReopen?: string;
 }
 
+/**
+ * Ledger findings-store row (sole row shape for store write-point flips).
+ * Status tokens single-sourced in {@link FindingStoreStatus}
+ * (`findingsStateStore.ts`); constructed via `recordFindingStoreFlip` —
+ * do not redeclare a parallel store-record type.
+ */
 export interface FindingDisposition {
   readonly identityKey: string;
   /**
-   * Terminal / open ledger statuses. `#925` judge kill rows flip to `refuted`
-   * (legal terminal flip alongside fresh-review final flips — ADR 0129).
+   * Terminal / open ledger statuses (ADR 0129). Single source:
+   * `FINDING_STORE_STATUSES` in findingsStateStore.ts.
+   * - `#925` judge kill → `refuted`
+   * - `#952` judge suppress → `suppressed` (internal terminal; not public ABI)
+   * - CMR governance carrier status `accepted_suppressed` remains a different
+   *   seam from judge `suppress` / store `suppressed` (#952 4b).
    */
-  readonly status:
-    | "unrepaired"
-    | "wont_fix"
-    | "rejected"
-    | "accepted_suppressed"
-    | "refuted";
+  readonly status: FindingStoreStatus;
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
 }
-
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
@@ -349,6 +364,12 @@ export interface ReviewerOutput {
   /** Residual declared open count; validated at the typed worker boundary. */
   readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
+  /**
+   * Optional authored coder-fix packet body already on residual paper.
+   * ADR 0138: residual projection may pass this through **verbatim** only;
+   * runner never invents a placeholder body from open-count / findings.
+   */
+  readonly fixPacketBody?: string;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -373,9 +394,18 @@ export interface JudgeResult {
   readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  /**
+   * ADR 0138 / #978: judge-authored coder-fix packet body (判词正文).
+   * Required on continue for the sole fixer-packet content path; runner
+   * transports verbatim and never packs bare finding rows as a substitute.
+   */
+  readonly fixPacketBody?: string;
   /** Optional continue suggestion to switch coder roster entry (#926 executes). */
   readonly advanceCoder?: string;
-  /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
+  /**
+   * Opaque findings cargo (identity / telemetry). Not the coder-fix packet
+   * content path after ADR 0138 — that is {@link fixPacketBody} only.
+   */
   readonly findings?: ReadonlyArray<Finding>;
   /** Escalate doorbell cargo (also mirrored on {@link escalate}). */
   readonly reason?: string;
@@ -390,7 +420,6 @@ export interface JudgeResult {
   readonly successfulLegs?: readonly string[];
   readonly skippedLegs?: readonly CmrSkippedLeg[];
   readonly evidencePaths?: readonly string[];
-  readonly findingFamilies?: readonly FindingFamily[];
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
@@ -778,14 +807,6 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
-/** Cross-round finding family synthesis (#711). */
-export interface FindingFamily {
-  readonly family: string;
-  readonly members: ReadonlyArray<string>;
-  readonly recurringFromRounds: ReadonlyArray<number>;
-  readonly brief: string;
-}
-
 /** Prior-round finding snapshot forwarded to judge workers (#711). */
 export interface PriorRoundFindingSnapshot {
   readonly round: number;
@@ -869,15 +890,21 @@ export interface OnlineReviewLandingSnapshot {
 
 export interface WorkerLandingPayload {
   /**
-   * S5 / family coder-fix worker only: the blocking reviewer findings (full
-   * content) selected from the current full-diff review. The dispatch seam writes
-   * them to the landing file; the runner does not read them.
+   * ADR 0138 / #978: sole coder-fix packet body — judge continue
+   * `fixPacketBody` transported verbatim. Missing/empty is fail-loud at the
+   * continue edge; runner never synthesises this from bare finding rows.
+   */
+  readonly fixPacketBody?: string;
+  /**
+   * @deprecated ADR 0138 — bare finding packing path deleted. Residual
+   * fixtures may still set this; production coder-fix landing does not
+   * write it. Prefer {@link fixPacketBody}.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
   /**
    * S5 only: opaque human/coordinator finding scope from continue_fixing /
-   * repair intent. Runner transports only — never filters blockingFindings by
-   * scope (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
+   * repair intent. Runner transports only — never filters by content
+   * (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
    */
   readonly findingScope?: FindingRepairScope;
   /**
@@ -929,8 +956,6 @@ export interface WorkerLandingPayload {
   }>;
   /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
-  /** Family fixer / child S5 coder-fix: pattern briefs from prior judge worker. */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   /** Family cleanup: host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
@@ -1142,8 +1167,6 @@ export interface CmrResult {
    * family never mints continue from findingsCount; court fail-louds residual.
    */
   readonly findingsCount?: number;
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: readonly FindingFamily[];
   /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
@@ -1237,8 +1260,6 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
 }
 
 /**
@@ -1448,11 +1469,12 @@ export interface LedgerEntry {
   /** Optional CMR route leg removed after smoke failure. */
   readonly droppedLeg?: string;
   /**
-   * Finding dispositions persisted at the judge verdict boundary (#925).
+   * Finding dispositions persisted at the judge verdict boundary (#925 / #952).
    *
    * Formerly the S4 review/fix boundary (open-count mechanical station). S4 is
-   * dissolved: S3/S6 judge ledger rows now carry kill→`refuted` flips and
-   * governance data. Not a runner content-classification (信封宪法, ADR 0062).
+   * dissolved: S3/S6 judge ledger rows now carry store terminal flips
+   * (`refute`→`refuted`, `suppress`→`suppressed`) and governance data. Not a
+   * runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
   /** Runner-owned terminal stop reason summary (#450). */
@@ -1567,19 +1589,19 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
   /**
-   * Terminal handoff status — set ONLY on the S8 entry (#255).
+   * Terminal handoff status — set ONLY on the S8 entry (#255 / #942).
    *
-   * Both success and error handoffs previously wrote an identical `{step:"S8"}`
-   * entry, making them indistinguishable to a resuming run reading the ledger.
-   * Recording the status here lets {@link ResumeState} recovery report the TRUE
-   * terminal outcome (success / escalate / error) instead of inferring it — and
-   * lets a re-fed run tell a prior SUCCESS apart from a prior ERROR.
+   * Public tokens are completed | parked | failed (ID-001). Recording the
+   * status here lets {@link ResumeState} recovery report the TRUE terminal
+   * outcome instead of inferring it — and lets a re-fed run tell a prior
+   * completed apart from a prior failed/parked. #929 tokens (success / error /
+   * escalate / …) fail closed as public failed (ID-005, no dual-read).
    * Undefined for every non-S8 (in-flight) entry.
    */
   readonly handoffStatus?: HandoffStatus;
   /**
    * Distinguishes answerable decision pauses from true terminal failure
-   * escalations (#439). Set only with `handoffStatus:"escalate"` on S8.
+   * escalations (#439). Set only with handoffStatus parked|failed on S8.
    */
   readonly escalationKind?: EscalationKind;
 }
@@ -1809,7 +1831,6 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
-  readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
   /**
    * #686 / ADR 0124 — billing pool for this dispatch. Selects the real
@@ -1915,18 +1936,25 @@ export interface ErrorPackage {
   readonly branchHead?: string;
 }
 
-/** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
-export interface RunResult {
-  readonly status: HandoffStatus;
-  /** The reviewed local slice branch handed to the family merger on success. */
+/** Shared fields on every public single-slice handoff. */
+interface RunResultBase {
   readonly branch?: string;
-  /**
-   * Diagnostic error payload — set when status=error (#252).
-   * Undefined for success and escalate outcomes.
-   */
+  /** Diagnostic package (failed terminals; optional on park for transport). */
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
 }
+
+/**
+ * Final handoff (S8); public completed|parked|failed.
+ * Discriminated: `status:"failed"` requires ID-001 `cause` (#942 CR R2 S3).
+ */
+export type RunResult =
+  | (RunResultBase & { readonly status: "completed" })
+  | (RunResultBase & { readonly status: "parked" })
+  | (RunResultBase & {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+    });

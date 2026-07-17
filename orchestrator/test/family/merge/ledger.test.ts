@@ -683,6 +683,75 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
       }),
     ).toBe(false);
   });
+
+  // #982 Codex P1: checkpoint green must not free-skip final IC after final
+  // completeness coder-fix advances HEAD (phase-scoped pass reuse).
+  it("#982: correctness_checkpoint pass + final completeness fix advance does NOT skip final correctness", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "correctness_checkpoint",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H",
+        routeFingerprint: "route:v1",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: "head-H",
+        familyHeadAfter: "head-H2",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H2",
+        routeFingerprint: "route:v1",
+        phase: "final",
+      }),
+    ).toBe(false);
+    // Checkpoint-phase resume at the original head still reuses the checkpoint pass.
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H",
+        routeFingerprint: "route:v1",
+        phase: "correctness_checkpoint",
+      }),
+    ).toBe(true);
+  });
+
+  it("#982: checkpoint correctness pass at H does not satisfy final correctness admission at H", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "correctness_checkpoint",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H",
+        routeFingerprint: "route:v1",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H",
+        routeFingerprint: "route:v1",
+        phase: "final",
+      }),
+    ).toBe(false);
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "correctness",
+        familyHeadAfter: "head-H",
+        routeFingerprint: "route:v1",
+        phase: "correctness_checkpoint",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("family-ledger.familyEscalationState", () => {

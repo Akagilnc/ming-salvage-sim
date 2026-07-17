@@ -320,7 +320,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(waveCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.status).not.toBe("incomplete");
@@ -361,7 +361,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.failedPhase).toBeUndefined();
@@ -739,7 +739,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     // #922: open-shipped online-review hard fail is online_review_failed (real name).
-    expect(result.status).toBe("online_review_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("online_review_failed");
     expect(result.stopSummary).toBeDefined();
     expect(result.stopSummary?.summary).toMatch(
@@ -909,20 +909,61 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toEqual(["verify"]);
     // Default when step missing: online_review → S9 (not S7/ship).
     const errNoStep = quotaWaitError({ resetAt, pool: "grok", step: "S3" });
-    // strip step
+    // Valid error first, then strip step without audit-trigger cast (#982).
     const bare = new QuotaWaitForResetError({
       disposition: errNoStep.disposition,
       applied: {
-        ledgerEntry: {
-          ...errNoStep.applied.ledgerEntry!,
-          step: undefined as unknown as "S3",
-        },
+        ledgerEntry: { ...errNoStep.applied.ledgerEntry! },
       },
-      pool: errNoStep.pool
+      pool: errNoStep.pool,
     });
+    Reflect.deleteProperty(bare.applied.ledgerEntry!, "step");
     expect(
       familyWallStepFromQuotaWait({ err: bare, phase: "online_review" }),
     ).toBe("S9");
+  });
+
+  it("C1 pure: correctness_checkpoint bare step → S3 CMR (not S7/ship, not verify-only S9)", async () => {
+    // #961 CR R2 + #982 Codex P2: phase default must not fall through to S7/ship.
+    // Checkpoint baton must rewrite cmrCorrectness — S9 hard-maps to verify and
+    // would leave the quota-limited CMR slot unchanged when step is lost.
+    const { familyWallStepFromQuotaWait } = await import(
+      "../../../src/family/runner.js"
+    );
+    const resetAt = new Date("2026-07-14T14:00:00.000Z");
+    const errNoStep = quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+    const bare = new QuotaWaitForResetError({
+      disposition: errNoStep.disposition,
+      applied: {
+        ledgerEntry: { ...errNoStep.applied.ledgerEntry! },
+      },
+      pool: errNoStep.pool,
+    });
+    bare.cmrPass = "correctness";
+    Reflect.deleteProperty(bare.applied.ledgerEntry!, "step");
+    const wallStep = familyWallStepFromQuotaWait({
+      err: bare,
+      phase: "correctness_checkpoint",
+    });
+    expect(wallStep).toBe("S3");
+    expect(wallStep).not.toBe("S7");
+    expect(wallStep).not.toBe("S9");
+    const slots = familyRelaySlotsForWall({
+      phase: "correctness_checkpoint",
+      wallStep,
+      cmrPass: "correctness",
+    });
+    expect(slots).toEqual(["cmrCorrectness"]);
+    expect(slots).not.toContain("ship");
+    expect(slots).not.toContain("verify");
+    // Defense in depth: legacy S9 stamp under checkpoint phase still CMR.
+    expect(
+      familyRelaySlotsForWall({
+        phase: "correctness_checkpoint",
+        wallStep: "S9",
+        cmrPass: "correctness",
+      }),
+    ).toEqual(["cmrCorrectness"]);
   });
 
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
@@ -955,7 +996,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     // Soft "relay staged" escalate must NOT pass as park_fallback green.
@@ -999,7 +1040,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
@@ -1086,11 +1127,12 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(
       `${result.stopSummary.summary} ${result.escalation?.diagnosis ?? ""} ${result.escalation?.reason ?? ""}`,
     ).toMatch(/tight route violation|relay baton admission/i);
-    // OUT #942: keep infra_failure stopSummary.reason until public ABI cutover.
+    // #942: stopSummary.reason is diagnostic-only (not public ABI); public status
+    // above is already parked. infra_failure here is the internal stop token.
     expect(result.stopSummary.reason).toBe("infra_failure");
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
@@ -1126,7 +1168,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
 
     // Fail-closed: no second dispatch on a silently defaulted roster.
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     // Must surface Coder-Rec failure — not park masquerade / not silent relay.
     expect(
       `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
@@ -1172,7 +1214,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(
       `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
     ).toMatch(/Coder-Rec|unreadable|meta|snapshot/i);

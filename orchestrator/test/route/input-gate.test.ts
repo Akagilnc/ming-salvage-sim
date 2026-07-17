@@ -111,7 +111,7 @@ async function expectS0GateError(
     backend,
   });
 
-  expect(result.status).toBe("error");
+  expect(result.status).toBe("failed");
   expect(result.errorPackage?.failedStep).toBe("S0");
   expect(result.errorPackage?.reason).toMatch(messagePattern);
   expect(result.stopSummary.reason).toBe("infra_failure");
@@ -235,7 +235,7 @@ describe("S0 input gate — pass case (#248)", () => {
     // Gate let it through → S1 prepareWorktree ran (#936: no snapshot court).
     expect(backend.calls).toContain("prepareWorktree(248, main)");
     // Full run succeeded.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("compliant meta passes S0 then S1 in order (gate-to-worktree sequencing)", async () => {
@@ -263,7 +263,7 @@ describe("S0 input gate — pass case (#248)", () => {
     const backend = new LeafBackend();
     const result = await runOrchestrator({ issueNumber: 248, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // Scene discovery first; then S0 meta; S1 prepareWorktree (no snapshot).
     const metaIdx = backend.calls.indexOf("fetchIssueMeta(248)");
     const wtIdx = backend.calls.indexOf("prepareWorktree(248, main)");
@@ -312,7 +312,7 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
     // The ledger-merged口径 excused #247, so the gate did NOT throw — S1 ran and
     // the run reached success (no re-rejection of a just-released child).
     expect(backend.calls.some((c) => c.startsWith("prepareWorktree(248"))).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("family mode: an open blocker NOT in mergedBlockers (external dependency) returns a structured S0 terminal error", async () => {
@@ -366,7 +366,7 @@ describe("S0 gate — #247 happy-path regression", () => {
     const backend = new FullBackend();
     const result = await runOrchestrator({ issueNumber: 248, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // ADR 0030: the runner-level ledger exposes the fresh reviewer and
     // classification boundary before ship.
     expect(result.stepLedger.map((e) => e.step)).toEqual([

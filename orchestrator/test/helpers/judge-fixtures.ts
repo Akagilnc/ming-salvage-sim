@@ -14,8 +14,35 @@ import type {
   Finding,
   JudgeFindingDisposition,
   JudgeResult,
+  ReviewerOutput,
   WorkerResult,
 } from "../../src/types.js";
+
+/** Authored residual body for fixtures that exercise residual open-count transport. */
+export const FIXTURE_RESIDUAL_FIX_PACKET_BODY =
+  "fixture residual authored fixPacketBody (ADR 0138 pass-through)";
+
+/**
+ * Residual open-count paper with an explicit authored body (pass-through only).
+ * Production never invents this string — tests must supply it when residual
+ * paper is expected to reach coder-fix (ADR 0138 / #978).
+ */
+export function residualOpenContinue(
+  findings: ReadonlyArray<Finding>,
+  opts?: {
+    readonly findingsCount?: number;
+    readonly fixPacketBody?: string;
+  },
+): ReviewerOutput {
+  const findingsCount = opts?.findingsCount ?? findings.length;
+  const fixPacketBody = opts?.fixPacketBody ?? FIXTURE_RESIDUAL_FIX_PACKET_BODY;
+  return {
+    kind: "reviewer",
+    findings: [...findings],
+    findingsCount,
+    fixPacketBody,
+  };
+}
 
 export function judgeConverged(): JudgeResult {
   return { kind: "judge", status: "converged" };
@@ -25,19 +52,41 @@ export function judgeContinue(
   findings: ReadonlyArray<Finding>,
   opts?: {
     readonly kill?: ReadonlyArray<JudgeFindingDisposition & { action: "refute" }>;
+    /** #952 terminal suppress rows (parked; not sent to fixer). */
+    readonly suppress?: ReadonlyArray<
+      JudgeFindingDisposition & { action: "suppress" }
+    >;
     readonly advanceCoder?: string;
+    /** ADR 0138 / #978: judge-authored fix packet body (defaults to fixture text). */
+    readonly fixPacketBody?: string;
   },
 ): JudgeResult {
   const kills = opts?.kill ?? [];
-  const killKeys = new Set(kills.map((k) => k.identityKey));
-  const live = liveDispositionsForFindings(
-    findings.filter((f) => !killKeys.has(findingIdentityKey(f))),
+  const suppresses = opts?.suppress ?? [];
+  const terminalKeys = new Set([
+    ...kills.map((k) => k.identityKey),
+    ...suppresses.map((s) => s.identityKey),
+  ]);
+  const liveFindings = findings.filter(
+    (f) => !terminalKeys.has(findingIdentityKey(f)),
   );
+  const live = liveDispositionsForFindings(liveFindings);
+  const fixPacketBody =
+    opts?.fixPacketBody ??
+    (liveFindings.length > 0
+      ? liveFindings
+          .map(
+            (f) =>
+              `${f.severity} ${f.category} @ ${f.location}: ${f.claim_quote}`,
+          )
+          .join("\n")
+      : "fixture judge continue: live findings remain");
   return {
     kind: "judge",
     status: "continue",
-    findingDispositions: [...kills, ...live],
+    findingDispositions: [...kills, ...suppresses, ...live],
     findings: [...findings],
+    fixPacketBody,
     ...(opts?.advanceCoder !== undefined
       ? { advanceCoder: opts.advanceCoder }
       : {}),
@@ -126,7 +175,6 @@ export function liveCmrJudgeContinue(
     readonly reason?: string;
     readonly claimedFixedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
-    readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
   },
 ): JudgeResult {
   const count = opts?.findingsCount;
@@ -139,6 +187,7 @@ export function liveCmrJudgeContinue(
             status: "continue",
             findingDispositions: liveDispositionsForOpenCount(count, []),
             findings: [],
+            fixPacketBody: `fixture family continue: ${count} live finding(s)`,
           } as JudgeResult)
         : judgeContinue([]);
   return {
@@ -158,9 +207,6 @@ export function liveCmrJudgeContinue(
       : {}),
     ...(opts?.priorFindingDispositions !== undefined
       ? { priorFindingDispositions: opts.priorFindingDispositions }
-      : {}),
-    ...(opts?.findingFamilies !== undefined
-      ? { findingFamilies: opts.findingFamilies }
       : {}),
   } as JudgeResult;
 }
@@ -208,9 +254,6 @@ export function legacyCmrScriptToWorkerOutput(
         ? { priorFindingDispositions: cmr.priorFindingDispositions }
         : {}),
       ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-      ...(cmr.findingFamilies !== undefined
-        ? { findingFamilies: cmr.findingFamilies }
-        : {}),
     });
   }
 

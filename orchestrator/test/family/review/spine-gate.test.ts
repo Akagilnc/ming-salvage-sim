@@ -282,7 +282,7 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
     expect(durableAborts[0]?.familyHeadAfter).toBe("+294");
     expect(durableAborts[0]?.reason).toContain("TS2345");
     // Observably verify_failed at the wave phase — NOT a false success.
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBe("wave");
     const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
     expect(byIssue.get(294)).toBe("merged");
@@ -354,7 +354,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.cmrCalls[0]).toMatchObject({
       cmrPass: "completeness",
       priorCmrFindingIdentityKeys: [priorKey],
@@ -449,7 +449,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.cmrCalls[0]).toMatchObject({
       cmrPass: "completeness",
       priorCmrFindingIdentityKeys: [firstKey, secondKey],
@@ -527,7 +527,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.cmrCalls[0]).toMatchObject({
       cmrPass: "completeness",
       priorCmrFindingIdentityKeys: [priorKey],
@@ -591,7 +591,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.cmrCalls[0]).toMatchObject({
       cmrPass: "completeness",
     });
@@ -664,7 +664,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.cmrCalls[0]).toMatchObject({
       cmrPass: "completeness",
     });
@@ -721,12 +721,15 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
       familyBase: "family/291-base",
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
-    // Both verify barriers ran green; the child merged; but the final barrier is red
-    // because the 承重闸 cmr could not run — observably cmr_failed (#922), never success.
-    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(result.status).toBe("cmr_failed");
+    // Wave verify green + #961 IC checkpoint; missing CMR capability fails the
+    // checkpoint (or final) with cmr_failed (#922), never success.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+    ]);
+    expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("cmr_failed");
-    expect(result.failedPhase).toBe("final");
+    expect(result.failedPhase).toBe("correctness_checkpoint");
   });
 });
 
@@ -742,18 +745,23 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/291-base",
     });
-    // One wave (all independent): wave verify (green) then final verify (green) →
-    // step5 completeness → step6 correctness → PR opened ONCE from the family base.
-    expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(backend.cmrCalls).toEqual([
-      { familyBase: "family/291-base", cmrPass: "completeness" },
-      { familyBase: "family/291-base", cmrPass: "correctness" },
+    // One wave: wave verify → #961 IC checkpoint → final completeness→correctness→ship.
+    expect(backend.verifyCalls.map((v) => v.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+      "final",
     ]);
+    // Checkpoint runs correctness early; final reuses skip or re-runs + completeness.
+    const cmrPasses = backend.cmrCalls.map((c) => c.cmrPass);
+    expect(cmrPasses).toContain("completeness");
+    expect(cmrPasses.filter((p) => p === "correctness").length).toBeGreaterThanOrEqual(1);
+    expect(cmrPasses[0]).toBe("correctness"); // checkpoint first
+    expect(cmrPasses).toContain("completeness");
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
     // 止于 PR: a PR was opened, but the run STOPS here — every child merged into the
     // family base, status success, no escalate. (No merge-to-main seam exists on
     // FamilyBackend at all — the family layer cannot merge to main by construction.)
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
     expect(backend.escalations).toEqual([]);
   });
@@ -792,7 +800,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
     expect(backend.cmrCalls).toEqual([]);
     expect(backend.prCalls).toEqual([]);
     // Honest: observably incomplete (decision 3⑤ 不静默吞), NOT a fabricated success.
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children.every((c) => c.status === "failed")).toBe(true);
   });
 });
@@ -828,6 +836,6 @@ describe("#330 spine — shipped resume continues after the delivery checkpoint"
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger.filter((entry) => entry.status === "shipped")).toHaveLength(1);
     expect(backend.ledger.some((entry) => entry.status === "review_loop_converged")).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });

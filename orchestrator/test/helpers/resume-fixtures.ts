@@ -95,7 +95,7 @@ export function entry(
 }
 
 /** Build a terminal S8 entry tagged with its handoff status (#255). */
-export function s8(handoffStatus: "success" | "escalate" | "error"): PersistentLedgerEntry {
+export function s8(handoffStatus: "completed" | "parked" | "failed"): PersistentLedgerEntry {
   return {
     step: "S8",
     sessionId: "session-prior",
@@ -108,7 +108,7 @@ export function s8(handoffStatus: "success" | "escalate" | "error"): PersistentL
 
 export function coderProtocolFailureS8(): PersistentLedgerEntry {
   return {
-    ...s8("error"),
+    ...s8("failed"),
     stopSummary: {
       reason: "contract_drift",
       summary:
@@ -121,7 +121,7 @@ export function coderProtocolFailureS8(): PersistentLedgerEntry {
 
 export function malformedCoderPayloadFailureS8(): PersistentLedgerEntry {
   return {
-    ...s8("error"),
+    ...s8("failed"),
     stopSummary: {
       reason: "contract_drift",
       summary:

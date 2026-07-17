@@ -21,6 +21,10 @@ import type { ChildProcess } from "node:child_process";
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import { capacityRelayErrorFrom } from "./relayDispatch.js";
 import {
+  isSandcastleAgentError,
+  workerResultFromAgentError,
+} from "./sandcastleAgentError.js";
+import {
   isWorkerTerminationFailedError,
   terminateSpawnedChild,
   WorkerTerminationFailedError,
@@ -264,6 +268,11 @@ export async function withMechanicalRetry(
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
+      // #964: AgentError → Action-typed failure for this invocation only.
+      // Same dead credentials / agent death will not recover on re-dispatch —
+      // convert once and return (do not burn process-root budget).
+      const agentFailure = workerResultFromAgentError(err, spec.kind);
+      if (agentFailure !== undefined) return agentFailure;
       // #683/#686/#937: resource / adoption / termination — never mechanical-retry.
       if (isNonRetryableDispatchThrow(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
@@ -340,6 +349,10 @@ export async function retryProcessCrash<T>(
     try {
       return await fn();
     } catch (err) {
+      // #964: AgentError is Action-typed failure for this invocation — never
+      // re-burn process-root retries on the same dead credentials. Rethrow so
+      // the seat court (merger) / outer converter surfaces structured failure.
+      if (isSandcastleAgentError(err)) throw err;
       // #683/#686/#909/#937: resource / adoption / termination — NEVER retry.
       if (isNonRetryableDispatchThrow(err)) throw err;
       lastError = err;

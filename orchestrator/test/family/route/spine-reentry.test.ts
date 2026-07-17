@@ -136,7 +136,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       },
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(refetched).toBe(0);
     expect(childBackend.ran).toEqual([]);
     expect(familyBackend.merges).toEqual([]);
@@ -175,7 +175,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.familyHead).toBe("head-after-cmr-pause");
     expect(result.children).toEqual([
       { issue: 10, status: "already_done" },
@@ -221,7 +221,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       refetchEpic: async () => liveEpic,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(childBackend.ran).toEqual([10]);
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([10]);
   });
@@ -257,7 +257,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       }),
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(childBackend.ran).toEqual([]);
     expect(familyBackend.merges).toEqual([]);
   });
@@ -300,7 +300,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     // Off the LIVE graph the run converges: 10 first (now unblocked), then 11.
     expect(childBackend.ran).toEqual([10, 11]);
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([10, 11]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // The result accounts for the LIVE children.
     expect(result.children.map((c) => c.issue).sort()).toEqual([10, 11]);
   });
@@ -322,7 +322,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       familyBase: "family/291-base",
     });
     expect(result.children.map((c) => c.issue).sort()).toEqual([10, 11]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("refetch + reconcile compose: the live graph is reconciled against the ledger末条", async () => {
@@ -374,7 +374,7 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     // 10 already merged (ledger, branch ① — not re-run); 11 runs fresh after it.
     expect(childBackend.ran).toEqual([11]);
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([11]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.map((c) => c.issue).sort()).toEqual([10, 11]);
   });
 });
