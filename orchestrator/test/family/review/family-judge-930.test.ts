@@ -182,7 +182,7 @@ class FamilyJudgeBackend implements FamilyBackend {
       };
     }
 
-    // #600/#603 online-review tail after ship (verify / fixer / docRelease / cleanup).
+    // #600/#603 online-review tail after ship (verify / fixer / landing / cleanup).
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) return skeleton;
     throw new Error(`unexpected worker kind ${spec.kind}`);

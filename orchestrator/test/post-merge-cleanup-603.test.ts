@@ -37,28 +37,33 @@ const PR_MERGED = {
 
 describe("#891 offline cleanup dispatch is hermetic", () => {
   it("does not execute gh when an offline test handle carries cleanup landing", () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+    // #941: fake-PR offline hatch deleted from dispatchPostMergeCleanup.
+    // Landing Action injects liveState; unit callers must do the same.
     const sh = vi.fn<Sh>(() => {
-      throw new Error("offline cleanup must not execute host CLI");
+      throw new Error("injected liveState must not execute host CLI");
     });
 
-    const result = dispatchPostMergeCleanup(
-      {
-        cleanupDispatch: {
-          coveredIssues: [603],
-          prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
-          prNumber: 603,
-          remoteBranchName: "feat/issue-603",
-          mergedHeadOid: MERGED_HEAD,
-          convergedHeadOid: MERGED_HEAD,
-        },
-      },
-      {
-        repo: REPO,
-        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
-      },
+    const result = runPostMergeCleanup({
       sh,
-    );
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: {
+        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+        prNumber: 603,
+        remoteBranchName: "feat/issue-603",
+        mergedHeadOid: MERGED_HEAD,
+        convergedHeadOid: MERGED_HEAD,
+      },
+      liveState: {
+        state: "MERGED",
+        headOid: MERGED_HEAD,
+        prNumber: 603,
+        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+        headRefName: "feat/issue-603",
+      },
+      fetchIssueState: () => "CLOSED",
+      branchExists: () => false,
+    });
 
     expect(result).toEqual({
       kind: "cleanup",
@@ -268,20 +273,27 @@ describe("#603 runPostMergeCleanup — live verify before act (AC1)", () => {
     expect(result.branchOutcome).toBe("skipped_precondition");
   });
 
-  it("allows offline synthetic MERGED only with explicit ORCHESTRATOR_OFFLINE_REVIEW_POLL=1", () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+  it("#941: liveState injection completes cleanup without gh (no offline env hatch)", () => {
     const closed: number[] = [];
+    const sh = fakeSh({
+      "gh pr view": () => {
+        throw new Error("liveState injection must not call live gh pr view");
+      },
+    });
     const result = runPostMergeCleanup({
-      sh: fakeSh({
-        "gh pr view": () => {
-          throw new Error("offline hatch must not call live gh pr view");
-        },
-      }),
+      sh,
       repo: REPO,
       coveredIssues: [603],
       prMerged: {
         ...PR_MERGED,
         prUrl: "pr://family/offline-cleanup",
+      },
+      liveState: {
+        state: "MERGED",
+        headOid: MERGED_HEAD,
+        prNumber: 603,
+        prUrl: "pr://family/offline-cleanup",
+        headRefName: "feat/issue-603",
       },
       fetchIssueState: () => "OPEN",
       closeIssue: (n) => closed.push(n),

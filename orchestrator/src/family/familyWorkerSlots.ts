@@ -28,8 +28,8 @@ export function familyWorkerSlotForDispatch(
       return "verify";
     case "fixer":
       return "fixer";
-    case "docRelease":
-      return "docRelease";
+    case "landing":
+      return "landing";
     default:
       return undefined;
   }

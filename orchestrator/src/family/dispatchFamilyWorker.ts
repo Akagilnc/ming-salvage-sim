@@ -472,7 +472,7 @@ export async function legacyDispatchFamilyWorker(
   if (
     spec.kind === "verify" ||
     spec.kind === "fixer" ||
-    spec.kind === "docRelease"
+    spec.kind === "landing"
   ) {
     // Explicit offline/test injection only. Production reaches no synthetic
     // success receipt before this gate and fails when the real seam is absent.

@@ -145,13 +145,13 @@ describe("review-round persistence immunity", () => {
   });
 });
 
-/** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
+/** #600/#603: successful pr_opened ship → verify → landing → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
   expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
-  expect.objectContaining({ kind: "docRelease", promptFile: "docRelease.md" }),
+  expect.objectContaining({ kind: "landing", promptFile: "landing.md" }),
 ] as const;
 
-/** Deterministic skeleton for verify/fixer/cleanup/docRelease after ship (#600). */
+/** Deterministic skeleton for verify/fixer/cleanup/landing after ship (#600). */
 function onlineReviewLoopWorkerOrThrow(spec: WorkerSpec): WorkerResult {
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) {
@@ -1970,10 +1970,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyHeadAfter: "head-after-bad-coder-fix",
       blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
     }));
-    // One resolution schedules the coder-fix commit range and one belongs to
-    // the independent terminal family auto-merge observation. Evidence-only
-    // retries must not add further resolutions for the same coder-fix range.
-    expect(backend.telemetryRepoResolutions).toBe(2);
+    // #941: host auto-merge observation deleted. One resolution schedules the
+    // coder-fix commit range; evidence-only retries must not add more.
+    expect(backend.telemetryRepoResolutions).toBe(1);
   });
 
   it("head not moved → fixed topology still alternates to fresh re-review", async () => {
@@ -2644,7 +2643,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       "cmr",
       "ship",
       "verify",
-      "docRelease",
+      "landing",
     ]);
   });
 it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", async () => {

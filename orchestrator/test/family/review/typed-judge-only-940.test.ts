@@ -192,7 +192,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
           fixCommitSha: `fix-${fixerCalls}`,
         };
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (sha) => sha,
     });
@@ -217,8 +217,8 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
       },
-      dispatchDocRelease: async () => {
-        throw new Error("docRelease must not run after escalate disposition");
+      dispatchLanding: async () => {
+        throw new Error("landing must not run after escalate disposition");
       },
       retriggerAfterFix: () => {},
     });
@@ -249,7 +249,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         committed: true,
         fixCommitSha: "fix-sha",
       }),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -266,7 +266,7 @@ describe("#940 public driver — ID-012 missing capability fake exits deleted", 
       kinds.push(spec.kind);
       if (spec.kind === "cmr") return completedJudgeGreen();
       if (spec.kind === "ship") return completedShip();
-      // Online-review / fixer / docRelease not fully exercised here — ship
+      // Online-review / fixer / landing not fully exercised here — ship
       // returns a PR; barrier may continue into online review which needs more
       // surface. For this pin we only need cmr+ship to have been dispatched.
       return {

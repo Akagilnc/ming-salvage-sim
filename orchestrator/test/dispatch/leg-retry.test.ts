@@ -237,7 +237,7 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
         verify: "opus",
         fixer: "opus",
         cleanup: "opus",
-        docRelease: "opus",
+        landing: "opus",
       },
       legCollections: {
         cmrReview: [{ family: "claude" as const, slug: "opus" }],

@@ -1215,8 +1215,8 @@ export function soulForStep(
           ? "fixer"
           : spec.role === "cleanup"
             ? "cleanup"
-            : spec.role === "docRelease"
-              ? "docRelease"
+            : spec.role === "landing"
+              ? "landing"
               : "coder";
   if (spec.soul !== expected) {
     throw new Error(
@@ -1278,7 +1278,7 @@ export function lastSessionId(
  */
 function extractTaggedJson(
   stdout: string,
-  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease" | "judge",
+  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "landing" | "judge",
 ): unknown | undefined {
   const body = extractLastTagBody(stdout, tag);
   if (body === undefined) return undefined;
@@ -1773,7 +1773,7 @@ export function promptsDirError(
  * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
  * mirroring promptsDir validation. Family workers share this image inventory,
- * so docRelease/verify/fixer/ship souls remain required here.
+ * so landing/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
@@ -1781,7 +1781,7 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "cmr_completeness.md",
   "cmr_correctness.md",
   "coder.md",
-  "docRelease.md",
+  "landing.md",
   "fixer.md",
   "merger.md",
   "reviewer.md",
@@ -1820,7 +1820,7 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. docRelease.md; ` +
+      `must be present (every file under image/souls, incl. landing.md; ` +
       `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
     );
   }

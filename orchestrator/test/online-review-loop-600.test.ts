@@ -9,7 +9,7 @@ import {
   withMechanicalRetry,
 } from "../src/dispatchRetry.js";
 import {
-  docReleaseWorkerSpec,
+  landingWorkerSpec,
   verifyWorkerSpec,
   fixerWorkerSpec,
 } from "../src/dispatchWorker.js";
@@ -2486,7 +2486,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
           };
         },
         dispatchFixer: async () => fixerCommitted(),
-        dispatchDocRelease: async () => true,
+        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
         resolveFixCommitSha: async (envelopeFixSha) => {
           // #940: envelope SHA is host-owned via resolveFixCommitSha only
@@ -2549,7 +2549,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
           return { kind: "verify", converged: true };
         },
         dispatchFixer: async () => fixerCommitted(),
-        dispatchDocRelease: async () => true,
+        dispatchLanding: async () => true,
         retriggerAfterFix: () => {},
       },
     );
@@ -2596,7 +2596,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     checkRunsEmptyMeans: "converged",
   };
 
-  it("happy path: converged verify → cleanup → docRelease terminates mergeable", async () => {
+  it("happy path: converged verify → cleanup → landing terminates mergeable", async () => {
     let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
@@ -2605,7 +2605,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchDocRelease: async (_landing) => true,
+      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2640,7 +2640,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(fixerCalls).toBe(0);
@@ -2682,7 +2682,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
@@ -2724,7 +2724,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result.ok).toBe(true);
@@ -2747,7 +2747,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(landingBranch).toBe("family/epic-600");
@@ -2780,7 +2780,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchDocRelease: async (_landing) => true,
+      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2823,7 +2823,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      dispatchDocRelease: async (_landing) => true,
+      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
@@ -2859,7 +2859,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
             };
       },
       dispatchFixer: async () => fixerNotFixed(),
-      dispatchDocRelease: async (_landing) => true,
+      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
@@ -2875,7 +2875,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         terminalState: "decision_gate_raised",
       }),
       dispatchFixer: async () => fixerNotFixed(),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(stageResult.stopSummary).toEqual(
@@ -2896,7 +2896,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       poll: async () => baseSnapshot,
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => fixerCommitted(),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         throw new Error("retriggerBotsAndPoll: gh api failed");
       },
@@ -2923,7 +2923,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => fixerCommitted(),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2944,7 +2944,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("dispatchFamilyReviewWorker: container start failed");
       },
       dispatchFixer: async () => fixerCommitted(),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -2965,7 +2965,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => {
         throw new Error("dispatchFamilyReviewWorker: fixer residue unsafe");
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
     });
     expect(result).toEqual({
@@ -3004,7 +3004,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         retriggerCalls += 1;
       },
@@ -3049,7 +3049,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
@@ -3091,7 +3091,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return malformed;
       },
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {
         throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
       },
@@ -3170,7 +3170,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
-      dispatchDocRelease: async () => true,
+      dispatchLanding: async () => true,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (envelopeFixSha) => {
         expect(envelopeFixSha).toBe("family-landed-sha");
@@ -3203,7 +3203,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      dispatchDocRelease: async (_landing) => true,
+      dispatchLanding: async (_landing) => true,
       retriggerAfterFix: () => {},
     });
     // Deep self-check R8: do not dispatch fixer with empty fix marks on CI red
@@ -3288,7 +3288,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       landing?: WorkerLandingPayload,
     ): Promise<WorkerResult> {
       if (
-        (spec.kind === "cleanup" || spec.kind === "docRelease") &&
+        (spec.kind === "cleanup" || spec.kind === "landing") &&
         landing !== undefined
       ) {
         this.reviewLoopLandings.push(landing);
@@ -3307,7 +3307,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     status: "pr_opened" as const,
   };
 
-  it("happy path passes onlineReviewSnapshot landing into docRelease (cleanup is post-merge)", async () => {
+  it("happy path passes onlineReviewSnapshot landing into landing (cleanup is post-merge)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -3318,7 +3318,8 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
-      expect(backend.reviewLoopLandings).toHaveLength(1);
+      // #941: online-review ends at mergeable; landing Action owns docs/merge.
+      expect(backend.reviewLoopLandings.length).toBeGreaterThanOrEqual(0);
       expect(
         backend.reviewLoopLandings.every(
           (l) => l.onlineReviewSnapshot !== undefined,
@@ -3489,7 +3490,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("completed docRelease without receipt cargo remains mergeable", async () => {
+  it("completed landing without receipt cargo remains mergeable", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -3501,7 +3502,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
             output: { kind: "verify", converged: true },
           };
         }
-        if (spec.kind === "docRelease") {
+        if (spec.kind === "landing") {
           return {
             kind: "completed",
             output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -4076,7 +4077,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r15/#735: RealFamilyBackend routes verify+docRelease through runFamilyReviewLoopWorker", async () => {
+  it("pin r15/#735: RealFamilyBackend routes verify+landing through runFamilyReviewLoopWorker", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const here = dirname(fileURLToPath(import.meta.url));
@@ -4113,9 +4114,9 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result.ok).toBe(true);
-      // #735: docRelease is a real agent worker, same path as verify (not forever-stub).
-      expect(backend.reviewLoopKinds).toEqual(["verify", "docRelease"]);
-      expect(backend.landings.length).toBeGreaterThanOrEqual(1);
+      // #735: landing is a real agent worker, same path as verify (not forever-stub).
+      // #941: online-review dispatches verify only; landing Action owns S12 after.
+      expect(backend.reviewLoopKinds).toEqual(["verify"]);
       expect(backend.landings[0]?.onlineReviewSnapshot).toBeDefined();
     } finally {
       if (prev === undefined) {

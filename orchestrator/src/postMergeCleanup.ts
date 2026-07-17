@@ -6,14 +6,11 @@ import {
   fetchPrMergeLiveState,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
-import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
-import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import {
   decodeSubIssueEntry,
   decodeSubIssueNodes,
   type Sh,
 } from "./familyDriver.js";
-import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
   CleanupResult,
@@ -46,6 +43,15 @@ export interface PostMergeCleanupInput {
   readonly branchExists?: (branch: string) => boolean;
   readonly fetchSubIssues?: (parent: number) => readonly LiveSubIssue[];
   readonly fetchIssueState?: (issue: number) => string;
+  /** Landing Action / tests may inject live MERGED state (no host fake-PR hatch). */
+  readonly liveState?: {
+    readonly state: string;
+    readonly headOid: string;
+    readonly prNumber: number;
+    readonly prUrl: string;
+    readonly headRefName: string;
+    readonly mergeStateStatus?: string;
+  };
 }
 
 export function branchTipMatchesMergedHead(
@@ -232,19 +238,15 @@ export function runPostMergeCleanup(
   const skippedReasons: string[] = [];
   const issuesClosed: number[] = [];
 
-  const offlineSynthetic =
-    !isLiveGithubReviewPollEnabled(input.prMerged.prUrl, input.repo) &&
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
-
   let live;
-  if (offlineSynthetic) {
+  if (input.liveState !== undefined) {
     live = {
-      prNumber: input.prMerged.prNumber,
-      prUrl: input.prMerged.prUrl,
-      state: "MERGED",
-      headOid: input.prMerged.mergedHeadOid,
-      headRefName: input.prMerged.remoteBranchName,
-      mergeStateStatus: "UNKNOWN",
+      prNumber: input.liveState.prNumber,
+      prUrl: input.liveState.prUrl,
+      state: input.liveState.state,
+      headOid: input.liveState.headOid,
+      headRefName: input.liveState.headRefName,
+      mergeStateStatus: input.liveState.mergeStateStatus ?? "UNKNOWN",
     };
   } else {
     try {
@@ -445,9 +447,7 @@ export function dispatchPostMergeCleanup(
   if (repo.length === 0) {
     throw new Error("cleanup dispatch requires repo on DispatchContext");
   }
-  if (offlineReviewLoopDispatchAdmissible(ctx, repo)) {
-    return stubCleanupResult();
-  }
+  // #941: fake-PR offline cleanup hatch deleted — landing Action injects live hooks in tests.
   return runPostMergeCleanup({
     sh,
     repo,

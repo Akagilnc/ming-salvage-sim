@@ -646,7 +646,7 @@ export interface FamilyBackend {
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
   /**
    * Absolute git working directory for the family base clone. Optional — used to
-   * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
+   * compute `landingPaths` for diagnostics only (ADR 0123 / #735). Missing
    * working-repo does not block merge: path allowlist is not a merge gate.
    * Merge still requires readiness + doc-release completed; paths are diagnostics.
    */

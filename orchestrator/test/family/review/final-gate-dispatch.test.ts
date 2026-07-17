@@ -370,7 +370,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       if (
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
-        spec.kind === "docRelease"
+        spec.kind === "landing"
       ) {
         return {
           kind: "completed",
@@ -383,7 +383,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
                   committed: true,
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
-                : { kind: "docRelease", released: true },
+                : { kind: "landing", released: true },
         };
       }
       return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
@@ -411,7 +411,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md" },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "landing", promptFile: "landing.md" },
     ]);
   });
 
@@ -445,7 +445,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       },
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
       { kind: "verify", promptFile: "verify.md" },
-      { kind: "docRelease", promptFile: "docRelease.md" },
+      { kind: "landing", promptFile: "landing.md" },
     ]);
   });
 });
@@ -536,7 +536,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
         spec.kind === "cleanup" ||
-        spec.kind === "docRelease"
+        spec.kind === "landing"
       ) {
         return {
           kind: "completed",
@@ -551,7 +551,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
                 }
                 : spec.kind === "cleanup"
                   ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                  : { kind: "docRelease", released: true },
+                  : { kind: "landing", released: true },
         };
       }
       return this.shipOutput;

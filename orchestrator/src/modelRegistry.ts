@@ -143,7 +143,7 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
-  // #916: low-effort sol row for ship/merger/fixer/cleanup/docRelease seats on
+  // #916: low-effort sol row for ship/merger/fixer/cleanup/landing seats on
   // claude-tight (same model string as sol, options.effort:"low").
   "gpt-5.6-sol-low": {
     provider: "codex",

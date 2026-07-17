@@ -267,7 +267,7 @@ function stubGrokCmrPreset(): void {
           verify: "gpt-5.6-sol",
           fixer: "sonnet",
           cleanup: "sonnet",
-          docRelease: "sonnet",
+          landing: "sonnet",
         },
         legCollections: {
           cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
@@ -790,7 +790,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toEqual(["fixer"]);
     expect(
       familyRelaySlotsForWall({ phase: "online_review", wallStep: "S12" }),
-    ).toEqual(["docRelease"]);
+    ).toEqual(["landing"]);
     expect(familyRelaySlotsForWall({ phase: "merge", wallStep: "S1" })).toEqual(
       ["merger"],
     );
