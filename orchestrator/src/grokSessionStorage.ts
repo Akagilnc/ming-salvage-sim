@@ -162,8 +162,8 @@ async function walkSessionTexts(
 ): Promise<void> {
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
-    // #981: never content-validate / rewrite OS metadata sidecars.
-    if (isOsMetadataSessionEntry(entry.name)) continue;
+    // OS metadata is stripped at capture/resume entry before walk; no second
+    // filter here (single truth: stripOsMetadataSessionEntries).
     const p = join(dir, entry.name);
     // CR-9: reject symlinks / non-regular entries before any follow-on I/O.
     if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
