@@ -197,7 +197,7 @@ def test_private_audience_does_not_erase_independent_public_settlement(game):
     assert "私下所议" not in rendered
 
 
-def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
+def test_settlement_pure_public_narrative_excludes_secret_brief_from_public_view(game):
     """真实结算：密令只在 brief；独立公开源投影给未参与者；不靠文本擦洗拆混合串。
 
     #976 结构：公共 LLM 永不预读密令，故结算 narrative 只承载公开句；
@@ -243,7 +243,7 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
     assert brief is not None and secret_marker in (brief["body"] or "")
 
 
-def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
+def test_settlement_pure_public_narrative_lands_while_secret_brief_active(game):
     """#883/#976：公共产出不预读密令；纯公开结算叙事在 brief 存活期仍可入档（F3）。"""
     db, state, content = game
     ministers = [
