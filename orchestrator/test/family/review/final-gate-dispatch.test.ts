@@ -763,16 +763,25 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
-      this.shipDispatched = true;
+      if (spec.kind === "ship") {
+        this.shipDispatched = true;
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "feat/445",
+            status: "pr_opened",
+            pr: "pr://feat/445",
+            prHead: "stale-pr-head",
+          },
+        };
+      }
+      // #940: host no longer caps online-review rounds. Returning non-verify
+      // cargo forever would hang the for(;;) loop — fail closed so the stage
+      // still proves ship persisted before online-review failure.
       return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: "feat/445",
-          status: "pr_opened",
-          pr: "pr://feat/445",
-          prHead: "stale-pr-head",
-        },
+        kind: "failed",
+        reason: `test pin: online-review ${spec.kind} incomplete after ship`,
       };
     }
   }

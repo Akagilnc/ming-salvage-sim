@@ -644,10 +644,10 @@ export interface FamilyBackend {
   ): Promise<WorkerResult>;
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // Verify is REQUIRED (#939 / #934 ID-011): missing capability is not a success
-  // no-op. CMR/ship and other downstream methods may remain optional for older
-  // fakes; production RealFamilyBackend supplies the full set. The verify-cmr
-  // module ({@link runVerifyCmr}) reaches these off the `familyBackend` handed by
-  // the frozen spine input `{phase, familyBase, familyBackend}`.
+  // no-op. CMR/ship are production/test contract guarantees via dispatchWorker
+  // (#940 / #934 ID-012) — host missing-capability fake exits deleted. The
+  // verify-cmr module ({@link runVerifyCmr}) reaches these off the `familyBackend`
+  // handed by the frozen spine input `{phase, familyBase, familyBackend}`.
 
   /**
    * #296 verify seam (ADR 0022 decision 3④/⑤): run the family verify (typecheck

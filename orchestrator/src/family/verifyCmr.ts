@@ -67,7 +67,7 @@ import {
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
 } from "../findingFamilies.js";
-import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
+
 import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
@@ -100,7 +100,6 @@ import type {
   Finding,
   FindingFamily,
   ShipResult,
-  VerifyResult,
   ReviewFixRefuseRecord,
   WorkerLandingPayload,
   WorkerMonitorHandle,
@@ -1061,13 +1060,11 @@ function familyOnlineReviewLoopFailureStopSummary(
         : {}),
     });
   }
-  const reason =
-    reviewLoop.terminalState === "round_budget_exhausted"
-      ? "family online review loop exhausted the 3-round budget"
-      : "family online review loop did not converge";
+  // #940: mechanical round-budget exhaust deleted; remaining non-success is
+  // worker/judge disposition (decision_gate / online_review_failed).
   return stageFailureStopSummary({
     status: "online_review_failed",
-    summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
+    summary: `family online review loop did not converge (terminal: ${reviewLoop.terminalState})`,
     repairHint: "resolve remaining online review findings or answer the decision gate",
   });
 }
@@ -1398,30 +1395,8 @@ export async function runFamilyOnlineReviewLoop(input: {
         ? result.output.released
         : undefined;
     },
-    applySideEffects: (
-      landing: WorkerLandingPayload,
-      verify: VerifyResult,
-      fixingCommitSha?: string,
-    ) => {
-      if (!livePoll) {
-        return verify;
-      }
-      const applied = applyVerifySideEffects({
-        sh: ghSh,
-        repo,
-        prUrl,
-        verify,
-        fixingCommitSha,
-        landingThreads: landing.onlineReviewSnapshot?.threads,
-        approvedFixMarkedFindingThreads: landing.fixMarkedFindingThreads,
-      });
-      return {
-        ...verify,
-        ...(applied.deferredIssueUrls.length > 0
-          ? { deferredIssueUrls: applied.deferredIssueUrls }
-          : {}),
-      };
-    },
+    // #940 / ID-012: verify worker owns GitHub side effects; host does not
+    // re-apply reply/resolve/deferred after the worker's typed disposition.
     retriggerAfterFix: async () => {
       if (livePoll) {
         const retriggered = retriggerBotsAndPoll(
@@ -2442,25 +2417,11 @@ export async function runVerifyCmr(
   // (decision 3⑤/⑥). A green wave verify clears the wave.
   if (phase === "wave") return { ok: true, ran: true };
 
-  // ── integrated cmr 承重闸 (decision 3⑥): only AFTER a green full verify. No cmr
-  //    capability ⇒ the hook CANNOT run the load-bearing review, so it must NOT
-  //    report a pass: a real verify already ran, and `{ok:true}` here would make
-  //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
-  //    Fail-safe to ok:false + cmr_failed (#922) — NOT the #293 nothing-ran no-op. ──
-  // ADR 0026 / #331: the integrated cmr is dispatched as a FAMILY cmr WORKER
-  // through the unified seam (no longer the inline `runIntegratedCmr`). The
-  // capability check stays: NO cmr capability ⇒ cmr_failed (the load-bearing
-  // review cannot run; never a false pass). The capability is satisfied by EITHER
-  // the new unified `dispatchWorker` seam OR the legacy `runIntegratedCmr` (the
-  // dispatch helper prefers the former, forwards to the latter) — gating on the
-  // legacy method ALONE would wrongly fail-safe a backend that implements ONLY the
-  // new seam (codex cmr finding).
-  if (
-    familyBackend.dispatchWorker === undefined &&
-    familyBackend.runIntegratedCmr === undefined
-  ) {
-    return stageGate("cmr_failed");
-  }
+  // ── integrated cmr 承重闸 (decision 3⑥): only AFTER a green full verify.
+  // #940 / ID-012: production/test contract guarantees CMR capability via the
+  // unified dispatchWorker seam (legacy runIntegratedCmr remains a residual
+  // fallback inside dispatchFamilyWorker). Missing-capability host fake exits
+  // are deleted — dispatch failures surface as normal worker/process outcomes.
   let resolvedRoute: ResolvedModelRoute;
   try {
     resolvedRoute = modelRoute ?? resolveActiveModelRoute();
@@ -2686,57 +2647,9 @@ export async function runVerifyCmr(
 
   // ── Ship stage: green verify + converged CMR ⇒ open the family PR, then the
   //    same final barrier continues through online review, auto-merge, and cleanup.
-  //    No PR capability means that continuation cannot start; verify + CMR already
-  //    ran, so `{ok:true}` would report `"success"` for a run whose PR never opened
-  //    — fail-safe to `ok:false` (NOT the no-op). The ship action is a FAMILY SHIP
-  //    WORKER through the unified seam. Without that worker capability the final
-  //    barrier remains incomplete.
-  if (familyBackend.dispatchWorker === undefined) {
-    const reason =
-      "family ship worker unavailable after converged CMR: backend has no dispatchWorker capability";
-    const postCmrFamilyHead = await readPostCmrFamilyHead(
-      familyBackend,
-      familyBase,
-      cmrPassedFamilyHeadAfter,
-    );
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: { reason },
-      familyHeadAfter: postCmrFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason,
-      familyHeadAfter: postCmrFamilyHead,
-      stopSummary: stageFailureStopSummary({
-        status: "ship_failed",
-        summary: `${reason}; the terminal PR gate cannot open a PR`,
-        repairHint:
-          "provide the family ship worker dispatch seam, then rerun the final family barrier",
-        metadata: {
-          ship: {
-            latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
-            currentFamilyHead: postCmrFamilyHead,
-            shipPrState: "ship-capability-missing",
-          },
-          heads: {
-            ...(postCmrFamilyHead !== undefined
-              ? { actualFamilyHead: postCmrFamilyHead }
-              : {}),
-            ...(cmrPassedFamilyHeadAfter !== undefined
-              ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
-              : {}),
-            sources: {
-              actualFamilyHead: "family head after CMR before missing ship capability",
-              verifiedCmrHead: "latest cmr_passed ledger row",
-            },
-          },
-        },
-      }),
-    });
-    return stageGate("ship_failed");
-  }
+  // #940 / ID-012: ship capability is guaranteed by production/test contract
+  // (dispatchWorker). Missing-capability host fake exits deleted — ship is
+  // always dispatched; worker/process failure is the only ship_failed path.
   const shipSpec = familyShipWorkerSpec(resolvedRoute);
   const shipPool = billingPoolForFamilyWorker({
     ...scopedPoolFields,
