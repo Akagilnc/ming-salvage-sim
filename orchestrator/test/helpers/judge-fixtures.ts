@@ -25,18 +25,26 @@ export function judgeContinue(
   findings: ReadonlyArray<Finding>,
   opts?: {
     readonly kill?: ReadonlyArray<JudgeFindingDisposition & { action: "refute" }>;
+    /** #952 terminal suppress rows (parked; not sent to fixer). */
+    readonly suppress?: ReadonlyArray<
+      JudgeFindingDisposition & { action: "suppress" }
+    >;
     readonly advanceCoder?: string;
   },
 ): JudgeResult {
   const kills = opts?.kill ?? [];
-  const killKeys = new Set(kills.map((k) => k.identityKey));
+  const suppresses = opts?.suppress ?? [];
+  const terminalKeys = new Set([
+    ...kills.map((k) => k.identityKey),
+    ...suppresses.map((s) => s.identityKey),
+  ]);
   const live = liveDispositionsForFindings(
-    findings.filter((f) => !killKeys.has(findingIdentityKey(f))),
+    findings.filter((f) => !terminalKeys.has(findingIdentityKey(f))),
   );
   return {
     kind: "judge",
     status: "continue",
-    findingDispositions: [...kills, ...live],
+    findingDispositions: [...kills, ...suppresses, ...live],
     findings: [...findings],
     ...(opts?.advanceCoder !== undefined
       ? { advanceCoder: opts.advanceCoder }

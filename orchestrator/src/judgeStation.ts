@@ -20,6 +20,7 @@ import type {
   WorkerSessionMode,
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
+import { recordFindingStoreFlip } from "./findingsStateStore.js";
 import type {
   JudgeVerdict,
   LegalRefuseReason,
@@ -68,6 +69,7 @@ export function isLegalJudgeReviewLegSession(
 /**
  * Envelope consistency: converged must not coexist with live dispositions.
  * Pure check for tests / seat self-check — runner does not re-judge.
+ * Suppress / refute terminals do not block converged (only `live` does).
  */
 export function liveFindingsBlockConverged(
   dispositions: ReadonlyArray<{ readonly action: string }> | undefined,
@@ -76,33 +78,69 @@ export function liveFindingsBlockConverged(
 }
 
 /**
- * Map judge kill dispositions to ledger findings-store flips (`refuted`).
+ * Map judge terminal dispositions to ledger findings-store flips:
+ * - `refute` → `refuted` (#925)
+ * - `suppress` → `suppressed` (#952; internal terminal, not public ABI)
+ *
  * Live rows stay out of the terminal ledger flip set (they remain open).
+ * Transitions go through {@link recordFindingStoreFlip} (single write-point
+ * source — ADR 0129). Illegal store flips fail loud (throw with store reason).
  */
-export function judgeKillsToLedgerDispositions(
+export function judgeTerminalsToLedgerDispositions(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
   severity: Finding["severity"] = "medium",
 ): FindingDisposition[] {
   const out: FindingDisposition[] = [];
   for (const d of dispositions) {
-    if (d.action !== "refute") continue;
-    out.push({
-      identityKey: d.identityKey,
-      status: "refuted",
-      reason: `${d.reason}: ${d.evidence}`,
-      severity,
-      source: "judge_kill",
-      scope: d.reason,
-    });
+    if (d.action === "refute") {
+      const written = recordFindingStoreFlip({
+        identityKey: d.identityKey,
+        from: "unrepaired",
+        to: "refuted",
+        reason: `${d.reason}: ${d.evidence}`,
+        severity,
+        source: "judge_kill",
+        scope: d.reason,
+      });
+      if (!written.ok) {
+        throw new Error(written.reason);
+      }
+      out.push(written.value);
+      continue;
+    }
+    if (d.action === "suppress") {
+      const groundKind =
+        "groundTicket" in d && d.groundTicket !== undefined
+          ? "groundTicket"
+          : "ownerRecordPointer";
+      const groundSource =
+        groundKind === "groundTicket"
+          ? `groundTicket:${d.groundTicket}`
+          : d.ownerRecordPointer;
+      const written = recordFindingStoreFlip({
+        identityKey: d.identityKey,
+        from: "unrepaired",
+        to: "suppressed",
+        reason: d.evidence,
+        severity,
+        source: groundSource,
+        scope: groundKind,
+      });
+      if (!written.ok) {
+        throw new Error(written.reason);
+      }
+      out.push(written.value);
+    }
   }
   return out;
 }
 
 /**
  * Filter findings cargo to only the live (open) identity keys from the
- * disposition table. Dead/refuted keys never enter S5 dispatch.
+ * disposition table. Dead / refuted / suppressed keys never enter S5 dispatch.
  *
- * Filtering is by schema identity keys — not by prose parsing.
+ * Filtering is by schema identity keys — not by prose parsing. Only
+ * `action: "live"` enters the fixer live-set (#952: suppressed is archived).
  *
  * Empty live set is a cargo filter result only — NOT topology authorization.
  * Family (#919 M1) and single-slice (#919 M6) both fail-loud when
@@ -123,7 +161,6 @@ export function openFindingsForFixer(
   }
   return [];
 }
-
 /** Live identity keys only (control envelope for S5). */
 export function liveFindingIdentityKeys(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
@@ -422,7 +459,7 @@ export function projectResidualReviewerToJudge(residual: {
 
 /**
  * Live-path projection of a judge `continue` verdict into the S5 open set
- * (kills → refuted flips; live keys only). Shared by the in-process continue
+ * (terminals → store flips; live keys only). Shared by the in-process continue
  * edge and crash/resume ledger rebuild (F2).
  */
 export function projectJudgeContinueBlocking(output: {
@@ -433,11 +470,11 @@ export function projectJudgeContinueBlocking(output: {
   readonly blocking: Finding[];
   readonly blockingIdentityKeys: string[];
   readonly blockingFindingCount: number;
-  readonly killDispositions: FindingDisposition[];
+  readonly terminalDispositions: FindingDisposition[];
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
-  const kills = judgeKillsToLedgerDispositions(dispositions);
+  const terminals = judgeTerminalsToLedgerDispositions(dispositions);
   const cargo = output.findings ?? [];
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
@@ -445,7 +482,7 @@ export function projectJudgeContinueBlocking(output: {
     blocking,
     blockingIdentityKeys,
     blockingFindingCount: blockingIdentityKeys.length,
-    killDispositions: kills,
+    terminalDispositions: terminals,
   };
 }
 
@@ -469,7 +506,7 @@ export type FamilyJudgeClosure =
       readonly blocking: Finding[];
       readonly blockingIdentityKeys: string[];
       readonly blockingFindingCount: number;
-      readonly killDispositions: FindingDisposition[];
+      readonly terminalDispositions: FindingDisposition[];
     }
   | {
       readonly action: "escalate";
@@ -526,7 +563,7 @@ export function closeFamilyCourtFromJudgeOutput(
         blocking: projected?.blocking ?? [],
         blockingIdentityKeys: projected?.blockingIdentityKeys ?? [],
         blockingFindingCount: projected?.blockingFindingCount ?? 0,
-        killDispositions: projected?.killDispositions ?? [],
+        terminalDispositions: projected?.terminalDispositions ?? [],
       };
     }
     if (status === "escalate") {

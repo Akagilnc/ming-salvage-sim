@@ -95,16 +95,16 @@ export function applyHistoricalResidualOpenSet(
 }
 
 /**
- * Rebuild the S5 open-set / kill flips / raw-artifact pointers from a
+ * Rebuild the S5 open-set / terminal store flips / raw-artifact pointers from a
  * persisted ledger (crash/resume seed).
  *
  * Single shared projection (F2/F3) — not S4-only:
- *   - #925 live path: S3/S6 `kind:"judge" status:"continue"` → kills + live-only
- *     open set (same as in-process continue edge via
- *     {@link projectJudgeContinueBlocking}).
+ *   - #925/#952 live path: S3/S6 `kind:"judge" status:"continue"` → terminal
+ *     flips (`refute`→`refuted`, `suppress`→`suppressed`) + live-only open set
+ *     (same as in-process continue edge via {@link projectJudgeContinueBlocking}).
  *   - Residual historical path: S4 + preceding `kind:"reviewer"` open-count.
  *
- * Walk order: last applicable projection wins for the open set; judge kill
+ * Walk order: last applicable projection wins for the open set; judge terminal
  * flips accumulate across continue rounds (mirrors the live path).
  */
 export function rebuildBlockingFromLedger(
@@ -136,10 +136,10 @@ export function rebuildBlockingFromLedger(
     ) {
       const projected = projectJudgeContinueBlocking(entry.output);
       if (projected !== undefined) {
-        if (projected.killDispositions.length > 0) {
+        if (projected.terminalDispositions.length > 0) {
           findingDispositions = [
             ...findingDispositions,
-            ...projected.killDispositions,
+            ...projected.terminalDispositions,
           ];
         }
         pendingBlockingFindings = projected.blocking;
