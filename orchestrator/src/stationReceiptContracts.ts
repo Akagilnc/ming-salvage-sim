@@ -347,11 +347,26 @@ export function parseFindingDisposition(
     if (hasTicket) {
       const parsed = suppressWithTicketSchema.safeParse(rec);
       if (!parsed.success) return zodFail("finding disposition", parsed.error);
-      return ok(parsed.data as JudgeSuppressDisposition);
+      // Build the exclusive-arm object explicitly so the XOR `never` arm is
+      // typed without a post-Zod assertion (Zod object output omits the absent
+      // ground key; JudgeSuppressDisposition encodes that as `?: never`).
+      const ticketArm: JudgeSuppressDisposition = {
+        identityKey: parsed.data.identityKey,
+        action: "suppress",
+        evidence: parsed.data.evidence,
+        groundTicket: parsed.data.groundTicket,
+      };
+      return ok(ticketArm);
     }
     const parsed = suppressWithOwnerPointerSchema.safeParse(rec);
     if (!parsed.success) return zodFail("finding disposition", parsed.error);
-    return ok(parsed.data as JudgeSuppressDisposition);
+    const pointerArm: JudgeSuppressDisposition = {
+      identityKey: parsed.data.identityKey,
+      action: "suppress",
+      evidence: parsed.data.evidence,
+      ownerRecordPointer: parsed.data.ownerRecordPointer,
+    };
+    return ok(pointerArm);
   }
 
   return fail(
