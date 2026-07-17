@@ -23,7 +23,7 @@
 
 import type { ChildProcess } from "node:child_process";
 
-import { AdoptionPersistFailedError } from "../dispatchRetry.js";
+import { abandonSpawnAfterAdoptionFailure } from "../dispatchRetry.js";
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
   createTelemetryLegStamper,
@@ -31,10 +31,7 @@ import {
 } from "../telemetry.js";
 import {
   dispatchMonitoredCliWorker,
-  isWorkerTerminationFailedError,
-  terminateSpawnedChild,
   readLogActivity,
-  WorkerTerminationFailedError,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
 import type {
@@ -323,31 +320,14 @@ export async function dispatchFamilyWorkerWithMonitor(
           await opts.onDispatchConfirmed?.();
           await opts.onMonitorHandleSpawned?.(handle);
         } catch (error) {
-          // #934 ID-006: exact terminate; unconfirmed exit → worker_termination_failed + PID.
-          try {
-            await terminateSpawnedChild(child, undefined, {
-              instanceId: handle.instanceId,
-            });
-          } catch (termErr) {
-            if (isWorkerTerminationFailedError(termErr)) {
-              const base =
-                error instanceof Error ? error.message : String(error);
-              throw new WorkerTerminationFailedError({
-                ...(termErr.pid !== undefined ? { pid: termErr.pid } : {}),
-                instanceId: handle.instanceId,
-                message:
-                  `${base}; worker_termination_failed` +
-                  (termErr.pid !== undefined ? ` pid=${termErr.pid}` : "") +
-                  ` instanceId=${handle.instanceId}`,
-              });
-            }
-          }
-          try {
-            await exitPromise;
-          } catch {
-            // Preserve the original spawn-persist error if child cleanup fails.
-          }
-          throw new AdoptionPersistFailedError(error);
+          // #934 ID-006 / #937 S1: single adoption-failure cleanup court
+          // (monitorDeps undefined — family has no observational monitorDeps seam).
+          await abandonSpawnAfterAdoptionFailure({
+            child,
+            exitPromise,
+            adoptionError: error,
+            instanceId: handle.instanceId,
+          });
         }
       }
       const exitCode = await exitPromise;

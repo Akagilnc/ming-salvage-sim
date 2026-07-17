@@ -34,6 +34,73 @@ function isValidStepId(value: unknown): value is SliceStepId {
 }
 
 /**
+ * #934 ID-005 / #937 S2 — single durable court for `relay_baton_handoff` rows.
+ *
+ * Builds the in-memory marker, writeLedger (fail-closed with unified
+ * `record_persist_failed` vocabulary), then ledger.push. Shared by quota-wall
+ * relay and capacity relay so the two paths cannot drift on cargo or failure class.
+ *
+ * @param persistClass optional prefix fragment (e.g. `"capacity"`) →
+ *   `record_persist_failed: capacity relay_baton_handoff: …`
+ */
+export async function persistRelayBatonHandoff(opts: {
+  readonly entry: RelayHandoffLedgerEvent;
+  readonly step: SliceStepId;
+  readonly ledger: LedgerEntry[];
+  readonly stateDir: string | undefined;
+  readonly sessionId: string;
+  readonly backend: Backend;
+  readonly resolveBranchHEAD: () => Promise<string | undefined>;
+  readonly hashPrompt: (
+    promptFile: string | undefined,
+    step: SliceStepId,
+  ) => Promise<string>;
+  readonly persistClass?: string;
+}): Promise<LedgerEntry> {
+  const { entry, step, ledger, stateDir, sessionId, backend } = opts;
+  const marker: LedgerEntry = {
+    step: isValidStepId(entry.step) ? entry.step : step,
+    event: "relay_baton_handoff",
+    trigger: entry.trigger,
+    state_summary: entry.state_summary,
+    ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
+    ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+    fromModelId: entry.fromModelId,
+    fromPool: entry.fromPool,
+    toModelId: entry.toModelId,
+    toPool: entry.toPool,
+    ts: entry.ts,
+  };
+  // Durable baton first; write failure fails closed (no best-effort in-memory-only).
+  if (stateDir !== undefined) {
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await opts.hashPrompt(undefined, step),
+          branchHEAD: await opts.resolveBranchHEAD(),
+          ts: entry.ts,
+        },
+        stateDir,
+      );
+    } catch (writeErr) {
+      const classLabel =
+        opts.persistClass !== undefined && opts.persistClass.length > 0
+          ? `${opts.persistClass} relay_baton_handoff`
+          : "relay_baton_handoff";
+      throw new Error(
+        `record_persist_failed: ${classLabel}: ${
+          writeErr instanceof Error ? writeErr.message : String(writeErr)
+        }`,
+      );
+    }
+  }
+  ledger.push(marker);
+  return marker;
+}
+
+/**
  * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
  * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
  */
@@ -184,35 +251,18 @@ export async function parkOrRelayQuotaWall(opts: {
 
   if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
     const entry = forked.ledgerEntry;
-    // #937: durable ledger row first; ephemeral brief is pure render from the
-    // in-memory entry (no worktree focus file).
-    const marker: LedgerEntry = {
-      step: isValidStepId(entry.step) ? entry.step : step,
-      event: "relay_baton_handoff",
-      trigger: entry.trigger,
-      state_summary: entry.state_summary,
-      ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
-      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-      fromModelId: entry.fromModelId,
-      fromPool: entry.fromPool,
-      toModelId: entry.toModelId,
-      toPool: entry.toPool,
-      ts: entry.ts,
-    };
-    // Durable baton first; write failure fails closed (no best-effort park).
-    if (stateDir !== undefined) {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: entry.ts,
-        },
-        stateDir,
-      );
-    }
-    ledger.push(marker);
+    // #937 / #934 S2: durable ledger row via single court; ephemeral brief is
+    // pure render from the in-memory entry (no worktree focus file).
+    await persistRelayBatonHandoff({
+      entry,
+      step,
+      ledger,
+      stateDir,
+      sessionId,
+      backend,
+      resolveBranchHEAD: opts.resolveBranchHEAD,
+      hashPrompt: opts.hashPrompt,
+    });
     return {
       kind: "relay",
       nextBaton: forked.nextBaton,

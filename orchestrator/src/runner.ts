@@ -66,6 +66,7 @@ import {
 import {
   parkOrRelayQuotaWall,
   parkQuotaWaitForReset,
+  persistRelayBatonHandoff,
 } from "./quotaParkRelay.js";
 import {
   applyCoderRecToRoute,
@@ -2689,17 +2690,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #936: Coder-Rec body comes from live meta only — snapshot dual court deleted.
     // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely — never
     // errorTerminate / poison the resume terminal state.
+    // #934 N1: meta throw ≠ successful empty body (legal no-marking → preset).
+    let resumeCoderRecMetaFailed = false;
     try {
       const meta = await backend.fetchIssueMeta(issueNumber);
       if (typeof meta.body === "string" && meta.body.length > 0) {
         coderRecIssueBody = meta.body;
       }
     } catch {
-      // fall through — continue with route preset
+      resumeCoderRecMetaFailed = true;
     }
     if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
       console.info(
-        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+        resumeCoderRecMetaFailed
+          ? "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset"
+          : "[orchestrator] Coder-Rec resume: no Coder-Rec marking in issue body; continuing with route preset",
       );
     }
     const coderRecPolicy = await applyCoderRecSelection();
@@ -3413,49 +3418,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               return await errorTermination(step, err);
             }
             const entry = handoff.ledgerEntry;
-            const marker: LedgerEntry = {
-              step: isValidStepId(entry.step) ? entry.step : step,
-              event: "relay_baton_handoff",
-              trigger: entry.trigger,
-              state_summary: entry.state_summary,
-              ...(entry.remaining !== undefined
-                ? { remaining: entry.remaining }
-                : {}),
-              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-              fromModelId: entry.fromModelId,
-              fromPool: entry.fromPool,
-              toModelId: entry.toModelId,
-              toPool: entry.toPool,
-              ts: entry.ts,
-            };
-            if (stateDir !== undefined) {
-              try {
-                await backend.writeLedger(
-                  {
-                    ...marker,
-                    sessionId,
-                    prompt_hash: await hashPrompt(undefined, step, backend),
-                    branchHEAD: await resolveBranchHEAD(),
-                    ts: entry.ts,
-                  },
-                  stateDir,
-                );
-              } catch (writeErr) {
-                // #934 CR R4 S1: surface write failure class, not the outer
-                // capacity err (stay-put audit path already does this).
-                return await errorTermination(
-                  step,
-                  new Error(
-                    `record_persist_failed: capacity relay_baton_handoff: ${
-                      writeErr instanceof Error
-                        ? writeErr.message
-                        : String(writeErr)
-                    }`,
-                  ),
-                );
-              }
+            // #934 S2: single durable court (shared with quota-wall relay).
+            try {
+              await persistRelayBatonHandoff({
+                entry,
+                step,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+                persistClass: "capacity",
+              });
+            } catch (writeErr) {
+              // Surface write failure class via errorTermination (not throw out).
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
             }
-            ledger.push(marker);
             activeRelayBrief = renderEphemeralRelayBrief(entry);
             completeMechanicalRetryInvocation(step);
             applyRelayBaton(handoff.nextBaton, step);

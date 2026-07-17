@@ -16,9 +16,16 @@
  * worker's self-reported content.
  */
 
+import type { ChildProcess } from "node:child_process";
+
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import { capacityRelayErrorFrom } from "./relayDispatch.js";
-import { isWorkerTerminationFailedError } from "./workerMonitor.js";
+import {
+  isWorkerTerminationFailedError,
+  terminateSpawnedChild,
+  WorkerTerminationFailedError,
+  type WorkerMonitorDeps,
+} from "./workerMonitor.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
@@ -46,6 +53,49 @@ export function isAdoptionPersistFailedError(
       err !== null &&
       (err as { readonly name?: unknown }).name === "AdoptionPersistFailedError")
   );
+}
+
+/**
+ * #934 ID-006 / #937 S1 — single court for spawn-adoption failure cleanup.
+ *
+ * Exact-handle terminate → wait exitPromise → promote
+ * {@link WorkerTerminationFailedError} or wrap {@link AdoptionPersistFailedError}.
+ * Shared by single-slice dispatchWorker and family dispatchFamilyWorker so the
+ * two call sites cannot drift on monitorDeps / message shaping.
+ */
+export async function abandonSpawnAfterAdoptionFailure(input: {
+  readonly child: ChildProcess;
+  readonly exitPromise: Promise<unknown>;
+  readonly adoptionError: unknown;
+  readonly instanceId: string;
+  readonly monitorDeps?: WorkerMonitorDeps;
+}): Promise<never> {
+  try {
+    await terminateSpawnedChild(input.child, input.monitorDeps, {
+      instanceId: input.instanceId,
+    });
+  } catch (termErr) {
+    if (isWorkerTerminationFailedError(termErr)) {
+      const base =
+        input.adoptionError instanceof Error
+          ? input.adoptionError.message
+          : String(input.adoptionError);
+      throw new WorkerTerminationFailedError({
+        ...(termErr.pid !== undefined ? { pid: termErr.pid } : {}),
+        instanceId: input.instanceId,
+        message:
+          `${base}; worker_termination_failed` +
+          (termErr.pid !== undefined ? ` pid=${termErr.pid}` : "") +
+          ` instanceId=${input.instanceId}`,
+      });
+    }
+  }
+  try {
+    await input.exitPromise;
+  } catch {
+    // Preserve the original spawn-persist error if child cleanup fails.
+  }
+  throw new AdoptionPersistFailedError(input.adoptionError);
 }
 
 /** Non-retryable throws that surface after exact-handle cleanup or durable edge. */
