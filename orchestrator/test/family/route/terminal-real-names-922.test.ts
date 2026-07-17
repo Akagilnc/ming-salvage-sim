@@ -71,6 +71,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
@@ -252,9 +256,9 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
         return this.ledger;
       }
-      async runFamilyVerify(): Promise<{ ok: true }> {
-        return { ok: true };
-      }
+      async runFamilyVerify(): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
       // No dispatchWorker / runIntegratedCmr.
     }
     const backend = new VerifyOnlyBackend();
@@ -306,6 +310,10 @@ describe("#922 fresh / resume same accident → same terminal name", () => {
 
       // Resume: children already merged; final barrier re-hits the same stage death.
       class ResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
         readonly ledger: FamilyLedgerEntry[] = [
           {
             childIssue: 10,

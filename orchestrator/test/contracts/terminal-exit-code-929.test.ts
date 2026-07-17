@@ -158,6 +158,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
@@ -405,6 +409,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       const freshCode = familyDriverExitCode(fresh);
 
       class ResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
         readonly ledger: FamilyLedgerEntry[] = [
           {
             childIssue: 10,
@@ -473,6 +481,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: same accident (child still fails, still unmerged) → same terminal + code.
     // Ledger is the prior incomplete residue (no merges); re-entry re-runs the child.
     class IncompleteResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("incomplete resume must not merge a failed child");
@@ -520,6 +532,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: unanswered child_decision_parked early-exits before the wave loop
     // with the same escalated terminal (production #604 F8 path).
     class EscalatedResumeBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("unanswered escalated resume must not merge");

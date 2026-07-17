@@ -210,9 +210,11 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyHead(_familyBase: string): Promise<string> {
     return this.head;
   }
-  // NOTE: deliberately NO `runFamilyVerify` — a backend without it makes the
-  // verify-cmr hook the no-op `{ok:true, ran:false}` (verifyCmr.ts), so a
-  // fully-merged family run reaches "success" (the spine.test.ts happy-path form).
+  // #939: verify is required. Explicit green so a fully-merged family run can
+  // still reach "success" without a real toolchain.
+  async runFamilyVerify(): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
 }
 
 class FakeReconcileGit implements ReconcileGit {
@@ -256,6 +258,7 @@ describe("#604 slice 5 — child decision escalation parks the family (core)", (
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -301,6 +304,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
 
     // ── invocation 1: parks on #11's decision escalation ──
     const first = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -330,6 +334,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
 
     // ── invocation 2 (re-entry): resumes #11 in place, merges, reaches success ──
     const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -359,6 +364,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     // merge → recordChildDecisionParked seam rather than manufacturing a head on
     // the ledger row below.
     const first = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -393,6 +399,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     expect(familyBackend.ledger.at(-1)).not.toHaveProperty("familyHeadAfter");
 
     const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -430,6 +437,7 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
 
     // ── invocation 1: parks on #11's decision escalation ──
     const first = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -451,6 +459,7 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
 
     // ── invocation 2 (re-entry): must resume #11 in place and reach success ──
     const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -499,6 +508,7 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
 
     // ── invocation 1: parks on #11 via the wave loop ──
     const first = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -512,6 +522,7 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
 
     // ── invocation 2 (re-entry): NO answer appended → the early-exit path fires ──
     const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -573,6 +584,7 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend,
@@ -615,6 +627,7 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
 
     // ── invocation 1: parks on #11's decision escalation ──
     const first = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -636,6 +649,7 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
 
     // ── invocation 2 (re-entry): resume state missing → must FAIL CLOSED ──
     const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -683,6 +697,7 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend,
@@ -738,6 +753,7 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
         issue: 604,
         children: [

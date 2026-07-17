@@ -188,6 +188,10 @@ class FailingFamilyLedgerBackend implements FamilyBackend {
   constructor(workingRepo?: string) {
     this.workingRepo = workingRepo ?? makeRepo();
   }
+  // #939: runFamilyVerify is a required FamilyBackend capability.
+  async runFamilyVerify(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     this.head = `+${child.childIssue}`;
     return { familyHead: this.head };

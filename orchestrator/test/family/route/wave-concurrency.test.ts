@@ -77,6 +77,10 @@ class LatentChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly mergeOrder: number[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -106,6 +110,7 @@ describe("#291 B7 — concurrent wave fan-out", () => {
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend: fb,
       singleSliceBackend: ssb,
@@ -141,6 +146,7 @@ describe("#291 B7 — concurrent wave fan-out", () => {
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend: fb,
       singleSliceBackend: ssb,

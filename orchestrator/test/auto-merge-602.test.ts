@@ -122,6 +122,10 @@ describe("#602 docReleasePathsFromCommit", () => {
 
 describe("#602 runFamilyAutoMergeStage", () => {
   class MinimalFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
     readonly ledger: FamilyLedgerEntry[] = [];
     readonly workingRepo: string;
     constructor(workingRepo?: string) {

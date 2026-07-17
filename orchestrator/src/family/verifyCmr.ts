@@ -11,45 +11,13 @@
  *     pipeline has zero review).
  * The `phase` field tells #296 which of the two it is running.
  *
- * #293 keeps it a NO-OP so the spine wiring is proven (the hook is called at BOTH
- * points, with the context #296 needs, and the spine acts on `ok`) without
- * pulling verify/cmr into this slice — exactly the "本片不处理冲突、不跑 verify/cmr"
- * scope (#293 = the four seams, not their behaviour).
- *
- * #296 FILLS the hook body behind this SAME signature (it never rewrites the
- * family main loop — the spine already (a) passes the phase + context, (b)
- * fails-fast on `ok === false` at the wave barrier, (c) makes the failure
- * observable in the result):
- *   - "wave"  → run the family verify (typecheck + unit tests) against the family
- *     base; RED ⇒ `{ok:false}` (the spine aborts before the next wave) + an
- *     `aborted` ledger event (decision 3④/5).
- *   - "final" → run the FULL verify; green ⇒ run the two ADR 0030 integrated-cmr
- *     passes as ordered runner-dispatched boundaries: Step 5 completeness first,
- *     Step 6 correctness only after completeness passes. Each pass is a clean CMR
- *     reviewer over the current full family diff and returns a TERMINAL review
- *     verdict (`converged` | blocking findings | `escalate`). Blocking findings
- *     return to this runner, which records the review, dispatches a separate
- *     coder-fix worker for persistent repair commits, then dispatches a fresh CMR
- *     re-review over the current full diff. A malformed reviewer envelope follows
- *     the same fixed topology with its raw artifact paths as fixer cargo. A worker-
- *     pressed escalation is transported unchanged; process crashes stop before
- *     ship. `verifyCmr` owns pass ordering and the ADR0032 strong-leg
- *     / required-leg degradation floor. #875 demolished the accounting court
- *     (leg-accounting death, claimed-fixed coverage audit, disposition-enum kill):
- *     envelope prose no longer aborts a live run. #930: family court closure is
- *     the shared T2 judge tri-state (converged|continue|escalate) — residual
- *     open-count is boundary-only transport (never a second closer). Three-channel
- *     routing stays (exit / judge status / decision gate) plus real infra durable abort.
- *
- * The verify / cmr / PR / abort / escalate capabilities are reached as methods on
- * the injected `FamilyBackend` (the frozen spine input is `{phase, familyBase,
- * familyBackend}`). Missing `runFamilyVerify` fails closed via
- * `stageGate("verify_failed")` (#939 / #934 ID-011) — never a successful optional
- * no-op. A backend that verifies green but lacks a required downstream final-barrier
- * capability (cmr / PR) fails-safe to `{ok:false, ran:true}` with a stage-named
- * gate (`stageGate("cmr_failed"|"ship_failed"|…)` per #922). The `aborted`/escalate
- * SCHEMA (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's
- * (decision 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams.
+ * #296 fills the hook body: wave = verify fail-fast; final = full verify then
+ * ordered completeness/correctness CMR courts, coder-fix on blocking findings,
+ * then ship. #939: `runFamilyVerify` is a required capability (no success no-op).
+ * Missing CMR/ship after a real verify fails-safe to stage-named red (not success).
+ * Family court closure is the shared T2 judge tri-state; residual open-count is
+ * boundary-only transport. Three-channel routing stays (exit / judge status /
+ * decision gate) plus real infra durable abort.
  */
 
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
@@ -207,14 +175,9 @@ export interface VerifyCmrInput {
   /** The family base branch verify runs against / cmr reviews. */
   readonly familyBase: string;
   /**
-   * The family seam #296 reaches the verify / integrated-cmr / open-PR / aborted
-   * / escalate capabilities through. Missing `runFamilyVerify` fails closed
-   * (`verify_failed`); green verify without a required downstream capability
-   * fails-safe to `{ok:false, ran:true}` with a stage-named gate
-   * (`cmr_failed` / `ship_failed` / … per #922). The CONCRETE
-   * `aborted`/escalate schema (`FamilyLedgerEntry` widening + the escalate/resume
-   * machine) is #298's (ADR 0022 decision 5, "字段级 JSON 留 TDD"); #296 only CALLS
-   * `recordAborted` / `escalateFamily`.
+   * Family seam: verify is required (#939). Missing CMR/ship after a real verify
+   * fails-safe to a stage-named red gate (not a success no-op). The CONCRETE
+   * `aborted`/escalate schema is #298's; #296 only CALLS those seams.
    */
   readonly familyBackend: FamilyBackend;
   /** Invocation-scoped telemetry identity minted by runFamily. */
@@ -307,7 +270,7 @@ async function runFamilyVerifyOrAbort(input: {
   readonly familyIssue?: number;
 }): Promise<VerifyCmrResult | undefined> {
   const { phase, familyBase, familyBackend, familyHeadAfter } = input;
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify!({
+  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
     phase,
     familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
@@ -2403,15 +2366,11 @@ export async function runVerifyCmr(
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
   };
 
-  // #939 / #934 ID-011: missing verify capability fails closed — never a
-  // successful optional/no-op production path.
-  if (familyBackend.runFamilyVerify === undefined) {
-    return stageGate("verify_failed");
-  }
-
   // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
   //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is
-  //    not silently dropped, and return `{ok:false}` (decision 3④/5). ──
+  //    not silently dropped, and return `{ok:false}` (decision 3④/5).
+  //    #939: verify is a required capability on FamilyBackend (type-level) —
+  //    no optional success no-op path. ──
   const verifyFailed = await runFamilyVerifyOrAbort({
     phase,
     familyBase,

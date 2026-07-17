@@ -626,9 +626,9 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
-  // `runFamilyVerify` is required for a green barrier: missing capability fails
-  // closed via `verify_failed` (#939 / #934 ID-011). Downstream cmr/ship seams
-  // remain optional with their own stage-named fail-closed gates. The verify-cmr
+  // Verify is REQUIRED (#939 / #934 ID-011): missing capability is not a success
+  // no-op. CMR/ship and other downstream methods may remain optional for older
+  // fakes; production RealFamilyBackend supplies the full set. The verify-cmr
   // module ({@link runVerifyCmr}) reaches these off the `familyBackend` handed by
   // the frozen spine input `{phase, familyBase, familyBackend}`.
 
@@ -638,10 +638,9 @@ export interface FamilyBackend {
    * The verify-cmr hook fails-fast on `{ok:false}` at the wave barrier. Reads the
    * `phase` so a RealBackend can scope the wave verify vs the end-of-run 全量
    * verify. NOT塞进 LLM prompt — a deterministic command run (decision 3⑤).
-   * Optional only for type compatibility with partial fakes; production path
-   * treats absence as `verify_failed` (never successful no-op).
+   * Required capability (#939): no optional production no-op path.
    */
-  runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
+  runFamilyVerify(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
   /**
    * Legacy per-method integrated-CMR seam retained for older fake/test backends.
    * Production dispatches the CMR container worker through `dispatchWorker`; the

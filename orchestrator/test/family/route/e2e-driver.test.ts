@@ -456,6 +456,55 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     });
 
     expect(result.status).toBe("verify_failed");
+    // Fail closed on parse, not installDeps pseudo-red (#934 ID-011).
+    expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
+      /parse package\.json|failed to parse/i,
+    );
+  });
+
+  it("invalid scripts shape at verifyCwd → status verify_failed (not legal empty skip)", async () => {
+    const source = track(makeSourceRepo());
+    const home = track(mkdtempSync(join(tmpdir(), "e2e-939-shape-home-")));
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "e2e-939-shape-ledger-")));
+    const verifyCwd = track(mkdtempSync(join(tmpdir(), "e2e-939-shape-proj-")));
+    writeFileSync(
+      join(verifyCwd, "package.json"),
+      JSON.stringify({ name: "bad-scripts", version: "0.0.0", scripts: 42 }),
+    );
+    const familyBase = "family/939-shape-base";
+    const result = await runFamilyDriver({
+      epicIssue: 939,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase,
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "img",
+      home,
+      sh: makeSh(),
+      verifyCwd,
+      singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
+      familyBackendFactory: (clone, startHead) =>
+        new ProductionVerifyE2EFamilyBackend({
+          workingRepo: clone,
+          familyBase,
+          ledgerDir,
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: familyPromptsDir,
+          soulsDir: familySoulsDir,
+          imageName: "img",
+          familyBaseStartHead: startHead,
+          verifyCwd,
+        }),
+    });
+    expect(result.status).toBe("verify_failed");
+    expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
+      /scripts.*must be an object/i,
+    );
   });
 
   it("successful empty verifiable scripts → legal skip; driver can complete", async () => {

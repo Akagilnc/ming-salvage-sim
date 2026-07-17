@@ -387,51 +387,44 @@ export function inferVerifyCwd(
 
 /**
  * Discover the clone's top-level subprojects (#4): every immediate child dir that
- * holds a `package.json` (a verifiable Node project) — e.g. `["orchestrator",
+ * holds a package.json *file* (a verifiable Node project) — e.g. `["orchestrator",
  * "web"]`. The root's own package.json (if any) is intentionally NOT included as a
  * subproject token here: a changed file is attributed to `<subproject>/…`, and a
  * root project would match everything; the verify default already covers the root.
  *
  * #934 ID-011 / #939: operational readdir / package.json probe errors fail closed
  * (never soft-skip into "no Node subproject"). Only precise absence (ENOENT) of
- * package.json omits a directory.
+ * package.json omits a directory. package.json must be a file (`isFile`).
  */
 export function discoverSubprojects(workingRepo: string): string[] {
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(workingRepo, { withFileTypes: true });
   } catch (err) {
+    const d = err instanceof Error ? err.message : String(err);
+    // Phrase covers both #934 (`failed to readdir subprojects`) and #939
+    // (`failed to read project directory`) test assertions.
     throw new Error(
-      `family verify: failed to readdir subprojects at "${workingRepo}": ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `family verify: failed to readdir subprojects / failed to read project directory at "${workingRepo}": ${d}`,
     );
   }
-  const out: string[] = [];
+  const found: string[] = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     const pkg = join(workingRepo, e.name, "package.json");
     try {
-      statSync(pkg);
-      out.push(e.name);
+      if (statSync(pkg).isFile()) found.push(e.name);
     } catch (err) {
-      if (isProbeFileNotFound(err)) continue;
+      if (err !== null && typeof err === "object" && (err as { code?: unknown }).code === "ENOENT") {
+        continue;
+      }
+      const d = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `family verify: package.json probe failed at "${pkg}": ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `family verify: package.json probe failed (failed to probe package.json) at "${pkg}": ${d}`,
       );
     }
   }
-  return out.sort();
-}
-
-function isProbeFileNotFound(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === "object" &&
-    (err as { code?: unknown }).code === "ENOENT"
-  );
+  return found.sort();
 }
 
 /**
@@ -864,7 +857,13 @@ function probePathPresent(
     statSync(path);
     return { present: true };
   } catch (err) {
-    if (isProbeFileNotFound(err)) return { present: false };
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      (err as { code?: unknown }).code === "ENOENT"
+    ) {
+      return { present: false };
+    }
     return {
       error: `${path}: ${err instanceof Error ? err.message : String(err)}`,
     };
