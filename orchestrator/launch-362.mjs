@@ -67,8 +67,7 @@ const result = await runFamilyDriver({
 
 console.log("\n===== FAMILY RUN RESULT =====");
 console.log(JSON.stringify(result, null, 2));
-// #929 — business failures exit non-zero so drivers/cron classify without
-// parsing logs. success / already_done → 0; every other terminal → unique code.
+// #942 — public result OS map only: completed→0, parked→2, failed→1.
 const exitCode = familyDriverExitCode(result);
-console.log(`[launcher] exit ${exitCode} (terminal=${result.status})`);
+console.log(`[launcher] exit ${exitCode} (status=${result.status})`);
 process.exit(exitCode);

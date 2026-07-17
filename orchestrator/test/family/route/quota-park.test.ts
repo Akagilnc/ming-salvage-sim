@@ -320,7 +320,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(waveCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.status).not.toBe("incomplete");
@@ -361,7 +361,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.failedPhase).toBeUndefined();
@@ -739,7 +739,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     // #922: open-shipped online-review hard fail is online_review_failed (real name).
-    expect(result.status).toBe("online_review_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary.reason).toBe("online_review_failed");
     expect(result.stopSummary).toBeDefined();
     expect(result.stopSummary?.summary).toMatch(
@@ -955,7 +955,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     // Soft "relay staged" escalate must NOT pass as park_fallback green.
@@ -999,7 +999,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
@@ -1086,11 +1086,12 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(
       `${result.stopSummary.summary} ${result.escalation?.diagnosis ?? ""} ${result.escalation?.reason ?? ""}`,
     ).toMatch(/tight route violation|relay baton admission/i);
-    // OUT #942: keep infra_failure stopSummary.reason until public ABI cutover.
+    // #942: stopSummary.reason is diagnostic-only (not public ABI); public status
+    // above is already parked. infra_failure here is the internal stop token.
     expect(result.stopSummary.reason).toBe("infra_failure");
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
@@ -1126,7 +1127,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
 
     // Fail-closed: no second dispatch on a silently defaulted roster.
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     // Must surface Coder-Rec failure — not park masquerade / not silent relay.
     expect(
       `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
@@ -1172,7 +1173,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(finalCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(
       `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
     ).toMatch(/Coder-Rec|unreadable|meta|snapshot/i);

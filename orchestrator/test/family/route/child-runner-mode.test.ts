@@ -93,7 +93,7 @@ describe("runner family-mode adaptations (#293)", () => {
       backend,
       family: { parentIssue: 293, familyBase: "family/293-base" },
     });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.branch).toBe("feat/child-294");
     // It still ran the full S0→S8 sequence (S7 just no-ops). ADR 0030 keeps the
     // reviewer and classification boundaries visible before the local ship step.

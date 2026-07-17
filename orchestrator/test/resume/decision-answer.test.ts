@@ -78,7 +78,7 @@ describe("#439 decision-escalate answer channel", () => {
         }),
         entry("S4"),
         {
-          ...s8("escalate"),
+          ...s8("parked"),
           escalationKind: opts?.escalationKind ?? "decision",
         },
         ...(opts?.answer !== undefined ? [opts.answer] : []),
@@ -91,7 +91,7 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatchSpecs).toEqual([]);
   });
 
@@ -102,7 +102,7 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatchSpecs).toEqual([]);
   });
 
@@ -126,7 +126,7 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.dispatchSpecs).toEqual([]);
     expect(result.stopSummary?.summary).toMatch(/unanswered escalation/i);
   });
@@ -157,7 +157,7 @@ describe("#439 decision-escalate answer channel", () => {
       },
     });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage).toMatchObject({
       failedStep: "S4",
       reason: expect.stringContaining("repair intent ledger write failed"),
@@ -165,7 +165,7 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.dispatchSpecs).toEqual([]);
     expect(backend.ledgerWrites.at(-1)).toMatchObject({
       step: "S8",
-      handoffStatus: "error",
+      handoffStatus: "failed",
     });
   });
 
@@ -179,7 +179,7 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toEqual([]);
   });
 
@@ -193,7 +193,7 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(backend.dispatchSpecs).toEqual([]);
   });
 
@@ -217,13 +217,13 @@ describe("#439 decision-escalate answer channel", () => {
           },
           "session-escalated-S2",
         ),
-        s8("escalate"),
+        s8("parked"),
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
@@ -247,14 +247,14 @@ describe("#439 decision-escalate answer channel", () => {
           },
           "session-escalated-S2",
         ),
-        s8("escalate"),
+        s8("parked"),
         escalationAnswer("S2", "continue-with-x-required"),
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
     expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
       event: "escalation_answered",
@@ -286,14 +286,14 @@ describe("#439 decision-escalate answer channel", () => {
             },
             "session-escalated-S2",
           ),
-          s8("escalate"),
+          s8("parked"),
           { ...escalationAnswer("S2", "continue-with-x-required"), source },
         ],
       });
 
       const result = await runOrchestrator({ issueNumber: 439, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
     },
   );
@@ -320,14 +320,14 @@ describe("#439 decision-escalate answer channel", () => {
           },
           "session-escalated-S2",
         ),
-        s8("escalate"),
+        s8("parked"),
         sourceLessAnswer,
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
     expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
       event: "escalation_answered",
@@ -359,14 +359,14 @@ describe("#439 decision-escalate answer channel", () => {
             },
             "session-escalated-S2",
           ),
-          s8("escalate"),
+          s8("parked"),
           { ...escalationAnswer("S2", "continue-with-x-required"), source },
         ],
       });
 
       const result = await runOrchestrator({ issueNumber: 439, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(backend.resumeSessionCalls).toHaveLength(0);
       expect(backend.dispatchSpecs).toEqual([]);
     },
@@ -392,21 +392,21 @@ describe("#439 decision-escalate answer channel", () => {
           },
           "session-escalated-S2",
         ),
-        { ...s8("escalate"), escalationKind: "decision" },
+        { ...s8("parked"), escalationKind: "decision" },
         escalationAnswer("S2", "continue-with-x-required"),
       ],
     });
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.resumeSessionCalls[0]).toEqual(["S2", "session-escalated-S2"]);
     expect(result.stepLedger.filter((e) => e.step === "S2")).toHaveLength(1);
     expect(result.stepLedger).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           step: "S8",
-          handoffStatus: "escalate",
+          handoffStatus: "parked",
           escalationKind: "decision",
         }),
       ]),
@@ -432,7 +432,7 @@ describe("#439 decision-escalate answer channel", () => {
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
     // #877: still-active disposition prose does not reopen; findings=[] → S7 local handoff.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatchSpecs).toHaveLength(0);
   });
 });

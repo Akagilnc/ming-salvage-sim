@@ -328,7 +328,7 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
       ],
     });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(result.status).not.toBe("error");
     expect(backend.coderDispatches).toBe(1);
     // Marker present on in-memory step ledger and durable writes.
@@ -377,7 +377,7 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
         },
       ],
     });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.reason ?? "").toMatch(
       /record_persist_failed: quota_wait_for_reset:.*ENOSPC disk full on quota park/,
     );

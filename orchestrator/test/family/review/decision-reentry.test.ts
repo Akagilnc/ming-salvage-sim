@@ -131,7 +131,7 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
       familyBase: "family/604-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     // The A/B split must survive the family-level re-entry: an answerable park,
     // not an A-class repair failure.
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
@@ -158,7 +158,7 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
       familyBase: "family/604-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     // A failure-kind escalation is A-class — it must NOT be reclassified as a park.
     expect(result.stopSummary?.reason).toBe("infra_failure");
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");

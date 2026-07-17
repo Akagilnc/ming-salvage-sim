@@ -169,7 +169,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     const backend = new AdvisoryDiscrepancyBackend();
     const result = await runOrchestrator({ issueNumber: 818, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatched.slice(0, 2)).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
       "S3:verify:verify:fresh:clean:/verify",
@@ -180,7 +180,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     const backend = new DispatchBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.branch).toBe("feat/orchestrator/issue-331");
 
     // Every productive child worker went through the unified seam.
@@ -302,7 +302,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     try {
       const backend = new MalformedCoderTelemetryBackend();
       const result = await runOrchestrator({ issueNumber: 786, backend });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(backend.specs.filter((spec) => spec.id === "S2").length).toBeGreaterThanOrEqual(2);
       expect(backend.specs.filter((spec) => spec.id === "S3")).toHaveLength(1);
       expect(result.stepLedger.find((entry) => entry.step === "S2")?.output)
@@ -344,7 +344,7 @@ describe("#331 non-completed WorkerResult routing", () => {
     const backend = new EscalateBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
     // The escalate edge is preserved through the unified seam.
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
   });
 
   /** A backend whose S2 coder worker FAILS (crash / hard error). */
@@ -365,7 +365,7 @@ describe("#331 non-completed WorkerResult routing", () => {
   it("a failed worker → S8(error) with the reason surfaced", async () => {
     const backend = new FailedBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.reason).toContain("container crashed");
   });
 });
@@ -422,7 +422,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new NonArrayFindingsBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.specs.filter((spec) => (spec.kind === "reviewer" || spec.kind === "verify"))).toHaveLength(2);
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
@@ -481,7 +481,7 @@ describe("ADR 0131 reviewer count envelope", () => {
       const backend = new PositiveCountMissingCargoBackend();
       const result = await runOrchestrator({ issueNumber: 899, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
       expect(s5Index).toBeGreaterThan(-1);
       expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
@@ -543,7 +543,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new PositiveCountWithCargoBackend();
     const result = await runOrchestrator({ issueNumber: 899, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
@@ -578,7 +578,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new WrongReviewerKindBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
   });
@@ -703,7 +703,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new ResumeAfterS4Backend();
     const result = await runOrchestrator({ issueNumber: 899, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
@@ -874,7 +874,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new DualRoundResumeBackend();
     const result = await runOrchestrator({ issueNumber: 899, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
@@ -995,7 +995,7 @@ describe("ADR 0131 reviewer count envelope", () => {
             },
             {
               step: "S8",
-              handoffStatus: "escalate",
+              handoffStatus: "parked",
               escalationKind: "decision",
               sessionId: "run",
               prompt_hash: "h8",
@@ -1049,7 +1049,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new ContinueFixingScopeBackend();
     const result = await runOrchestrator({ issueNumber: 899, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     // Full cargo — runner does not filter by scope.
@@ -1090,7 +1090,7 @@ describe("#331 an escalated agent worker preserves its sessionId in the ledger (
       return spy(entry, dir);
     };
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     const s2 = persisted.find((e) => e.step === "S2");
     expect(s2?.sessionId).toBe("sess-coder-42");
   });
@@ -1172,7 +1172,7 @@ describe("#796 Coder-Rec host dispatch", () => {
       const result = await runOrchestrator({ issueNumber: 796, backend });
       const coder = backend.specs.find((spec) => spec.id === "S2");
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(coder).toMatchObject({
         model: entry.slug,
         host:
@@ -1304,7 +1304,7 @@ describe("#796 Coder-Rec host dispatch", () => {
       });
 
       const coderDispatches = backend.specs.filter((spec) => spec.id === "S2");
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       expect(coderDispatches).toHaveLength(2);
       // #905: first baton grok-4.5 → SuperGrok; relay advances roster to terra@med.
       expect(coderDispatches.map((spec) => spec.host)).toEqual(["grok", "codex"]);

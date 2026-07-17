@@ -438,7 +438,7 @@ function shipWorkerFailedStopSummary(input: {
   readonly shipPrState: string;
 }): StopSummary {
   return stageFailureStopSummary({
-    status: "ship_failed",
+      status: "ship_failed",
     summary: input.reason,
     repairHint:
       "repair the family ship worker infrastructure/auth/toolchain failure and rerun the final family barrier",
@@ -523,7 +523,7 @@ function familyVerifyFailureStopSummary(reason: string): StopSummary {
     });
   }
   return stageFailureStopSummary({
-    status: "verify_failed",
+      status: "verify_failed",
     summary: reason,
     repairHint:
       "inspect the family verify failure, repair the failing toolchain command, and rerun",
@@ -697,7 +697,7 @@ async function runCmrCoderFix(input: {
     };
     const stopSummary = synthesizedFailure
       ? stageFailureStopSummary({
-          status: "cmr_failed",
+      status: "cmr_failed",
           summary: `${reason} — ${diagnosis}`,
           repairHint:
             "repair the coder-fix worker startup/authentication failure, then re-feed the family run",
@@ -1043,7 +1043,7 @@ function familyOnlineReviewLoopFailureStopSummary(
   // #940: mechanical round-budget exhaust deleted; remaining non-success is
   // worker/judge disposition (decision_gate / online_review_failed).
   return stageFailureStopSummary({
-    status: "online_review_failed",
+      status: "online_review_failed",
     summary: `family online review loop did not converge (terminal: ${reviewLoop.terminalState})`,
     repairHint: "resolve remaining online review findings or answer the decision gate",
   });
@@ -1081,7 +1081,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       terminalState: "decision_gate_raised",
       round: 1,
       stopSummary: stageFailureStopSummary({
-        status: "online_review_failed",
+      status: "online_review_failed",
         summary: `family online-review route smoke failed: ${err instanceof Error ? err.message : String(err)}`,
         repairHint:
           "provide the family startup-smoked model route before dispatching online review workers",
@@ -1166,7 +1166,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       terminalState: "decision_gate_raised",
       round: loopState.round,
       stopSummary: stageFailureStopSummary({
-        status: "online_review_failed",
+      status: "online_review_failed",
         summary: `family online review round-trigger setup failed: ${err instanceof Error ? err.message : String(err)}`,
         repairHint:
           "repair ledger round-trigger / fix-gap anchors and re-feed the family run",
@@ -1235,7 +1235,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
         const stopSummary = isRunnerSynthesizedFailureEscalation(result.escalation)
           ? stageFailureStopSummary({
-              status: "online_review_failed",
+      status: "online_review_failed",
               summary: escalationSummary,
               repairHint:
                 "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
@@ -1259,7 +1259,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           terminalState: "decision_gate_raised",
           round,
           stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
+      status: "online_review_failed",
             summary: `family verify worker returned ${result.kind}${detail}`,
             repairHint:
               "inspect the verify worker envelope and re-feed the family online review loop",
@@ -1308,7 +1308,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           round,
           stopSummary: isRunnerSynthesizedFailureEscalation(result.escalation)
             ? stageFailureStopSummary({
-                status: "online_review_failed",
+      status: "online_review_failed",
                 summary: escalationSummary,
                 repairHint:
                   "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
@@ -1330,7 +1330,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           terminalState: "decision_gate_raised",
           round,
           stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
+      status: "online_review_failed",
             summary: `family fixer worker returned ${result.kind}${detail}`,
             repairHint:
               "inspect the fixer worker envelope and re-feed the family online review loop",
@@ -1745,7 +1745,7 @@ async function runIntegratedCmrPass(input: {
     );
     const stopSummary = synthesizedFailure
       ? stageFailureStopSummary({
-          status: "cmr_failed",
+      status: "cmr_failed",
           summary: `${reason} — ${diagnosis}`,
           repairHint:
             "repair the integrated CMR worker startup/configuration failure, then re-feed the family run",
@@ -1817,7 +1817,7 @@ async function runIntegratedCmrPass(input: {
             }
           : {
               stopSummary: stageFailureStopSummary({
-                status: "cmr_failed",
+      status: "cmr_failed",
                 summary: reason,
               }),
             }),
@@ -2010,7 +2010,7 @@ async function runIntegratedCmrPass(input: {
 
   const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
   const stopSummary: StopSummary = stageFailureStopSummary({
-    status: "cmr_failed",
+      status: "cmr_failed",
     summary: reason,
     repairHint: "send live findings to coder-fix, then resume the family judge",
   });
@@ -2485,7 +2485,7 @@ export async function runVerifyCmr(
         : undefined;
     const stopSummary = synthesizedFailure
       ? stageFailureStopSummary({
-          status: "ship_failed",
+      status: "ship_failed",
           summary: `${escalationReason} — ${escalationDiagnosis}`,
           repairHint:
             "repair the family ship worker startup/authentication failure, then re-feed the family run",

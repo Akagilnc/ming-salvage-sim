@@ -16,9 +16,9 @@ export type StopReason =
   | "contract_drift"
   | "already_done"
   | "resumed"
-  // #922 — per-stage family terminal real names (also FamilyRunStatus tokens).
+  // #922/#942 — stage diagnostics for stopSummary.reason only (not public
+  // FamilyRunStatus). Public ABI is completed|parked|failed (ID-001).
   // Derived from canonical FAMILY_STAGE_FAILURE_STATUSES — do not re-list.
-  // Family aggregation status and stopSummary.reason use the same word.
   | FamilyStageFailureStatus;
 
 export interface StopSummary {

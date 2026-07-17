@@ -172,7 +172,7 @@ describe("spine reconcile — branch ② ancestor-confirmed (no double-merge)", 
       familyBackend.ledger.find((e) => e.childIssue === 11 && e.event === "reconciled"),
     ).toMatchObject({ childIssue: 11, status: "merged", event: "reconciled", childHead: "c11" });
     // Both children were already proven by ledger/reconcile truth in this run.
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.every((c) => c.status === "already_done")).toBe(true);
   });
 });
@@ -201,7 +201,7 @@ describe("spine reconcile — branch ② childHead absent (rerun, no error)", ()
     // (already merged in the ledger).
     expect(childBackend.ran).toEqual([11]);
     expect(familyBackend.merges.map((m) => m.childIssue)).toEqual([11]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });
 
@@ -252,7 +252,7 @@ describe("spine reconcile — append-loop crash idempotency (no double-merge mid
     // advances the baseline to the verified live HEAD.
     expect(recon.find((e) => e.childIssue === 11)?.familyHeadAfter).toBeUndefined();
     expect(recon.find((e) => e.childIssue === 12)?.familyHeadAfter).toBe("base2");
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });
 
@@ -272,7 +272,7 @@ describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", (
       reconcileGit: new FakeReconcileGit("rogue", { 10: "c10" }, new Set()),
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     // Fail-closed: no child run, no merge attempted.
     expect(childBackend.ran).toEqual([]);
     expect(familyBackend.merges).toEqual([]);
@@ -317,7 +317,7 @@ describe("spine reconcile — familyHead reflects the reconcile live head on a r
 
     // No new merge ran (both already merged), yet the family base leads at base2.
     expect(familyBackend.merges).toEqual([]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     // The bug: this was `undefined`. The result must report the real live head.
     expect(result.familyHead).toBe("base2");
   });
@@ -357,7 +357,7 @@ describe("spine reconcile — a RED final barrier on a no-new-merge resume recor
     });
 
     // RED final barrier → the run is observably verify_failed (不静默吞).
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     // The durable aborted entry must carry the reconcile live head as the abort-time
     // head — without the backfill it is `undefined` (dropped by `compact`).
     const aborted = familyBackend.ledger.find((e) => e.status === "aborted");
@@ -377,7 +377,7 @@ describe("spine reconcile — no reconcileGit (fresh run unchanged)", () => {
       singleSliceBackend: childBackend,
       familyBase: "family/291-base",
     });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(childBackend.ran.sort()).toEqual([10, 11]);
   });
 });
