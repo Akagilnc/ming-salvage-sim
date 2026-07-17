@@ -186,10 +186,11 @@ export function executePrMergeCommit(
  * Single authority for head-aligned MERGED terminal records (landing /
  * confirmPrMergedLive). Not-merged vs head-mismatch are distinguished so
  * callers can park foreign merges without fabricating a record.
+ * `mismatch` carries the live head so callers park without a second fetch.
  */
 export type MergeRecordAlignment =
   | { readonly kind: "aligned"; readonly record: PrMergedTerminalRecord }
-  | { readonly kind: "mismatch" }
+  | { readonly kind: "mismatch"; readonly headOid: string }
   | { readonly kind: "not_merged" };
 
 export function mergeRecordIfHeadAligned(
@@ -197,7 +198,9 @@ export function mergeRecordIfHeadAligned(
   expectedHeadOid: string,
 ): MergeRecordAlignment {
   if (!githubFieldEquals(live.state, "MERGED")) return { kind: "not_merged" };
-  if (live.headOid !== expectedHeadOid) return { kind: "mismatch" };
+  if (live.headOid !== expectedHeadOid) {
+    return { kind: "mismatch", headOid: live.headOid };
+  }
   return {
     kind: "aligned",
     record: {
@@ -210,16 +213,19 @@ export function mergeRecordIfHeadAligned(
   };
 }
 
-/** Confirm merge via live GitHub state — not the merge command's exit code. */
+/**
+ * Confirm merge via live GitHub state — not the merge command's exit code.
+ * Returns the full three-state alignment (L2): never collapse mismatch and
+ * not_merged into an opaque `undefined`.
+ */
 export function confirmPrMergedLive(
   sh: Sh,
   repo: string,
   prUrl: string,
   expectedHeadOid: string,
-): PrMergedTerminalRecord | undefined {
+): MergeRecordAlignment {
   const live = fetchPrMergeLiveState(sh, repo, prUrl);
-  const aligned = mergeRecordIfHeadAligned(live, expectedHeadOid);
-  return aligned.kind === "aligned" ? aligned.record : undefined;
+  return mergeRecordIfHeadAligned(live, expectedHeadOid);
 }
 
 export interface PrMergedMarkerLike {
