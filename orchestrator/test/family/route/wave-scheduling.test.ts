@@ -20,7 +20,6 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { runFamily } from "../../../src/family/runner.js";
 import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 import type {
@@ -180,7 +179,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
     expect(result.children.every((child) => child.status === "merged")).toBe(true);
   });
 
-  it("parks and escalates an unresolved merger step after its bound without starting the next child", async () => {
+  it("trusts a still-conflicted merger worker once — fails the child without host mechanical-cap court (#938)", async () => {
     const familyBackend = new PersistentlyConflictedFamilyBackend();
     const result = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
@@ -196,26 +195,14 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("escalated");
-    expect(familyBackend.resolverCalls).toEqual(
-      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 10),
-    );
+    // ID-010: one merger worker call; no host still-conflicted re-dispatch.
+    expect(familyBackend.resolverCalls).toEqual([10]);
     expect(familyBackend.mergeOrder).toEqual([10]);
-    expect(familyBackend.escalationCalls).toHaveLength(1);
-    expect(familyBackend.escalationCalls[0]).toEqual(
-      expect.objectContaining({
-        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
-        escalationKind: "failure",
-        phase: "wave",
-      }),
-    );
-    expect(familyBackend.ledger).toEqual([
-      expect.objectContaining({
-        status: "escalated",
-        event: "escalated",
-      }),
-    ]);
+    expect(familyBackend.escalationCalls).toEqual([]);
+    expect(result.status).toBe("incomplete");
+    expect(result.children.find((child) => child.issue === 10)?.status).toBe("failed");
     expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
+    expect(JSON.stringify(result)).not.toMatch(/still-conflicted retries/i);
   });
 
   it("durably parks a structured merger decision without retrying it", async () => {
@@ -381,16 +368,18 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
     });
 
     expect(result.status).toBe("incomplete");
-    expect(result.children).toEqual([{ issue: 10, status: "failed" }]);
+    expect(result.children).toEqual([
+      expect.objectContaining({ issue: 10, status: "failed" }),
+    ]);
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
     expect(result.stopSummary.summary).toContain("#10:failed");
   });
 });
 
-// ─── acceptance 3: cycle fail-closed through the spine ────────────────────────
+// ─── acceptance 3: residual cycle at empty-wave (#938 / ID-009) ───────────────
 
-describe("#294 acceptance 3 — blocked_by cycle fails closed (no deadlock)", () => {
-  it("a 2-node cycle (10↔11) makes runFamily fail-closed (throws), not stall on an empty wave", async () => {
+describe("#294/#938 acceptance 3 — residual blocked_by cycle (no silent empty wave)", () => {
+  it("a 2-node cycle (10↔11) surfaces dependency_cycle after empty wave, not a throw", async () => {
     const singleSliceBackend = new RecordingChildBackend();
     const familyBackend = new FakeFamilyBackend();
     const epic: FamilyEpic = {
@@ -400,19 +389,18 @@ describe("#294 acceptance 3 — blocked_by cycle fails closed (no deadlock)", ()
         { issue: 11, blockedBy: [10] },
       ],
     };
-    await expect(
-      runFamily({
-        epic,
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/291-base",
-      }),
-    ).rejects.toThrow(/cycle/i);
-    // Fail-closed BEFORE any child fan-out / merge: nothing was merged.
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/291-base",
+    });
     expect(familyBackend.mergeOrder).toEqual([]);
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
   });
 
-  it("a cycle is detected even when an independent child could otherwise run", async () => {
+  it("an independent sibling still merges when a residual cycle exists among others (#938)", async () => {
     const singleSliceBackend = new RecordingChildBackend();
     const familyBackend = new FakeFamilyBackend();
     const epic: FamilyEpic = {
@@ -423,17 +411,17 @@ describe("#294 acceptance 3 — blocked_by cycle fails closed (no deadlock)", ()
         { issue: 11, blockedBy: [10] },
       ],
     };
-    await expect(
-      runFamily({
-        epic,
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/291-base",
-      }),
-    ).rejects.toThrow(/cycle/i);
-    // No child merged — the cycle guard runs before the wave loop, so even the
-    // independent #99 is not fanned out (fail-closed is whole-run).
-    expect(familyBackend.mergeOrder).toEqual([]);
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/291-base",
+    });
+    // ID-009: cycle does not block already-runnable components.
+    expect(familyBackend.mergeOrder).toEqual([99]);
+    expect(result.children.find((c) => c.issue === 99)?.status).toBe("merged");
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
   });
 });
 

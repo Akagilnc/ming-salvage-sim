@@ -7,23 +7,9 @@
  * commander reads those现成 children + edges and selects the next WAVE — the
  * children whose every blocker is already merged into the family base.
  *
- * #293 ships the THINNEST selection: a pure function over the children + the set
- * of already-merged child issue numbers. #294 layers the richer wave / unblock /
- * cycle-detection logic ON this module (e.g. topological multi-wave ordering,
- * cycle fail-closed) — it extends THIS selector, it does NOT rewrite the family
- * main loop, which only ever CALLS selectWave / assertAcyclic. That is the seam
- * boundary.
- *
- * No LLM dependency inference (ADR 0022: we have explicit blocked_by, so the
- * native Plan's LLM selector is neither used nor needed). #294 adds the
- * fail-closed cycle guard (`assertAcyclic`) the family spine runs before
- * scheduling: the `selectWave` predicate alone turns a cyclic graph into an
- * empty wave forever (a SILENT deadlock — every cycle member stays blocked), so
- * the commander validates the intra-family `blocked_by` DAG is acyclic up front
- * and throws a human-actionable escalation otherwise (ADR 0022 decisions 3①/4).
- * #293's selectWave contract is unchanged: given children + a merged set, return
- * the unmerged children whose blocked_by ⊆ merged, in input order
- * (deterministic).
+ * Pure selection over children + merged set. #938 / ID-009: `assertAcyclic` is
+ * the residual-cycle probe at empty-wave (not startup whole-family guard).
+ * selectWave: unmerged children whose blocked_by ⊆ merged, input order.
  */
 
 import type { ChildSlice } from "./types.js";
@@ -90,24 +76,8 @@ export function selectWave(
 }
 
 /**
- * Fail-closed cycle guard (ADR 0022 decisions 3①/4) — run by the family spine
- * BEFORE scheduling any wave.
- *
- * The wave loop schedules a child once every blocker it is `blocked_by` is
- * merged. If the children's `blocked_by` edges form a CYCLE (A↦B, B↦A, or a
- * self-loop A↦A), no child in the cycle can EVER unblock — `selectWave` would
- * just keep returning an empty wave and the spine would silently terminate with
- * the cycle members "skipped". That is an undetected deadlock. This guard
- * detects it up front and THROWS a {@link DependencyCycleError} so the spine
- * fails closed and escalates to a human (decision 4), never deadlocks.
- *
- * Scope: only INTRA-FAMILY edges count — a `blocked_by` issue that is NOT one of
- * the children (an external blocker) cannot be part of a cycle WITH the children,
- * so such edges are ignored here (whether an external blocker is satisfied is the
- * ledger-merged unblock concern, not cycle detection). Detection is an iterative
- * DFS over the directed graph child → blocker; a back-edge to a node on the
- * current DFS stack is a cycle, and the stack slice from that node is reported as
- * the cycle path (deterministic in input order).
+ * Residual-cycle probe (#934 ID-009 / #938). Spine calls only at empty-wave +
+ * still-unmerged residual. Intra-family edges only; throws DependencyCycleError.
  */
 export function assertAcyclic(children: ReadonlyArray<ChildSlice>): void {
   // Node set = the children's own issue numbers; only edges to nodes IN this set
