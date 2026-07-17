@@ -2004,17 +2004,52 @@ async function runIntegratedCmrPass(input: {
   }
 
   // continue + live findings → coder-fix (or abort when fix disabled)
+  // #952: terminal-only continue (0 live + suppress/refute flips) is already
+  // folded to closure.action === "pass" by closeFamilyCourtFromJudgeOutput —
+  // isomorphic with single-slice runner (continue + terminals → converged route).
   const blockingFindings = closure.blocking;
   const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
   const blockingFindingCount = closure.blockingFindingCount;
 
-  // #919 M1 / #930 AC: empty continue is court contract drift — never empty-spin
-  // family coder-fix. openFindingsForFixer may yield [] for cargo filter; that
-  // does NOT authorize a topology fix loop with zero live identity keys.
+  // #919 M1 / #930 AC: true empty continue (0 live AND 0 terminals) is court
+  // contract drift — never empty-spin family coder-fix. openFindingsForFixer
+  // may yield [] for cargo filter; that does NOT authorize a topology fix loop
+  // with zero live identity keys. Terminal-only never reaches here (pass above).
   if (
     blockingFindingCount === 0 &&
     blockingFindingIdentityKeys.length === 0
   ) {
+    // Defense in depth: if a continue still carries terminal flips, close like
+    // pass rather than inventing cmr_failed (mirrors runner M6/#952 gate).
+    if (closure.terminalDispositions.length > 0) {
+      await persistFinalReviewRound("accepted", () =>
+        recordCmrPassed(familyBackend, {
+          cmrPass: pass,
+          familyHeadAfter: postWorkerFamilyHead,
+          routeFingerprint,
+          ...(openedJudgeSessionId !== undefined
+            ? { sessionId: openedJudgeSessionId }
+            : {}),
+          // Keep envelope truth queryable; topology already treated as pass.
+          judgeStatus: "continue",
+          ...(judgeDispositionsForLedger !== undefined
+            ? { findingDispositions: judgeDispositionsForLedger }
+            : {}),
+          ...(advanceCoderForLedger !== undefined
+            ? { advanceCoder: advanceCoderForLedger }
+            : {}),
+          stopSummary: familyCmrPassStopSummary({
+            familyHeadAfter: postWorkerFamilyHead,
+            skippedLegs,
+          }),
+        }),
+      );
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+        resolvedRoute: activeRoute,
+      };
+    }
     const reason =
       `integrated cmr ${pass} judge continue with 0 live findings ` +
       `(court contract drift; empty continue must not spin coder-fix)`;
@@ -2022,7 +2057,8 @@ async function runIntegratedCmrPass(input: {
       status: "cmr_failed",
       summary: reason,
       repairHint:
-        "family judge status:continue requires non-empty live identity keys; " +
+        "family judge status:continue requires non-empty live identity keys " +
+        "or terminal-only dispositions (suppress/refute); " +
         "re-open the same family judge seat or repair the seat envelope — " +
         "do not empty-spin coder-fix",
     });

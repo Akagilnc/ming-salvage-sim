@@ -159,8 +159,9 @@ export function judgeTerminalsToLedgerDispositions(
  *
  * Empty live set is a cargo filter result only — NOT topology authorization.
  * Family (#919 M1) and single-slice (#919 M6) both fail-loud when
- * status:continue projects zero live identity keys; callers must gate empty
- * continue before dispatching coder-fix / S5.
+ * status:continue projects **true empty** (0 live AND 0 terminal flips).
+ * Terminal-only continue (0 live + non-empty refute/suppress flips) is court
+ * closure via {@link isTerminalOnlyContinue} — not empty-spin (#952).
  */
 export function openFindingsForFixer(
   findings: ReadonlyArray<Finding>,
@@ -170,7 +171,7 @@ export function openFindingsForFixer(
     dispositions.filter((d) => d.action === "live").map((d) => d.identityKey),
   );
   // Cargo filter only: empty table / zero live keys → yield []. Topology
-  // authorization for empty continue is the caller's fail-loud gate (M1/M6).
+  // authorization: true empty continue fail-loud (M1/M6); terminal-only → close.
   if (dispositions.length > 0 || liveKeys.size > 0) {
     return findings.filter((f) => liveKeys.has(findingIdentityKey(f)));
   }
@@ -502,6 +503,48 @@ export function projectJudgeContinueBlocking(output: {
 }
 
 /**
+ * #952 — terminal-only continue is court closure, not empty contract drift.
+ *
+ * Disposition-table pure check (no cargo walk / store flip): `status:continue`
+ * with **0 live** AND **≥1 refute|suppress** means the judge finished the open
+ * set by parking/killing everything — no fixer open set remains. Topology
+ * routes like **converged** (single-slice S7 / family pass) after callers apply
+ * flips. True empty continue (no live AND no terminals) remains fail-loud
+ * (M1/M6). Prefer this over inventing a new public result/cause.
+ *
+ * Used by {@link judgeStatusFromOutput} so route never materializes cargo keys.
+ */
+export function isTerminalOnlyContinueDispositions(
+  dispositions: ReadonlyArray<{ readonly action: string }> | undefined,
+): boolean {
+  const rows = dispositions ?? [];
+  if (rows.length === 0) return false;
+  let hasLive = false;
+  let hasTerminal = false;
+  for (const d of rows) {
+    if (d.action === "live") hasLive = true;
+    if (d.action === "refute" || d.action === "suppress") hasTerminal = true;
+  }
+  return !hasLive && hasTerminal;
+}
+
+/**
+ * Projection form of {@link isTerminalOnlyContinueDispositions} for gates that
+ * already hold {@link projectJudgeContinueBlocking} output.
+ */
+export function isTerminalOnlyContinue(projected: {
+  readonly blockingFindingCount: number;
+  readonly blockingIdentityKeys: ReadonlyArray<string>;
+  readonly terminalDispositions: ReadonlyArray<unknown>;
+}): boolean {
+  return (
+    projected.blockingFindingCount === 0 &&
+    projected.blockingIdentityKeys.length === 0 &&
+    projected.terminalDispositions.length > 0
+  );
+}
+
+/**
  * #930 — family CMR court closure from the shared T2 judge tri-state only.
  *
  * One judgment function, two ordered courts (completeness / correctness). The
@@ -573,6 +616,11 @@ export function closeFamilyCourtFromJudgeOutput(
         findingDispositions: dispositions,
         findings,
       });
+      // #952: 0 live + non-empty terminal flips = court closed (like converged).
+      // True empty continue stays `continue` with empty open set for the M1 gate.
+      if (projected !== undefined && isTerminalOnlyContinue(projected)) {
+        return { action: "pass" };
+      }
       return {
         action: "continue",
         blocking: projected?.blocking ?? [],
@@ -701,7 +749,17 @@ export function judgeStatusFromOutput(
   const projected = projectJudgeSeatOutput(output);
   if (projected.kind === "judge") {
     if (projected.status === "converged") return "converged";
-    if (projected.status === "continue") return "continue";
+    if (projected.status === "continue") {
+      // #952: terminal-only continue (suppress/refute flips, 0 live) routes like
+      // converged so single-slice S7 / resume do not empty-spin S5. Envelope
+      // status string stays `continue` on the ledger for queryable flips.
+      // Disposition-table only — never walk findings cargo here (opaque/residual
+      // rows must not crash topology; store flips stay on the live gate).
+      if (isTerminalOnlyContinueDispositions(projected.findingDispositions)) {
+        return "converged";
+      }
+      return "continue";
+    }
     return "escalate";
   }
   return "unusable";
