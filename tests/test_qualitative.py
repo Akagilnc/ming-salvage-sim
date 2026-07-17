@@ -103,6 +103,18 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
         "能力几乎70",
         "能力到了70",
         "忠诚维持在40",
+        # Residual state-verb composition: 降低/升高 + 到 (not only 至/到 alone).
+        "能力降低到30",
+        "士气升高到80",
+        "能力降低至30",
+        "士气升高至80",
+        "士气回落到40",
+        "训练下滑到20",
+        # Residual approx synonym: 约略 (and same-class 约计) before bare 约.
+        "能力约略70",
+        "忠诚约略是70",
+        "能力约略在70左右",
+        "能力约计70",
     ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
