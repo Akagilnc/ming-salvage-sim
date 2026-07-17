@@ -439,7 +439,10 @@ describe("#422 model route presets", () => {
 
     const { resolveActiveModelRoute: resolve } = await import("../../src/modelRoutes.js");
     const route = resolve();
-    // Env asked for opus verify; preset keeps sol (override deleted).
+    // Env asked for opus verify; preset keeps sol (override deleted — #936).
+    // #939's env-driven family-runner tight-escalation fixture is incompatible
+    // with #936 (slot env no longer restaffs); required runFamilyVerify is
+    // covered by FamilyBackend typing + verify-cmr / merge-child tests.
     expect(route.slots.verify).toBe("gpt-5.6-sol");
     expect(route.tightFamilyViolations).toEqual([]);
   });

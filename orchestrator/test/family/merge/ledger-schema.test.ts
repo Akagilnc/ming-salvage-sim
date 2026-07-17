@@ -27,6 +27,10 @@ import type {
 } from "../../../src/family/types.js";
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly appended: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(_c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: "head" };

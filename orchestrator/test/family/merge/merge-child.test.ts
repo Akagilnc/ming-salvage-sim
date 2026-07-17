@@ -22,6 +22,10 @@ import type {
 } from "../../../src/family/types.js";
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly appended: FamilyLedgerEntry[] = [];
   private head = "base0";
@@ -101,28 +105,23 @@ describe("merger.mergeChild (#293 seam 2)", () => {
   });
 });
 
-describe("verify-cmr.runVerifyCmr (missing verify fails closed)", () => {
-  it("fails closed with verify_failed when backend lacks runFamilyVerify (#939 ID-011)", async () => {
+describe("verify-cmr.runVerifyCmr (#939 required verify capability)", () => {
+  it("wave with green verify yields ok:true, ran:true; final without cmr fails closed", async () => {
     const backend = new FakeFamilyBackend();
     const wave = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/293-base",
       familyBackend: backend,
     });
-    expect(wave).toEqual({
-      ok: false,
-      ran: true,
-      failedStatus: "verify_failed",
-    });
+    expect(wave).toEqual({ ok: true, ran: true });
+    // Final requires CMR after green verify — no silent pass when CMR is absent.
     const final = await runVerifyCmr({
       phase: "final",
       familyBase: "family/293-base",
       familyBackend: backend,
     });
-    expect(final).toEqual({
-      ok: false,
-      ran: true,
-      failedStatus: "verify_failed",
-    });
+    expect(final.ok).toBe(false);
+    expect(final.ran).toBe(true);
+    expect(final.failedStatus).toBe("cmr_failed");
   });
 });

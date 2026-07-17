@@ -87,6 +87,8 @@ function fakeBackend(sourceRepo: string): Backend {
 function fakeFamilyBackend(): FamilyBackend & { reconcileGit(): ReconcileGit } {
   const ledger: unknown[] = [];
   return {
+    // #939: required verify capability (type-level); green no-op for assembly probe.
+    runFamilyVerify: async () => ({ ok: true as const }),
     mergeChildIntoFamilyBase: async (_request: MergeRequest) => ({
       conflicted: false,
       familyHead: "head-after-merge",

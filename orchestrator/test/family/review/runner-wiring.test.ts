@@ -92,6 +92,10 @@ function readLegacyPersistedCmrAbort(): FamilyLedgerEntry {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -1020,10 +1024,10 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     ]);
   });
 
-  it("defaults to the #293 no-op hook when none is injected (ok, ran:false)", async () => {
-    // No verifyCmr in the input → the spine uses the module no-op, which is ok, so
-    // the run completes normally (covered by spine.test.ts; here we assert the
-    // default path does not abort).
+  it("defaults to production runVerifyCmr when none is injected (required verify green)", async () => {
+    // No verifyCmr in the input → the spine uses production runVerifyCmr.
+    // FakeFamilyBackend implements required green verify; final still needs CMR
+    // capability — without it the run fails closed (not a silent success no-op).
     const result = await runFamily({
       epic: epicWith(10),
       familyBackend: new FakeFamilyBackend(),
@@ -1031,8 +1035,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
     });
     expect(result.children.map((c) => c.status)).toEqual(["merged"]);
-    // The no-op default passes → the run is observably "success".
-    expect(result.status).toBe("success");
+    // Missing CMR on final is verify/cmr stage failure, not empty-success.
+    expect(result.status).not.toBe("success");
   });
 
   it("INCOMPLETE: a child whose single-slice run does not succeed makes the family status 'incomplete' (NOT a false 'success')", async () => {
@@ -1051,6 +1055,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     }
     const familyBackend = new FakeFamilyBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
       familyBackend,
       singleSliceBackend: new OneChildFailsBackend(),
@@ -1082,6 +1087,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     }
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend: new PreSeededFamilyBackend(),
       singleSliceBackend: new OneChildFailsBackend(),
@@ -1110,6 +1116,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     }
     const familyBackend = new PreSeededFamilyBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend: new ChildBackend(),
@@ -1136,9 +1143,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       constructor(private readonly cmrOutput: WorkerResult) {
         super();
       }
-      async runFamilyVerify(): Promise<{ ok: true }> {
-        return { ok: true };
-      }
+      async runFamilyVerify(): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
       async readFamilyHead(): Promise<string> {
         return "head-after-cmr";
       }

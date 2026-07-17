@@ -15,6 +15,9 @@ const familyBackend: FamilyBackend = {
   async readFamilyLedger() {
     throw new Error("family backend should not run");
   },
+  async runFamilyVerify() {
+    throw new Error("family backend should not run");
+  },
 };
 
 function singleSliceBackend(overrides: Partial<Backend> = {}): Backend {
@@ -27,6 +30,7 @@ function singleSliceBackend(overrides: Partial<Backend> = {}): Backend {
 describe("family startup smoke gate (#685)", () => {
   it("refuses before family work when the backend has no smoke executor", async () => {
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 685, children: [{ issue: 686, blockedBy: [] }] },
       familyBackend,
       singleSliceBackend: singleSliceBackend({ smokeModelRoute: undefined }),
@@ -40,6 +44,7 @@ describe("family startup smoke gate (#685)", () => {
 
   it("refuses before family work when route smoke fails", async () => {
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 685, children: [{ issue: 687, blockedBy: [] }] },
       familyBackend,
       singleSliceBackend: singleSliceBackend({
@@ -74,9 +79,11 @@ describe("family startup smoke gate (#685)", () => {
           { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" },
         ];
       },
+      async runFamilyVerify() { throw new Error("must not verify"); },
     };
     try {
       await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
         epic: { issue: 846, children: [{ issue: 847, blockedBy: [] }] },
         familyBackend: backend,
         singleSliceBackend: singleSliceBackend({
@@ -110,6 +117,7 @@ describe("family startup smoke gate (#685)", () => {
       async readFamilyLedger() {
         return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];
       },
+      async runFamilyVerify() { throw new Error("must not verify"); },
     };
     const input = {
       epic: { issue: 846, children: [{ issue: 847, blockedBy: [] }] },

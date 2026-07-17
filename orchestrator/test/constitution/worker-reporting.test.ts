@@ -182,6 +182,10 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 describe("#825 Group A family roles", () => {
   it("Group A merger missing sidecar: unresolved report redispatches mechanically and records the landed merge", async () => {
     class MergerBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       resolves = 0;
       async mergeChildIntoFamilyBase(_request: MergeRequest) {
