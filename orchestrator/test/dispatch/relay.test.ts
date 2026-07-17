@@ -587,6 +587,104 @@ describe("#787 capacity relay", () => {
     });
   });
 
+  it("NEGATIVE: capacity relay writeLedger failure surfaces record_persist_failed (not capacity class)", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "feat/934-capacity-relay-persist-fail",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "relay-934-capacity-persist-")),
+    };
+
+    class CapacityPersistFailBackend implements Backend {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: terra@med → luna@med",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      }
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "relay_baton_handoff") {
+          throw new Error("disk full on relay handoff");
+        }
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "coder" && spec.id === "S2") {
+          if (spec.model === "gpt-5.6-terra") {
+            return { kind: "failed", reason: "Selected model is at capacity" };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer" || spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "judge", status: "converged" },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: worktree.branch,
+              status: "pushed",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 934,
+        backend: new CapacityPersistFailBackend(),
+        now: () => now,
+        family: {
+          parentIssue: 686,
+          familyBase: "feat/686-family-base",
+          mergedBlockers: [],
+        },
+      });
+      expect(result.status).toBe("error");
+      expect(result.errorPackage?.reason ?? "").toMatch(
+        /record_persist_failed.*capacity relay_baton_handoff/i,
+      );
+      // Must not mislabel the write failure as the outer capacity fingerprint.
+      expect(result.errorPackage?.reason ?? "").not.toMatch(
+        /Selected model is at capacity/i,
+      );
+    } finally {
+      rmSync(worktree.path, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an S5 wall relay on the coder-fix slot", async () => {
     const worktree: WorktreeHandle = {
       branch: "fix/873-s5-coder-fix-relay",

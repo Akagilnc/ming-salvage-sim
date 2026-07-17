@@ -206,6 +206,9 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
+   *   - `"online_review_fix_committed"` / `"online_review_round_retrigger"` /
+   *     `"worker_dispatched"` / `"route_degraded"` — phase/worker audit markers
+   *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
    *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
    *     seat audit (applied vs stay-put).
    */

@@ -3440,8 +3440,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   },
                   stateDir,
                 );
-              } catch {
-                return await errorTermination(step, err);
+              } catch (writeErr) {
+                // #934 CR R4 S1: surface write failure class, not the outer
+                // capacity err (stay-put audit path already does this).
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `record_persist_failed: capacity relay_baton_handoff: ${
+                      writeErr instanceof Error
+                        ? writeErr.message
+                        : String(writeErr)
+                    }`,
+                  ),
+                );
               }
             }
             ledger.push(marker);
