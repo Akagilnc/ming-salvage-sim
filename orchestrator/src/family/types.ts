@@ -1074,9 +1074,10 @@ export interface FamilyChildResult {
   /** The child's reviewed branch (set when the single-slice run succeeded). */
   readonly branch?: string;
   /**
-   * The parked decision escalation when `status==="escalated"` (#604 slice 5).
+   * The parked decision escalation when the child is decision-parked (#604 slice 5).
    * Carries the reason/diagnosis/sessionId the family runner records on the
-   * `child_decision_parked` ledger row and resumes from.
+   * `child_decision_parked` ledger row and resumes from. Public family status
+   * for that outcome is `parked` (ID-001), not a legacy escalate token.
    */
   readonly escalation?: FamilyChildEscalation;
   /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */

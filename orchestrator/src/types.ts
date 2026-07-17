@@ -1568,19 +1568,19 @@ export interface PersistentLedgerEntry extends LedgerEntry {
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
   /**
-   * Terminal handoff status — set ONLY on the S8 entry (#255).
+   * Terminal handoff status — set ONLY on the S8 entry (#255 / #942).
    *
-   * Both success and error handoffs previously wrote an identical `{step:"S8"}`
-   * entry, making them indistinguishable to a resuming run reading the ledger.
-   * Recording the status here lets {@link ResumeState} recovery report the TRUE
-   * terminal outcome (success / escalate / error) instead of inferring it — and
-   * lets a re-fed run tell a prior SUCCESS apart from a prior ERROR.
+   * Public tokens are completed | parked | failed (ID-001). Recording the
+   * status here lets {@link ResumeState} recovery report the TRUE terminal
+   * outcome instead of inferring it — and lets a re-fed run tell a prior
+   * completed apart from a prior failed/parked. #929 tokens (success / error /
+   * escalate / …) fail closed as public failed (ID-005, no dual-read).
    * Undefined for every non-S8 (in-flight) entry.
    */
   readonly handoffStatus?: HandoffStatus;
   /**
    * Distinguishes answerable decision pauses from true terminal failure
-   * escalations (#439). Set only with `handoffStatus:"escalate"` on S8.
+   * escalations (#439). Set only with handoffStatus parked|failed on S8.
    */
   readonly escalationKind?: EscalationKind;
 }

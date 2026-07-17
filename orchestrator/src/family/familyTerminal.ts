@@ -1,34 +1,21 @@
 /** #922/#942 stage diagnostics; public ABI is completed|parked|failed (publicResult). */
 
 import {
+  FAMILY_STAGE_FAILURE_STATUSES,
   causeFromStageFailure,
+  isFamilyStageFailureStatus,
+  type FamilyStageFailureStatus,
   type PublicFailedCause,
   type PublicRunResult,
 } from "../publicResult.js";
 import type { StopSummary } from "../stopSummary.js";
 
-/** Diagnostic stage tokens for stopSummary / failedStatus (not public ABI). */
-export const FAMILY_STAGE_FAILURE_STATUSES = [
-  "verify_failed",
-  "cmr_failed",
-  "ship_failed",
-  "online_review_failed",
-  "merge_failed",
-  "cleanup_failed",
-] as const;
-
-export type FamilyStageFailureStatus =
-  (typeof FAMILY_STAGE_FAILURE_STATUSES)[number];
-
-const STAGE_FAILURE_SET: ReadonlySet<string> = new Set(
+// Re-export stage diagnostic tokens from publicResult (single source; LEGACY_929 composes them).
+export {
   FAMILY_STAGE_FAILURE_STATUSES,
-);
-
-export function isFamilyStageFailureStatus(
-  value: unknown,
-): value is FamilyStageFailureStatus {
-  return typeof value === "string" && STAGE_FAILURE_SET.has(value);
-}
+  isFamilyStageFailureStatus,
+  type FamilyStageFailureStatus,
+};
 
 const DEFAULT_SUMMARY: Readonly<Record<FamilyStageFailureStatus, string>> = {
   verify_failed: "family verify barrier failed",

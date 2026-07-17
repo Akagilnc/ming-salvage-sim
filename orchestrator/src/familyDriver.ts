@@ -1187,8 +1187,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
- *   family base HEAD + the honest run status (success / stage failures /
- *   incomplete / escalated — #922 real names, not the old verify_failed mash).
+ *   family base HEAD + public status completed|parked|failed (#942 / ID-001).
+ *   Stage diagnostics stay on stopSummary / cause, never as public status.
  */
 export async function runFamilyDriver(
   options: FamilyDriverOptions,
@@ -1568,15 +1568,24 @@ export function resolveImageTag(envTag: string | undefined): string {
   return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
 }
 
-// Exit-code map re-export for launchers that only import familyDriver.
+// Public exit map re-export for launchers that only import familyDriver (#942).
+export {
+  PUBLIC_EXIT_CODES,
+  PUBLIC_RUN_RESULTS,
+  exitCodeForPublicResult,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isPublicRunResult,
+  publicResultExitCode,
+  runResultExitCode,
+} from "./publicResult.js";
+export type { PublicRunResult } from "./publicResult.js";
+// Thin TERMINAL_* aliases for older launcher import paths.
 export {
   TERMINAL_EXIT_CODES,
   TERMINAL_EXIT_STATUSES,
   exitCodeForTerminal,
-  exitProcessForFamilyRun,
-  familyDriverExitCode,
   isTerminalExitStatus,
-  runResultExitCode,
 } from "./terminalExitCode.js";
 export type { TerminalExitStatus } from "./terminalExitCode.js";
 

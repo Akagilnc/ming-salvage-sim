@@ -162,7 +162,7 @@ export {
   syncStopSummaryToStageFailure,
 } from "./family/familyTerminal.js";
 export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
-// #942 public result + OS exit ABI (supersedes #929)
+// #942 public result + OS exit ABI (supersedes #929) — single export path.
 export {
   PUBLIC_EXIT_CODES,
   PUBLIC_FAILED_CAUSES,
@@ -174,9 +174,11 @@ export {
   familyDriverExitCode,
   isLegacy929PublicStatusToken,
   isPublicRunResult,
+  publicResultExitCode,
   runResultExitCode,
 } from "./publicResult.js";
 export type { PublicFailedCause, PublicRunResult } from "./publicResult.js";
+// Thin TERMINAL_* aliases for older launcher import paths only.
 export {
   TERMINAL_EXIT_CODES,
   TERMINAL_EXIT_STATUSES,

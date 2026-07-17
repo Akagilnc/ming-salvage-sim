@@ -169,6 +169,31 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+import {
+  isLegacy929PublicStatusToken,
+  type PublicFailedCause,
+} from "./publicResult.js";
+
+/**
+ * Public single-slice failed RunResult with mandatory ID-001 cause.
+ * Every public failed path must go through this so no path forgets `cause`.
+ */
+function failedRunResult(input: {
+  readonly cause: PublicFailedCause;
+  readonly errorPackage: ErrorPackage;
+  readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  readonly stopSummary: StopSummary;
+  readonly branch?: string;
+}): RunResult {
+  return {
+    status: "failed",
+    cause: input.cause,
+    errorPackage: input.errorPackage,
+    stepLedger: input.stepLedger,
+    stopSummary: input.stopSummary,
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
+  };
+}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -346,15 +371,18 @@ const SLICE_BASE = "main";
  *
  *   - `terminalStatus` — set when the prior run already reached a terminal
  *                      handoff that is NOT being re-opened. Re-feeding is a
- *                      no-op; the runner returns this exact status (success /
- *                      error / escalate), NOT a hardcoded success. A prior
- *                      ERROR or ESCALATE that the human has not re-opened must
- *                      not masquerade as success.
+ *                      no-op; the runner returns this exact public status
+ *                      (completed | parked | failed), NOT a hardcoded completed.
+ *                      A prior failed/parked that the human has not re-opened
+ *                      must not masquerade as completed. #929 tokens fail closed
+ *                      as failed (ID-005).
+ *   - `terminalCause` — ID-001 cause when terminalStatus is failed (mandatory
+ *                      for public failed returns).
  *   - `resumeStep`   — the step to continue from (only when terminalStatus is
  *                      undefined).
  *   - `resumeSessionId` — set when the step must be resumed in its ORIGINAL
  *                      agent session (Sandcastle `resumeSession`): the prior run
- *                      ESCALATED at this step and a human has since answered, so
+ *                      parked at this step and a human has since answered, so
  *                      the coder finishes in the same session rather than a
  *                      fresh `run()`. Undefined ⇒ continue with a fresh dispatch
  *                      (crash-resume: the next step is brand new work).
@@ -369,6 +397,8 @@ const SLICE_BASE = "main";
  */
 interface ResumePlan {
   readonly terminalStatus?: HandoffStatus;
+  /** ID-001 cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   readonly resumeStep: SliceStepId;
   readonly resumeSessionId?: string;
   readonly resumeSessionModel?: string;
@@ -898,15 +928,19 @@ function planResume(
   // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
   // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
   // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
+  // #942 / #934 ID-005: #929 / unknown handoff tokens fail closed as failed.
+  // No dual-read to completed/parked; scene preserved; cause = resume_state_invalid.
   if (
     lastEntry.step === "S8" &&
     lastEntry.handoffStatus !== undefined &&
-    (lastEntry.handoffStatus as string) !== "completed" &&
-    (lastEntry.handoffStatus as string) !== "parked" &&
-    (lastEntry.handoffStatus as string) !== "failed"
+    (isLegacy929PublicStatusToken(lastEntry.handoffStatus) ||
+      ((lastEntry.handoffStatus as string) !== "completed" &&
+        (lastEntry.handoffStatus as string) !== "parked" &&
+        (lastEntry.handoffStatus as string) !== "failed"))
   ) {
     return {
       terminalStatus: "failed",
+      terminalCause: "resume_state_invalid",
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -920,6 +954,7 @@ function planResume(
     if (lastEntry.escalationKind === "failure") {
       return {
         terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -928,6 +963,7 @@ function planResume(
     if (lastEntry.escalationKind !== "decision") {
       return {
         terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1085,12 +1121,15 @@ function planResume(
   }
 
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
-  // (recorded in handoffStatus, #255) — a prior error/escalate must not be
-  // re-reported as success. If an older ledger lacks the tag, fall back to
-  // inferring via route() below.
+  // (recorded in handoffStatus, #255/#942) — a prior failed/parked must not be
+  // re-reported as completed. If an older ledger lacks the tag, fall back to
+  // inferring via route() below. Non-canonical tokens already failed closed above.
   if (lastEntry.step === "S8" && lastEntry.handoffStatus !== undefined) {
     return {
       terminalStatus: lastEntry.handoffStatus,
+      ...(lastEntry.handoffStatus === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1132,6 +1171,9 @@ function planResume(
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
+      ...(decision.status === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
       lastOutput: routeOutput,
       priorLedger: priorForResume,
@@ -1402,17 +1444,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       summary: reason,
       repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
-    return {
-      status: "failed",
+    return failedRunResult({
+      cause: "resume_state_invalid",
       errorPackage: { failedStep: "S0", reason },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-    };
+    });
   }
 
   // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
   // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
-  // finished success/error/unanswered-escalate terminal (zero meta/smoke).
+  // finished completed/failed/parked terminal (zero meta/smoke).
   // Skip early short-circuit when a repairIntent is present — that path must
   // still durable-write the intent (and surface write failures) before planResume.
   if (scene.kind === "resident" && input.repairIntent === undefined) {
@@ -1422,7 +1464,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const ledger = earlyPlan.priorLedger;
       if (earlyPlan.terminalStatus === "failed") {
         const reason =
-          "prior run terminated with an error handoff (re-fed after completion)";
+          earlyPlan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
           failedStep: lastAgentStep(ledger) ?? "S8",
           reason,
@@ -1430,18 +1474,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return {
-          status: "failed",
+        return failedRunResult({
+          cause: earlyPlan.terminalCause ?? "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
       const stopSummary: StopSummary =
         earlyPlan.terminalStatus === "completed"
           ? {
               reason: "already_done",
-              summary: "prior run already reached a success handoff",
+              summary: "prior run already reached a completed handoff",
             }
           : latestLedgerStopSummary(ledger) ?? {
               reason: "spec_conflict",
@@ -1464,15 +1508,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   if (admitted.kind === "stop") {
     const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
     const isTight = admitted.escalation.reason === "tight route violation";
-    return {
-      status: "failed",
+    const cause: PublicFailedCause = isTight
+      ? "route_config_invalid"
+      : /coder-rec|coder_rec/i.test(admitted.escalation.reason)
+        ? "coder_rec_invalid"
+        : "route_config_invalid";
+    return failedRunResult({
+      cause,
       errorPackage: {
         failedStep: "S0",
         reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-    };
+    });
   }
   console.info(
     `[orchestrator] model route lineup\n${printableRouteLineup(admitted.route)}`,
@@ -1669,13 +1718,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "failure",
       stopSummary,
     );
-    const cause =
+    const cause: PublicFailedCause =
       escalation.reason === "tight route violation" ||
       /route/i.test(escalation.reason)
-        ? ("route_config_invalid" as const)
-        : ("coder_rec_invalid" as const);
-    return {
-      status: "failed",
+        ? "route_config_invalid"
+        : "coder_rec_invalid";
+    return failedRunResult({
       cause,
       errorPackage: {
         failedStep: "S0",
@@ -1683,7 +1731,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
       stepLedger: ledger,
       stopSummary,
-    };
+    });
   };
 
   /**
@@ -2282,6 +2330,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
       stopSummary?: StopSummary;
+      cause?: PublicFailedCause;
     },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
@@ -2342,10 +2391,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Terminal S8 entry — in-memory + persisted. The PERSISTED entry is TAGGED
     // with the terminal status (integ-cmr m2 r1, Finding 1): errorTermination is
-    // always an ERROR handoff, so the disk S8 must carry handoffStatus:'error';
-    // a re-feed then reports the true error via planResume Case 3a instead of
+    // always a failed handoff, so the disk S8 must carry handoffStatus:'failed';
+    // a re-feed then reports the true failed via planResume Case 3a instead of
     // falling through to Case 3b/4 (which would re-route from the prior NON-S8
-    // step — reporting a spurious success). The in-memory entry stays untagged,
+    // step — reporting a spurious completed). The in-memory entry stays untagged,
     // matching the normal handoff path (only the disk ledger is the resume truth;
     // the in-memory ledger is the live result).
     ledger.push({ step: "S8", stopSummary });
@@ -2364,12 +2413,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
     // runner-visible S3/S4/S5/S6 steps; deferral tracking belongs to the later
     // family/integrated gates, not this error path.
-    return {
-      status: "failed",
+    const cause: PublicFailedCause =
+      opts?.cause ??
+      (reason.startsWith("record_persist_failed")
+        ? "record_persist_failed"
+        : "runner_internal_error");
+    return failedRunResult({
+      cause,
       errorPackage,
       stepLedger: ledger,
       stopSummary,
-    };
+    });
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -2425,18 +2479,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       escalationKind,
       stopSummary,
     );
+    const errorPackage = {
+      failedStep,
+      reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+      branchHead: worktree?.branch,
+    };
+    if (publicStatus === "failed") {
+      return failedRunResult({
+        cause: "runner_internal_error",
+        errorPackage,
+        stepLedger: ledger,
+        stopSummary,
+      });
+    }
     return {
-      status: publicStatus,
-      ...(publicStatus === "failed"
-        ? { cause: "runner_internal_error" as const }
-        : {}),
-      // Surface the escalation as the error package so the caller can read the
-      // reason/diagnosis for callers.
-      errorPackage: {
-        failedStep,
-        reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
-        branchHead: worktree?.branch,
-      },
+      status: "parked",
+      errorPackage,
       stepLedger: ledger,
       stopSummary,
     };
@@ -2489,15 +2547,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (typeof backend.smokeModelRoute !== "function") {
       const reason =
         "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
-      return {
-        status: "failed",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: reason,
           repairHint: "provide a real model×pipe smoke executor before dispatching workers",
         }),
-      };
+      });
     }
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
@@ -2518,15 +2576,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return {
-        status: "failed",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: `route smoke failed: ${reason}`,
           repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
         }),
-      };
+      });
     }
     const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
     modelRoute = degradation.route;
@@ -2537,15 +2595,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions,
     );
     if (smokeFailure !== undefined) {
-      return {
-        status: "failed",
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason: smokeFailure },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
           summary: smokeFailure,
           repairHint: "rerun the route smoke or repair the selected model×pipe",
         }),
-      };
+      });
     }
     for (const dropped of degradation.dropped) {
       console.error(
@@ -2718,11 +2776,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
       // so no destructive cleanup is run here (a cleanup failure must not flip
       // an already-finished run's reported status). Report the
-      // TRUE terminal status (success / error / escalate), never a hardcoded
-      // success (#255: a prior error/escalate must not masquerade as success).
+      // TRUE public terminal status (completed | parked | failed), never a
+      // hardcoded completed (#255/#942: a prior failed/parked must not masquerade).
       if (plan.terminalStatus === "failed") {
         const reason =
-          "prior run terminated with an error handoff (re-fed after completion)";
+          plan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
           failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
           reason,
@@ -2730,18 +2790,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return {
-          status: "failed",
+        return failedRunResult({
+          cause: plan.terminalCause ?? "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
       const stopSummary: StopSummary =
         plan.terminalStatus === "completed"
           ? {
               reason: "already_done",
-              summary: "prior run already reached a success handoff",
+              summary: "prior run already reached a completed handoff",
             }
           : latestLedgerStopSummary(ledger) ?? {
               reason: "spec_conflict",
@@ -3432,6 +3492,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : String(writeErr)
                     }`,
                   ),
+                  { cause: "record_persist_failed" },
                 );
               }
             }
@@ -3999,14 +4060,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
-        // #929 — speak before best-effort re-persist (same loudness class as
+        // Speak before best-effort re-persist (same loudness class as
         // errorTermination; this path does not call that helper).
         console.error(
           `[orchestrator] S8 failed: writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
         );
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
         // persistBestEffort swallows a secondary write fault — we already return
-        // status:error, a second ledger fault must not mask the original cause.
+        // status:failed, a second ledger fault must not mask the original cause.
         await persistBestEffort(
           "S8",
           undefined,
@@ -4017,12 +4078,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           undefined,
           stopSummary,
         );
-        return {
-          status: "failed",
+        return failedRunResult({
+          cause: "record_persist_failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-        };
+        });
       }
 
       if (decision.status === "failed") {
@@ -4034,12 +4095,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
-        return {
-          status: "failed",
+        return failedRunResult({
+          cause: "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
-        };
+        });
       }
 
       return {
