@@ -282,13 +282,18 @@ describe("#966 family judge session from ledger", () => {
       expected: "sess-latest",
     },
     {
-      name: "trailing missing uses earlier non-empty",
+      name: "newest missing sessionId means fresh (do not resurrect older)",
       rows: [
         { sessionId: "sess-kept" },
         { sessionId: "" },
         {},
       ],
-      expected: "sess-kept",
+      expected: undefined,
+    },
+    {
+      name: "newest blank sessionId means fresh",
+      rows: [{ sessionId: "sess-old" }, { sessionId: "" }],
+      expected: undefined,
     },
   ])("familyJudgeResumeSessionIdFromPriorRows: $name", ({ rows, expected }) => {
     expect(familyJudgeResumeSessionIdFromPriorRows(rows)).toBe(expected);

@@ -42,9 +42,11 @@ import type {
 } from "../types.js";
 import type { ModelRouteSlot, ResolvedModelRoute } from "../modelRoutes.js";
 import {
+  familyDocsReleasedForHead,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
+  recordDocsReleased,
   recordPostMergeCleanup,
   recordPrMerged,
   recordReviewLoopConverged,
@@ -234,6 +236,46 @@ async function resolveLandingMarkerHead(
 }
 
 /**
+ * Accept live MERGED only when head equals the post-docs completion OID
+ * (CR-7 / CX-1). Mismatch → park, never record/cleanup a foreign merge.
+ */
+function mergeRecordIfHeadAligned(
+  live: PrMergeLiveState,
+  completionHeadOid: string,
+):
+  | { readonly kind: "aligned"; readonly record: PrMergedTerminalRecord }
+  | { readonly kind: "mismatch" }
+  | { readonly kind: "not_merged" } {
+  if (live.state.toUpperCase() !== "MERGED") return { kind: "not_merged" };
+  if (live.headOid !== completionHeadOid) return { kind: "mismatch" };
+  return {
+    kind: "aligned",
+    record: {
+      prUrl: live.prUrl,
+      prNumber: live.prNumber,
+      remoteBranchName: live.headRefName,
+      mergedHeadOid: live.headOid,
+      convergedHeadOid: completionHeadOid,
+    },
+  };
+}
+
+function mergedHeadMismatchPark(
+  liveHeadOid: string,
+  completionHeadOid: string,
+): LandingActionResult {
+  return {
+    ok: false,
+    terminalState: "decision_gate",
+    stopSummary: decisionGateParkStopSummary({
+      summary: `landing PR is MERGED but head ${liveHeadOid} does not match completion head ${completionHeadOid}`,
+      repairHint:
+        "ensure the merged PR contains the landing docs/release commit, or answer the decision gate",
+    }),
+  };
+}
+
+/**
  * Landing Action — docs worker → merge → MERGED confirm → close/cleanup leftovers.
  *
  * close/cleanup failures become leftovers only (ID-013); never park/fail/flip
@@ -281,6 +323,13 @@ export async function runLandingAction(
     (liveMarkerHead !== input.convergedHeadOid
       ? familyPrMergedForHead(ledger, input.convergedHeadOid)
       : undefined);
+  // Durable docs release (CR-6): crash after worker push must not re-dispatch
+  // VERSION/CHANGELOG. Keyed post-release HEAD (dual-key with pre-doc fallback).
+  const priorDocsReleased =
+    familyDocsReleasedForHead(ledger, liveMarkerHead) ??
+    (liveMarkerHead !== input.convergedHeadOid
+      ? familyDocsReleasedForHead(ledger, input.convergedHeadOid)
+      : undefined);
   const sh = ghSh();
   // Explicit live surface only — no silent non-live pr:// MERGED hatch (ID-013).
   const liveHooks =
@@ -295,7 +344,10 @@ export async function runLandingAction(
     (() => fetchPrMergeLiveState(sh, familyRepo, prUrl));
 
   // ── 1. Docs + push (landing worker seat — former docRelease) ───────────
-  if (priorMerged === undefined) {
+  // Skip when already merged OR docs already durably released for this head.
+  const docsNeedRun =
+    priorMerged === undefined && priorDocsReleased === undefined;
+  if (docsNeedRun) {
     const pool = billingPoolForFamilyWorker({
       kind: "landing",
       ...(input.billingPool !== undefined
@@ -357,28 +409,29 @@ export async function runLandingAction(
     }
   }
 
-  // Docs may have advanced family HEAD. When docs ran, re-read live HEAD for
-  // completion markers + resume lookup (not the stale pre-doc converged OID).
-  // When docs were skipped (priorMerged already set), entry liveMarkerHead is
-  // already the right key — a second resolve is pure redundancy.
-  const docsRan = priorMerged === undefined;
-  const completionHeadOid = docsRan
+  // Docs may have advanced family HEAD. Re-read live HEAD only when docs just
+  // ran this entry (not when priorMerged / priorDocsReleased already covers it).
+  const completionHeadOid = docsNeedRun
     ? await resolveLandingMarkerHead(
         input.familyBackend,
         input.familyBase,
         input.convergedHeadOid,
       )
     : liveMarkerHead;
-  if (
-    docsRan &&
-    completionHeadOid !== input.convergedHeadOid
-  ) {
-    // Re-stamp so runner's already-converged short path (live HEAD equality)
-    // still finds review_loop_converged after a non-empty docs push.
-    await recordReviewLoopConverged(input.familyBackend, {
+  if (docsNeedRun) {
+    // Durable before merge (CR-6): DB-only recovery must not re-run release.
+    await recordDocsReleased(input.familyBackend, {
       pr: prUrl,
       familyHeadAfter: completionHeadOid,
     });
+    if (completionHeadOid !== input.convergedHeadOid) {
+      // Re-stamp so runner's already-converged short path (live HEAD equality)
+      // still finds review_loop_converged after a non-empty docs push.
+      await recordReviewLoopConverged(input.familyBackend, {
+        pr: prUrl,
+        familyHeadAfter: completionHeadOid,
+      });
+    }
   }
 
   // ── 2. Merge + live MERGED confirm (Action-owned; no host auto-merge court)
@@ -410,14 +463,12 @@ export async function runLandingAction(
       };
     }
 
-    if (live.state.toUpperCase() === "MERGED") {
-      mergeRecord = {
-        prUrl: live.prUrl,
-        prNumber: live.prNumber,
-        remoteBranchName: live.headRefName,
-        mergedHeadOid: live.headOid,
-        convergedHeadOid: completionHeadOid,
-      };
+    const entryMerged = mergeRecordIfHeadAligned(live, completionHeadOid);
+    if (entryMerged.kind === "mismatch") {
+      return mergedHeadMismatchPark(live.headOid, completionHeadOid);
+    }
+    if (entryMerged.kind === "aligned") {
+      mergeRecord = entryMerged.record;
     } else if (live.state.toUpperCase() === "CLOSED") {
       return {
         ok: false,
@@ -443,10 +494,9 @@ export async function runLandingAction(
         });
       };
 
-      // Std S4 / R2 S1: repeated live I/O failures (fetchState OR pollOnce)
-      // → decision_gate. Do not infinite keep-prior or throw out of band on
-      // auth/API death while OPEN+ci_pending. Initial poll fails closed the
-      // same way (retry interval until consecutive limit).
+      // Std S4 / R2 S1 / R3-G2: repeated live I/O failures (fetchState OR
+      // pollOnce) → decision_gate. Fail-closed per failed round: never assess
+      // readiness or accept MERGED from a stale snapshot/live after I/O death.
       let consecutiveFetchFailures = 0;
       let consecutivePollFailures = 0;
       let snapshot: PrReviewSnapshot | undefined;
@@ -469,15 +519,12 @@ export async function runLandingAction(
               }),
             };
           }
-          if (snapshot === undefined) {
-            // No prior snapshot yet — blip then re-poll (same limit as mid-loop).
-            await sleepPendingCiPollInterval();
-            continue;
-          }
-          /* keep prior snapshot for a single/transient blip */
+          // Fail-closed (R3-G2): do not assess with a prior snapshot this round.
+          await sleepPendingCiPollInterval();
+          continue;
         }
 
-        readiness = assessMergeReadiness(live, snapshot!);
+        readiness = assessMergeReadiness(live, snapshot);
         if (readiness.ready) break;
 
         const pendingOnly =
@@ -513,27 +560,38 @@ export async function runLandingAction(
               }),
             };
           }
-          /* keep prior live for a single/transient blip */
+          // Fail-closed: do not judge MERGED/ready from stale live this round.
+          continue;
         }
-        if (live.state.toUpperCase() === "MERGED") {
-          mergeRecord = {
-            prUrl: live.prUrl,
-            prNumber: live.prNumber,
-            remoteBranchName: live.headRefName,
-            mergedHeadOid: live.headOid,
-            convergedHeadOid: completionHeadOid,
-          };
+        const midMerged = mergeRecordIfHeadAligned(live, completionHeadOid);
+        if (midMerged.kind === "mismatch") {
+          return mergedHeadMismatchPark(live.headOid, completionHeadOid);
+        }
+        if (midMerged.kind === "aligned") {
+          mergeRecord = midMerged.record;
           break;
         }
       }
 
       if (mergeRecord === undefined) {
+        // Merge only the completion (post-docs) head — never a foreign tip.
+        if (live.headOid !== completionHeadOid) {
+          return {
+            ok: false,
+            terminalState: "decision_gate",
+            stopSummary: decisionGateParkStopSummary({
+              summary: `landing ready but live PR head ${live.headOid} does not match completion head ${completionHeadOid}`,
+              repairHint:
+                "ensure the PR tip includes the landing docs/release commit, then re-enter landing",
+            }),
+          };
+        }
         const doMerge =
           liveHooks?.executeMerge ??
           ((prNumber: number, headOid: string) =>
             executePrMergeCommit(sh, familyRepo, prNumber, headOid));
         try {
-          doMerge(live.prNumber, live.headOid);
+          doMerge(live.prNumber, completionHeadOid);
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           return {
@@ -551,21 +609,22 @@ export async function runLandingAction(
             liveHooks?.confirmMerged ??
             ((expectedHeadOid: string) =>
               confirmPrMergedLive(sh, familyRepo, prUrl, expectedHeadOid));
-          mergeRecord = confirm(live.headOid);
+          mergeRecord = confirm(completionHeadOid);
         } catch {
           mergeRecord = undefined;
         }
         if (mergeRecord === undefined) {
           try {
             const after = fetchState();
-            if (after.state.toUpperCase() === "MERGED") {
-              mergeRecord = {
-                prUrl: after.prUrl,
-                prNumber: after.prNumber,
-                remoteBranchName: after.headRefName,
-                mergedHeadOid: after.headOid,
-                convergedHeadOid: completionHeadOid,
-              };
+            const afterMerged = mergeRecordIfHeadAligned(
+              after,
+              completionHeadOid,
+            );
+            if (afterMerged.kind === "mismatch") {
+              return mergedHeadMismatchPark(after.headOid, completionHeadOid);
+            }
+            if (afterMerged.kind === "aligned") {
+              mergeRecord = afterMerged.record;
             }
           } catch {
             /* fall through */

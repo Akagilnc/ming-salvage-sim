@@ -402,9 +402,11 @@ describe("#940 unified worker dispatch — ID-004 / ID-006 still hold", () => {
     } as unknown as Backend;
 
     const killed: number[] = [];
+    let spawnedPid: number | undefined;
     await expect(
       dispatchWorkerWithMonitor(backend, coderSpec(), {}, undefined, {
-        onMonitorHandleSpawned: async () => {
+        onMonitorHandleSpawned: async (handle) => {
+          spawnedPid = handle.pid;
           throw new Error("adoption persist failed");
         },
         monitorDeps: {
@@ -421,7 +423,11 @@ describe("#940 unified worker dispatch — ID-004 / ID-006 still hold", () => {
         },
       }),
     ).rejects.toThrow(/adoption persist failed/);
-    expect(killed.length).toBeGreaterThan(0);
+    // CR-15: kill targets the exact spawn PID (process-group form is -pid).
+    expect(spawnedPid).toEqual(expect.any(Number));
+    expect(
+      killed.some((p) => p === spawnedPid || p === -spawnedPid!),
+    ).toBe(true);
   });
 });
 

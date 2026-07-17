@@ -53,10 +53,11 @@ async function dirExists(path: string): Promise<boolean> {
 }
 
 /**
- * #959 — staged session tree must be parseable before it can replace the live
- * host dir. Required-file set is intentionally minimal: only chat_history.jsonl
- * (resume critical path) must exist; any other .json / .jsonl under the tree is
- * validated if present.
+ * #959 / CR-9 — staged session tree must be parseable and free of symlinks
+ * before it can replace the live host dir. Required-file set is intentionally
+ * minimal: only chat_history.jsonl (resume critical path) must exist as a
+ * regular file; any other .json / .jsonl under the tree is validated if present.
+ * Symlinks / non-regular entries are rejected (sandbox escape / host overwrite).
  */
 async function assertStagedSessionIntact(dir: string): Promise<void> {
   if (!(await dirExists(dir))) {
@@ -65,8 +66,20 @@ async function assertStagedSessionIntact(dir: string): Promise<void> {
   const historyPath = join(dir, "chat_history.jsonl");
   let history: string;
   try {
+    const histStat = await fsp.lstat(historyPath);
+    if (!histStat.isFile() || histStat.isSymbolicLink()) {
+      throw new Error(
+        "grok-cap: integrity failed — chat_history.jsonl must be a regular file",
+      );
+    }
     history = await fsp.readFile(historyPath, "utf8");
-  } catch {
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message.startsWith("grok-cap: integrity failed")
+    ) {
+      throw err;
+    }
     throw new Error(
       "grok-cap: integrity failed — staged session missing chat_history.jsonl",
     );
@@ -83,10 +96,10 @@ async function assertStagedSessionIntact(dir: string): Promise<void> {
     if (name.endsWith(".json")) {
       try {
         JSON.parse(body);
-      } catch (err) {
+      } catch (parseErr) {
         throw new Error(
           `grok-cap: integrity failed — ${name} is not valid JSON: ${
-            err instanceof Error ? err.message : String(err)
+            parseErr instanceof Error ? parseErr.message : String(parseErr)
           }`,
         );
       }
@@ -126,6 +139,12 @@ async function walkSessionTexts(
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const p = join(dir, entry.name);
+    // CR-9: reject symlinks / non-regular entries before any follow-on I/O.
+    if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+      throw new Error(
+        `grok-cap: integrity failed — unsupported session entry: ${p}`,
+      );
+    }
     if (entry.isDirectory()) {
       await walkSessionTexts(p, visit);
       continue;

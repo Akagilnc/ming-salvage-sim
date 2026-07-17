@@ -112,6 +112,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "review_loop_converged",
   "pr_merged",
   "post_merge_cleanup",
+  /** Landing docs/VERSION release completed (before merge) — durable re-entry. */
+  "docs_released",
   "cmr_reviewed",
   "cmr_fix_committed",
   "cmr_passed",
@@ -233,6 +235,8 @@ export interface FamilyLedgerEntry {
    *     written after live GitHub confirms the PR merged (#602).
    *   - `"post_merge_cleanup"` — paired with `status:"post_merge_cleanup"`;
    *     the terminal marker written after post-merge verify+act cleanup (#603).
+   *   - `"docs_released"` — paired with `status:"docs_released"`; durable
+   *     landing-docs completion so crash re-entry does not re-run VERSION/CHANGELOG.
    *   - `"cmr_reviewed"` — paired with `status:"cmr_reviewed"`; records a red
    *     reviewer outcome before the runner sends it to coder-fix (#550).
    *   - `"cmr_fix_committed"` — paired with `status:"cmr_fix_committed"`; records
@@ -257,6 +261,7 @@ export interface FamilyLedgerEntry {
     | "review_loop_converged"
     | "pr_merged"
     | "post_merge_cleanup"
+    | "docs_released"
     | "cmr_reviewed"
     | "cmr_fix_committed"
     | "cmr_passed"
