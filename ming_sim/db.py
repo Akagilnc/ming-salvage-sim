@@ -10096,6 +10096,84 @@ class GameDB:
             source_id or str(record.get("source_id") or ""), excluded_names, commit=commit,
         )
 
+    @staticmethod
+    def _secret_text_needles(*texts: str) -> List[str]:
+        """Substantial secret strings used for audience-channel origin hygiene (#883).
+
+        Short titles (e.g. two-character 密查) are ignored so scrubbing never
+        deletes unrelated public audience rows by coincidence.
+        """
+        needles: List[str] = []
+        for text in texts:
+            value = str(text or "").strip()
+            if len(value) >= 6:
+                needles.append(value)
+        return needles
+
+    @staticmethod
+    def _is_audience_chat_shared_channel(kind: str = "", source_id: str = "") -> bool:
+        """召对 chat → shared-ledger channel that #883 must not carry secret wording."""
+        return str(kind or "") == "audience" or str(source_id or "").startswith("chat_message:")
+
+    def _body_carries_secret_order_text(self, body: str = "", title: str = "") -> bool:
+        """True when payload carries an active secret brief's wording."""
+        blob = f"{title or ''}\n{body or ''}"
+        if not blob.strip():
+            return False
+        try:
+            rows = self.conn.execute(
+                "SELECT title, body FROM secret_order_briefs"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return False
+        for row in rows:
+            for needle in self._secret_text_needles(row["title"], row["body"]):
+                if needle in blob:
+                    return True
+        return False
+
+    def _scrub_secret_text_from_shared_knowledge(
+        self, *texts: str, commit: bool = True,
+    ) -> None:
+        """Remove audience/chat shared-ledger rows that carry secret wording (#883).
+
+        Called at secret-order origin writes (create/update).  Audience chat
+        registers knowledge before the secret is materialised; scrubbing at the
+        secret write mouth keeps isolation structural rather than read-path
+        filtering.  Scope is the audience/chat channel only — other restricted
+        kinds keep their own exclusion machinery.
+        """
+        needles = self._secret_text_needles(*texts)
+        if not needles:
+            return
+        source_ids: List[str] = []
+        for table in ("character_knowledge_sources", "character_knowledge_events"):
+            try:
+                rows = self.conn.execute(
+                    f"SELECT source_id, kind, title, body FROM {table}"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                continue
+            for row in rows:
+                sid = str(row["source_id"] or "")
+                if not self._is_audience_chat_shared_channel(row["kind"], sid):
+                    continue
+                blob = f"{row['title'] or ''}\n{row['body'] or ''}"
+                if any(needle in blob for needle in needles):
+                    if sid and sid not in source_ids:
+                        source_ids.append(sid)
+        if not source_ids:
+            return
+        for sid in source_ids:
+            self.conn.execute(
+                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
+            )
+            self.conn.execute(
+                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
+            )
+        if commit:
+            self.conn.commit()
+
     def register_character_knowledge_source(
         self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
         kind: str, title: str, body: str = "", source_id: str = "",
@@ -10113,6 +10191,13 @@ class GameDB:
             raise ValueError(
                 "密令不得写入共享知识源；只允许本体表 + 接令者专用简报表（#883）"
             )
+        # Audience/chat channel: refuse payloads that already restate an active
+        # secret brief (do not raise — chat must keep working).
+        if (
+            self._is_audience_chat_shared_channel(kind_text, source_id)
+            and self._body_carries_secret_order_text(body, title)
+        ):
+            return
         roster = [dict(item) for item in participant_roster if item.get("character_id") or item.get("name")]
         if not source_id:
             source_id = f"{kind}:{state.turn}:{title}"
@@ -10166,10 +10251,24 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
+        # Origin hygiene: prior audience/chat shared rows that already deposited
+        # this wording must leave the shared ledger.
+        self._scrub_secret_text_from_shared_knowledge(title, body, commit=False)
         if commit:
             self.conn.commit()
 
     def record_character_participation(self, state: GameState, participants: Iterable[str], kind: str, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None, *, commit: bool = True) -> None:
+        kind_text = str(kind or "")
+        source_text = str(source_id or "")
+        # #883: secret_order shape never becomes a participation event.
+        if kind_text == "secret_order" or source_text.startswith("secret_order:"):
+            return
+        # Audience/chat channel: refuse restating active secret brief wording.
+        if (
+            self._is_audience_chat_shared_channel(kind_text, source_text)
+            and self._body_carries_secret_order_text(body, title)
+        ):
+            return
         source_id = source_id or f"{kind}:{state.turn}:{title}"
         excluded_json = json.dumps(
             list(dict.fromkeys(str(p).strip() for p in (excluded_names or []) if str(p).strip())),
