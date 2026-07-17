@@ -70,6 +70,37 @@ def test_p4_projection_keeps_lawful_chinese_comma_fragments_and_rejects_comparat
     assert "已过六个月" in rendered
 
 
+def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
+    """Approximate / comparator score phrasing must not leak past the shared P4 guard.
+
+    Natural LLM prose uses 接近/不及/跌破/约/左右/大约/差不多 forms that sit
+    outside the older connector list; player-visible mindreading reply_text
+    and history seams all call this one rejector.
+    """
+    for injected in (
+        "忠诚接近40",
+        "士气不及20",
+        "军心跌破30",
+        "能力约70",
+        "补给在30左右",
+        "能力大约70",
+        "忠诚差不多40",
+        "山东民心堪忧15分",
+        "势力将近80",
+        "训练约等于50",
+    ):
+        rendered = safe_historical_text(injected)
+        assert "已略去" in rendered, injected
+        assert not any(ch.isdigit() for ch in rendered), (injected, rendered)
+
+    # Lawful countable facts beside an approximate leak must survive.
+    mixed = safe_historical_text("忠诚接近40，拨银三万两，已过六个月")
+    assert "已略去" in mixed
+    assert "拨银三万两" in mixed
+    assert "已过六个月" in mixed
+    assert "接近40" not in mixed
+
+
 def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
     assert "已略去" in safe_historical_text("补给已经明显恶化至20")
     assert "已略去" in safe_historical_text("补给整体已经明显恶化至20")

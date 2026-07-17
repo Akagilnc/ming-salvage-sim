@@ -92,10 +92,43 @@ _ABSTRACT_AXIS_PATTERN = "|".join(
      "military_pressure", "gentry_resistance", "progress"]
 )
 _COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年"
+# Qualitative band words may sit between an axis and a raw score
+# (``民心堪忧15分``).  Keep them optional and axis-local so countable facts
+# with unrelated intervening prose stay lawful.
+_ABSTRACT_BAND_WORD = "|".join(
+    sorted(
+        {re.escape(word) for words in _AUDIENCE_ABSTRACT_BANDS.values() for word in words},
+        key=len,
+        reverse=True,
+    )
+)
+# Approximate / comparator connectors used in natural LLM historical prose.
+# Longer alternatives first so ``大约`` / ``约等于`` win over bare ``约``.
+_ABSTRACT_SCORE_CONNECTOR = (
+    r"由|为|达|高达|至|是|从|"
+    r"不足|不到|低于|少于|不满|超过|高于|大于|"
+    r"接近|近于|近乎|将近|不及|"
+    r"约等于?|大约|约|差不多|"
+    r"跌破|突破|冲破"
+)
+# Shared numeric tail: optional percent / 分, never a countable unit, optional 左右.
+_ABSTRACT_SCORE_NUMBER = (
+    rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
+    rf"(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))"
+    rf"(?:\s*(?:左右|上下))?"
+)
 _ABSTRACT_VALUE_RE = re.compile(
-    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从|不足|不到|低于|少于|不满|超过|高于|大于)\s*|[（(]\s*|(?=[-+]?\d))"
-    rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))\s*[）)]?",
+    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
+    rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
+    rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
+    rf"(?:"
+    # ``补给在30左右`` — 在 + number + 左右/上下
+    rf"在\s*{_ABSTRACT_SCORE_NUMBER}"
+    rf"|"
+    # ``忠诚接近40`` / ``能力约70`` / ``忠诚=98`` / bare ``忠诚88``
+    rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*|[（(]\s*|(?=[-+]?\d))"
+    rf"{_ABSTRACT_SCORE_NUMBER}\s*[）)]?"
+    rf")",
     re.IGNORECASE,
 )
 # A score may be wrapped in natural prose (``补给整体已经明显恶化至20``),
@@ -114,12 +147,13 @@ _ABSTRACT_STATE_MODIFIER = (
 )
 _ABSTRACT_STATE_VERB = (
     r"(?:升(?:高|至|到)?|降(?:低|至|到)?|提高(?:至|到)?|提升(?:至|到)?|"
-    r"跌(?:至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|只有|仅有|仅|为|至|有|余|剩)"
+    r"跌(?:破|至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|"
+    r"接近|近于|不及|约|大约|只有|仅有|仅|为|至|有|余|剩)"
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
     rf"(?:{_ABSTRACT_STATE_CONNECTIVE}{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?=[-+]?\d))"
-    rf"[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))",
+    rf"{_ABSTRACT_SCORE_NUMBER}",
     re.IGNORECASE,
 )
 
@@ -138,9 +172,10 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
     if compound_axis.search(rendered):
         return safe_historical_text(rendered, kind)
     pattern = re.compile(
-        rf"({names})\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-        r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从|不足|不到|低于|少于|不满|超过|高于|大于)\s*|(?=[-+]?\d))"
-        r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%)?",
+        rf"({names})\s*(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
+        rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
+        rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*|在\s*|(?=[-+]?\d))"
+        r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%|\s*分)?(?:\s*(?:左右|上下))?",
         re.IGNORECASE,
     )
     def replace(match: re.Match[str]) -> str:

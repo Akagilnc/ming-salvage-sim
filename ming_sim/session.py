@@ -1813,7 +1813,8 @@ class GameSession:
             return 0
         if not isinstance(data, dict):
             return 0
-        title = str(data.get("title") or "").strip()[:20]
+        # No formal title hard-cap (align with tools/web extract paths).
+        title = str(data.get("title") or "").strip()
         content = str(data.get("content") or "").strip()
         if not title or not content:
             return 0

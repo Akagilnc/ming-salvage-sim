@@ -918,7 +918,8 @@ def extract_minister_actions(
     return {
         "secret_action": _action,
         "order_id": _int(obj.get("目标密令编号")),
-        "new_title": str(obj.get("新标题") or "").strip()[:20],
+        # Title has no formal length cap (family removed silent 20-char hard trunc).
+        "new_title": str(obj.get("新标题") or "").strip(),
         "new_content": str(obj.get("新内容") or "").strip(),
         "deadline_months": _int(obj.get("期限月数"), 36),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
@@ -1003,7 +1004,8 @@ def classify_cli_action_intent(
         "secret_action": _enum(
             obj.get("密令动作"), {"无", "更新", "提交核议", "催办", "记进展"}, "无"),
         "order_id": _int(obj.get("目标密令编号")),
-        "new_title": str(obj.get("新标题") or "").strip()[:60],
+        # Align with extract_minister_actions: no formal title hard-cap.
+        "new_title": str(obj.get("新标题") or "").strip(),
         "new_content": str(obj.get("新内容") or "").strip()[:500],
         "deadline_months": max(0, min(_int(obj.get("期限月数")), 36)),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:30],
@@ -1767,7 +1769,7 @@ def _extract_secret_order(
         "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
         "只输出一个 JSON 对象，不要 markdown 代码围栏、不要 JSON 以外任何字：\n"
         "{\n"
-        "  \"标题\": \"≤14字的密令简称，概括任务，如 密查关宁军饷、暗结蒙古诸部\",\n"
+        "  \"标题\": \"密令简称，概括任务，如 密查关宁军饷、暗结蒙古诸部（不硬截长度）\",\n"
         "  \"内容\": \"密令完整任务详情：目标、保密要求、做法\",\n"
         "  \"承办人\": \"实际承办此密令的人名；皇帝或大臣指明谁就填谁，没指明就填 "
         + (default_assignee or "") + "\",\n"
@@ -1821,7 +1823,9 @@ def _extract_secret_order(
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
         # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
         content = _merge_secret_content(_emperor_fallback, _content_llm, minister_reply)
-    title = str(obj.get("标题") or "").strip()[:20] or (content or player_command)[:14]
+    # No formal title hard-cap: keep the full extracted title; only synthesize a
+    # short fallback when the extractor omitted 标题 entirely.
+    title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
     # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
     # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
     # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
