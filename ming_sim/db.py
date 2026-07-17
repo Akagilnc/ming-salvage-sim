@@ -8336,16 +8336,22 @@ class GameDB:
     ) -> List[int]:
         """Resolve oral-decree chat pins for secret-order classification (#976).
 
-        Prefer explicit stage/API pins; if none, auto-capture latest held user for
-        speaker then assignee so direct mutations still withhold the oral line.
+        Prefer explicit stage/API pins.  Auto-capture latest held user only when
+        the caller provided **no** pin intent (both args None) — direct create
+        without pending still withholds the oral line.  Explicit empty
+        ``origin_chat_message_ids=[]`` means pin-mode with no new oral (do not
+        invent pure-public bloodline).
         """
+        has_explicit_pin_intent = (
+            origin_chat_message_ids is not None or origin_chat_message_id is not None
+        )
         explicit: List[object] = []
         if origin_chat_message_ids is not None:
             explicit.extend(origin_chat_message_ids)
         if origin_chat_message_id is not None:
             explicit.append(origin_chat_message_id)
         pinned_ids = self._coerce_positive_message_ids(explicit)
-        if not pinned_ids:
+        if not pinned_ids and not has_explicit_pin_intent:
             # Auto-capture: any still-held user bloodline (cross-turn F4 included).
             # Prefer same-turn first so pure-public earlier-turn held is not
             # stolen when a fresh same-turn oral exists.
@@ -8361,6 +8367,25 @@ class GameDB:
                 if mid is not None and mid not in pinned_ids:
                     pinned_ids.append(mid)
         return pinned_ids
+
+    def _brief_origin_chat_message_ids(self, order_id: int) -> List[int]:
+        """Durable oral pins already registered on this order's brief (may be empty)."""
+        try:
+            row = self.conn.execute(
+                "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+                (int(order_id),),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return []
+        if row is None:
+            return []
+        try:
+            parsed = json.loads(row["origin_chat_message_ids"] or "[]")
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return self._coerce_positive_message_ids(parsed)
 
     def _classify_secret_order_audience(
         self,
@@ -8397,11 +8422,19 @@ class GameDB:
         """把一条结构化聊天写动作存进 pending_actions 暂存(status=pending)。返回行 id。
         颁诏时 commit_pending_actions 批量落库;颁诏前不动真实表。
 
-        secret_order: pin oral-decree ``origin_chat_message_id`` at stage time so
-        later same-turn confirmation user lines cannot steal max(held id) bloodline.
+        secret_order 新建: pin oral-decree ``origin_chat_message_id`` at stage time
+        so later same-turn confirmation user lines cannot steal max(held id)
+        bloodline.  Non-create (更新/催办/记进展/提交核议) does **not** auto-pin
+        latest held — pure-public 问话 must not become secret-origin withheld
+        (S3 参与即知).  New oral on non-create requires explicit
+        ``origin_chat_message_id`` in payload.
         """
         payload_data: Dict[str, object] = dict(payload or {})
-        if str(kind) == "secret_order" and payload_data.get("origin_chat_message_id") is None:
+        if (
+            str(kind) == "secret_order"
+            and str(action) == "新建"
+            and payload_data.get("origin_chat_message_id") is None
+        ):
             origin_mid = self._latest_held_user_chat_message_id(minister_name, turn)
             if origin_mid is not None:
                 payload_data["origin_chat_message_id"] = int(origin_mid)
@@ -8757,12 +8790,15 @@ class GameDB:
                 return order_id is not None
             if oid is None:
                 return False
-            # Non-create secret_order: stage already pinned origin_chat_message_id;
-            # consume it at commit so oral decree is withheld (同构新建分类).
+            # Non-create: consume explicit stage/API pin only.  No auto-pin of
+            # latest held (pure public must not become secret-origin withheld).
+            # No pin → skip classify (do not invent bloodline; pure public stays
+            # held until settle release, never withheld).
             origin_mid = self._parse_origin_chat_message_id(payload)
             origin_speaker = str(pa.get("minister_name") or "") or None
             if pa["action"] == "更新":
                 deadline = _coerce_deadline_months(payload.get("deadline_months"), default=0)
+                # No pin → update_secret_order_by_id preserves brief pins (no pure-public auto-capture).
                 return self.update_secret_order_by_id(
                     state, int(oid),
                     str(payload.get("new_title") or ""),
@@ -8776,19 +8812,20 @@ class GameDB:
                 deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
                 self.rush_secret_order(
                     int(oid), state, deadline_months=deadline, reason=str(payload.get("reason") or ""))
-                order = self.get_secret_order(int(oid))
-                if order is not None:
-                    self._classify_secret_order_audience(
-                        state, int(oid), str(order["minister_name"]),
-                        str(order.get("title") or ""), str(order.get("content") or ""),
-                        origin_minister_name=origin_speaker,
-                        origin_chat_message_id=origin_mid,
-                    )
+                if origin_mid is not None:
+                    order = self.get_secret_order(int(oid))
+                    if order is not None:
+                        self._classify_secret_order_audience(
+                            state, int(oid), str(order["minister_name"]),
+                            str(order.get("title") or ""), str(order.get("content") or ""),
+                            origin_minister_name=origin_speaker,
+                            origin_chat_message_id=origin_mid,
+                        )
                 return True
             if pa["action"] == "提交核议":
                 ok = self.submit_secret_order_for_review(
                     int(oid), str(payload.get("claim") or ""), state.year, state.period)
-                if ok:
+                if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
                         self._classify_secret_order_audience(
@@ -8801,7 +8838,7 @@ class GameDB:
             if pa["action"] == "记进展":
                 ok = self.update_secret_order_progress(
                     int(oid), str(payload.get("note") or ""), state.year, state.period)
-                if ok:
+                if ok and origin_mid is not None:
                     order = self.get_secret_order(int(oid))
                     if order is not None:
                         self._classify_secret_order_audience(
@@ -10831,6 +10868,8 @@ class GameDB:
 
         Oral-decree pins (stage ``origin_chat_message_id`` / speaker) feed the same
         classification seam as create so non-create audience updates withhold口谕.
+        When no pin intent is provided, preserve brief pins (do not auto-capture
+        pure-public held as new secret-origin bloodline).
         """
         row = self.conn.execute(
             "SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?", (int(order_id),)
@@ -10859,6 +10898,10 @@ class GameDB:
         )
         excluded_names = _snapshot_secret_order_people(self.content, people, offices)
         excluded_targets = _secret_order_exclusion_targets(people, offices)
+        # Preserve create-time oral pins when caller did not name a new pin.
+        classify_ids = origin_chat_message_ids
+        if origin_chat_message_id is None and classify_ids is None:
+            classify_ids = self._brief_origin_chat_message_ids(int(order_id))
         with atomic(self):
             if deadline:
                 self.conn.execute(
@@ -10878,7 +10921,7 @@ class GameDB:
                 state, int(order_id), str(row["minister_name"]), persisted_title, content,
                 origin_minister_name=origin_minister_name,
                 origin_chat_message_id=origin_chat_message_id,
-                origin_chat_message_ids=origin_chat_message_ids,
+                origin_chat_message_ids=classify_ids,
                 commit=False,
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
