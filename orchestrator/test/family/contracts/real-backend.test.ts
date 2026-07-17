@@ -3158,6 +3158,27 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
     ]);
   });
 
+  it("#934: legacy escalation off-shape / invalid JSON fails closed (no silent cast)", async () => {
+    const o = opts(trackRepo());
+    mkdirSync(o.ledgerDir, { recursive: true });
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      "not-json-at-all\n",
+      "utf8",
+    );
+    const b = new RealFamilyBackend(o);
+    await expect(b.readEscalations()).rejects.toThrow(/not valid JSON|fail closed/i);
+
+    writeFileSync(
+      join(o.ledgerDir, "family-escalations.jsonl"),
+      `${JSON.stringify({ reason: 42 })}\n`,
+      "utf8",
+    );
+    await expect(b.readEscalations()).rejects.toThrow(
+      /not a valid FamilyEscalationRecord shape|fail closed/i,
+    );
+  });
+
   it("orders legacy escalations before newer ledger answers so migration can reopen", async () => {
     const o = opts(trackRepo());
     mkdirSync(o.ledgerDir, { recursive: true });

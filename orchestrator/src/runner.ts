@@ -241,9 +241,15 @@ async function hashPrompt(
     let content: string | undefined;
     try {
       content = await backend.readPromptContent(promptFile);
-    } catch {
+    } catch (err) {
       // A prompt-resolution fault must NOT abort ledgering — fall back to the
       // name hash so the step is still recorded (the resume truth survives).
+      // #934 ID-015: name-prefix fallback AND warn (not silent).
+      console.warn(
+        `[orchestrator] optional prompt content read failed (name-hash fallback): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       content = undefined;
     }
     if (content !== undefined) {
@@ -2529,8 +2535,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
-    // in-flight CLI monitor handle from the persisted ledger so hang judge/kill
-    // can resume without global process-name matching.
+    // in-flight CLI monitor handle from the persisted ledger so observation +
+    // exact-handle adoption/terminate can resume without global process-name
+    // matching.
     resumeMonitorHandle = (() => {
       for (let i = resumeLedger.length - 1; i >= 0; i--) {
         const candidate = resumeLedger[i]!;

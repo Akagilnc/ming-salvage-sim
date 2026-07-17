@@ -47,6 +47,7 @@ import {
   readMetadataWithRetry,
 } from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
+import { gitExitStatus, isFileNotFound } from "./fsErrors.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import {
   RealBackend,
@@ -431,9 +432,7 @@ export function discoverSubprojects(workingRepo: string): string[] {
     try {
       if (statSync(pkg).isFile()) found.push(e.name);
     } catch (err) {
-      if (err !== null && typeof err === "object" && (err as { code?: unknown }).code === "ENOENT") {
-        continue;
-      }
+      if (isFileNotFound(err)) continue;
       const d = err instanceof Error ? err.message : String(err);
       throw new Error(
         `family verify: package.json probe failed at "${pkg}": ${d}`,
@@ -879,13 +878,7 @@ function probePathPresent(
     statSync(path);
     return { present: true };
   } catch (err) {
-    if (
-      err !== null &&
-      typeof err === "object" &&
-      (err as { code?: unknown }).code === "ENOENT"
-    ) {
-      return { present: false };
-    }
+    if (isFileNotFound(err)) return { present: false };
     return {
       error: `${path}: ${err instanceof Error ? err.message : String(err)}`,
     };
@@ -1600,12 +1593,24 @@ export function cutFamilyBase(
   return startHead;
 }
 
-/** Does a local branch exist on the clone? (`-q`: no stderr noise when absent.) */
+/**
+ * Does a local branch exist on the clone? (`-q`: no stderr noise when absent.)
+ *
+ * #934 ID-015 / ID-009: precise missing-ref only (`git rev-parse --verify` exit 1)
+ * → false. Any other failure (exit 128 / spawn / broken repo) fails closed — never
+ * soft as "absent" (that would re-cut over a live base).
+ */
 function branchExists(workingRepo: string, branch: string, sh: Sh): boolean {
   try {
     sh("git", ["-C", workingRepo, "rev-parse", "-q", "--verify", `refs/heads/${branch}`]);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (gitExitStatus(err) === 1) return false;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `cutFamilyBase: git rev-parse --verify refs/heads/${branch} failed ` +
+        `(not a precise missing-ref/exit 1); refusing to treat the branch as ` +
+        `absent (#934 ID-015/ID-009). (${msg})`,
+    );
   }
 }

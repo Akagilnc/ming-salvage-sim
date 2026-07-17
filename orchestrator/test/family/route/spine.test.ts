@@ -164,7 +164,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       "merged",
       "merged",
     ]);
-    // A complete clean run is observably "success" (#293 no-op verify passes).
+    // A complete clean run is observably "success" (green barriers + all merged).
     expect(result.status).toBe("success");
   });
 
