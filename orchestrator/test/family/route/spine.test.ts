@@ -38,6 +38,8 @@ import type {
 import { resolveActiveModelRoute } from "../../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { StopSummary } from "../../../src/stopSummary.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +91,18 @@ class ChildBackend implements Backend {
 
 /** A FamilyBackend that records merges + ledger writes (the "family base" model). */
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly workingRepo: string;
@@ -101,9 +115,12 @@ class FakeFamilyBackend implements FamilyBackend {
     this.head = `+${child.childIssue}`;
     return { familyHead: this.head };
   }
-  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — these spine
-  // tests use the deterministic (no-conflict) merge path and never reach it, so
-  // the fake omits it.
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam.
+  // Throwing stub must remain unreachable on the deterministic no-conflict path.
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -229,8 +246,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         verifyDispatches += 1;
         return { kind: "completed", output: { kind: "verify", converged: true } };
       }
-      if (spec.kind === "docRelease") {
-        return { kind: "completed", output: { kind: "docRelease", released: true } };
+      if (spec.kind === "landing") {
+        return { kind: "completed", output: { kind: "landing", released: true } };
       }
       return { kind: "failed", reason: `unexpected ${spec.kind}` };
     };
@@ -336,7 +353,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     ).toHaveLength(1);
   });
 
-  it("#603: family cleanup process failure abort includes worker reason", async () => {
+  it("#941: cleanup leftovers never flip completed after pr_merged (ID-013)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(
@@ -359,6 +376,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         familyHeadAfter: "family-base-0",
       },
     );
+    // Host cleanup classification court deleted — landing Action owns re-entry.
     familyBackend.runPostMergeCleanup = async () => {
       throw new Error("gh auth expired while closing issues");
     };
@@ -371,18 +389,15 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    // #922: cleanup stage death is cleanup_failed (not the escalated umbrella).
-    expect(result.status).toBe("cleanup_failed");
-    expect(result.stopSummary.reason).toBe("cleanup_failed");
-    const reason =
-      result.stopSummary?.summary ??
-      result.stopSummary?.repairHint ??
-      "";
-    expect(reason).toMatch(/gh auth expired while closing issues/);
-    expect(reason).toMatch(/failed/);
+    // #941 / ID-013: close/cleanup failure is leftover only — never fail completed
+    expect(result.status).toBe("success");
+    expect(result.stopSummary?.reason).toBe("already_done");
+    expect(
+      familyBackend.ledger.filter((e) => e.status === "post_merge_cleanup"),
+    ).toHaveLength(1);
   });
 
-  it("#603: pr_merged without terminal cleanup re-enters cleanup before already_done", async () => {
+  it("#941: pr_merged without terminal cleanup re-enters landing before already_done", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(
@@ -405,17 +420,6 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         familyHeadAfter: "family-base-0",
       },
     );
-    let cleanupDispatched = 0;
-    familyBackend.runPostMergeCleanup = async () => {
-      cleanupDispatched += 1;
-      return {
-        kind: "cleanup",
-        terminal: true,
-        ok: true,
-        branchOutcome: "deleted",
-        issuesClosed: [10],
-      };
-    };
 
     const result = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
@@ -425,7 +429,6 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(cleanupDispatched).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stopSummary?.reason).toBe("already_done");
     const cleanupRows = familyBackend.ledger.filter(
@@ -437,7 +440,6 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       cleanupOutput: expect.objectContaining({
         terminal: true,
         ok: true,
-        branchOutcome: "deleted",
       }),
     });
   });
@@ -479,7 +481,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           },
         };
       }
-      const skeletonKinds = new Set(["verify", "fixer", "docRelease"]);
+      const skeletonKinds = new Set(["verify", "fixer", "landing"]);
       if (skeletonKinds.has(spec.kind)) {
         return {
           kind: "completed",
@@ -496,7 +498,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
                   committed: true,
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
-                : { kind: "docRelease", released: true },
+                : { kind: "landing", released: true },
         };
       }
       return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };
@@ -641,7 +643,12 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.status).toBe("incomplete");
     expect(result.children).toEqual([
       { issue: 10, status: "merged", branch: "feat/child-10" },
-      { issue: 11, status: "failed", branch: undefined },
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
     ]);
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
     expect(result.stopSummary.summary).toContain("#11:failed");

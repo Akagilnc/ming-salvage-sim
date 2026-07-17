@@ -15,7 +15,7 @@ import {
   isMissingMonitorSidecarResult,
   workerResultFromMonitorSidecar,
 } from "../../src/cliMonitorHooks.js";
-import { verifyWorkerSpec, fixerWorkerSpec, docReleaseWorkerSpec } from "../../src/dispatchWorker.js";
+import { verifyWorkerSpec, fixerWorkerSpec, landingWorkerSpec } from "../../src/dispatchWorker.js";
 import {
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
@@ -62,7 +62,7 @@ describe("#928 completion-signal retirement", () => {
       { label: "family ship", spec: familyShipWorkerSpec(route) },
       { label: "verify", spec: verifyWorkerSpec(route) },
       { label: "fixer", spec: fixerWorkerSpec(route) },
-      { label: "docRelease", spec: docReleaseWorkerSpec(route) },
+      { label: "landing", spec: landingWorkerSpec(route) },
     ];
 
     it.each(seats)("$label is single-iter and has no completionSignal field", ({ spec }) => {
@@ -243,7 +243,7 @@ describe("#928 completion-signal retirement", () => {
         cmrWorkerSpec("fresh", "completeness", route),
         verifyWorkerSpec(route),
         fixerWorkerSpec(route),
-        docReleaseWorkerSpec(route),
+        landingWorkerSpec(route),
       ];
       for (const spec of specs) {
         expect(JSON.stringify(spec)).not.toMatch(/completionSignal/);

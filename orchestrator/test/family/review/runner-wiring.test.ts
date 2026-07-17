@@ -45,6 +45,8 @@ import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -92,6 +94,18 @@ function readLegacyPersistedCmrAbort(): FamilyLedgerEntry {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -102,9 +116,13 @@ class FakeFamilyBackend implements FamilyBackend {
     this.merges.push(child);
     return { familyHead: `+${child.childIssue}` };
   }
-  // #295 conflict-fallback seam `resolveMergeConflict` is OPTIONAL — this
-  // verify-cmr test uses the deterministic (no-conflict) merge path and never
-  // reaches it, so the fake omits it.
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam.
+  // Throwing stub guards the deterministic no-conflict merge path (must stay
+  // unreachable here).
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1064,7 +1082,14 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // The child failed → it never merged → the family run is "incomplete".
     expect(result.status).toBe("incomplete");
     expect(result.failedPhase).toBeUndefined();
-    expect(result.children).toEqual([{ issue: 11, status: "failed" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
+    ]);
     // No merge / ledger write for a failed child.
     expect(familyBackend.merges).toEqual([]);
     expect(familyBackend.ledger).toEqual([]);
@@ -1096,7 +1121,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     expect(result.status).toBe("incomplete");
     expect(result.children).toEqual([
-      { issue: 11, status: "failed" },
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
       { issue: 10, status: "already_done" },
     ]);
     expect(result.stopSummary.summary).toContain("#11:failed");

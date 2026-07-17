@@ -16,7 +16,7 @@
  *   - the merged ledger entry is written ONLY AFTER a clean OR an LLM-RESOLVED
  *     merge lands (ADR 0022 decision 5 ordering preserved). If resolution itself
  *     fails (throws, OR returns still-conflicted), the ledger is NOT written and
- *     the failure is surfaced — not swallowed. The resolver seam is OPTIONAL: a
+ *     the failure is surfaced — not swallowed. The resolver seam is required (#934 ID-010 / #938).
  *     conflict on a backend that does not implement it fails loud too.
  *
  * Acceptance evidence:
@@ -30,15 +30,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { mergeChild } from "../../../src/family/merger.js";
 import type {
+
   ConflictResolveRequest,
   FamilyBackend,
   FamilyLedgerEntry,
   MergeRequest,
   MergeResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 /**
  * A fake family Backend whose deterministic merge can be told to "conflict" for
@@ -47,6 +48,18 @@ import type {
  * call and returns a synthetic resolved head.
  */
 class ConflictingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -106,33 +119,6 @@ class ConflictingFamilyBackend implements FamilyBackend {
   }
 }
 
-/**
- * A family backend that NEVER implements the optional conflict-fallback seam
- * `resolveMergeConflict` — the #293-era shape. Used to prove the merger
- * fails-loud (rather than crashing on an undefined call) if a conflict is hit
- * on a backend that cannot resolve it.
- */
-class NoResolverFamilyBackend implements FamilyBackend {
-  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
-    return { ok: true };
-  }
-
-  readonly appended: FamilyLedgerEntry[] = [];
-  constructor(private readonly conflictIssues: ReadonlySet<number> = new Set()) {}
-  async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
-    if (this.conflictIssues.has(child.childIssue)) {
-      return { familyHead: "base0", conflicted: true };
-    }
-    return { familyHead: `merged-${child.childIssue}` };
-  }
-  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
-    this.appended.push(entry);
-  }
-  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
-    return this.appended;
-  }
-}
-
 describe("merger conflict fallback — no-conflict path stays deterministic (#295 acc. 1/2)", () => {
   it("a no-conflict child merges deterministically and NEVER calls the LLM resolver", async () => {
     const backend = new ConflictingFamilyBackend(/* no conflicts */);
@@ -168,14 +154,30 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     // (no-conflict) deterministic merge must NOT leak a false LLM-resolved signal
     // downstream — the merger is the sole source of truth for the flag.
     class FlagStampingFamilyBackend implements FamilyBackend {
-  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
-    return { ok: true };
-  }
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      }
+
+      async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+        return { ok: true };
+      }
 
       readonly appended: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
         return { familyHead: `merged-${child.childIssue}`, conflictResolvedByLlm: true };
       }
+      async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+        throw new Error("resolveMergeConflict not used in this test");
+      }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.appended.push(entry);
       }
@@ -293,11 +295,10 @@ describe("merger conflict fallback — a FAILED resolution is not silently swall
     expect(backend.appended).toEqual([]);
   });
 
-  it("returns still-conflicted after the bounded merger-step retry and does NOT write a merged ledger entry", async () => {
+  it("returns still-conflicted after ONE merger worker call and does NOT write a merged ledger entry (#938 / ID-010)", async () => {
     // The resolver returns WITHOUT throwing but its result is still
-    // `conflicted: true` (a misbehaving / escalating backend that did not
-    // actually clear the conflict). The merger must NOT treat this as a clean
-    // LLM-resolved merge — it must surface it, never record it as merged.
+    // `conflicted: true`. The Action converges that outcome once — no host
+    // still-conflicted re-dispatch court — and never records it as merged.
     const backend = new ConflictingFamilyBackend(
       new Set([14]),
       /* resolveFailures */ new Set(),
@@ -308,69 +309,7 @@ describe("merger conflict fallback — a FAILED resolution is not silently swall
       childBranch: "feat/child-14",
     });
     expect(result.conflicted).toBe(true);
-    // The merger step was re-dispatched up to the shared mechanical bound.
-    expect(backend.resolves.map((r) => r.childIssue)).toEqual(
-      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 14),
-    );
-    // NO merged ledger entry — a still-conflicted resolution must never look clean.
+    expect(backend.resolves.map((r) => r.childIssue)).toEqual([14]);
     expect(backend.appended).toEqual([]);
-  });
-
-  it("re-dispatches the merger step after a transient still-conflicted result, then records the landed merge", async () => {
-    class ResolvesOnRetryBackend extends ConflictingFamilyBackend {
-      private attempts = 0;
-
-      override async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
-        this.attempts += 1;
-        this.resolves.push(req);
-        if (this.attempts < 2) {
-          return { familyHead: "base0", conflicted: true };
-        }
-        return { familyHead: "resolved-14" };
-      }
-    }
-
-    const backend = new ResolvesOnRetryBackend(new Set([14]));
-    const result = await mergeChild(backend, {
-      childIssue: 14,
-      childBranch: "feat/child-14",
-    });
-
-    expect(result).toMatchObject({
-      familyHead: "resolved-14",
-      conflictResolvedByLlm: true,
-    });
-    expect(backend.resolves).toHaveLength(2);
-    expect(backend.appended).toHaveLength(1);
-  });
-});
-
-describe("merger conflict fallback — a backend without the optional resolver fails loud (#295 acc. 3)", () => {
-  it("throws a descriptive error (not an undefined-call crash) and writes NO ledger entry when a conflict hits a resolver-less backend", async () => {
-    const backend = new NoResolverFamilyBackend(new Set([15]));
-    await expect(
-      mergeChild(backend, { childIssue: 15, childBranch: "feat/child-15" }),
-    ).rejects.toThrow(/resolveMergeConflict/);
-    // No merged ledger entry — an unresolvable conflict must never look clean.
-    expect(backend.appended).toEqual([]);
-  });
-
-  it("a resolver-less backend still merges a NO-conflict child cleanly (the resolver is never needed)", async () => {
-    const backend = new NoResolverFamilyBackend(/* no conflicts */);
-    const result = await mergeChild(backend, {
-      childIssue: 16,
-      childBranch: "feat/child-16",
-    });
-    expect(result.familyHead).toBe("merged-16");
-    expect(result.conflictResolvedByLlm ?? false).toBe(false);
-    // #298 full-schema ledger write (childBranch + familyHeadAfter land).
-    expect(backend.appended).toEqual([
-      {
-        childIssue: 16,
-        childBranch: "feat/child-16",
-        status: "merged",
-        familyHeadAfter: "merged-16",
-      },
-    ]);
   });
 });

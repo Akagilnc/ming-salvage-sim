@@ -41,6 +41,7 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import type {
+
   FamilyAbortedEvent,
   FamilyBackend,
   FamilyEpic,
@@ -52,6 +53,7 @@ import type {
   MergeRequest,
   MergeResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 class ChildBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -85,6 +87,18 @@ class ChildBackend implements Backend {
 
 /** A capable family backend that records both the seam aborts AND the ledger. */
 class AbortingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
   currentFamilyHead = "head-1";
@@ -98,6 +112,10 @@ class AbortingFamilyBackend implements FamilyBackend {
     this.currentFamilyHead = `+${child.childIssue}`;
     return { familyHead: this.currentFamilyHead, childHead: `c${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

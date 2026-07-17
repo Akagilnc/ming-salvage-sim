@@ -1,10 +1,13 @@
 /**
- * Family PR review-loop orchestration helpers (#600).
+ * Family PR review-loop orchestration helpers (#600 / #940).
  *
  * Host-side deterministic glue between bot polling, verify/fixer worker dispatch,
- * and ledger markers. Worker judgment (fix / reject / defer) stays inside the
- * verify worker; the runner only counts findings and enforces the 3-round cap
- * (ADR 0061 / ADR 0062).
+ * GitHub side-effect application, and ledger markers. The verify worker owns
+ * finding judgment and should execute reply/resolve/deferred before self-report;
+ * the host still applies cargo plan fields as a fail-safe before accepting a
+ * disposition as mergeable. Host routes on three-state disposition
+ * (`converged | continue | escalate`) — no mechanical round cap, no
+ * empty-success from counts (#934 ID-012).
  */
 
 import {
@@ -44,19 +47,38 @@ import {
   fixerHasFixCommit,
   fixerProceedsToVerify,
 } from "../reviewLoopOutcome.js";
+import type { StopSummary } from "../stopSummary.js";
+import { decisionGateParkStopSummary } from "../stopSummary.js";
 import {
   fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
+  type FixMarkedFindingThread,
 } from "../onlineReviewSideEffects.js";
-import type { StopSummary } from "../stopSummary.js";
-import { decisionGateParkStopSummary } from "../stopSummary.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
-
-/** Hard cap on online review rounds — runner-enforced (ADR 0061). */
-export const MAX_ONLINE_REVIEW_ROUNDS = 3;
 
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
+
+/**
+ * #940 / #934 ID-012 — host-visible judge disposition for online review.
+ * Derived only from the verify worker's typed status fields; findings counts
+ * are opaque cargo and never consulted.
+ */
+export type OnlineReviewJudgeDisposition =
+  | "converged"
+  | "continue"
+  | "escalate";
+
+export function onlineReviewJudgeDisposition(
+  verify: VerifyResult,
+): OnlineReviewJudgeDisposition {
+  if (verify.terminalState === "decision_gate_raised") return "escalate";
+  if (verify.converged) return "converged";
+  return "continue";
+}
+
+export type { FixMarkedFindingThread };
+export { fixMarkedKeysFromVerify, fixMarkedFindingThreadsFromVerify };
 
 export type { OnlineReviewTerminalState } from "../types.js";
 
@@ -478,6 +500,23 @@ export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
   });
 }
 
+/**
+ * Stop summary when a host-owned online-review operation fails closed
+ * (e.g. post-fix retrigger). Side-effect failures use
+ * {@link verifySideEffectFailureStopSummary}.
+ */
+export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary {
+  const detail = err instanceof Error ? err.message : String(err);
+  // #922: family surface terminal owns online_review_failed at the source —
+  // do not emit infra_failure for callers to restamp.
+  return stageFailureStopSummary({
+    status: "online_review_failed",
+    summary: `online review host operation failed: ${detail}`,
+    repairHint:
+      "repair the online review host operation (bot retrigger / poll) and rerun the online review loop",
+  });
+}
+
 type OnlineReviewDispatchPhase = "poll" | "verify" | "fixer";
 
 /** Stop summary when poll/verify/fixer dispatch throws (#600 r20). */
@@ -613,8 +652,8 @@ export const immediateBotPollClock: BotPollClock = {
 /**
  * Family pending-CI re-poll delay.
  * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
- * Production uses real 2-minute cadence so CI latency does not burn the overdue
- * budget in milliseconds (online R4/R5 Codex+Gemini chain).
+ * Production uses real 2-minute cadence between pending-CI polls (#934 ID-004:
+ * CI pending is not on the bot overdue window — no finite host-fail budget).
  */
 export async function sleepPendingCiPollInterval(
   clock?: BotPollClock,
@@ -753,9 +792,11 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  readonly dispatchDocRelease: (
-    landing: WorkerLandingPayload,
-  ) => Promise<boolean | undefined>;
+  /**
+   * Host fail-safe GitHub side-effect applicator (#600 / correctness K1).
+   * Must run after a usable verify disposition and before mergeable acceptance.
+   * Live production wires {@link applyVerifySideEffects}; tests may pass identity.
+   */
   readonly applySideEffects: (
     landing: WorkerLandingPayload,
     verify: VerifyResult,
@@ -781,18 +822,20 @@ export interface OnlineReviewLoopStageResult {
 }
 
 /**
- * Family online review-loop stage.
- * Post-merge cleanup (#603) runs after host auto-merge, not inside this loop.
+ * Family online review-loop stage (#940 typed-judge-only).
+ * #941: stops at mergeable; landing Action owns docs/merge/close/cleanup.
+ * Exit conditions are worker judge dispositions only — no mechanical round cap.
  */
 export async function runOnlineReviewLoopStage(
   ship: ShipResult,
   dispatch: OnlineReviewLoopDispatch,
   opts?: {
     readonly initialRound?: number;
+    /** Prior fixing commit SHA for recheck side-effect resolve (#600). */
     readonly initialFixCommitSha?: string;
     /** Durable fixer authorization reconstructed for a post-crash recheck. */
     readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    /** Durable identity-to-thread bindings reconstructed for side effects. */
+    /** Durable identity-to-thread bindings reconstructed for fixer landing. */
     readonly initialFixMarkedFindingThreads?: ReadonlyArray<{
       readonly identityKey: string;
       readonly threadId: string;
@@ -806,8 +849,6 @@ export async function runOnlineReviewLoopStage(
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
   let lastFixCommitSha = opts?.initialFixCommitSha;
-  /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
-  let pendingCiPolls = 0;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -821,7 +862,9 @@ export async function runOnlineReviewLoopStage(
    */
   const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
 
-  while (round <= MAX_ONLINE_REVIEW_ROUNDS + 1) {
+  // #940 / ID-012: no mechanical round cap — persistent verify judge owns
+  // continue vs escalate. Host only routes the three-state disposition.
+  for (;;) {
     let snapshot: PrReviewSnapshot;
     try {
       snapshot = await dispatch.poll(round);
@@ -868,33 +911,90 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
+    let disposition: OnlineReviewJudgeDisposition = "continue";
     let fixKeys: string[] = [];
-    let fixMarkedFindingThreads: Array<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }> = [];
+    let fixMarkedFindingThreads: FixMarkedFindingThread[] = [];
+
     if (verify !== undefined) {
-      // #877: isRecheck force-normalize is routing plumbing; fix-marked echo
-      // coverage court demolished (helper always admits three-channel converge).
+      // #877: isRecheck force-normalize is routing plumbing.
       verify = enforceRunnerOwnedRecheck(verify, round);
-    if (verify.terminalState === "decision_gate_raised") {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+      disposition = onlineReviewJudgeDisposition(verify);
+
+      if (disposition === "escalate") {
+        return {
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+        };
+      }
+
+      // Pending CI only: re-poll without finite host fail (#934 ID-004).
+      // Bot overdue window is for bots only — CI pending keeps sleeping until
+      // check-runs go terminal (or the worker escalates on a later poll).
+      // Do not apply side effects while CI is still pending.
+      if (
+        verifyBlockedOnlyOnPendingCheckRuns(
+          verify,
+          landing.onlineReviewSnapshot,
+        )
+      ) {
+        await sleepPendingCiPollInterval();
+        continue;
+      }
+
+      // Host fail-safe applicator: reply/resolve/deferred land before mergeable
+      // (or fixer continue). Worker should have executed already; cargo plan is
+      // still applied deterministically so effects cannot be skipped.
+      try {
+        verify = dispatch.applySideEffects(
+          landing,
+          verify,
+          round > 1 ? lastFixCommitSha : undefined,
+        );
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) {
+          throw err;
+        }
+        return {
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: verifySideEffectFailureStopSummary(err),
+        };
+      }
+      // Re-derive disposition after applicator (e.g. deferredIssueUrls filled).
+      disposition = onlineReviewJudgeDisposition(verify);
+
+      fixKeys = fixMarkedKeysFromVerify(verify);
+      fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
+      landing = {
+        ...landing,
+        fixMarkedFindingIdentityKeys: fixKeys,
+        fixMarkedFindingThreads,
+        ...(verify.findingFamilies !== undefined
+          ? { findingFamilies: verify.findingFamilies }
+          : {}),
       };
-    }
-    // Pending CI only: re-poll — do not apply "all clear" side effects, do not fixer
-    // (online R2 Codex P2: empty fix list → decision_gate park).
-    if (
-      verifyBlockedOnlyOnPendingCheckRuns(
-        verify,
-        landing.onlineReviewSnapshot,
-      )
-    ) {
-      pendingCiPolls += 1;
-      if (pendingCiPolls > BOT_OVERDUE_POLL_COUNT) {
+
+      const reviewSnap = landing.onlineReviewSnapshot;
+      const checkRuns = reviewSnap?.checkRuns ?? [];
+      const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
+
+      if (
+        disposition === "converged" &&
+        checkRunsConverged(checkRuns, emptyMeans)
+      ) {
+        // #941 / ID-013: online-review Action ends at mergeable. Landing Action
+        // owns docs release, merge, MERGED confirm, close, and cleanup.
+        return { ok: true, terminalState: "mergeable", round };
+      }
+
+      // Converged disposition + CI red: park on CI (host-deterministic).
+      if (
+        disposition === "converged" &&
+        classifyCheckRuns(checkRuns, emptyMeans) === "failed"
+      ) {
         return {
           ok: false,
           terminalState: "decision_gate_raised",
@@ -902,95 +1002,17 @@ export async function runOnlineReviewLoopStage(
           stopSummary: stageFailureStopSummary({
             status: "online_review_failed",
             summary:
-              "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
+              "online review bots are clean but CI check-runs failed on the PR head",
             repairHint:
-              "wait for CI to complete (or fail) on the PR head, then re-run online review",
+              "fix the CI failures on the PR head and re-run the online review loop",
           }),
         };
       }
-      // Bots may already be quiescent — poll returns immediately. Shared delay
-      // Keep pending-CI delay inside the family loop.
-      await sleepPendingCiPollInterval();
-      continue;
     }
-    pendingCiPolls = 0;
-    try {
-      verify = dispatch.applySideEffects(
-        landing,
-        verify,
-        round > 1 ? lastFixCommitSha : undefined,
-      );
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
-      }
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: verifySideEffectFailureStopSummary(err),
-      };
-    }
-    fixKeys = fixMarkedKeysFromVerify(verify);
-    fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
-    landing = {
-      ...landing,
-      fixMarkedFindingIdentityKeys: fixKeys,
-      fixMarkedFindingThreads,
-      ...(verify.findingFamilies !== undefined
-        ? { findingFamilies: verify.findingFamilies }
-        : {}),
-    };
+    // Sparse / unusable verify cargo (no typed disposition) continues to fixer
+    // with raw artifacts — never host empty-success (#940 / ID-012).
 
-    const reviewSnap = landing.onlineReviewSnapshot;
-    const checkRuns = reviewSnap?.checkRuns ?? [];
-    const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
-    if (verify.converged && checkRunsConverged(checkRuns, emptyMeans)) {
-      const released = await dispatch.dispatchDocRelease(landing);
-      if (released === false) {
-        // #735: surface 文档发布 failure distinctly (not a silent empty gate).
-        return {
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
-            summary:
-              "family 文档发布 returned released:false — skill fail / hang / required push fail",
-            repairHint:
-              "fix the docRelease skill or push failure and re-feed the family run",
-          }),
-        };
-      }
-      return { ok: true, terminalState: "mergeable", round };
-    }
-
-    // CI failed + no bot fix marks: gate only the runner's merge action. Preserve
-    // the worker's convergence receipt and park on the existing CI-red resume lane.
-    if (
-      classifyCheckRuns(checkRuns, emptyMeans) === "failed" &&
-      fixKeys.length === 0
-    ) {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: stageFailureStopSummary({
-          status: "online_review_failed",
-          summary:
-            "online review bots are clean but CI check-runs failed on the PR head",
-          repairHint:
-            "fix the CI failures on the PR head and re-run the online review loop",
-        }),
-      };
-    }
-    }
-
-    // ADR 0061: round MAX+1 is verify-only — no further fixer after the cap.
-    if (round > MAX_ONLINE_REVIEW_ROUNDS) {
-      return { ok: false, terminalState: "round_budget_exhausted", round };
-    }
-
+    // continue disposition: fixer path (no mechanical round cap).
     recheckFixMarkedFindingIdentityKeys = fixKeys;
     recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
 
@@ -1011,6 +1033,8 @@ export async function runOnlineReviewLoopStage(
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
       if (envelopeFixSha !== undefined) {
         try {
+          // Persist envelope SHA for ledger / recheck landing AND thread it into
+          // the next round's host side-effect resolve (threadsToResolve).
           lastFixCommitSha = dispatch.resolveFixCommitSha
             ? await dispatch.resolveFixCommitSha(envelopeFixSha)
             : envelopeFixSha;
@@ -1030,7 +1054,7 @@ export async function runOnlineReviewLoopStage(
             ok: false,
             terminalState: "decision_gate_raised",
             round,
-            stopSummary: verifySideEffectFailureStopSummary(err),
+            stopSummary: onlineReviewHostOpFailureStopSummary(err),
           };
         }
       }
@@ -1045,6 +1069,4 @@ export async function runOnlineReviewLoopStage(
     });
     round += 1;
   }
-
-  return { ok: false, terminalState: "round_budget_exhausted", round };
 }

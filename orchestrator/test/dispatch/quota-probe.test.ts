@@ -287,11 +287,11 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           } as StepOutput,
         };
       }
-      if (spec.kind === "docRelease") {
+      if (spec.kind === "landing") {
         return {
           kind: "completed",
           output: {
-            kind: "docRelease",
+            kind: "landing",
             released: true,
             commitOid: "a".repeat(40),
           } as StepOutput,
@@ -384,11 +384,13 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
   });
 });
 
-describe("#883 codex capture ritual deleted", () => {
-  it("every codex-provider agent has session capture disabled (ephemeral legs never write session files)", async () => {
+// #957 reversed the #883 capture-off bandaid. Active pin lives in
+// codex-native-capture-957.test.ts (captureSessions:true + no --ephemeral).
+describe("#883 codex capture ritual — superseded by #957", () => {
+  it("codex-provider agents now capture sessions again (native sandcastle)", async () => {
     const { agentForSlug } = await import("../../src/modelRegistry.js");
     for (const slug of ["gpt-5.6-sol", "gpt-5.6-sol-high", "gpt-5.6-luna"]) {
-      expect(agentForSlug(slug).captureSessions).toBe(false);
+      expect(agentForSlug(slug).captureSessions).toBe(true);
     }
   });
   it("claude legs keep capture (working path: resume + usage parsing)", async () => {

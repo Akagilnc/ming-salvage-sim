@@ -36,6 +36,7 @@ import {
 } from "../../src/terminalExitCode.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
+
   Backend,
   CoderOutput,
   Escalation,
@@ -47,6 +48,7 @@ import type {
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 // ── pure map ───────────────────────────────────────────────────────────────
 
@@ -158,6 +160,18 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -166,6 +180,10 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(e);
   }
@@ -409,6 +427,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       const freshCode = familyDriverExitCode(fresh);
 
       class ResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -423,6 +453,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
         async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
           throw new Error("resume must not re-merge");
         }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
         async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
           this.ledger.push(e);
         }
@@ -481,6 +515,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: same accident (child still fails, still unmerged) → same terminal + code.
     // Ledger is the prior incomplete residue (no merges); re-entry re-runs the child.
     class IncompleteResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -489,6 +535,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("incomplete resume must not merge a failed child");
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }
@@ -532,6 +582,18 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
     // Resume: unanswered child_decision_parked early-exits before the wave loop
     // with the same escalated terminal (production #604 F8 path).
     class EscalatedResumeBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -540,6 +602,10 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         throw new Error("unanswered escalated resume must not merge");
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }

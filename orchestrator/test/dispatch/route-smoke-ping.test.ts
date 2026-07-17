@@ -447,7 +447,7 @@ describe("#884 driver stage line logs", () => {
           }
           return { kind: "judge", status: "converged" };
         }
-        // Any remaining role (verify/fixer/cleanup/docRelease): keep the loop moving.
+        // Any remaining role (verify/fixer/cleanup/landing): keep the loop moving.
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
       async writeLedger() {}

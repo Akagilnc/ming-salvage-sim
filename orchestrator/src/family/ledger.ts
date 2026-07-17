@@ -131,6 +131,16 @@ export interface PrMergedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/**
+ * Landing docs/VERSION release completion (before merge). Durable so a crash
+ * after push does not re-dispatch the landing worker and duplicate release.
+ */
+export interface DocsReleasedRecord {
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+  readonly stopSummary?: StopSummary;
+}
+
 /** The fields for a green integrated CMR pass audit event (#419). */
 export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
@@ -547,8 +557,12 @@ export async function recordChildDecisionParked(
   );
 }
 
-/** Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)? */
-function isValidChildDecisionParked(
+/**
+ * Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)?
+ * Single authority for "ledger-proven decision park" shape — family runner #970
+ * injection gating reuses this (do not reimplement a weaker twin).
+ */
+export function isValidChildDecisionParked(
   entry: FamilyLedgerEntry,
 ): entry is FamilyLedgerEntry & { readonly childIssue: number } {
   return (
@@ -1277,6 +1291,81 @@ export function familyReviewLoopConvergedForHead(
 }
 
 /**
+ * Append the PHASE-LEVEL `docs_released` marker (landing docs before merge).
+ * Keyed by post-release family HEAD so resume skips a second VERSION/CHANGELOG.
+ */
+export async function recordDocsReleased(
+  backend: FamilyBackend,
+  record: DocsReleasedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family docs_released marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family docs_released marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "docs_released",
+      event: "docs_released",
+      phase: "final",
+      pr,
+      familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "docs_released ledger row" },
+          },
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+export function isValidDocsReleased(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly status: "docs_released";
+  readonly event: "docs_released";
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+} {
+  return (
+    entry.status === "docs_released" &&
+    entry.event === "docs_released" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+/** Docs-release completion row for THIS family HEAD (landing crash re-entry). */
+export function familyDocsReleasedForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): DocsReleasedRecord | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  for (const e of entries) {
+    if (!isValidDocsReleased(e)) continue;
+    if (e.familyHeadAfter !== familyHeadAfter) continue;
+    return {
+      pr: e.pr,
+      familyHeadAfter: e.familyHeadAfter,
+      ...(e.stopSummary !== undefined ? { stopSummary: e.stopSummary } : {}),
+    };
+  }
+  return undefined;
+}
+
+/**
  * Append the PHASE-LEVEL `pr_merged` terminal marker (#602).
  */
 export async function recordPrMerged(
@@ -1504,6 +1593,46 @@ export function isFamilyLedgerEntryShape(
     return false;
   }
   return true;
+}
+
+/**
+ * Reconstruct durable process-root attempts already consumed for a family
+ * worker step (#934 ID-004 / #937). Mirrors single-slice
+ * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
+ * failure markers for this workerStep, stop at any non-spawn boundary so a
+ * later successful phase does not inherit an earlier crash streak.
+ */
+export function mechanicalRedispatchAttemptsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  workerStep: string,
+): number {
+  let durableAttempts = 0;
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    const attempt = entry.mechanicalRedispatchAttempt;
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.workerStep === workerStep &&
+      typeof attempt === "number" &&
+      Number.isSafeInteger(attempt) &&
+      attempt >= 1
+    ) {
+      durableAttempts = Math.max(durableAttempts, attempt);
+      continue;
+    }
+    // Spawn adoption / advisory git telemetry: worker_dispatched without a
+    // retry counter — skip so inter-retry spawn rows do not reset the streak.
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.mechanicalRedispatchAttempt === undefined
+    ) {
+      continue;
+    }
+    // Any other durable fact (phase success, escalate, merge, …) is a budget
+    // boundary for this workerStep.
+    break;
+  }
+  return durableAttempts;
 }
 
 /**

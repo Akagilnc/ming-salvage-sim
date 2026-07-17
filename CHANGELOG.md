@@ -4,6 +4,25 @@
 
 ## [未发布]
 
+## [0.32.0.0] — 2026-07-17
+
+### Added
+- **#941 Landing Action**：`docRelease` 原子改名为 `landing`，承接 docs/push → readiness → merge → live MERGED → close/cleanup；删除 host auto-merge / familyAutoMerge 法庭。
+- **#959 grok 会话 atomic temp+swap**：capture 同卷 staging、完整性校验、rename 替换；失败保留旧会话；并发同 slug 不混写。
+- **#966 判官 session 台账派生**：`cmr_reviewed` ledger 为 sole truth；host session 缺失时 fresh + priorJudgeVerdicts。
+- **#970 家族/子级 escalation 分型**：仅 decision park + sessionId 才注入 runChild；响亮 `child_answer_without_parked_state`。
+- **#962 noSandbox `GIT_CONFIG_GLOBAL` 隔离**、**#957 Codex Sandcastle 原生 capture/resume**、**#938 wave 保留 sibling + 信任 merger**、**#940 typed-judge-only** online review。
+
+### Changed
+- **Online review dual-owner（K1）**：worker 应执行 reply/resolve/deferred；host `onlineReviewSideEffects` 作 fail-safe 直至 worker 真正拥有效果。
+- **Landing process-root**：共享 `dispatchFamilyWorkerOrAbort`（mechanical retry + monitor + 429 rethrow）；resume 路径进 family quota wall。
+- **Landing decision-park 账本统一**：fresh/resume 均 `recordFamilyEscalated(decision)`，可被 `familyEscalationState` 重入。
+
+### Fixed
+- Family CR R1–R3：landing park 双账本、poll/fetch 连续失败 decision_gate、hollow AC 降级、README 与 side-effect 真值对齐。
+- Correctness K2：ledger sessionId 在 host 不存在时不再强制 resume。
+
+
 ## [0.31.0.0] — 2026-07-17
 
 ### Added

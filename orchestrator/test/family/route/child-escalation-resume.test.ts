@@ -40,12 +40,14 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
   ReconcileGit,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const STUCK = {
   reason: "Design-level ambiguity: unclear whether child #N field X should be optional",
@@ -193,6 +195,18 @@ function originalEscalatedSession(
 
 /** A FamilyBackend that records merges + ledger writes (the "family base" model). */
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
   private head = "family-base-0";
@@ -201,6 +215,10 @@ class FakeFamilyBackend implements FamilyBackend {
     this.head = `+${child.childIssue}`;
     return { familyHead: this.head };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

@@ -4,16 +4,14 @@
 
 import {
   fetchPrMergeLiveState,
+  githubFieldEquals,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
-import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
-import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import {
   decodeSubIssueEntry,
   decodeSubIssueNodes,
   type Sh,
 } from "./familyDriver.js";
-import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
   CleanupResult,
@@ -46,6 +44,15 @@ export interface PostMergeCleanupInput {
   readonly branchExists?: (branch: string) => boolean;
   readonly fetchSubIssues?: (parent: number) => readonly LiveSubIssue[];
   readonly fetchIssueState?: (issue: number) => string;
+  /** Landing Action / tests may inject live MERGED state (no host fake-PR hatch). */
+  readonly liveState?: {
+    readonly state: string;
+    readonly headOid: string;
+    readonly prNumber: number;
+    readonly prUrl: string;
+    readonly headRefName: string;
+    readonly mergeStateStatus?: string;
+  };
 }
 
 export function branchTipMatchesMergedHead(
@@ -71,7 +78,7 @@ export function assessBranchDeletePrecondition(input: {
   readonly branchTip?: string;
   readonly mergedHeadOid: string;
 }): BranchDeletePrecondition {
-  if (input.prState !== "MERGED") return "skip_pr_not_merged";
+  if (!githubFieldEquals(input.prState, "MERGED")) return "skip_pr_not_merged";
   if (!input.branchExists) return "already_gone";
   if (!branchTipMatchesMergedHead(input.branchTip, input.mergedHeadOid)) {
     return "skip_tip_drift";
@@ -89,7 +96,7 @@ export function shouldCloseParentIssue(
   const covered = new Set(coveredIssues);
   return subIssues.every(
     (s) =>
-      s.state.toUpperCase() === "CLOSED" || covered.has(s.number),
+      githubFieldEquals(s.state, "CLOSED") || covered.has(s.number),
   );
 }
 
@@ -232,19 +239,15 @@ export function runPostMergeCleanup(
   const skippedReasons: string[] = [];
   const issuesClosed: number[] = [];
 
-  const offlineSynthetic =
-    !isLiveGithubReviewPollEnabled(input.prMerged.prUrl, input.repo) &&
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
-
   let live;
-  if (offlineSynthetic) {
+  if (input.liveState !== undefined) {
     live = {
-      prNumber: input.prMerged.prNumber,
-      prUrl: input.prMerged.prUrl,
-      state: "MERGED",
-      headOid: input.prMerged.mergedHeadOid,
-      headRefName: input.prMerged.remoteBranchName,
-      mergeStateStatus: "UNKNOWN",
+      prNumber: input.liveState.prNumber,
+      prUrl: input.liveState.prUrl,
+      state: input.liveState.state,
+      headOid: input.liveState.headOid,
+      headRefName: input.liveState.headRefName,
+      mergeStateStatus: input.liveState.mergeStateStatus ?? "UNKNOWN",
     };
   } else {
     try {
@@ -259,7 +262,7 @@ export function runPostMergeCleanup(
     }
   }
 
-  if (live.state !== "MERGED") {
+  if (!githubFieldEquals(live.state, "MERGED")) {
     return cleanupResultFromActs({
       allStepsComplete: false,
       skippedReasons: ["pr_not_merged"],
@@ -284,7 +287,7 @@ export function runPostMergeCleanup(
 
   for (const issue of input.coveredIssues) {
     const state = fetchIssueState(issue);
-    if (state.toUpperCase() !== "CLOSED") {
+    if (!githubFieldEquals(state, "CLOSED")) {
       closeIssue(issue);
       issuesClosed.push(issue);
     }
@@ -298,7 +301,7 @@ export function runPostMergeCleanup(
       fetchPaginatedSubIssues(input.sh, input.repo, input.parentIssue);
     if (shouldCloseParentIssue(subIssues, input.coveredIssues)) {
       cachedParentState = fetchIssueState(input.parentIssue);
-      if (cachedParentState.toUpperCase() !== "CLOSED") {
+      if (!githubFieldEquals(cachedParentState, "CLOSED")) {
         closeIssue(input.parentIssue);
         parentClosedThisRun = true;
       }
@@ -320,7 +323,7 @@ export function runPostMergeCleanup(
     } else {
       const parentState =
         cachedParentState ?? fetchIssueState(input.parentIssue);
-      parentIssueClosed = parentState.toUpperCase() === "CLOSED";
+      parentIssueClosed = githubFieldEquals(parentState, "CLOSED");
     }
   }
 
@@ -359,9 +362,10 @@ export function runPostMergeCleanup(
         branchOutcome = "deleted";
       } catch (err) {
         // Concurrent delete / already-gone race: treat missing ref as idempotent
-        // success; other delete errors remain non-terminal failure.
+        // success (terminal ok) but surface branch_already_gone leftover (ID-015).
         if (isMissingGitRefError(err)) {
           branchOutcome = "already_gone";
+          skippedReasons.push("branch_already_gone");
           break;
         }
         const detail = err instanceof Error ? err.message : String(err);
@@ -445,9 +449,7 @@ export function dispatchPostMergeCleanup(
   if (repo.length === 0) {
     throw new Error("cleanup dispatch requires repo on DispatchContext");
   }
-  if (offlineReviewLoopDispatchAdmissible(ctx, repo)) {
-    return stubCleanupResult();
-  }
+  // #941: fake-PR offline cleanup hatch deleted — landing Action injects live hooks in tests.
   return runPostMergeCleanup({
     sh,
     repo,

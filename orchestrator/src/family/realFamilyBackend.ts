@@ -177,7 +177,7 @@ import {
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
-  DOCRELEASE_PROMPT_FILE,
+  LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
   workerHostForModel,
@@ -197,7 +197,7 @@ import type {
   CleanupResult,
   CliMonitorSpawnSpec,
   DispatchContext,
-  DocReleaseResult,
+  LandingResult,
   Escalation,
   WorkerMonitorHandle,
   Finding,
@@ -374,7 +374,7 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     MERGER_CONFLICT_PROMPT,
     VERIFY_PROMPT_FILE,
     FIXER_PROMPT_FILE,
-    DOCRELEASE_PROMPT_FILE,
+    LANDING_PROMPT_FILE,
   ]),
 ];
 /** The merger resolver model slot, selected by the active route. */
@@ -1387,7 +1387,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
-    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "docRelease") {
+    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "landing") {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -1690,6 +1690,30 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         let result: Awaited<ReturnType<typeof sc.run>>;
         try {
+          // #966: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (single-slice already does via resumeSession / runAgentSandbox).
+          // Capability gate matches runner #955: incapable provider → fresh open
+          // with priorJudgeVerdicts still landed above (AC4 session-loss shape).
+          // When the ledger id is present but the host session file is gone,
+          // omit resumeSession (fresh open) — still keep priorJudgeVerdicts.
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const agent = this.agentForSpec(spec, ctx);
+          let resumeSessionId: string | undefined =
+            typeof ctx.resumeSessionId === "string" && resumeCapable
+              ? ctx.resumeSessionId
+              : undefined;
+          if (
+            resumeSessionId !== undefined &&
+            agent.sessionStorage?.existsOnHost !== undefined
+          ) {
+            const present = await agent.sessionStorage.existsOnHost(
+              this.opts.workingRepo,
+              resumeSessionId,
+            );
+            if (!present) {
+              resumeSessionId = undefined;
+            }
+          }
           result = await this.runAgentSandbox({
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1705,7 +1729,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // symmetry): resolve the worker's slug through the shared family registry —
             // no constant that could silently drift
             // from the spec the runner declares.
-            agent: this.agentForSpec(spec, ctx),
+            agent,
             // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
             // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
             // sequencing and accounting.
@@ -1714,6 +1738,9 @@ export class RealFamilyBackend implements FamilyBackend {
             // current full family diff. Persistent repairs are made only by the
             // separate family coder-fix worker.
             branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             // #930: same live judge seat as single-slice S3/S6 — T2 station
             // receipt on JUDGE_RECEIPT_TAG (not open-count `cmr` workerReceipt).
@@ -1721,7 +1748,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
-              this.resumeCapableForSpec(spec, ctx),
+              resumeCapable,
             ),
           });
         } catch (err) {
@@ -2153,10 +2180,10 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      // verify/fixer need the bot-evidence landing; docRelease only invokes
+      // verify/fixer need the bot-evidence landing; landing only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
-        spec.kind === "docRelease"
+        spec.kind === "landing"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
       const fixFocusLanding =
@@ -2164,7 +2191,7 @@ export class RealFamilyBackend implements FamilyBackend {
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
-        // (completed|escalate). Role cargo (verify/fixer/cleanup/docRelease)
+        // (completed|escalate). Role cargo (verify/fixer/cleanup/landing)
         // rides opaque sidecar only — never dual decision-gate tag.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
@@ -4013,7 +4040,7 @@ function isLegacyEscalationRecordShape(v: unknown): v is FamilyEscalationRecord 
 
 // ════════════════════════════════════════════════════════════════════════════
 // #596 F2 / #899 / ADR 0131: family-side cargo transport for the 4 review-loop
-// kinds (verify / fixer / cleanup / docRelease). Sidecar-prefer + last <tag>
+// kinds (verify / fixer / cleanup / landing). Sidecar-prefer + last <tag>
 // JSON enrich delivery cargo only — never a fate court.
 // Law: cargo is opaque. Sparse / unreadable / off-shape cargo completes the
 // Action as best-effort (sparseReviewLoopCompleted); it does NOT throw for
@@ -4094,7 +4121,7 @@ function sparseReviewLoopCompleted(
           ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
             { kind: "cleanup", terminal: true, ok: true }
           : // Empty-run success is legal for 文档发布 (process success, cargo miss).
-            { kind: "docRelease", released: true };
+            { kind: "landing", released: true };
   return { kind: "completed", output, sessionId };
 }
 
@@ -4113,7 +4140,7 @@ function reviewLoopCargoResult(
     kind === "verify" ||
     kind === "fixer" ||
     kind === "cleanup" ||
-    kind === "docRelease"
+    kind === "landing"
       ? kind
       : "verify";
   // Read cargo, strip fate keys, re-decode without escalate so a spoofed
@@ -4133,7 +4160,7 @@ function reviewLoopCargoResult(
         ? parseFixerOutcome(cargoStdout)
         : kind === "cleanup"
           ? parseCleanupOutcome(cargoStdout)
-          : parseDocReleaseOutcome(cargoStdout);
+          : parseLandingOutcome(cargoStdout);
   if (parsed.kind === "cargo") {
     // Off-shape paper is opaque miss cargo — complete the Action; do not
     // re-open cargo shape as a #598 channel.
@@ -4145,6 +4172,8 @@ function reviewLoopCargoResult(
 /**
  * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
  * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
+ * Host fail-safe applicator (correctness K1) needs threadReplies /
+ * threadsToResolve / deferredIssueUrls decoded when well-typed.
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4177,7 +4206,6 @@ export function parseVerifyOutcome(
     : undefined;
   const terminalState: VerifyWorkerTerminalState | undefined =
     parsed.terminalState === "mergeable" ||
-    parsed.terminalState === "round_budget_exhausted" ||
     parsed.terminalState === "decision_gate_raised"
       ? parsed.terminalState
       : undefined;
@@ -4273,15 +4301,15 @@ export function parseCleanupOutcome(
   return candidate;
 }
 
-export function parseDocReleaseOutcome(
+export function parseLandingOutcome(
   stdout: string,
   outcomePath?: string,
-): DocReleaseResult | ReceiptCargo {
-  const payload = parseOutcomePayload(stdout, "docRelease", outcomePath);
+): LandingResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "landing", outcomePath);
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
   if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
-  const candidate: DocReleaseResult = { kind: "docRelease", released: parsed.released };
+  const candidate: LandingResult = { kind: "landing", released: parsed.released };
   return candidate;
 }
