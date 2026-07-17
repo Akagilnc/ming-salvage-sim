@@ -30,7 +30,6 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { findingIdentityKeys } from "./findings.js";
 import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
@@ -217,22 +216,22 @@ function writeFixFindingsLandingFile(
       : undefined;
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
-  // Identity keys are derived here at the fixer-landing boundary from opaque
-  // findings cargo — not by the runner reading cargo fields (ADR 0131 / #899).
-  // Prefer cargo-derived keys; fall back to ctx keys when findings rows are
-  // sparse (family envelope / count-only reopen may still carry prior keys).
-  const findingsRows = landing?.blockingFindings ?? [];
-  const identityKeys =
-    findingsRows.length > 0
-      ? findingIdentityKeys(findingsRows)
-      : [...(ctx.blockingFindingIdentityKeys ?? [])];
+  // ADR 0138 / #978: packet content is judge-authored fixPacketBody only.
+  // Identity keys stay on the thin control envelope (ctx); never derive packet
+  // content from bare findings rows (deleted dual path).
+  const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+  const fixPacketBody =
+    typeof landing?.fixPacketBody === "string" &&
+    landing.fixPacketBody.trim().length > 0
+      ? landing.fixPacketBody
+      : undefined;
   writeFileSync(
     landingPath,
     `${JSON.stringify(
       {
-        // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-        // ADR 0062) — never from the runner's thin DispatchContext.
-        blockingFindings: findingsRows,
+        // ADR 0138: sole coder-fix packet content path — verbatim judge body.
+        // Bare `blockingFindings` packing is deleted (no second content channel).
+        ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
         ...(rawReviewerArtifacts !== undefined
           ? { rawReviewerArtifacts }
           : {}),

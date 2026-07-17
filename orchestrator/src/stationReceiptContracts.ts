@@ -411,12 +411,16 @@ export interface JudgeVerdictConverged extends JudgeEnvelopeBase {
  * Continue the fix loop. May carry:
  * - `findingDispositions` — terminal rows (`refute`→store `refuted`,
  *   `suppress`→store `suppressed`) plus `live` rows for the fixer open set
+ * - `fixPacketBody` — ADR 0138 judge-authored fix packet body (判词正文);
+ *   runner's sole coder-fix packet content path (verbatim transport)
  * - `advanceCoder` — suggestion to switch coder roster entry (runner still
  *   owns the stay-put fallback when the target is unusable — #926)
  */
 export interface JudgeVerdictContinue extends JudgeEnvelopeBase {
   readonly status: "continue";
   readonly findingDispositions: readonly JudgeFindingDisposition[];
+  /** ADR 0138: judge-authored coder-fix packet body; non-empty required. */
+  readonly fixPacketBody: string;
   readonly advanceCoder?: string;
 }
 
@@ -450,6 +454,9 @@ const judgeContinueFields = {
   station: z.literal("judge"),
   status: z.literal("continue"),
   findingDispositions: z.array(findingDispositionSchema),
+  // ADR 0138 / #978: 判词即包 — required non-empty traffic field; runner
+  // transports verbatim and never packs bare findings as a second path.
+  fixPacketBody: nonEmptyString,
   advanceCoder: nonEmptyString.optional(),
   cargoPointer: cargoPointerSchema,
 } as const;

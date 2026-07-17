@@ -686,6 +686,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
                 { identityKey: FINDING_KEY, action: "live" },
               ],
               findings: [FINDING],
+              fixPacketBody: `live: ${FINDING_KEY}`,
               skippedLegs: [{ slug: "gpt-leg", reason: "quota" }],
             } as JudgeResult,
             "judge-typed-live",
@@ -760,6 +761,8 @@ describe("#930 runVerifyCmr family judge courts", () => {
             status: "continue",
             findingDispositions: [],
             findings: [],
+            // Body present so the empty-live-keys gate (not body gate) fires.
+            fixPacketBody: "empty continue must not spin coder-fix",
           },
           "empty-continue",
         );

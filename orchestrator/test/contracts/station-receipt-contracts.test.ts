@@ -48,6 +48,8 @@ describe("#921 judge verdict three-state", () => {
             station: "judge",
             status: "continue",
             findingDispositions: [],
+            // ADR 0138 / #978: continue requires non-empty fixPacketBody
+            fixPacketBody: "fixture continue packet",
           }
         : status === "escalate"
           ? {
@@ -99,6 +101,7 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "terra@med",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
     });
     expect(parsed.ok).toBe(true);
     if (parsed.ok && parsed.value.status === "continue") {
@@ -112,6 +115,7 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "   ",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
     });
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
@@ -151,6 +155,8 @@ describe("#921 judge verdict three-state", () => {
       status: "continue",
       advanceCoder: "sol@med",
       cargoPointer: "artifacts/judge-cargo-1.json",
+      fixPacketBody:
+        "live: correctness|src/b.ts:2|other\nauthority: ADR 0131",
       findingDispositions: [
         {
           identityKey: "correctness|src/a.ts:1|claim",
@@ -273,6 +279,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -298,6 +305,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -409,6 +417,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet with suppress",
       findingDispositions: [
         {
           identityKey: "k-live",
@@ -436,6 +445,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -456,6 +466,7 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
+      fixPacketBody: "fixture continue packet",
       findingDispositions: [
         {
           identityKey: "k",
@@ -615,6 +626,7 @@ describe("#921 envelope field vocabulary — refused* only", () => {
       station: "judge",
       status: "continue",
       findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
       refutedFindingIdentityKeys: ["x"],
     });
     expect(parsed.ok).toBe(false);
