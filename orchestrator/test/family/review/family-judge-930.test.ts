@@ -234,8 +234,44 @@ describe("#930 pure family judge closure", () => {
     expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
     expect(closure.blocking).toEqual([live]);
     expect(closure.blockingFindingCount).toBe(1);
-    expect(closure.killDispositions).toHaveLength(1);
-    expect(closure.killDispositions[0]?.status).toBe("refuted");
+    expect(closure.terminalDispositions).toHaveLength(1);
+    expect(closure.terminalDispositions[0]?.status).toBe("refuted");
+  });
+
+  it("#952 continue → suppress parks as terminalDispositions suppressed (queryable)", () => {
+    const parked = sampleFinding("parked claim", "b.ts:2");
+    const suppressKey = findingIdentityKey(parked);
+    const live = FINDING;
+    const verdict = judgeContinue([live, parked], {
+      suppress: [
+        {
+          identityKey: suppressKey,
+          action: "suppress",
+          evidence: "owner parked via ticket",
+          groundTicket: 949,
+        },
+      ],
+    });
+    // Schema table on the verdict is what family ledger persists (action:suppress).
+    expect(
+      verdict.findingDispositions?.some(
+        (d) => d.action === "suppress" && d.identityKey === suppressKey,
+      ),
+    ).toBe(true);
+
+    const closure = closeFamilyCourtFromJudgeOutput(verdict);
+    expect(closure.action).toBe("continue");
+    if (closure.action !== "continue") return;
+    expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
+    expect(closure.blocking).toEqual([live]);
+    // Shared projection still produces store-status suppressed flips for
+    // callers that need them (single-slice ledger); family live-set excludes
+    // the parked key either way.
+    expect(
+      closure.terminalDispositions.some(
+        (d) => d.status === "suppressed" && d.identityKey === suppressKey,
+      ),
+    ).toBe(true);
   });
 
   it("escalate → escalate action with reason/diagnosis", () => {

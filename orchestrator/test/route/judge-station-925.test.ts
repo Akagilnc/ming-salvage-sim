@@ -20,7 +20,7 @@ import {
   isJudgeSeat,
   isLegalJudgeReviewLegSession,
   judgeContinueFromOpenCount,
-  judgeKillsToLedgerDispositions,
+  judgeTerminalsToLedgerDispositions,
   judgeReviewLegSessionMode,
   liveDispositionsForOpenCount,
   liveFindingsBlockConverged,
@@ -245,10 +245,10 @@ describe("#925 pure: disposition → open-only + refuted flips", () => {
     expect(open).toEqual([live]);
     expect(open.some((f) => findingIdentityKey(f) === deadKey)).toBe(false);
 
-    const kills = judgeKillsToLedgerDispositions(dispositions);
-    expect(kills).toHaveLength(1);
-    expect(kills[0]!.status).toBe("refuted");
-    expect(kills[0]!.identityKey).toBe(deadKey);
+    const terminals = judgeTerminalsToLedgerDispositions(dispositions);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]!.status).toBe("refuted");
+    expect(terminals[0]!.identityKey).toBe(deadKey);
   });
 
   it("live findings block converged (negative consistency)", () => {
@@ -257,6 +257,71 @@ describe("#925 pure: disposition → open-only + refuted flips", () => {
     ).toBe(true);
     expect(liveFindingsBlockConverged([{ action: "refute" }])).toBe(false);
     expect(liveFindingsBlockConverged([])).toBe(false);
+  });
+});
+
+describe("#952 pure: suppress disposition → suppressed store + fixer exclusion", () => {
+  it("maps legal suppress rows to suppressed store flips (positive)", () => {
+    const suppressedFinding = sampleFinding("suppressed", "c.ts:3");
+    const key = findingIdentityKey(suppressedFinding);
+    const dispositions = [
+      {
+        identityKey: key,
+        action: "suppress" as const,
+        evidence: "owner deferred via ticket #949",
+        groundTicket: 949,
+      },
+    ];
+    const flips = judgeTerminalsToLedgerDispositions(dispositions);
+    expect(flips).toHaveLength(1);
+    expect(flips[0]).toMatchObject({
+      identityKey: key,
+      status: "suppressed",
+      reason: "owner deferred via ticket #949",
+    });
+  });
+
+  it("openFindingsForFixer excludes suppress keys — not sent to fixer (negative)", () => {
+    const live = sampleFinding("live", "a.ts:1");
+    const suppressed = sampleFinding("suppressed", "c.ts:3");
+    const liveKey = findingIdentityKey(live);
+    const suppressedKey = findingIdentityKey(suppressed);
+    const dispositions = [
+      { identityKey: liveKey, action: "live" as const },
+      {
+        identityKey: suppressedKey,
+        action: "suppress" as const,
+        evidence: "parked behind owner record",
+        ownerRecordPointer: "owner-record://914/comment/1",
+      },
+    ];
+    const open = openFindingsForFixer([live, suppressed], dispositions);
+    expect(open).toEqual([live]);
+    expect(open.some((f) => findingIdentityKey(f) === suppressedKey)).toBe(
+      false,
+    );
+
+    const projected = projectJudgeContinueBlocking({
+      status: "continue",
+      findingDispositions: dispositions,
+      findings: [live, suppressed],
+    });
+    expect(projected?.blocking).toEqual([live]);
+    expect(projected?.terminalDispositions.some((d) => d.status === "suppressed")).toBe(
+      true,
+    );
+    expect(
+      projected?.terminalDispositions.some((d) => d.identityKey === suppressedKey),
+    ).toBe(true);
+  });
+
+  it("suppress alone does not block converged consistency (positive)", () => {
+    expect(
+      liveFindingsBlockConverged([
+        { action: "suppress" },
+        { action: "refute" },
+      ]),
+    ).toBe(false);
   });
 });
 
@@ -1038,8 +1103,8 @@ describe("#925 F3: single open-count → continue projection", () => {
     });
     const projected = projectJudgeContinueBlocking(out);
     expect(projected?.blockingIdentityKeys).toEqual([findingIdentityKey(live)]);
-    expect(projected?.killDispositions).toHaveLength(1);
-    expect(projected?.killDispositions[0]!.status).toBe("refuted");
+    expect(projected?.terminalDispositions).toHaveLength(1);
+    expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
   });
 });
 
