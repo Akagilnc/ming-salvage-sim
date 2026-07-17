@@ -3276,6 +3276,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
       return { familyHead: "fb-head" };
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -3834,6 +3838,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         return { familyHead: "head" };
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
         this.appended.push(entry);
       }

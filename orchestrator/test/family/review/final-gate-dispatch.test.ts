@@ -66,6 +66,10 @@ class CapableFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(): Promise<void> {}
   async readFamilyLedger(): Promise<[]> {
     return [];
@@ -314,6 +318,10 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -456,6 +464,10 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
@@ -518,6 +530,10 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(): Promise<void> {}
     async readFamilyLedger(): Promise<[]> {
       return [];
@@ -690,6 +706,10 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -713,6 +733,10 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -747,6 +771,10 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -848,6 +876,10 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }
@@ -882,6 +914,10 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
     async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
       this.ledger.push(entry);
     }

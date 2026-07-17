@@ -84,6 +84,10 @@ class ScriptedCmrBackend implements FamilyBackend {
   ): Promise<{ familyHead: string }> {
     return { familyHead: "unused" };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

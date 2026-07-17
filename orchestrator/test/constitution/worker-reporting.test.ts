@@ -214,6 +214,10 @@ describe("#825 Group A family roles", () => {
       cmrCalls = 0;
       shipCalls = 0;
       async mergeChildIntoFamilyBase() { return { familyHead: "head" }; }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(entry: FamilyLedgerEntry) { this.ledger.push(entry); }
       async readFamilyLedger() { return this.ledger; }
       async readFamilyHead() { return "head"; }

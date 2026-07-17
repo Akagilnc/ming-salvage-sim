@@ -54,6 +54,10 @@ describe("review-round persistence immunity", () => {
     async mergeChildIntoFamilyBase(): Promise<never> {
       throw new Error("not used");
     }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
 
     async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
       return this.ledger;
@@ -198,6 +202,10 @@ class SchedulerFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `+${child.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -347,6 +355,10 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -456,6 +468,10 @@ class CountChannelFixBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -543,6 +559,10 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -650,6 +670,10 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -754,6 +778,10 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -889,6 +917,10 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1025,6 +1057,10 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1153,6 +1189,10 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -1500,6 +1540,10 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }

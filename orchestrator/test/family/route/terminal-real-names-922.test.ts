@@ -79,6 +79,10 @@ class FakeFamilyBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
     return { familyHead: `head-after-${c.childIssue}` };
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(e);
   }
@@ -250,6 +254,10 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `+${c.childIssue}` };
       }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
       async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
         this.ledger.push(e);
       }
@@ -324,6 +332,10 @@ describe("#922 fresh / resume same accident → same terminal name", () => {
         async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
           throw new Error("resume must not re-merge");
         }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
         async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
           this.ledger.push(e);
         }

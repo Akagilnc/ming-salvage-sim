@@ -533,12 +533,12 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
-   * Conflict-only merger worker leg (#934 ID-010 / #938). Production/conflict
-   * tests guarantee it; clean-merge fakes may omit. Action converges once;
-   * process-root retry is ID-004 inside the impl. Still-conflicted/throw ⇒ no
-   * `merged` ledger entry.
+   * Conflict-only merger worker leg (#934 ID-010 / #938). Required seam —
+   * production/test contract guarantees the resolver (type-system, not optional
+   * + `!`). Action converges once; process-root retry is ID-004 inside the impl.
+   * Clean-merge paths never call it; still-conflicted/throw ⇒ no `merged` ledger.
    */
-  resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
+  resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
    * family-ledger seam (ADR 0022 decision 5, #298 extends): append one event to
    * the append-only family ledger (a sibling of the family base worktree, OUTSIDE

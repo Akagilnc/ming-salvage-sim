@@ -14,7 +14,7 @@
  *            landed #925/#926/#930 persistent judge baseline.
  */
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,6 +127,10 @@ class DispatchCapableBackend implements FamilyBackend {
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
   }
+  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.ledger.push(entry);
   }
@@ -157,6 +161,40 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
     );
     expect(existsSync(join(srcDir, "onlineReviewSideEffects.ts"))).toBe(false);
     expect(existsSync(join(srcDir, "onlineReviewSideEffects.js"))).toBe(false);
+  });
+
+  it("POSITIVE: worker-owned side effects — host routes disposition without cargo plan fields", async () => {
+    // #940 / ID-012: side effects run inside the verify worker before three-state
+    // self-report. Host entry accepts bare disposition (no threadReplies /
+    // threadsToResolve / deferredIssueUrls plan) and never re-applies cargo.
+    const verifyMd = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../../prompts/verify.md"),
+      "utf8",
+    );
+    expect(verifyMd).toMatch(/Execute.*side effects yourself/i);
+    expect(verifyMd).toMatch(/before.*self-report/i);
+    expect(verifyMd).not.toContain('"threadReplies"');
+    expect(verifyMd).not.toContain('"threadsToResolve"');
+    expect(verifyMd).not.toContain('"deferredIssueUrls"');
+
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
+      poll: async () => BASE_SNAPSHOT,
+      // Worker reports converged only after effects succeeded — host sees no plan.
+      dispatchVerify: async () =>
+        ({ kind: "verify", converged: true }) satisfies VerifyResult,
+      dispatchFixer: async () => {
+        throw new Error("fixer must not run on worker-owned converged");
+      },
+      dispatchDocRelease: async () => true,
+      retriggerAfterFix: () => {
+        throw new Error("retrigger must not run on worker-owned converged");
+      },
+    });
+    expect(result).toEqual({
+      ok: true,
+      terminalState: "mergeable",
+      round: 1,
+    });
   });
 
   it("POSITIVE: continue disposition past former 3-round cap still routes until worker converges", async () => {

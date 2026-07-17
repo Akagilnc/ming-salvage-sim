@@ -204,7 +204,6 @@ import type {
   FindingFamily,
   FixerResult,
   OnlineReviewFindingDisposition,
-  OnlineReviewThreadReply,
   PriorFindingDisposition,
   StepSoul,
   VerifyResult,
@@ -4157,6 +4156,8 @@ function reviewLoopCargoResult(
 /**
  * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
  * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
+ * #940 / ID-012: dead host side-effect plan fields (threadReplies /
+ * threadsToResolve / deferredIssueUrls) are not decoded — worker owns effects.
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4180,13 +4181,6 @@ export function parseVerifyOutcome(
         );
       })
     : undefined;
-  const threadReplies = Array.isArray(parsed.threadReplies)
-    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
-        isJsonRecord(item) &&
-        typeof item.threadId === "string" &&
-        typeof item.body === "string",
-      )
-    : undefined;
   const terminalState: VerifyWorkerTerminalState | undefined =
     parsed.terminalState === "mergeable" ||
     parsed.terminalState === "decision_gate_raised"
@@ -4202,13 +4196,6 @@ export function parseVerifyOutcome(
           : {}),
         ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
           ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(threadReplies !== undefined ? { threadReplies } : {}),
-        ...(stringArray(parsed.threadsToResolve)
-          ? { threadsToResolve: parsed.threadsToResolve }
-          : {}),
-        ...(stringArray(parsed.deferredIssueUrls)
-          ? { deferredIssueUrls: parsed.deferredIssueUrls }
           : {}),
         ...(terminalState !== undefined ? { terminalState } : {}),
         ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),

@@ -805,12 +805,6 @@ export interface OnlineReviewFindingDisposition {
   readonly reason?: string;
 }
 
-/** Evidence-bearing thread reply authored by the verify worker (#600 AC6). */
-export interface OnlineReviewThreadReply {
-  readonly threadId: string;
-  readonly body: string;
-}
-
 /**
  * Terminal states a verify worker may self-declare (#600 wire schema / #940).
  * Mechanical `round_budget_exhausted` deleted — continue vs escalate is the
@@ -1207,29 +1201,24 @@ export interface MergeWorkerResult {
  * deferred issue). After side effects succeed it self-reports judge disposition
  * via {@link converged} + optional {@link terminalState}; the host routes only on
  * that three-state mapping (`converged | continue | escalate`) and never on
- * findings counts (#934 ID-012). Cargo fields remain opaque diagnostics / fixer
- * landing data.
+ * findings counts (#934 ID-012). Remaining cargo is opaque diagnostics / fixer
+ * landing only — no host side-effect plan fields (ID-012 delete cargo).
  */
 export interface VerifyResult {
   readonly kind: "verify";
   /**
    * Judge green (converged). Combined with host CI check-runs for mergeability;
    * `false` is the continue disposition unless {@link terminalState} escalates.
+   * Worker must not set this until reply/resolve/deferred side effects succeed.
    */
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
    * Identity keys carried through as data for the verify worker to use when
-   * reporting which fix-marked findings it evaluated.
+   * reporting which fix-marked findings it evaluated (fixer landing).
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
-  readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
-  /** Thread IDs resolved by the worker after a fresh re-check confirms the fix. */
-  readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (worker-populated). */
-  readonly deferredIssueUrls?: ReadonlyArray<string>;
   /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
