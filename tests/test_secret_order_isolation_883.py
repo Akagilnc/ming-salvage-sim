@@ -216,9 +216,20 @@ def test_883_audience_chat_paraphrase_does_not_leave_origin_in_shared_sources(ga
     assert all(extracted_body not in body for body in _event_bodies(db))
     assert chat_origin not in other_text
     assert extracted_body not in other_text
-    # 接令者仍从专用简报读到密令；同回合他人公开召对放行共享轨。
+    # 接令者仍从专用简报读到密令。
     assert extracted_body in assignee_text
-    assert any(other_public in body for body in shared_bodies)
+    # #976 message-level：分类 release 仅 scoped 到接令者/口谕 speaker，
+    # 他臣纯公开 held 不因 create(A) 全局投轨（病根1）；settle/显式 release 后才进共享。
+    other_status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages "
+        "WHERE minister_name=? AND content=? ORDER BY id DESC LIMIT 1",
+        (other.name, other_public),
+    ).fetchone()["knowledge_status"]
+    assert other_status in ("held", "released")
+    assert other_status != "withheld"
+    if other_status == "held":
+        db.release_held_audience_knowledge()
+    assert any(other_public in body for body in _shared_bodies(db))
 
 
 def test_883_shared_write_seam_refuses_active_assignee_audience(game):
@@ -1170,3 +1181,360 @@ def test_976_non_create_stage_commit_progress_and_review_withhold_oral_pin(game)
             db, state, mid_sec=mid_sec, secret_q=secret_q,
             speakers={speaker.name, assignee.name}, content=content,
         )
+
+
+# ── #976 红队四轴 + 消息级 provenance 根治（正负配对，真实接缝）──────────────
+
+
+def _ks(db, mid: int) -> str:
+    row = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,),
+    ).fetchone()
+    return row["knowledge_status"] if row else ""
+
+
+def _shared_source_count(db, mid: int) -> int:
+    return db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0]
+
+
+def _view_text(db, state, name: str) -> str:
+    view = db.get_character_knowledge(state, name)
+    return " ".join(
+        item.get("body", "")
+        for item in [*view.get("events", []), *view.get("public_events", [])]
+    )
+
+
+def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
+    """红队① must：双密令跨接令者 — create(A) 不得把 B 的 held 口谕/应答投进共享库。
+
+    病根1：upsert 内全局 release 无过滤。根治后 A/B origin 血缘互不串轨。
+    """
+    db, state, content = game
+    ministers = _active_ministers(db, content)
+    a, b, other = ministers[0], ministers[1], ministers[2]
+    marker_a = "红队甲密：暗查国丈田宅典当虚实-A976"
+    marker_b = "红队乙密：密访阉党京城私结-B976"
+    ack_a = "臣领甲密旨，暗中查办，不敢外泄。"
+    ack_b = "臣领乙密旨，即日密访，绝不声张。"
+
+    mid_a_user = db.append_chat_message(a.name, state.turn, "user", marker_a)
+    mid_a_min = db.append_chat_message(a.name, state.turn, "minister", ack_a)
+    mid_b_user = db.append_chat_message(b.name, state.turn, "user", marker_b)
+    mid_b_min = db.append_chat_message(b.name, state.turn, "minister", ack_b)
+
+    for mid in (mid_a_user, mid_a_min, mid_b_user, mid_b_min):
+        assert _ks(db, mid) == "held"
+
+    oid_a = db.create_secret_order(state, a.name, "甲密查国丈", marker_a, [])
+    assert oid_a > 0
+
+    # create(A) 后 B 仍 held（不得 prematurely release 进共享）
+    assert _ks(db, mid_a_user) == "withheld"
+    assert _ks(db, mid_a_min) == "private"
+    assert _ks(db, mid_b_user) == "held"
+    assert _ks(db, mid_b_min) == "held"
+    assert _shared_source_count(db, mid_b_user) == 0
+    assert _shared_source_count(db, mid_b_min) == 0
+    assert all(marker_b not in body for body in _shared_bodies(db))
+    assert all(ack_b not in body for body in _shared_bodies(db))
+
+    # brief 持久化 A 的 origin message id
+    brief_a = db.conn.execute(
+        "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (oid_a,),
+    ).fetchone()
+    import json as _json
+    pins_a = _json.loads(brief_a["origin_chat_message_ids"] or "[]")
+    assert mid_a_user in pins_a
+
+    oid_b = db.create_secret_order(state, b.name, "乙密查阉党", marker_b, [])
+    assert oid_b > 0
+
+    assert _ks(db, mid_b_user) == "withheld"
+    assert _ks(db, mid_b_min) == "private"
+    assert _ks(db, mid_a_user) == "withheld"
+    assert _ks(db, mid_a_min) == "private"
+    assert _shared_source_count(db, mid_a_min) == 0
+    assert _shared_source_count(db, mid_b_min) == 0
+    assert all(marker_a not in body for body in _shared_bodies(db))
+    assert all(marker_b not in body for body in _shared_bodies(db))
+    assert all(ack_a not in body for body in _shared_bodies(db))
+    assert all(ack_b not in body for body in _shared_bodies(db))
+
+    assert marker_a not in _view_text(db, state, b.name)
+    assert marker_b not in _view_text(db, state, a.name)
+    assert marker_a not in _view_text(db, state, other.name)
+    assert marker_b not in _view_text(db, state, other.name)
+
+
+def test_976_rt02_misassigned_provenance_follows_origin_message(game):
+    """红队② must：错位 provenance — 密令正文来自 A 场、派给 B，A 口谕不进共享。
+
+    跟 origin message 走，不跟 assignee 走。create 无 origin pin 时 scoped release
+    也不得把 A 的 held 口谕当纯公开投轨。
+    """
+    db, state, content = game
+    a, b = _active_ministers(db, content)[:2]
+    origin_on_a = "着尔密查内库亏空根由，事密勿使司礼监与户部堂官知-错位A976"
+    extracted_for_b = "密查内库亏空根由，避开司礼监户部-指派B976"
+    public_on_b = "臣报：山东漕粮起运如常。"
+
+    mid_a_user = db.append_chat_message(a.name, state.turn, "user", origin_on_a)
+    db.append_chat_message(
+        a.name, state.turn, "minister", "臣领旨，密查内库，不敢外泄。",
+    )
+    mid_b_user = db.append_chat_message(b.name, state.turn, "user", "问卿漕运？")
+    mid_b_min = db.append_chat_message(b.name, state.turn, "minister", public_on_b)
+
+    # 错位：无 origin_minister_name / pin — 仅 assignee=B
+    oid = db.create_secret_order(state, b.name, "密查内库", extracted_for_b, [])
+    assert oid > 0
+
+    # A 口谕不得 released 进共享（scoped：create(B) 不投 A 的 held）
+    assert _ks(db, mid_a_user) != "released"
+    assert _shared_source_count(db, mid_a_user) == 0
+    assert all(origin_on_a not in body for body in _shared_bodies(db))
+    assert all(extracted_for_b not in body for body in _shared_bodies(db))
+
+    # 显式 pin 路径：origin 血缘跟 message id，不跟 assignee
+    mid_a2 = db.append_chat_message(
+        a.name, state.turn, "user",
+        "续密：再查内库出纳簿-显式pin976",
+    )
+    oid2 = db.create_secret_order(
+        state, b.name, "续密内库", "续查内库出纳簿", [],
+        origin_minister_name=a.name,
+        origin_chat_message_id=mid_a2,
+    )
+    assert oid2 > 0
+    assert _ks(db, mid_a2) == "withheld"
+    assert _shared_source_count(db, mid_a2) == 0
+    brief2 = db.conn.execute(
+        "SELECT origin_chat_message_ids, minister_name FROM secret_order_briefs "
+        "WHERE order_id=?",
+        (oid2,),
+    ).fetchone()
+    import json as _json
+    pins2 = _json.loads(brief2["origin_chat_message_ids"] or "[]")
+    assert mid_a2 in pins2
+    assert brief2["minister_name"] == b.name
+    # shared must not contain oral line (origin follows message id, not assignee)
+    assert all("续密：再查内库出纳簿-显式pin976" not in body for body in _shared_bodies(db))
+    assert all("续密：再查内库出纳簿-显式pin976" not in body for body in _event_bodies(db))
+
+    # B 的公开 minister 应答不得消失（private 因 active assignee）
+    assert _ks(db, mid_b_min) in ("private", "released", "held")
+    assert _ks(db, mid_b_user) in ("withheld", "private", "released", "held")
+
+
+def test_976_rt03_late_chat_after_create_same_turn(game):
+    """红队③ should：密令 create 后同回合晚到行 — 接令者 private，他臣公开 released。"""
+    db, state, content = game
+    a, b = _active_ministers(db, content)[:2]
+    secret = "密令正文：暗访边饷虚报-晚到976"
+    oid = db.create_secret_order(state, a.name, "密查边饷", secret, [])
+    assert oid > 0
+
+    late_user = "再密嘱：勿使总督知会-晚到user"
+    late_ack = "臣谨遵续旨，绝不走漏-晚到ack"
+    other_public = "臣报：京营点卯无缺-晚到公开"
+
+    mid_late_user = db.append_chat_message(a.name, state.turn, "user", late_user)
+    mid_late_ack = db.append_chat_message(a.name, state.turn, "minister", late_ack)
+    mid_other = db.append_chat_message(b.name, state.turn, "minister", other_public)
+
+    assert _ks(db, mid_late_user) == "held"
+    assert _ks(db, mid_late_ack) == "held"
+    assert _ks(db, mid_other) == "held"
+
+    db.release_held_audience_knowledge()
+    assert _ks(db, mid_late_user) == "private"
+    assert _ks(db, mid_late_ack) == "private"
+    assert _ks(db, mid_other) == "released"
+    assert all(late_user not in body for body in _shared_bodies(db))
+    assert all(late_ack not in body for body in _shared_bodies(db))
+    assert any(other_public in body for body in _shared_bodies(db))
+    assert all(secret not in body for body in _shared_bodies(db))
+
+    mid_even_later = db.append_chat_message(
+        a.name, state.turn, "user", "第三次密嘱：焚稿-更晚976",
+    )
+    db.update_secret_order_by_id(state, oid, "密查边饷", secret + "；补焚稿", [])
+    st_upd = _ks(db, mid_even_later)
+    assert st_upd in ("withheld", "private")
+    assert st_upd != "released"
+    assert all("焚稿-更晚976" not in body for body in _shared_bodies(db))
+
+
+def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
+    """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
+
+    foreign_keys=0 下 CASCADE 不生效；brief 须纳入 rollback 表集，不成孤儿。
+    """
+    db, state, content = game
+    a, b = _active_ministers(db, content)[:2]
+    marker = "undo密令正文：密查火器局虚报-UNDO976"
+    public_early = "臣报：漕运无阻-先轮公开976"
+
+    ctid_early = db.create_chat_turn(state, b.name, "sess-early-976", 0)
+    snap0 = db.capture_chat_rollback_snapshot()
+    mid_b_pub = db.append_chat_message(b.name, state.turn, "minister", public_early)
+    db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
+    db.record_chat_turn_rollback_diffs(
+        ctid_early, snap0, db.capture_chat_rollback_snapshot(),
+    )
+
+    ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
+    before = db.capture_chat_rollback_snapshot()
+    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
+    mid_m = db.append_chat_message(
+        a.name, state.turn, "minister", "臣领密旨，即查火器局。",
+    )
+    db.update_chat_turn_messages(ctid, user_message_id=mid_u, minister_message_id=mid_m)
+    oid = db.create_secret_order(state, a.name, "密查火器局", marker, [])
+    after = db.capture_chat_rollback_snapshot()
+    db.record_chat_turn_rollback_diffs(ctid, before, after)
+
+    assert oid > 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()[0] == 1
+    # 文档化：FK 关闭时 CASCADE 不可靠 — brief 进 rollback 表集才是结构真源
+    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+
+    undone = db.undo_chat_turn(ctid)
+    assert undone is not None
+    assert int(undone.get("id") or 0) == ctid
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["status"] == "undone"
+
+    order_left = db.conn.execute(
+        "SELECT COUNT(*) FROM secret_orders WHERE id=?", (oid,),
+    ).fetchone()[0]
+    brief_left = db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
+    ).fetchone()[0]
+    msg_u = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_u,),
+    ).fetchone()[0]
+    msg_m = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_m,),
+    ).fetchone()[0]
+    msg_b = db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE id=?", (mid_b_pub,),
+    ).fetchone()[0]
+
+    assert order_left == 0, f"secret_orders survived undo count={order_left}"
+    assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
+    assert msg_u == 0 and msg_m == 0
+    assert msg_b == 1, "early B public message wrongly deleted"
+    assert all(marker not in body for body in _shared_bodies(db))
+    assert all(marker not in body for body in _event_bodies(db))
+    assert not db._is_active_secret_order_assignee(a.name)
+
+
+def test_976_rt05_save_restore_between_hold_and_release(game):
+    """红队⑤ should：存档-恢复夹在 hold 与 release 之间 — P1 无损。"""
+    import os
+
+    db, state, content = game
+    a, b = _active_ministers(db, content)[:2]
+    marker = "存档夹心密令：密查驿递虚冒-SAVE976"
+    pending_public = "臣报：延绥军情平稳-夹心held公开"
+
+    mid_u = db.append_chat_message(a.name, state.turn, "user", marker)
+    mid_ack = db.append_chat_message(
+        a.name, state.turn, "minister", "臣领密旨查驿递。",
+    )
+    mid_pub = db.append_chat_message(b.name, state.turn, "minister", pending_public)
+
+    oid = db.create_secret_order(state, a.name, "密查驿递", marker, [])
+    st_pre = {
+        "u": _ks(db, mid_u),
+        "ack": _ks(db, mid_ack),
+        "pub": _ks(db, mid_pub),
+    }
+    assert st_pre["u"] == "withheld"
+    # create(A) scoped：B 的公开仍 held（不因全局 release 提前投轨）
+    assert st_pre["pub"] == "held"
+
+    late = "续谈：边墙修补进度-夹心后held"
+    mid_late = db.append_chat_message(b.name, state.turn, "minister", late)
+    assert _ks(db, mid_late) == "held"
+
+    path = db.path
+    backup_path = path + ".backup976"
+    db.backup_to(backup_path)
+    db.close()
+
+    db2 = __import__("ming_sim.db", fromlist=["GameDB"]).GameDB(backup_path, content)
+    try:
+        state2 = db2.load_state()
+        st_post = {
+            "u": _ks(db2, mid_u),
+            "ack": _ks(db2, mid_ack),
+            "pub": _ks(db2, mid_pub),
+            "late": _ks(db2, mid_late),
+        }
+        assert st_post["u"] == st_pre["u"]
+        assert st_post["ack"] == st_pre["ack"]
+        assert st_post["pub"] == st_pre["pub"]
+        assert st_post["late"] == "held"
+
+        brief = db2.conn.execute(
+            "SELECT body, origin_chat_message_ids FROM secret_order_briefs "
+            "WHERE order_id=?",
+            (oid,),
+        ).fetchone()
+        order = db2.conn.execute(
+            "SELECT status FROM secret_orders WHERE id=?", (oid,),
+        ).fetchone()
+        assert order is not None and order["status"] == "active"
+        assert brief is not None and marker in (brief["body"] or "")
+        import json as _json
+        pins = _json.loads(brief["origin_chat_message_ids"] or "[]")
+        assert mid_u in pins
+
+        db2.release_held_audience_knowledge()
+        assert _ks(db2, mid_u) == "withheld"
+        assert all(marker not in body for body in _shared_bodies(db2))
+        assert _ks(db2, mid_late) == "released"
+        assert any(late in body for body in _shared_bodies(db2))
+        assert _ks(db2, mid_pub) == "released"
+        assert any(pending_public in body for body in _shared_bodies(db2))
+        # silence: state2 used
+        assert state2.turn == state.turn
+    finally:
+        db2.close()
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+
+
+def test_976_message_level_origin_persisted_on_brief(game):
+    """契约：密令分类后 brief.origin_chat_message_ids 持久化消息级血缘。"""
+    import json as _json
+
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    secret_q = "着尔密访国丈家产虚实，勿使外廷知-provenance976"
+    mid = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+        origin_chat_message_id=mid,
+    )
+    brief = db.conn.execute(
+        "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (oid,),
+    ).fetchone()
+    pins = _json.loads(brief["origin_chat_message_ids"] or "[]")
+    assert pins == [mid]
+    assert _ks(db, mid) == "withheld"
+    # release 不得把已注册 origin 投轨
+    db.release_held_audience_knowledge()
+    assert _ks(db, mid) == "withheld"
+    assert _shared_source_count(db, mid) == 0
