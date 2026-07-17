@@ -486,8 +486,9 @@ async function decideFamilyQuotaWall(opts: {
   // Identity / coder-only apply is hollow and must fail consumed-slot nails.
   // #934 ID-002 / R7 F2: single admit court ({@link admitRelayBaton}) — same
   // stop shape as single-slice (apply throw → typed stop; tight fail → stop).
-  // Spec N1 / OUT #942: keep stopSummary.reason = infra_failure until public
-  // ABI cutover; do not invent a parallel route_config_invalid token here.
+  // #942: public ABI is status completed|parked|failed only. stopSummary.reason
+  // stays a diagnostic token (infra_failure here) — not public ABI; do not invent
+  // a parallel route_config_invalid public cause on this path.
   const admitted = admitRelayBaton(
     opts.modelRoute,
     outcome.nextBaton,

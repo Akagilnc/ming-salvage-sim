@@ -1090,7 +1090,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(
       `${result.stopSummary.summary} ${result.escalation?.diagnosis ?? ""} ${result.escalation?.reason ?? ""}`,
     ).toMatch(/tight route violation|relay baton admission/i);
-    // OUT #942: keep infra_failure stopSummary.reason until public ABI cutover.
+    // #942: stopSummary.reason is diagnostic-only (not public ABI); public status
+    // above is already parked. infra_failure here is the internal stop token.
     expect(result.stopSummary.reason).toBe("infra_failure");
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
