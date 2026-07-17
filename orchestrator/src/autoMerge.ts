@@ -182,6 +182,34 @@ export function executePrMergeCommit(
   ]);
 }
 
+/**
+ * Single authority for head-aligned MERGED terminal records (landing /
+ * confirmPrMergedLive). Not-merged vs head-mismatch are distinguished so
+ * callers can park foreign merges without fabricating a record.
+ */
+export type MergeRecordAlignment =
+  | { readonly kind: "aligned"; readonly record: PrMergedTerminalRecord }
+  | { readonly kind: "mismatch" }
+  | { readonly kind: "not_merged" };
+
+export function mergeRecordIfHeadAligned(
+  live: PrMergeLiveState,
+  expectedHeadOid: string,
+): MergeRecordAlignment {
+  if (!githubFieldEquals(live.state, "MERGED")) return { kind: "not_merged" };
+  if (live.headOid !== expectedHeadOid) return { kind: "mismatch" };
+  return {
+    kind: "aligned",
+    record: {
+      prUrl: live.prUrl,
+      prNumber: live.prNumber,
+      remoteBranchName: live.headRefName,
+      mergedHeadOid: live.headOid,
+      convergedHeadOid: expectedHeadOid,
+    },
+  };
+}
+
 /** Confirm merge via live GitHub state — not the merge command's exit code. */
 export function confirmPrMergedLive(
   sh: Sh,
@@ -190,30 +218,8 @@ export function confirmPrMergedLive(
   expectedHeadOid: string,
 ): PrMergedTerminalRecord | undefined {
   const live = fetchPrMergeLiveState(sh, repo, prUrl);
-  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
-  if (live.headOid !== expectedHeadOid) return undefined;
-  return {
-    prUrl: live.prUrl,
-    prNumber: live.prNumber,
-    remoteBranchName: live.headRefName,
-    mergedHeadOid: live.headOid,
-    convergedHeadOid: expectedHeadOid,
-  };
-}
-
-export function prMergedRecordFromLive(
-  live: PrMergeLiveState,
-  convergedHeadOid: string,
-): PrMergedTerminalRecord | undefined {
-  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
-  if (live.headOid.length === 0) return undefined;
-  return {
-    prUrl: live.prUrl,
-    prNumber: live.prNumber,
-    remoteBranchName: live.headRefName,
-    mergedHeadOid: live.headOid,
-    convergedHeadOid,
-  };
+  const aligned = mergeRecordIfHeadAligned(live, expectedHeadOid);
+  return aligned.kind === "aligned" ? aligned.record : undefined;
 }
 
 export interface PrMergedMarkerLike {
