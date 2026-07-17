@@ -178,6 +178,45 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
       ]),
     );
     expect(JSON.stringify(result.diagnostics)).toMatch(/11/);
+    // Public children[] must keep the settled failureCause (not drop on push).
+    const failed = result.children.find((c) => c.issue === 11);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.failureCause).toEqual(expect.stringMatching(/11/));
+  });
+
+  it("POSITIVE: hard-fail sibling keeps failureCause on final children[]", async () => {
+    class PrepareThrowBackend extends OkChildBackend {
+      override async prepareWorktree(
+        issueNumber: number,
+        base: string,
+      ): Promise<WorktreeHandle> {
+        if (issueNumber === 11) {
+          throw new Error("child #11 process crashed before worktree cut");
+        }
+        return super.prepareWorktree(issueNumber, base);
+      }
+    }
+    const familyBackend = new RecordingFamilyBackend();
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new PrepareThrowBackend(),
+      familyBase: "family/938-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    const failed = result.children.find((c) => c.issue === 11);
+    expect(failed?.status).toBe("failed");
+    // Settled wave cause must survive the childResults push (must-1).
+    expect(typeof failed?.failureCause).toBe("string");
+    expect(failed?.failureCause).toEqual(expect.stringMatching(/11/));
   });
 
   it("POSITIVE: successful sibling still merges when another child hard-fails (no rethrow-first wipe)", async () => {
@@ -363,6 +402,46 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     // No host "still-conflicted retries" court language.
     expect(JSON.stringify(result)).not.toMatch(/still-conflicted retries/i);
+  });
+
+  it("POSITIVE: merger decision escalate attaches wave diagnostics for failed siblings", async () => {
+    // #10 decision-escalates on merge; #11 fails single-slice. Wave diagnostics
+    // for #11 are settled before the merge early-return and must ride the
+    // public escalated result (attachDiagnostics on that terminal).
+    const familyBackend = new ConflictOnceFamilyBackend(
+      new Set([10]),
+      false,
+      {
+        reason: "choose the canonical migration",
+        diagnosis: "both branches deliberately changed the same public contract",
+        escalationKind: "decision",
+        phase: "wave",
+      },
+    );
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new SiblingFailBackend(new Set([11])),
+      familyBase: "family/938-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.reason).toBe("choose the canonical migration");
+    expect(result.diagnostics ?? []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issue: 11,
+          kind: "child_execution",
+        }),
+      ]),
+    );
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {
