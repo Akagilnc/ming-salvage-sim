@@ -478,6 +478,75 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     );
   });
 
+  it("POSITIVE: still-conflicted mid-wave exit keeps successful wave peer as ran (not skipped)", async () => {
+    // Both siblings allSettled; serial merge stops on #10 conflicted base.
+    // #11 already ran single-slice — must remain honest `ran`, not finalize-mapped
+    // `skipped` (never-schedulable only).
+    const familyBackend = new ConflictOnceFamilyBackend(new Set([10]), true);
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new OkChildBackend(),
+      familyBase: "family/938-base",
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.children.find((c) => c.issue === 10)).toEqual(
+      expect.objectContaining({
+        issue: 10,
+        status: "failed",
+        failureCause: expect.stringMatching(/merger_worker|conflict/i),
+      }),
+    );
+    const peer = result.children.find((c) => c.issue === 11);
+    expect(peer?.status).toBe("ran");
+    expect(peer?.status).not.toBe("skipped");
+    expect(peer?.branch).toEqual(expect.stringMatching(/11/));
+  });
+
+  it("POSITIVE: merger decision-escalate mid-wave exit keeps successful wave peer as ran (not skipped)", async () => {
+    // #10 decision-escalates during merge; #11 already allSettled as ran in the
+    // same wave. Early exit must drain #11 before mapping residual children.
+    const familyBackend = new ConflictOnceFamilyBackend(
+      new Set([10]),
+      false,
+      {
+        reason: "choose the canonical migration",
+        diagnosis: "both branches deliberately changed the same public contract",
+        escalationKind: "decision",
+        phase: "wave",
+      },
+    );
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new OkChildBackend(),
+      familyBase: "family/938-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.reason).toBe("choose the canonical migration");
+    expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
+    const peer = result.children.find((c) => c.issue === 11);
+    expect(peer?.status).toBe("ran");
+    expect(peer?.status).not.toBe("skipped");
+    expect(peer?.branch).toEqual(expect.stringMatching(/11/));
+  });
+
   it("NEGATIVE: production merger has no host still-conflicted re-dispatch loop (ID-016 delete)", () => {
     const mergerSrc = readFileSync(
       join(import.meta.dirname, "../../../src/family/merger.ts"),

@@ -2075,6 +2075,32 @@ export async function runFamily(
     // `"ran"` (single-slice success, not yet merged), and we flip it to `"merged"`
     // here once mergeChild resolves — so a future #295 merge failure can leave the
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
+    //
+    // #938: mid-wave early exit (merger decision escalate / still-conflicted)
+    // must drain remaining allSettled siblings into childResults first. Without
+    // that flush, finalize / residual maps map executed peers to fake "skipped".
+    // "skipped" is only for never-schedulable / never-ran children.
+    const recordWaveSibling = (sibling: FamilyChildResult): void => {
+      childResults.push({
+        issue: sibling.issue,
+        status: sibling.status,
+        ...(sibling.branch !== undefined ? { branch: sibling.branch } : {}),
+        ...(sibling.escalation !== undefined
+          ? { escalation: sibling.escalation }
+          : {}),
+        ...(sibling.failureCause !== undefined
+          ? { failureCause: sibling.failureCause }
+          : {}),
+      });
+    };
+    const drainRemainingWaveSiblings = (): void => {
+      const recorded = new Set(childResults.map((c) => c.issue));
+      for (const sibling of ran) {
+        if (recorded.has(sibling.issue)) continue;
+        recordWaveSibling(sibling);
+        recorded.add(sibling.issue);
+      }
+    };
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
         // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
@@ -2123,6 +2149,7 @@ export async function runFamily(
         if (mergeResult.escalation !== undefined) {
           familyHead = mergeResult.familyHead;
           childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
+          drainRemainingWaveSiblings();
           const ledgerMerged = await currentMerged(familyBackend);
           const children = epic.children.map((child) => {
             const recorded = childResults.find((entry) => entry.issue === child.issue);
@@ -2170,20 +2197,13 @@ export async function runFamily(
             branch: r.branch,
             failureCause: cause,
           });
+          drainRemainingWaveSiblings();
           return await finalize();
         }
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {
-        childResults.push({
-          issue: r.issue,
-          status: r.status,
-          branch: r.branch,
-          ...(r.escalation !== undefined ? { escalation: r.escalation } : {}),
-          ...(r.failureCause !== undefined
-            ? { failureCause: r.failureCause }
-            : {}),
-        });
+        recordWaveSibling(r);
       }
     }
 
