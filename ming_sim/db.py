@@ -1411,6 +1411,19 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_character_knowledge_sources_turn
                 ON character_knowledge_sources(turn, id);
 
+            -- #883: secret orders never enter the shared knowledge ledger.
+            CREATE TABLE IF NOT EXISTS secret_order_briefs (
+                order_id INTEGER PRIMARY KEY,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                minister_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS kv_store (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT '',
@@ -1505,21 +1518,13 @@ class GameDB:
         self.ensure_column("issues", "participants", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("issues", "participant_roster", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("secret_orders", "excluded_targets", "TEXT NOT NULL DEFAULT '{}'")
-        # Read-side projection is registry-driven, but old saves already contain
-        # durable issue/secret rows. Backfill them once so restore does not lose
-        # participation knowledge during the schema transition.
+        # Read-side projection is registry-driven.  Only issue rows are shared
+        # knowledge sources; #883 deliberately keeps secret orders out of it.
         self.conn.execute(
             "INSERT OR IGNORE INTO character_knowledge_sources "
             "(turn,year,period,kind,title,body,source_id,participant_roster) "
             "SELECT origin_turn, 0, 0, 'assignment', title, stage_text, "
             "'issue:' || id, participant_roster FROM issues WHERE participant_roster <> '[]'"
-        )
-        self.conn.execute(
-            "INSERT OR IGNORE INTO character_knowledge_sources "
-            "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
-            "SELECT turn_issued, year_issued, period_issued, 'secret_order', title, content, "
-            "'secret_order:' || id, json_array(json_object('character_id', minister_name)), "
-            "excluded_names, excluded_targets FROM secret_orders"
         )
         # BUG 3：directive 暂存 commit 成 turn_directives draft 时回填该 draft 行 id，
         # 使 undo_chat_turn 能精确删本轮自产的那条 draft（旧实现按 (turn,actor) 删，
@@ -7723,7 +7728,12 @@ class GameDB:
         self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
         items = [item for item in self.knowledge_items_for_turn(state.turn)
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        has_restricted_source = any(item.get("excluded_names") for item in items)
+        # #883: private secret briefs never enter shared sources; when any
+        # undisclosed brief exists, do not trust a raw aggregate report string.
+        has_restricted_source = (
+            any(item.get("excluded_names") for item in items)
+            or self._has_undisclosed_secret_order_brief()
+        )
         source_snapshot_supplied = knowledge_items is not None
         settlement_items = [
             item for item in items
@@ -7805,7 +7815,12 @@ class GameDB:
         )
         items = [item for item in self.knowledge_items_for_turn(state.turn)
                  if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        has_restricted_source = any(item.get("excluded_names") for item in items)
+        # #883: same single write-seam rule as turn reports — private secret
+        # briefs force source-scoped public aggregation only.
+        has_restricted_source = (
+            any(item.get("excluded_names") for item in items)
+            or self._has_undisclosed_secret_order_brief()
+        )
         source_snapshot_supplied = knowledge_items is not None
         if public_body is None:
             public_chapter = (
@@ -9851,6 +9866,25 @@ class GameDB:
                 item["excluded_names"] = row["excluded_names"] or "[]"
             result.append(item)
         known_sources = {str(item["source_id"]) for item in result}
+        # #883 contract: this is the sole private read seam for secret orders.
+        # Briefs deliberately do not carry a shared source id and therefore
+        # cannot be materialized into gazettes, chapters, or public events.
+        if character_name:
+            for row in self.conn.execute(
+                "SELECT turn, year, period, title, body, order_id FROM secret_order_briefs "
+                "WHERE minister_name=? ORDER BY turn, order_id",
+                (str(character_name),),
+            ).fetchall():
+                source_id = f"secret_order_brief:{int(row['order_id'])}"
+                if source_id in known_sources:
+                    continue
+                result.append({
+                    "turn": int(row["turn"]), "year": int(row["year"]),
+                    "period": int(row["period"]), "kind": "secret_order_brief",
+                    "title": row["title"], "body": row["body"], "source_id": source_id,
+                    **({"excluded_names": "[]"} if include_exclusions else {}),
+                })
+                known_sources.add(source_id)
         for row in self.conn.execute(
             "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
             "FROM character_knowledge_sources ORDER BY turn, id"
@@ -10057,6 +10091,18 @@ class GameDB:
         excluded_targets: Optional[Mapping[str, Iterable[str]]] = None,
         *, commit: bool = True,
     ) -> None:
+        # #883 single rejection seam: secret orders and derivatives must not
+        # enter the shared knowledge ledger.  Disclosure events use a separate
+        # public source_id prefix and remain the only publicization path.
+        source_id = str(source_id or "")
+        kind_text = str(kind or "")
+        if kind_text == "secret_order" or (
+            source_id.startswith("secret_order:")
+            and not source_id.startswith("secret_order_disclosure:")
+        ):
+            raise ValueError(
+                "密令不得写入共享知识源；只允许本体表 + 接令者专用简报表（#883）"
+            )
         roster = [dict(item) for item in participant_roster if item.get("character_id") or item.get("name")]
         if not source_id:
             source_id = f"{kind}:{state.turn}:{title}"
@@ -10070,6 +10116,34 @@ class GameDB:
              safe_json_dumps(roster, ensure_ascii=False),
              safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
              safe_json_dumps({k: list(dict.fromkeys(str(x).strip() for x in values if str(x).strip())) for k, values in (excluded_targets or {}).items()}, ensure_ascii=False)),
+        )
+        if commit:
+            self.conn.commit()
+
+    def _has_undisclosed_secret_order_brief(self) -> bool:
+        """True when any active/pending secret still has a private assignee brief.
+
+        #883: shared archive writers consult this single structural flag instead
+        of treating secret order rows as shared restricted sources.
+        """
+        row = self.conn.execute(
+            "SELECT 1 FROM secret_order_briefs b "
+            "INNER JOIN secret_orders o ON o.id = b.order_id "
+            "WHERE o.status IN ('active', 'pending_review') LIMIT 1"
+        ).fetchone()
+        return row is not None
+
+    def upsert_secret_order_brief(
+        self, state: GameState, order_id: int, minister_name: str, title: str, body: str,
+        *, commit: bool = True,
+    ) -> None:
+        """Write the assignee-only secret-order brief (#883 isolation seam)."""
+        self.conn.execute(
+            "INSERT INTO secret_order_briefs (order_id,turn,year,period,minister_name,title,body) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET "
+            "turn=excluded.turn,year=excluded.year,period=excluded.period,minister_name=excluded.minister_name,"
+            "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
+            (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
         if commit:
             self.conn.commit()
@@ -10206,16 +10280,7 @@ class GameDB:
              json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
         self.conn.commit()
-        self.register_character_knowledge_source(
-            state,
-            [{"character_id": minister_name, "tier": "主办"}],
-            "secret_order",
-            title,
-            content,
-            f"secret_order:{int(cur.lastrowid)}",
-            excluded_names=snapshot_excluded_names,
-            excluded_targets=exclusion_targets_payload,
-        )
+        self.upsert_secret_order_brief(state, int(cur.lastrowid), minister_name, title, content)
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -10304,17 +10369,8 @@ class GameDB:
                     (persisted_title, content, tags_json, json.dumps(excluded_names, ensure_ascii=False),
                      json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
-            self.register_character_knowledge_source(
-                state, [{"character_id": row["minister_name"], "tier": "主办"}], "secret_order",
-                persisted_title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
-                excluded_targets=excluded_targets, commit=False,
-            )
-            # Replace only automatic/private mirrors of the canonical source.
-            # A separately recorded public disclosure is historical evidence,
-            # not a stale mirror, and must survive an order amendment.
-            self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id=? AND character_name != ''",
-                (f"secret_order:{int(order_id)}",),
+            self.upsert_secret_order_brief(
+                state, int(order_id), str(row["minister_name"]), persisted_title, content, commit=False,
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)

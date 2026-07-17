@@ -123,8 +123,10 @@ def _record_settlement_narrative_sources(
     ]
     # Audience chat is not an input to the month-end simulator.  Its presence
     # in the same turn therefore cannot taint an independently produced public
-    # settlement narrative.  Sources that can feed the simulator (notably
-    # active secret orders and scoped event records) still block the aggregate.
+    # settlement narrative.  Other restricted shared sources still block it.
+    # #883: undisclosed secret-order briefs are private structure, not shared
+    # sources — their presence alone also blocks recording the aggregate as
+    # an audience source (secrets never pre-feed the public monthly judge).
     restricted_kinds = set()
     for source_id in restricted_ids:
         row = db.conn.execute(
@@ -132,7 +134,10 @@ def _record_settlement_narrative_sources(
             (source_id,),
         ).fetchone()
         restricted_kinds.add(str(row["kind"] or "") if row is not None else "unknown")
-    has_restricted_source = any(kind != "audience" for kind in restricted_kinds)
+    has_restricted_source = (
+        any(kind != "audience" for kind in restricted_kinds)
+        or db._has_undisclosed_secret_order_brief()
+    )
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return
@@ -689,11 +694,17 @@ def _settle_after_narrative(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
-    extractor_shared_context = build_extractor_shared_context(
-        db, state, effective_narrative, decree_text,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders_for_sim,
-    )
+    # #883: per-module supplemental context so only personnel_secret receives
+    # secret-order prose; other public extractors never pre-read it.
+    extractor_shared_contexts = {
+        module: build_extractor_shared_context(
+            db, state, effective_narrative, decree_text,
+            relevant_memories=relevant_memories,
+            secret_orders=secret_orders_for_sim,
+            module=module,
+        )
+        for module in EXTRACTION_MODULES
+    }
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
@@ -705,7 +716,7 @@ def _settle_after_narrative(
                 agno_db,
                 module,
                 simulator_payload=simulator_payload,
-                supplemental_context=extractor_shared_context,
+                supplemental_context=extractor_shared_contexts[module],
             )
             for module in EXTRACTION_MODULES
         }
