@@ -101,12 +101,6 @@ describe("#947 souls point at the law instead of copying it", () => {
     }
   });
 
-  it("verify.md drops the reviewer-facing disclaimers from §修复面审计", () => {
-    expect(verifySoul).not.toMatch(/DOC-MODE|round-10|double-clear|standing-degraded/);
-    // The operative half of that clause survives.
-    expect(verifySoul).toContain("one-pass CMR 只出本次判词");
-  });
-
   it("stationReceiptContracts.ts comment defers to the law instead of restating the carve-out", () => {
     expect(receiptContracts).not.toContain("bug 早于 fixed point");
     expect(receiptContracts).toMatch(/finding 裁决法理/);

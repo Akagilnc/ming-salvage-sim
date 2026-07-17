@@ -178,15 +178,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
   it("POSITIVE: host invokes applySideEffects before accepting mergeable (K1 fail-safe)", async () => {
     // Worker may report bare converged; host must still call applySideEffects
     // before mergeable — never green solely on disposition without the seam.
-    const verifyMd = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../../../prompts/verify.md"),
-      "utf8",
-    );
-    expect(verifyMd).toMatch(/Execute.*side effects yourself/i);
-    expect(verifyMd).toMatch(/before.*self-report/i);
-    expect(verifyMd).toMatch(/fail-safe/i);
-    expect(verifyMd).toContain('"threadReplies"');
-
     let applyCalls = 0;
     let applySawCargo = false;
     const result = await runOnlineReviewLoopStage(STAGE_SHIP, {

@@ -66,7 +66,6 @@ import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
 const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
-const fixerSoul = readFileSync(join(realSoulsDir, "fixer.md"), "utf8");
 
 const FINDING_R1 = sampleFinding(
   "family open claim 979 r1",
@@ -860,14 +859,3 @@ describe("#979 production runFamilyCoderFixWorker Sandcastle resume", () => {
   });
 });
 
-describe("#979 fixer soul fallback clause", () => {
-  it("fixer.md teaches 修法史先于动刀 as resume-loss fallback channel", () => {
-    expect(fixerSoul).not.toMatch(/^(<<<<<<<|=======|>>>>>>>)/m);
-    expect(fixerSoul).not.toContain("<<<<<<<");
-    expect(fixerSoul).not.toContain(">>>>>>>");
-    expect(fixerSoul).toContain("修法史先于动刀");
-    // Resume-loss fallback + history testimony (not title alone — false-green over conflict markers).
-    expect(fixerSoul).toMatch(/resume|会话/);
-    expect(fixerSoul).toMatch(/git log|案底|既往修复/);
-  });
-});

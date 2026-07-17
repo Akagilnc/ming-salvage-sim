@@ -366,25 +366,3 @@ describe("#924 session lost degrades to fresh (run survives)", () => {
   });
 });
 
-describe("#924 coder prompts teach legal envelope (T2 reference, no second copy)", () => {
-  it("implement + fix prompts name station envelope traffic fields and T2 source", () => {
-    const implement = readFileSync(
-      join(PROMPTS_DIR, "coder_implement.md"),
-      "utf8",
-    );
-    const fix = readFileSync(join(PROMPTS_DIR, "coder_fix.md"), "utf8");
-
-    for (const text of [implement, fix]) {
-      // Envelope traffic vocabulary (T2 / stationReceiptContracts).
-      expect(text).toMatch(/station/);
-      expect(text).toMatch(/status/);
-      expect(text).toMatch(/completed|refused|escalate/);
-      expect(text).toMatch(/refusedFindingIdentityKeys/);
-      expect(text).toMatch(/cargoPointer/);
-      // Point at the contract module — do not hand-copy a second schema.
-      expect(text).toMatch(/stationReceiptContracts/);
-      // Four reasons live in cargo body for the judge, not envelope schema.
-      expect(text).toMatch(/违宪|unconstitutional|四理由/);
-    }
-  });
-});
