@@ -30,10 +30,11 @@ import {
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type {
-  FamilyBackend,
-  FamilyLedgerEntry,
-  IntegratedCmrPass,
+import {
+  FAMILY_LEDGER_STATUS_VALUES,
+  type FamilyBackend,
+  type FamilyLedgerEntry,
+  type IntegratedCmrPass,
 } from "./types.js";
 
 /**
@@ -1472,28 +1473,11 @@ export function mergedSet(
  * Known {@link FamilyLedgerEntry.status} values. Shape gate for JSONL parse —
  * a line that JSON.parses as `null` / `{}` / bad status must fail closed the
  * same way as an unparseable line (#934 S-3; mirror single-slice isLedgerEntryShape).
+ * Built from {@link FAMILY_LEDGER_STATUS_VALUES} — no hand-synced twin list.
  */
-export const FAMILY_LEDGER_STATUSES: ReadonlySet<string> = new Set([
-  "merged",
-  "aborted",
-  "shipped",
-  "review_loop_converged",
-  "pr_merged",
-  "post_merge_cleanup",
-  "cmr_reviewed",
-  "cmr_fix_committed",
-  "cmr_passed",
-  "escalated",
-  "child_decision_parked",
-  "escalation_answered",
-  "admission_skipped",
-  "online_review_fix_committed",
-  "online_review_round_retrigger",
-  "worker_dispatched",
-  "route_degraded",
-  "coder_advance",
-  "coder_advance_stay_put",
-]);
+export const FAMILY_LEDGER_STATUSES: ReadonlySet<string> = new Set(
+  FAMILY_LEDGER_STATUS_VALUES,
+);
 
 /**
  * Per-line structural gate for family-ledger.jsonl (#934 S-3).

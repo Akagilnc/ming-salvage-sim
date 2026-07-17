@@ -1468,9 +1468,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * relay stickiness still wins when set (capacity crisis overrides quality advance).
    */
   let stickyJudgeAdvanceCoderSlug: string | undefined;
-  /** #686 — last written relay focus path (forwarded on next dispatch). */
+  /** #937 — last ephemeral relay brief (forwarded on next same-step dispatch). */
   let activeRelayBrief: string | undefined;
-  /** The only step allowed to consume the current relay pool and focus baton. */
+  /** The only step allowed to consume the current relay pool + ephemeral brief. */
   let activeRelayStep: StepId | undefined;
   // #924: coder persistent session across S2 → S5 rounds (declared early so
   // relay / first-seat Coder-Rec model changes can invalidate it).
