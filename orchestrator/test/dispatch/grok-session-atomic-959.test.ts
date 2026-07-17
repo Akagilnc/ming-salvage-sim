@@ -245,6 +245,49 @@ describe("#959 captureToHost atomic temp+swap", () => {
     expect(resumed).not.toContain("NEW_SESSION_V2");
   });
 
+  it("R4-G1: place failure after failed displace throws place error with displace cause", async () => {
+    const hostRoot = tmp("grok-959-host-");
+    const sandboxFs = tmp("grok-959-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const hostCwd = tmp("grok-959-hostcwd-r4g1-");
+    const sessionId = "019f-959-r4g1";
+    seedHostSession(hostRoot, hostCwd, sessionId, {
+      "chat_history.jsonl": `{"cwd":"${hostCwd}","mark":"OLD"}\n`,
+      "events.jsonl": `{"type":"end","mark":"OLD"}\n`,
+    });
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    seedSandboxSession(sandboxFs, sbxSessions, sandboxCwd, sessionId, {
+      "chat_history.jsonl": `{"cwd":"${sandboxCwd}","mark":"NEW"}\n`,
+      "events.jsonl": `{"type":"end","mark":"NEW"}\n`,
+    });
+
+    grokSessionAtomicReplaceTestInject.failDisplaceThenPlace = true;
+    const storage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: sbxSessions,
+    });
+
+    let thrown: unknown;
+    try {
+      await storage.captureToHost({
+        hostCwd,
+        sandboxCwd,
+        sessionId,
+        handle: localHandleWithStdin(sandboxFs),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(
+      /injected place failure after failed displace/,
+    );
+    expect((thrown as Error).cause).toBeInstanceOf(Error);
+    expect(((thrown as Error).cause as Error).message).toMatch(
+      /injected displace failure/,
+    );
+  });
+
   it("swap-segment place failure after displace restores old complete session (resumeable)", async () => {
     // Spec S1: failure during the rename swap (after live is displaced to
     // .old-*, before/while placing staging) must restore the prior complete

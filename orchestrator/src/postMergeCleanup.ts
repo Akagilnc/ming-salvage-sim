@@ -4,6 +4,7 @@
 
 import {
   fetchPrMergeLiveState,
+  githubFieldEquals,
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
 import {
@@ -77,7 +78,7 @@ export function assessBranchDeletePrecondition(input: {
   readonly branchTip?: string;
   readonly mergedHeadOid: string;
 }): BranchDeletePrecondition {
-  if (input.prState !== "MERGED") return "skip_pr_not_merged";
+  if (!githubFieldEquals(input.prState, "MERGED")) return "skip_pr_not_merged";
   if (!input.branchExists) return "already_gone";
   if (!branchTipMatchesMergedHead(input.branchTip, input.mergedHeadOid)) {
     return "skip_tip_drift";
@@ -261,7 +262,7 @@ export function runPostMergeCleanup(
     }
   }
 
-  if (live.state !== "MERGED") {
+  if (!githubFieldEquals(live.state, "MERGED")) {
     return cleanupResultFromActs({
       allStepsComplete: false,
       skippedReasons: ["pr_not_merged"],

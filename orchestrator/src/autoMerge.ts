@@ -51,7 +51,15 @@ export interface PrMergedTerminalRecord {
   readonly convergedHeadOid: string;
 }
 
-function githubFieldEquals(actual: string | undefined, expected: string): boolean {
+/**
+ * Case/whitespace-insensitive GitHub field compare (state, mergeStateStatus, …).
+ * Single authority for MERGED/OPEN/CLOSED predicates across landing, autoMerge,
+ * and postMergeCleanup — do not re-copy `.toUpperCase() ===` / bare `===`.
+ */
+export function githubFieldEquals(
+  actual: string | undefined,
+  expected: string,
+): boolean {
   return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
 }
 

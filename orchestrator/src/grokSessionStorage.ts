@@ -165,6 +165,11 @@ export const grokSessionAtomicReplaceTestInject = {
   /** When true, place rename is skipped once and throws after displace. */
   failPlaceAfterDisplace: false,
   /**
+   * When true: displace rename throws once, and the subsequent place-into-vacancy
+   * also throws (R4-G1 — assert place error surfaces with displace as cause).
+   */
+  failDisplaceThenPlace: false,
+  /**
    * Optional hook after live target is displaced to backup (e.g. plant a
    * concurrent winner at `targetDir` so place fails and restore is suppressed).
    * Hook must leave `targetDir` either absent or a complete tree — never a
@@ -177,6 +182,7 @@ export const grokSessionAtomicReplaceTestInject = {
     }) => void | Promise<void>),
   reset(): void {
     this.failPlaceAfterDisplace = false;
+    this.failDisplaceThenPlace = false;
     this.afterDisplace = null;
   },
 };
@@ -220,15 +226,35 @@ async function atomicReplaceDir(
   }
 
   try {
+    if (grokSessionAtomicReplaceTestInject.failDisplaceThenPlace) {
+      const err = new Error(
+        "injected displace failure",
+      ) as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    }
     await fsp.rename(targetDir, backup);
   } catch (err) {
     // Another racer may have already moved the live target. Try placing into
     // the vacancy; if the winner already re-created target, leave it alone.
     try {
+      if (grokSessionAtomicReplaceTestInject.failDisplaceThenPlace) {
+        grokSessionAtomicReplaceTestInject.failDisplaceThenPlace = false;
+        const placeErr = new Error(
+          "injected place failure after failed displace",
+        ) as NodeJS.ErrnoException;
+        placeErr.code = "EEXIST";
+        throw placeErr;
+      }
       await fsp.rename(sourceDir, targetDir);
       return;
-    } catch {
-      throw err;
+    } catch (placeErr) {
+      // Surface the place failure (true reason place failed); chain displace
+      // error as cause so both remain observable (R4-G1).
+      if (placeErr instanceof Error) {
+        throw Object.assign(placeErr, { cause: err });
+      }
+      throw new Error(String(placeErr), { cause: err });
     }
   }
 
