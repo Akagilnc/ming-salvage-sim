@@ -193,7 +193,12 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
+    // ADR 0138 / #978: packet body is judge-authored (residual synthetic here);
+    // bare findings rows are no longer packed into the coder-fix landing.
+    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
+      expect.stringContaining("[residual] open-count continue"),
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #925: live identity keys from the judge disposition table are the S5
     // control envelope (schema-fixed fields — not prose parsing).
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([
@@ -337,7 +342,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
+    // ADR 0138: S6 landing carries the same judge packet body, not bare rows.
+    expect(backend.landings[s6Index]?.fixPacketBody).toEqual(
+      expect.stringContaining("[residual] open-count continue"),
+    );
+    expect(backend.landings[s6Index]?.blockingFindings).toBeUndefined();
     // #925: live keys from the continue disposition table are control envelope.
     expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([
       blockingKey,
@@ -1820,7 +1829,11 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
+    // ADR 0138: residual resume lands synthetic fixPacketBody, not bare rows.
+    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
+      expect.stringContaining("[residual] open-count continue"),
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // #899: resume still pass-through findings cargo; keys land at the writer.
     expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
@@ -1882,10 +1895,11 @@ describe("#369 runner resume/retry review fixes", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    // Resume rebuild may leave identity keys empty when replaying pre-#925
-    // ledger rows (keys derived at landing writer); cargo must still land.
-    expect(backend.landings[s5Index]?.blockingFindings?.length).toBe(1);
+    // ADR 0138: residual resume packet body is synthetic judge text, not bare rows.
+    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
+      expect.stringContaining("[residual] open-count continue"),
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
   it("#877/#925: resume after empty S6 (findingsCount=0) ships without re-dispatch", async () => {
@@ -2296,12 +2310,16 @@ describe("#369 legacy S5 landing file", () => {
           source: "human",
         },
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:1|fix me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
-      blockingFindings: [finding],
+      // ADR 0138: bare findings packing deleted; body + keys + transport only.
+      fixPacketBody: "live: correctness|src/x.ts:1|fix me",
       blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
       escalationAnswer: {
         event: "escalation_answered",
@@ -2377,7 +2395,10 @@ describe("#369 legacy S5 landing file", () => {
         blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
         blockingFindingCount: 1,
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:2|mount me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(observedLanding).toEqual({
@@ -2454,7 +2475,7 @@ describe("#369 legacy S5 landing file", () => {
     );
 
     expect(observedLanding).toEqual({
-      blockingFindings: [finding],
+      // ADR 0138: bare blockingFindings packing deleted.
       blockingFindingIdentityKeys: ["correctness|src/x.ts:3|verify me"],
     });
     expect(observedMount).toEqual({

@@ -127,6 +127,7 @@ import {
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
+  requireFixPacketBody,
 } from "./judgeStation.js";
 import {
   rebuildBlockingFromLedger,
@@ -2065,6 +2066,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   /**
+   * ADR 0138 / #978: judge-authored fix packet body for the sole coder-fix
+   * content path. Verbatim transport only — never synthesised from findings.
+   */
+  let pendingFixPacketBody: string | undefined;
+  /**
    * #926 / #937 / #934 ID-008: consecutive review/fix no-baton stay-puts.
    * First stay-put is non-terminal (return to judge / preserve findings); a
    * second consecutive typed-429 wall with no baton parks for external reset
@@ -2713,6 +2719,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     pendingBlockingFindings = [...rebuiltBlocking.blocking];
     pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
     pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
     findingDispositions = [...rebuiltBlocking.findingDispositions];
     pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
@@ -3298,11 +3305,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {}),
               };
+              // ADR 0138 / #978: when a judge continue established a live open
+              // set, packet body is required and is the sole content path.
+              // Unusable non-judge → S5 (raw artifacts only) may lack a body —
+              // that edge is intentionally body-less, never bare-findings pack.
+              if (
+                step === "S5" &&
+                (pendingBlockingFindingCount > 0 ||
+                  pendingBlockingFindingIdentityKeys.length > 0)
+              ) {
+                try {
+                  pendingFixPacketBody = requireFixPacketBody({
+                    status: "continue",
+                    fixPacketBody: pendingFixPacketBody,
+                  });
+                } catch (err) {
+                  const reason =
+                    err instanceof Error
+                      ? err.message
+                      : "judge continue missing fixPacketBody (ADR 0138)";
+                  return await errorTermination(step, new Error(reason), {
+                    output: lastOutput,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue must author non-empty fixPacketBody; " +
+                        "runner transports it verbatim and will not pack bare findings",
+                    }),
+                  });
+                }
+              }
               const landingPayload =
                 step === "S5" || step === "S6"
                   ? {
-                      // Full findings cargo always — never scope-filtered (#899).
-                      blockingFindings: pendingBlockingFindings,
+                      // ADR 0138: sole packet content path (verbatim judge body).
+                      ...(pendingFixPacketBody !== undefined
+                        ? { fixPacketBody: pendingFixPacketBody }
+                        : {}),
                       ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
                         ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
                         : {}),
@@ -3785,6 +3825,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
               pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                 stepMonitorHandle,
                 stepSessionId,
@@ -3796,6 +3837,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Apply continue dispositions via the shared projection helper
             // (same helper resume rebuild uses — F2 single open-set seam).
             if (output.status === "continue") {
+              // ADR 0138: missing/empty fixPacketBody is contract drift — fail
+              // loud here so S5 never falls back to bare-findings packing.
+              let authoredBody: string;
+              try {
+                authoredBody = requireFixPacketBody(output);
+              } catch (err) {
+                const reason =
+                  err instanceof Error
+                    ? err.message
+                    : "judge continue missing fixPacketBody (ADR 0138)";
+                return await errorTermination(step, new Error(reason), {
+                  output,
+                  findingDispositions,
+                  stopSummary: contractDriftStopSummary({
+                    summary: reason,
+                    repairHint:
+                      "judge status:continue must author non-empty fixPacketBody; " +
+                      "runner transports it verbatim and will not pack bare findings",
+                  }),
+                });
+              }
               const projected = projectJudgeContinueBlocking(output);
               if (projected !== undefined) {
                 // Apply terminal store flips first, then gate empty live set (#919 M6).
@@ -3809,6 +3871,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 pendingBlockingFindingIdentityKeys =
                   projected.blockingIdentityKeys;
                 pendingBlockingFindingCount = projected.blockingFindingCount;
+                pendingFixPacketBody = authoredBody;
                 if (pendingBlockingFindingCount > 0) {
                   pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                     stepMonitorHandle,
@@ -3849,6 +3912,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
             }
           }
         }

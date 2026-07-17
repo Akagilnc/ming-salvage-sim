@@ -28,6 +28,12 @@ export interface BlockingFromLedgerRebuild {
   readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
   /**
+   * ADR 0138: rebuilt judge-authored fix packet body for S5 landing.
+   * Missing after a continue projection is fail-loud at the coder-fix edge
+   * (never fall back to bare findings packing).
+   */
+  readonly fixPacketBody?: string;
+  /**
    * Rebuilt raw artifact pointers for the positive-count → S5 edge after a
    * judge-continue or residual S4 resume boundary (host paths; materialised
    * into the fixer sandbox at landing).
@@ -113,6 +119,7 @@ export function rebuildBlockingFromLedger(
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let pendingBlockingFindingCount = 0;
+  let pendingFixPacketBody: string | undefined;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerOutputForS4: StepOutput | undefined;
   let lastReviewerSessionId: string | undefined;
@@ -145,6 +152,7 @@ export function rebuildBlockingFromLedger(
         pendingBlockingFindings = projected.blocking;
         pendingBlockingFindingIdentityKeys = projected.blockingIdentityKeys;
         pendingBlockingFindingCount = projected.blockingFindingCount;
+        pendingFixPacketBody = projected.fixPacketBody;
         pendingRawReviewerArtifacts =
           projected.blockingFindingCount > 0
             ? reviewerRawArtifactPointers(
@@ -186,6 +194,13 @@ export function rebuildBlockingFromLedger(
       pendingBlockingFindingIdentityKeys = residualOpen.blockingIdentityKeys;
       pendingBlockingFindingCount = residualOpen.blockingFindingCount;
       pendingRawReviewerArtifacts = residualOpen.rawReviewerArtifacts;
+      // Residual paper has no authored packet; synthetic body keeps the single
+      // content path alive without reopening bare-findings packing.
+      const residualJudge = projectResidualReviewerToJudge(lastReviewerOutputForS4);
+      pendingFixPacketBody =
+        residualJudge?.status === "continue"
+          ? residualJudge.fixPacketBody
+          : undefined;
     }
     lastJudgeContinueIndex = -1;
   }
@@ -209,6 +224,11 @@ export function rebuildBlockingFromLedger(
       pendingBlockingFindingIdentityKeys = residualOpen.blockingIdentityKeys;
       pendingBlockingFindingCount = residualOpen.blockingFindingCount;
       pendingRawReviewerArtifacts = residualOpen.rawReviewerArtifacts;
+      const residualJudge = projectResidualReviewerToJudge(lastReviewerOutputForS4);
+      pendingFixPacketBody =
+        residualJudge?.status === "continue"
+          ? residualJudge.fixPacketBody
+          : undefined;
     }
   }
 
@@ -217,6 +237,9 @@ export function rebuildBlockingFromLedger(
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
     blockingFindingCount: pendingBlockingFindingCount,
     findingDispositions,
+    ...(pendingFixPacketBody !== undefined
+      ? { fixPacketBody: pendingFixPacketBody }
+      : {}),
     ...(pendingRawReviewerArtifacts !== undefined
       ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
       : {}),

@@ -428,9 +428,11 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      blockingFindings: [],
+      // ADR 0138: residual synthetic packet body; no bare findings pack.
+      fixPacketBody: expect.any(String),
       rawReviewerArtifacts: { reviewerSessionId: "reviewer-session-non-array" },
     });
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
   });
 
@@ -486,12 +488,13 @@ describe("ADR 0131 reviewer count envelope", () => {
       expect(s5Index).toBeGreaterThan(-1);
       expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
       expect(backend.landings[s5Index]).toMatchObject({
-        blockingFindings: [],
+        fixPacketBody: expect.any(String),
         rawReviewerArtifacts: {
           reviewerSessionId: "reviewer-session-positive-missing-cargo",
           statement: "the previous reviewer raw artifacts are here",
         },
       });
+      expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     },
   );
 
@@ -548,12 +551,13 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      blockingFindings: [finding],
+      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-positive-with-cargo",
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
   it("dispatches S5 when the reviewer returns the wrong role kind", async () => {
@@ -708,7 +712,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      blockingFindings: [finding],
+      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-s4-resume",
         stdoutPath: "/host/ledger/S3.stdout",
@@ -716,6 +720,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
   });
 
   it("rebinds S5 raw artifacts to S6 r2 after dual-round resume without second S4 (C-R4-1)", async () => {
@@ -879,7 +884,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
-      blockingFindings: [findingR2],
+      fixPacketBody: expect.stringContaining("[residual] open-count continue"),
       rawReviewerArtifacts: {
         reviewerSessionId: "reviewer-session-r2",
         stdoutPath: "/host/ledger/S6.stdout",
@@ -887,6 +892,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         statement: "the previous reviewer raw artifacts are here",
       },
     });
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     // Must not still point at r1.
     expect(backend.landings[s5Index]?.rawReviewerArtifacts?.reviewerSessionId).not.toBe(
       "reviewer-session-r1",
@@ -1052,11 +1058,11 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(result.status).toBe("completed");
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
-    // Full cargo — runner does not filter by scope.
-    expect(backend.landings[s5Index]?.blockingFindings).toEqual([
-      findingA,
-      findingB,
-    ]);
+    // ADR 0138: residual synthetic packet body; scope is opaque transport only.
+    expect(backend.landings[s5Index]?.fixPacketBody).toEqual(
+      expect.stringContaining("[residual] open-count continue"),
+    );
+    expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
     // Opaque findingScope on the S5 landing.
     expect(backend.landings[s5Index]?.findingScope).toEqual(broadScope);
@@ -1439,11 +1445,16 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
         {
           worktree,
           stateDir,
-          // Empty envelope keys: landing writer must derive from cargo.
-          blockingFindingIdentityKeys: [],
+          // ADR 0138: identity keys stay on thin ctx; body is judge-authored.
+          blockingFindingIdentityKeys: [
+            "correctness|src/x.ts:1|derive me at the landing writer",
+          ],
           blockingFindingCount: 1,
         },
         {
+          fixPacketBody:
+            "high correctness @ src/x.ts:1: derive me at the landing writer",
+          // Bare findings packing path deleted — must not appear on disk.
           blockingFindings: [finding],
         },
       );
@@ -1452,7 +1463,10 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       const landing = JSON.parse(
         readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
       );
-      expect(landing.blockingFindings).toEqual([finding]);
+      expect(landing.fixPacketBody).toBe(
+        "high correctness @ src/x.ts:1: derive me at the landing writer",
+      );
+      expect(landing.blockingFindings).toBeUndefined();
       expect(landing.blockingFindingIdentityKeys).toEqual([
         "correctness|src/x.ts:1|derive me at the landing writer",
       ]);

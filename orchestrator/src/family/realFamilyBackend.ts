@@ -84,6 +84,7 @@ import {
 } from "../stationReceiptContracts.js";
 import {
   judgeResultFromVerdict,
+  materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
 } from "../judgeStation.js";
 
@@ -1551,14 +1552,26 @@ export class RealFamilyBackend implements FamilyBackend {
                 reason: outcome.reason ?? "family judge escalate",
                 diagnosis: outcome.diagnosis ?? "judge declared escalate",
               }
-            : {
-                station: "judge",
-                status: "continue",
-                findingDispositions: outcome.findingDispositions ?? [],
-                ...(outcome.advanceCoder !== undefined
-                  ? { advanceCoder: outcome.advanceCoder }
-                  : {}),
-              };
+            : (() => {
+                // ADR 0138 / #978 CR S2: never invent an empty packet body when
+                // missing — fail at projection (schema already requires body on
+                // live continue; empty invent only hides contract drift).
+                if (typeof outcome.fixPacketBody !== "string") {
+                  throw new Error(
+                    "family judge continue missing fixPacketBody " +
+                      "(ADR 0138; refuse invent empty string at projection)",
+                  );
+                }
+                return {
+                  station: "judge" as const,
+                  status: "continue" as const,
+                  findingDispositions: outcome.findingDispositions ?? [],
+                  fixPacketBody: outcome.fixPacketBody,
+                  ...(outcome.advanceCoder !== undefined
+                    ? { advanceCoder: outcome.advanceCoder }
+                    : {}),
+                };
+              })();
       const judge = judgeResultFromVerdict(verdict, outcome.findings);
       return {
         kind: "completed",
@@ -1978,17 +1991,25 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
+    const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+    // Shared helper with single-slice landing writer — fail-loud when open set
+    // lacks body (raw-artifacts-only path with empty keys still soft-omits).
+    const fixPacketBody = materializeLandingFixPacketBody({
+      fixPacketBody: landing?.fixPacketBody,
+      blockingFindingIdentityKeys: identityKeys,
+      blockingFindingCount: ctx.blockingFindingCount,
+    });
     writeFileSync(
       path,
       `${JSON.stringify(
         {
-          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-          // ADR 0062) — never from the runner's thin DispatchContext.
-          blockingFindings: landing?.blockingFindings ?? [],
+          // ADR 0138 / #978: sole coder-fix packet content — judge body
+          // verbatim. Bare findings packing deleted (no second path).
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
           ...(rawReviewerArtifacts !== undefined
             ? { rawReviewerArtifacts }
             : {}),
-          blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          blockingFindingIdentityKeys: identityKeys,
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
             : {}),
@@ -3264,6 +3285,8 @@ export type CmrWorkerOutcome =
       readonly findingDispositions?: ReadonlyArray<
         import("../types.js").JudgeFindingDisposition
       >;
+      /** ADR 0138: judge-authored coder-fix packet body on continue. */
+      readonly fixPacketBody?: string;
       readonly advanceCoder?: string;
       readonly findings?: readonly Finding[];
       readonly reason?: string;
@@ -3684,6 +3707,7 @@ function classifyCmrOutcomePayload(
       kind: "judge",
       status: "continue",
       findingDispositions: v.findingDispositions,
+      fixPacketBody: v.fixPacketBody,
       ...(v.advanceCoder !== undefined ? { advanceCoder: v.advanceCoder } : {}),
       ...cargo,
     };
@@ -3703,6 +3727,7 @@ const JUDGE_TRAFFIC_KEYS = new Set([
   "status",
   "cargoPointer",
   "findingDispositions",
+  "fixPacketBody",
   "advanceCoder",
   "reason",
   "diagnosis",

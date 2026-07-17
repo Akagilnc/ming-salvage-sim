@@ -30,6 +30,8 @@ export function judgeContinue(
       JudgeFindingDisposition & { action: "suppress" }
     >;
     readonly advanceCoder?: string;
+    /** ADR 0138 / #978: judge-authored fix packet body (defaults to fixture text). */
+    readonly fixPacketBody?: string;
   },
 ): JudgeResult {
   const kills = opts?.kill ?? [];
@@ -38,14 +40,26 @@ export function judgeContinue(
     ...kills.map((k) => k.identityKey),
     ...suppresses.map((s) => s.identityKey),
   ]);
-  const live = liveDispositionsForFindings(
-    findings.filter((f) => !terminalKeys.has(findingIdentityKey(f))),
+  const liveFindings = findings.filter(
+    (f) => !terminalKeys.has(findingIdentityKey(f)),
   );
+  const live = liveDispositionsForFindings(liveFindings);
+  const fixPacketBody =
+    opts?.fixPacketBody ??
+    (liveFindings.length > 0
+      ? liveFindings
+          .map(
+            (f) =>
+              `${f.severity} ${f.category} @ ${f.location}: ${f.claim_quote}`,
+          )
+          .join("\n")
+      : "fixture judge continue: live findings remain");
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: [...kills, ...suppresses, ...live],
     findings: [...findings],
+    fixPacketBody,
     ...(opts?.advanceCoder !== undefined
       ? { advanceCoder: opts.advanceCoder }
       : {}),
@@ -146,6 +160,7 @@ export function liveCmrJudgeContinue(
             status: "continue",
             findingDispositions: liveDispositionsForOpenCount(count, []),
             findings: [],
+            fixPacketBody: `fixture family continue: ${count} live finding(s)`,
           } as JudgeResult)
         : judgeContinue([]);
   return {

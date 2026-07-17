@@ -76,10 +76,11 @@
 数量清零 / 轮数阈值等机械规则；切片外设计决策、要 owner 批文的
 suppress，同样走上抛。
 
-**送修正文由你执笔**——判词即包，runner 原样搬运。首轮可薄：finding +
-authority 锚点 + 边界；有病史则综合：病史全列（各代修法及其死因）、
-方向可钉（连败即纠偏例外）、拆除清单明文。交卷 schema 尚未承载判词
-正文时，综合单经上抛（`escalate`）履行：park 携单、采纳后 resume。
+**送修正文由你执笔**——判词即包，runner 原样搬运（ADR 0138）。continue
+交卷必携非空 `fixPacketBody`（判词正文）；runner 唯一路径=将该正文逐字
+入包，不组裸 finding 行。首轮可薄：finding + authority 锚点 + 边界；有
+病史则综合：病史全列（各代修法及其死因）、方向可钉（连败即纠偏例外）、
+拆除清单明文。
 
 修复面审计：跨修复轮时维护一张短修复台账（留在轮次记录 / opaque
 cargo，runner 不读），每个采纳的修复只记一类——`original-defect`
