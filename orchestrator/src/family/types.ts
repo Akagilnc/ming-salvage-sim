@@ -372,6 +372,9 @@ export interface FamilyLedgerEntry {
    * Also: #930 family judge session id on `cmr_reviewed` / `cmr_passed` rows so
    * the same court can resume across fix rounds (or seed priorJudgeVerdicts
    * after session loss — same shape as single-slice #925).
+   *
+   * Also: #979 family coder-fix session id on `cmr_fix_committed` rows so the
+   * same fix chain resumes across rounds (ledger sole truth; absent → fresh).
    */
   readonly sessionId?: string;
   /**
