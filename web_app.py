@@ -1517,12 +1517,17 @@ class WebGame:
             truths = mindreading_payload.get("truths") if isinstance(mindreading_payload, dict) else None
             if not isinstance(truths, dict) or not truths:
                 raise RuntimeError("读心 payload 为空或缺少真相投影")
-        self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        # Durable chat_turn message ids first, then memory history.  Publishing
+        # history before append/update opens a race: observers see the minister
+        # reply while can_undo_last_chat_turn is still false (#976 hold path
+        # lengthens append_chat_message; background stream + early assert flaked
+        # and tore down the shared DB under the worker → SIGSEGV).
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
+        self.chat_history[minister_name].append({"role": "minister", "content": answer})
         return {
             "minister": minister_name,
             "answer": answer,
