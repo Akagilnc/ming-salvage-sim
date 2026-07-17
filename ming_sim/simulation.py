@@ -333,10 +333,11 @@ def build_simulator_payload(
     # orders.  Keep them on a separately named public rail; never pre-load
     # secret-order prose into the monthly judge.
     grouped_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
+    # Trust augment's Dict[str, list] contract — shape errors must fail loud.
     due_commitments = [
-        item for group in (grouped_orders.values() if isinstance(grouped_orders, dict) else [])
-        for item in (group if isinstance(group, list) else [])
-        if isinstance(item, dict) and item.get("entry_kind") == "due_commitment"
+        item for group in grouped_orders.values()
+        for item in group
+        if item.get("entry_kind") == "due_commitment"
     ]
     active = db.list_active_issues()
     issues_payload = [

@@ -86,7 +86,8 @@ def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
     count = db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
     ).fetchone()[0]
-    assert raised or count == 0
+    # #883 write seam raises ValueError on secret_order kind/source_id (loud reject).
+    assert raised
     assert count == 0
     bodies = [
         row["body"]
