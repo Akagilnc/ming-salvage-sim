@@ -844,8 +844,6 @@ export async function runOnlineReviewLoopStage(
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
-  /** Consecutive poll cycles blocked only on pending CI (not fixer rounds). */
-  let pendingCiPolls = 0;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -935,11 +933,9 @@ export async function runOnlineReviewLoopStage(
           landing.onlineReviewSnapshot,
         )
       ) {
-        pendingCiPolls += 1;
         await sleepPendingCiPollInterval();
         continue;
       }
-      pendingCiPolls = 0;
 
       // #940: side effects are worker-owned — host only reads opaque cargo for
       // fixer landing (identity keys / threads), never for routing.
