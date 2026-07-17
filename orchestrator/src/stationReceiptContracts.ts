@@ -174,6 +174,21 @@ function asRecord(raw: unknown): ContractResult<Record<string, unknown>> {
 
 const nonEmptyString = z.string().trim().min(1);
 
+/**
+ * ADR 0138 / #978 — non-transforming non-empty string for `fixPacketBody`.
+ * Rejects empty / all-whitespace without rewriting content (no `.trim()`
+ * transform). Verbatim transport requires byte-stable round-trip.
+ */
+const nonEmptyStringVerbatim = z.string().superRefine((value, ctx) => {
+  if (value.length === 0 || value.trim().length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "fixPacketBody must be non-empty (whitespace-only rejected; content not trimmed)",
+    });
+  }
+});
+
 /** Optional cargo pointer: absent/undefined ok; empty string rejected. */
 const cargoPointerSchema = nonEmptyString.optional();
 
@@ -456,7 +471,8 @@ const judgeContinueFields = {
   findingDispositions: z.array(findingDispositionSchema),
   // ADR 0138 / #978: 判词即包 — required non-empty traffic field; runner
   // transports verbatim and never packs bare findings as a second path.
-  fixPacketBody: nonEmptyString,
+  // Verbatim schema: do not trim/rewrite whitespace (P1).
+  fixPacketBody: nonEmptyStringVerbatim,
   advanceCoder: nonEmptyString.optional(),
   cargoPointer: cargoPointerSchema,
 } as const;

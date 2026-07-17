@@ -30,7 +30,11 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
+import {
+  isJudgeSeat,
+  materializeLandingFixPacketBody,
+  mintJudgeEscalate,
+} from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -220,17 +224,21 @@ function writeFixFindingsLandingFile(
   // Identity keys stay on the thin control envelope (ctx); never derive packet
   // content from bare findings rows (deleted dual path).
   const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
-  const fixPacketBody =
-    typeof landing?.fixPacketBody === "string" &&
-    landing.fixPacketBody.trim().length > 0
-      ? landing.fixPacketBody
-      : undefined;
+  // Coder-fix (S5) open set requires body; S6 judge re-adjudicate may carry
+  // keys only (not a fix content packet). Shared helper with family writer.
+  const isCoderFixLanding = spec.id === "S5" && spec.kind === "coder";
+  const fixPacketBody = materializeLandingFixPacketBody({
+    fixPacketBody: landing?.fixPacketBody,
+    blockingFindingIdentityKeys: identityKeys,
+    blockingFindingCount: ctx.blockingFindingCount,
+    requireBodyWhenOpen: isCoderFixLanding,
+  });
   writeFileSync(
     landingPath,
     `${JSON.stringify(
       {
         // ADR 0138: sole coder-fix packet content path — verbatim judge body.
-        // Bare `blockingFindings` packing is deleted (no second content channel).
+        // Bare findings packing is deleted (no second content channel).
         ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
         ...(rawReviewerArtifacts !== undefined
           ? { rawReviewerArtifacts }

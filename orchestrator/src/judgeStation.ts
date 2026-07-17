@@ -404,6 +404,47 @@ export function requireFixPacketBody(output: {
   return output.fixPacketBody;
 }
 
+/**
+ * ADR 0138 / #978 — single helper for coder-fix landing writers (single-slice
+ * `dispatchWorker` + family `writeFamilyFixFindingsFile`).
+ *
+ * - Present non-empty body → return **verbatim** (no trim rewrite).
+ * - Open set present (keys length > 0 or count > 0) without usable body and
+ *   `requireBodyWhenOpen` (default true for coder-fix) → fail loud (no
+ *   soft-omit second channel).
+ * - No open set / keys-only re-adjudicate (`requireBodyWhenOpen: false`) /
+ *   raw-artifacts-only → `undefined` (not a fixer content packet).
+ */
+export function materializeLandingFixPacketBody(input: {
+  readonly fixPacketBody?: unknown;
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  readonly blockingFindingCount?: number;
+  /**
+   * Coder-fix content landings default true. S6 judge re-adjudicate landings
+   * that carry identity keys without a fix packet set this false.
+   */
+  readonly requireBodyWhenOpen?: boolean;
+}): string | undefined {
+  const keysLen = input.blockingFindingIdentityKeys?.length ?? 0;
+  const count = input.blockingFindingCount ?? 0;
+  const hasOpenSet = keysLen > 0 || count > 0;
+  const requireBody = input.requireBodyWhenOpen !== false;
+  const raw =
+    typeof input.fixPacketBody === "string" ? input.fixPacketBody : undefined;
+  const usable =
+    raw !== undefined && raw.length > 0 && raw.trim().length > 0
+      ? raw
+      : undefined;
+  if (usable !== undefined) return usable;
+  if (hasOpenSet && requireBody) {
+    throw new Error(
+      "coder-fix landing missing non-empty fixPacketBody with live open set " +
+        "(ADR 0138; no bare-findings fallback / no soft-omit)",
+    );
+  }
+  return undefined;
+}
+
 /** Convenience: build a continue verdict table from live finding rows. */
 export function liveDispositionsForFindings(
   findings: ReadonlyArray<Finding>,

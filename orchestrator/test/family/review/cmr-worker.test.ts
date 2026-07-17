@@ -1957,10 +1957,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
 
     await expect(
-      be.dispatchWorker(familyCoderFixWorkerSpec(), {
-        familyBase: "fb",
-        blockingFindingIdentityKeys: ["cmr-key-1"],
-      }),
+      be.dispatchWorker(
+        familyCoderFixWorkerSpec(),
+        {
+          familyBase: "fb",
+          blockingFindingIdentityKeys: ["cmr-key-1"],
+        },
+        { fixPacketBody: "live: cmr-key-1 (ADR 0138 explicit body)" },
+      ),
     ).rejects.toThrow("outcome landing failed");
     expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
   });
@@ -2096,6 +2100,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       kind: "judge",
       status: "continue",
       findingDispositions: [{ identityKey: "__open_1", action: "live" as const }],
+      // ADR 0138: continue requires authored body (no empty invent at projection).
+      fixPacketBody: "live: __open_1 (fixture continue packet)",
       findings: [],
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,

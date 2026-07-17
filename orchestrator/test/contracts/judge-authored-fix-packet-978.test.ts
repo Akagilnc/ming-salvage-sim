@@ -3,10 +3,12 @@
  * runner transports it verbatim; bare findings packing path is deleted.
  *
  * Seams:
- * 1. Continue schema requires non-empty `fixPacketBody` (traffic)
+ * 1. Continue schema requires non-empty `fixPacketBody` (traffic; non-transforming)
  * 2. Pure requireFixPacketBody — verbatim / loud empty
- * 3. Landing write carries body only (no blockingFindings pack)
+ * 3. Landing write carries body only (no blockingFindings pack); open set without
+ *    body fails loud via shared materializeLandingFixPacketBody
  * 4. Residual dual-path ban: source scan for bare findings pack sites
+ * 5. Souls + ADR authority path present
  */
 
 import { describe, expect, it } from "vitest";
@@ -22,6 +24,7 @@ import {
 } from "../../src/dispatchWorker.js";
 import {
   judgeResultFromVerdict,
+  materializeLandingFixPacketBody,
   requireFixPacketBody,
 } from "../../src/judgeStation.js";
 import {
@@ -37,6 +40,7 @@ import type {
 } from "../../src/types.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const REPO_ROOT = join(ROOT, "..");
 
 const SAMPLE_BODY =
   "live: correctness|src/x.ts:1|claim\n" +
@@ -87,6 +91,40 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
     }
   });
 
+  it("continue schema preserves leading/trailing whitespace verbatim (P1)", () => {
+    // nonEmptyString.trim() would rewrite; fixPacketBody must not.
+    const body = "  keep leading and trailing  \nline2";
+    const verdict: JudgeVerdict = {
+      station: "judge",
+      status: "continue",
+      findingDispositions: [
+        { identityKey: "correctness|src/x.ts:1|claim", action: "live" },
+      ],
+      fixPacketBody: body,
+    };
+    const decoded = decodeJudgeVerdict(encodeJudgeVerdict(verdict));
+    expect(decoded.ok).toBe(true);
+    if (decoded.ok) {
+      expect(decoded.value).toMatchObject({ fixPacketBody: body });
+      expect(
+        (decoded.value as { fixPacketBody: string }).fixPacketBody,
+      ).toBe(body);
+    }
+    // Direct decode path (SO / raw) also non-transforming.
+    const raw = decodeJudgeVerdict({
+      station: "judge",
+      status: "continue",
+      findingDispositions: [
+        { identityKey: "correctness|src/x.ts:1|claim", action: "live" },
+      ],
+      fixPacketBody: body,
+    });
+    expect(raw.ok).toBe(true);
+    if (raw.ok) {
+      expect((raw.value as { fixPacketBody: string }).fixPacketBody).toBe(body);
+    }
+  });
+
   it("requireFixPacketBody returns body verbatim (positive)", () => {
     const body = "  keep leading and trailing  \nline2";
     expect(
@@ -126,6 +164,37 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
       status: "continue",
       fixPacketBody: SAMPLE_BODY,
     });
+  });
+
+  it("materializeLandingFixPacketBody is shared fail-loud helper (S3)", () => {
+    // Verbatim when present.
+    expect(
+      materializeLandingFixPacketBody({
+        fixPacketBody: "  body with spaces  ",
+        blockingFindingIdentityKeys: ["k1"],
+      }),
+    ).toBe("  body with spaces  ");
+
+    // Open set without body → fail loud (no soft-omit).
+    expect(() =>
+      materializeLandingFixPacketBody({
+        blockingFindingIdentityKeys: ["k1"],
+      }),
+    ).toThrow(/fixPacketBody|open set|ADR 0138/i);
+    expect(() =>
+      materializeLandingFixPacketBody({
+        fixPacketBody: "   ",
+        blockingFindingCount: 1,
+      }),
+    ).toThrow(/fixPacketBody|open set|ADR 0138/i);
+
+    // Raw-only / empty open set without body → omit (allowed).
+    expect(
+      materializeLandingFixPacketBody({
+        blockingFindingIdentityKeys: [],
+        blockingFindingCount: 0,
+      }),
+    ).toBeUndefined();
   });
 
   it("S5 landing packet body is byte-identical to judge fixPacketBody (contract)", async () => {
@@ -218,14 +287,13 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
     }
   });
 
-  it("S5 landing without fixPacketBody does not resurrect bare findings packing", async () => {
+  it("S5 landing with open set and no fixPacketBody fails loud (S3)", async () => {
     const worktree: WorktreeHandle = {
       branch: "feat/978-empty",
       base: "main",
       path: mkdtempSync(join(tmpdir(), "978-empty-packet-")),
     };
     const stateDir = mkdtempSync(join(tmpdir(), "978-empty-packet-ledger-"));
-    let observedLanding: unknown;
     const finding: Finding = {
       severity: "high",
       category: "correctness",
@@ -234,6 +302,72 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
       suggested_fix: "gone",
       action: "fix_now",
     };
+    const backend: Backend = {
+      async smokeModelRoute(route) {
+        return route;
+      },
+      async findResumeState() {
+        return undefined;
+      },
+      async resumeSession() {
+        throw new Error("not expected");
+      },
+      async fetchIssueMeta() {
+        throw new Error("not expected");
+      },
+      async prepareWorktree() {
+        throw new Error("not expected");
+      },
+      async runStep() {
+        throw new Error("runStep must not be reached when landing lacks body");
+      },
+      async writeLedger() {},
+    };
+    const spec: WorkerSpec = {
+      id: "S5",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "/tdd",
+      promptFile: "coder_fix.md",
+      maxIter: 1,
+      model: "gpt-5.6-sol",
+      soul: "coder",
+      toolchain: [],
+    };
+
+    try {
+      await expect(
+        legacyDispatchWorker(
+          backend,
+          spec,
+          {
+            worktree,
+            stateDir,
+            blockingFindingIdentityKeys: [
+              "correctness|src/y.ts:1|must not become packet body",
+            ],
+            blockingFindingCount: 1,
+          },
+          { blockingFindings: [finding] },
+        ),
+      ).rejects.toThrow(/fixPacketBody|open set|ADR 0138/i);
+    } finally {
+      rmSync(worktree.path, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("S5 raw-only landing (no open set) omits body without resurrecting bare findings", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "feat/978-raw-only",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "978-raw-only-")),
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "978-raw-only-ledger-"));
+    let observedLanding: unknown;
     const backend: Backend = {
       async smokeModelRoute(route) {
         return route;
@@ -280,15 +414,13 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
         {
           worktree,
           stateDir,
-          blockingFindingIdentityKeys: ["correctness|src/y.ts:1|must not become packet body"],
-          blockingFindingCount: 1,
+          blockingFindingIdentityKeys: [],
+          blockingFindingCount: 0,
         },
-        { blockingFindings: [finding] },
+        { blockingFindings: [] },
       );
       expect(observedLanding).toEqual({
-        blockingFindingIdentityKeys: [
-          "correctness|src/y.ts:1|must not become packet body",
-        ],
+        blockingFindingIdentityKeys: [],
       });
       expect(
         (observedLanding as { blockingFindings?: unknown }).blockingFindings,
@@ -302,9 +434,7 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
     }
   });
 
-  it("source ban: writeFixFindings / family fix landing do not pack blockingFindings rows", () => {
-    // Residual dual-path ban — if someone reintroduces
-    // `blockingFindings: landing?.blockingFindings ?? []` the contract fails.
+  it("source ban: dual landing writers share helper; no bare findings pack reintro", () => {
     const dispatchSrc = readRepoFileSync(
       join(ROOT, "src/dispatchWorker.ts"),
       "utf8",
@@ -313,16 +443,56 @@ describe("#978 ADR 0138 judge-authored fix packet", () => {
       join(ROOT, "src/family/realFamilyBackend.ts"),
       "utf8",
     );
+    const dogfoodSrc = readRepoFileSync(
+      join(ROOT, "src/dogfoodReplay.ts"),
+      "utf8",
+    );
+    const fixerSoul = readRepoFileSync(
+      join(ROOT, "image/souls/fixer.md"),
+      "utf8",
+    );
+
+    // Strengthened dual-path ban (nit): any landing assignment of bare findings
+    // rows as packet content, or soft invent of empty body at projection.
     expect(dispatchSrc).not.toMatch(
-      /blockingFindings:\s*findingsRows|blockingFindings:\s*landing\?\.blockingFindings/,
+      /blockingFindings\s*:\s*(findingsRows|landing\?\.blockingFindings|\[\s*\])/,
+    );
+    expect(dispatchSrc).not.toMatch(
+      /landing\?\.blockingFindings\s*\?\?\s*\[\]/,
     );
     expect(familySrc).not.toMatch(
-      /blockingFindings:\s*landing\?\.blockingFindings\s*\?\?\s*\[\]/,
+      /blockingFindings\s*:\s*(findingsRows|landing\?\.blockingFindings|\[\s*\])/,
     );
-    // Positive: both writers must materialise fixPacketBody.
+    expect(familySrc).not.toMatch(
+      /landing\?\.blockingFindings\s*\?\?\s*\[\]/,
+    );
+    // S2: never invent empty string for missing fixPacketBody.
+    expect(familySrc).not.toMatch(
+      /fixPacketBody\s*:\s*(?:typeof[^?\n]*\?\s*[^:\n]*:\s*[\"'][\"']|[\"'][\"'])/,
+    );
+    // S3: both writers must call the shared helper (not dual soft-omit clones).
+    expect(dispatchSrc).toMatch(/materializeLandingFixPacketBody/);
+    expect(familySrc).toMatch(/materializeLandingFixPacketBody/);
+    // Positive: both writers materialise fixPacketBody.
     expect(dispatchSrc).toMatch(/fixPacketBody/);
     expect(familySrc).toMatch(/fixPacketBody/);
-    // Smoke that ADR file exists on main copy optional — production code is the proof.
-    expect(existsSync(join(ROOT, "src/judgeStation.ts"))).toBe(true);
+
+    // Dogfood: no findings→body mint inside judge continue helper.
+    expect(dogfoodSrc).not.toMatch(
+      /findings\s*\.\s*map\s*\([\s\S]{0,120}claim_quote[\s\S]{0,80}\.join/,
+    );
+    expect(dogfoodSrc).toMatch(
+      /requires explicit non-empty fixPacketBody/,
+    );
+
+    // S1: fixer soul teaches sole content = landing fixPacketBody verbatim.
+    expect(fixerSoul).toMatch(/fixPacketBody/);
+    expect(fixerSoul).toMatch(/ADR 0138|0138/);
+    expect(fixerSoul).toMatch(/原样|verbatim|逐字/);
+
+    // P2: ADR authority path present in worktree.
+    expect(
+      existsSync(join(REPO_ROOT, "docs/adr/0138-judge-authored-fix-packet.md")),
+    ).toBe(true);
   });
 });

@@ -2310,12 +2310,16 @@ describe("#369 legacy S5 landing file", () => {
           source: "human",
         },
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:1|fix me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(result.kind).toBe("completed");
     expect(observedLanding).toEqual({
-      // ADR 0138: bare blockingFindings packing deleted; keys + transport only.
+      // ADR 0138: bare findings packing deleted; body + keys + transport only.
+      fixPacketBody: "live: correctness|src/x.ts:1|fix me",
       blockingFindingIdentityKeys: ["correctness|src/x.ts:1|fix me"],
       escalationAnswer: {
         event: "escalation_answered",
@@ -2391,7 +2395,10 @@ describe("#369 legacy S5 landing file", () => {
         blockingFindingIdentityKeys: ["correctness|src/x.ts:2|mount me"],
         blockingFindingCount: 1,
       },
-      { blockingFindings: [finding] },
+      {
+        fixPacketBody: "live: correctness|src/x.ts:2|mount me",
+        blockingFindings: [finding],
+      },
     );
 
     expect(observedLanding).toEqual({
