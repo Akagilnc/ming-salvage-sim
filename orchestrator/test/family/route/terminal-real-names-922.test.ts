@@ -225,7 +225,11 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/922-base",
       verifyCmr: async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-        if (input.phase === "wave") return { ok: true, ran: true };
+        // #961: wave + incremental IC checkpoint green; final barrier is the
+        // stage-named terminal under test.
+        if (input.phase === "wave" || input.phase === "correctness_checkpoint") {
+          return { ok: true, ran: true };
+        }
         await input.familyBackend.appendFamilyLedger({
           status: "aborted",
           event: "aborted",
@@ -305,7 +309,8 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       // Real runVerifyCmr — no injection.
     });
     assertStageTerminal(result, "cmr_failed");
-    expect(result.failedPhase).toBe("final");
+    // #961: missing CMR fails the incremental IC checkpoint first.
+    expect(result.failedPhase).toBe("correctness_checkpoint");
   });
 });
 

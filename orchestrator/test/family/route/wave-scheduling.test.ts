@@ -436,6 +436,9 @@ describe("#294/#938 acceptance 3 — residual blocked_by cycle (no silent empty 
       familyBackend,
       singleSliceBackend,
       familyBase: "family/291-base",
+      // Stub verify/IC so residual-cycle detection is not masked by a missing-CMR
+      // checkpoint failure on this bare FakeFamilyBackend (#961).
+      verifyCmr: async () => ({ ok: true, ran: true }),
     });
     // ID-009: cycle does not block already-runnable components.
     expect(familyBackend.mergeOrder).toEqual([99]);
