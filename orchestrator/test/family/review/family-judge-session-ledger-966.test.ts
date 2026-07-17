@@ -13,12 +13,26 @@
  *   3. Two consecutive family CMR rounds: round-2 judge resumes round-1 session
  *      (grok seat is resume-capable — #955 sessionStorage)
  *   4. Fresh fallback when session truly absent stays (priorJudgeVerdicts only)
+ *   5. Production runCmrWorker forwards resumeSession into Sandcastle when
+ *      ctx.resumeSessionId is set and the seat is resume-capable
  */
 
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { findingIdentityKey } from "../../../src/findings.js";
+import type * as sc from "@ai-hero/sandcastle";
+
+import { cmrWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
+import {
+  RealFamilyBackend,
+  type CmrAuth,
+} from "../../../src/family/realFamilyBackend.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import { familyJudgeResumeSessionIdFromPriorRows } from "../../../src/judgeStation.js";
 import { resumeCapableForSlug } from "../../../src/modelRegistry.js";
 import {
   resolveActiveModelRoute,
@@ -46,13 +60,42 @@ import {
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 
+const here = dirname(fileURLToPath(import.meta.url));
+const realPromptsDir = join(here, "..", "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
+
 const FINDING = sampleFinding(
   "family open claim 966",
   "orchestrator/src/family/verifyCmr.ts:966",
 );
-const FINDING_KEY = findingIdentityKey(FINDING);
 const ROUND1_SESSION = "judge-sess-round1-966";
 const GROK_SLUG = "grok-4.5";
+
+const cleanups: string[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) {
+    const p = cleanups.pop();
+    if (p !== undefined) rmSync(p, { recursive: true, force: true });
+  }
+});
+
+function mkDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(d);
+  return d;
+}
+
+function realRepo966(): string {
+  const repo = mkDir("966-cmr-repo-");
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
+    cwd: repo,
+  });
+  execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+  return repo;
+}
 
 function completedJudge(output: JudgeResult, sessionId?: string): WorkerResult {
   return {
@@ -201,8 +244,37 @@ async function grokCmrRoute() {
 }
 
 describe("#966 family judge session from ledger", () => {
-  it("registry truth: grok-4.5 is resume-capable (#955 sessionStorage path)", () => {
-    expect(resumeCapableForSlug(GROK_SLUG)).toBe(true);
+  it.each([
+    {
+      name: "empty rows → undefined",
+      rows: [] as ReadonlyArray<{ sessionId?: string }>,
+      expected: undefined,
+    },
+    {
+      name: "blank / empty sessionId skipped",
+      rows: [{ sessionId: "" }, {}],
+      expected: undefined,
+    },
+    {
+      name: "latest non-empty wins",
+      rows: [
+        { sessionId: "sess-old" },
+        { sessionId: "sess-mid" },
+        { sessionId: "sess-latest" },
+      ],
+      expected: "sess-latest",
+    },
+    {
+      name: "trailing missing uses earlier non-empty",
+      rows: [
+        { sessionId: "sess-kept" },
+        { sessionId: "" },
+        {},
+      ],
+      expected: "sess-kept",
+    },
+  ])("familyJudgeResumeSessionIdFromPriorRows: $name", ({ rows, expected }) => {
+    expect(familyJudgeResumeSessionIdFromPriorRows(rows)).toBe(expected);
   });
 
   it("two consecutive final CMR rounds: round-2 judge resumes round-1 session (ledger)", async () => {
@@ -308,5 +380,98 @@ describe("#966 family judge session from ledger", () => {
     expect(opens[0]?.session).toBe("fresh");
     expect(opens[1]?.session).toBe("fresh");
     expect(opens[1]?.resumeSessionId).toBeUndefined();
+  });
+
+  it("production runCmrWorker passes Sandcastle resumeSession when ctx carries resumeSessionId", async () => {
+    // MUST F1: verifyCmr → ctx.resumeSessionId is necessary but not sufficient —
+    // RealFamilyBackend.runCmrWorker must thread resumeSession into sc.run options
+    // (same field single-slice resumeSession uses). Mock FamilyBackend only proves
+    // ctx shape; this traps the real production sandbox options object.
+    // Default cmr seat is codex (resume-capable); claudeToken-only auth preflight
+    // is enough for that provider (unlike grok, which needs grokAuthDir).
+    const spec = cmrWorkerSpec("resume", "completeness");
+    expect(resumeCapableForSlug(spec.model)).toBe(true);
+    const repo = realRepo966();
+    const runs: Array<Parameters<typeof sc.run>[0]> = [];
+    class Backend extends RealFamilyBackend {
+      public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
+        return this.runCmrWorker(workerSpec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runs.push(options);
+        return {
+          branch: "fb",
+          stdout: "",
+          commits: [],
+          iterations: [{ sessionId: ROUND1_SESSION }],
+          output: { station: "judge", status: "converged" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("966-cmr-resume-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    await be.run(spec, {
+      familyBase: "fb",
+      cmrPass: "completeness",
+      resumeSessionId: ROUND1_SESSION,
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.resumeSession).toBe(ROUND1_SESSION);
+  });
+
+  it("production runCmrWorker keeps fresh Sandcastle open when no resumeSessionId", async () => {
+    const repo = realRepo966();
+    const runs: Array<Parameters<typeof sc.run>[0]> = [];
+    class Backend extends RealFamilyBackend {
+      public run(workerSpec: WorkerSpec, ctx: DispatchContext) {
+        return this.runCmrWorker(workerSpec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runs.push(options);
+        return {
+          branch: "fb",
+          stdout: "",
+          commits: [],
+          iterations: [{ sessionId: "fresh-sess-966" }],
+          output: { station: "judge", status: "converged" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("966-cmr-fresh-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    await be.run(cmrWorkerSpec("fresh", "completeness"), {
+      familyBase: "fb",
+      cmrPass: "completeness",
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.resumeSession).toBeUndefined();
   });
 });
