@@ -7393,10 +7393,18 @@ def apply_score_extraction(
                 # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
                 # event — re-true each month must not mint another public row.
                 disclosure_prefix = f"secret_order_disclosure:{real_id}:"
+                # LIKE treats `_`/`%` as wildcards; escape the literal prefix
+                # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
+                like_prefix = (
+                    disclosure_prefix
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
                 already_disclosed = db.conn.execute(
                     "SELECT 1 FROM character_knowledge_events "
-                    "WHERE character_name='' AND source_id LIKE ? LIMIT 1",
-                    (f"{disclosure_prefix}%",),
+                    "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+                    (f"{like_prefix}%",),
                 ).fetchone()
                 if already_disclosed is None:
                     db.record_public_knowledge_event(
