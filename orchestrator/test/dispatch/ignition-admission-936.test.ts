@@ -327,6 +327,58 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(cloneCalls).toBe(0);
   });
 
+  it("public family driver aggregates parent + child Coder-Rec failures once (no parent short-circuit)", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    let cloneCalls = 0;
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          { number: 935, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+          { number: 936, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (joined.includes("dependencies/blocked_by")) return "[]";
+      if (joined.includes("issue view")) {
+        const issue = Number(args[2]);
+        // Parent + both children malformed — inventory must list all three.
+        const body =
+          issue === 934
+            ? "Coder-Rec: missing-parent-model"
+            : issue === 935
+              ? "Coder-Rec: missing-model-a"
+              : issue === 936
+                ? "Coder-Rec: missing-model-b"
+                : "Coder-Rec: terra@med";
+        return JSON.stringify({ number: issue, body, author: { login: "Akagilnc" } });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936-parent-child",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("parent+child Coder-Rec aggregate must precede clone");
+      },
+    });
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.diagnosis).toMatch(/3 errors/);
+    expect(result.escalation?.diagnosis).toContain("issue #934");
+    expect(result.escalation?.diagnosis).toContain("issue #935");
+    expect(result.escalation?.diagnosis).toContain("issue #936");
+    expect(cloneCalls).toBe(0);
+  });
+
   it("public family driver: final Coder-Rec route smoke fails before worksite creation", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new CountingBackend();

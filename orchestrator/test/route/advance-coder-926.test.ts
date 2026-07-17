@@ -333,6 +333,35 @@ describe("#926 behavior: runner executes advance_coder", () => {
     ).toBe(false);
   });
 
+  it("NEGATIVE: judge advance writeLedger failure surfaces record_persist_failed (not fail-open)", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class FailAdvanceWriteBackend extends AdvanceCoderBackend {
+      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "coder_advance") {
+          throw new Error("disk full on advance marker");
+        }
+        return super.writeLedger(entry);
+      }
+    }
+    const backend = new FailAdvanceWriteBackend([
+      {
+        kind: "continue",
+        findings: [sampleFinding()],
+        advanceCoder: "sol@med",
+      },
+      { kind: "converged" },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 9267, backend });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason ?? "").toMatch(
+      /record_persist_failed.*coder_advance/i,
+    );
+    // Must not continue the run after durable advance truth was lost.
+    expect(backend.coderModels.filter((m) => m === "gpt-5.6-sol").length).toBe(
+      0,
+    );
+  });
+
   it("without advanceCoder, multi-round path never mechanically rotates coder", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     // Three continue rounds then converge — pure round count, no judge order.

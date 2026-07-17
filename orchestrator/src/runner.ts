@@ -1495,13 +1495,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   /**
-   * #926 — single bookkeeping write path for advance / stay-put markers.
-   * Disk write is fail-open: in-memory ledger already carries the event.
+   * #926 / #934 ID-005 — single bookkeeping write path for advance / stay-put
+   * markers. Post-worksite route/step truth is required durable: writeLedger
+   * failure surfaces as `record_persist_failed` (not ID-015 telemetry fail-open).
+   * Matches the coder_advance_stay_put audit fail-closed path.
    */
   const persistAdvanceBookkeeping = async (
     marker: LedgerEntry,
     forStep: "S3" | "S6",
-    failOpenLabel: string,
+    label: string,
   ): Promise<void> => {
     ledger.push(marker);
     if (stateDir === undefined) return;
@@ -1517,8 +1519,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stateDir,
       );
     } catch (err) {
-      console.warn(
-        `[orchestrator] #926 ${failOpenLabel} ledger write failed (fail-open): ${
+      throw new Error(
+        `record_persist_failed: coder_advance (${label}): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -3682,14 +3684,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #926: after a judge continue row is durably recorded, execute optional
     // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
     // #919 R1: sole isJudgeSeat membership (no redundant S3||S6 string OR).
+    // #934 ID-005: advance/stay-put ledger write is required durable truth —
+    // persist failure must error-terminate, not continue with lost route truth.
     if (
       isJudgeSeat({ step }) &&
       output?.kind === "judge" &&
       output.status === "continue" &&
       typeof output.advanceCoder === "string"
     ) {
-      // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
-      await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+      try {
+        // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
+        await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+      } catch (err) {
+        return await errorTermination(
+          step,
+          err instanceof Error ? err : new Error(String(err)),
+          { recordInMemory: false, output },
+        );
+      }
     }
 
     // A relay baton is a step-local override. Once its relayed step has
