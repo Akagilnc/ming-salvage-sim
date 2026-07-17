@@ -7,6 +7,7 @@ agy 生成内容非确定、不可断言；但其周围的解析、前缀分派�
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -89,6 +90,35 @@ def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     assert result["excluded_names"] == ["魏忠贤"]
     assert result["excluded_offices"] == ["司礼监"]
     assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
+
+
+def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
+    """Prefix/extract create path must keep full 标题 after formal title-cap removal."""
+    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+    assert len(long_title) > 20
+    canned = json.dumps({
+        "标题": long_title,
+        "内容": "查明事实并回奏。",
+        "承办人": "毕自严",
+        "期限月数": 0,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    captured = {}
+
+    def fake_json_extractor(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        return canned, 1
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
+    result = cb._extract_secret_order(
+        "密令如下：查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员\n查明事实并回奏。",
+        "臣领密旨",
+        "毕自严",
+    )
+    assert result["title"] == long_title
+    assert len(result["title"]) == len(long_title)
+    # Soft guidance only — no hard 字 cap in the extract prompt.
+    assert not re.search(r"\d+字", captured["prompt"])
 
 
 def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
@@ -1275,6 +1305,26 @@ def test_extract_minister_actions_update(monkeypatch):
     assert act["secret_action"] == "更新"
     assert act["order_id"] == 6
     assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
+
+
+def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
+    """Update extract must not silently hard-truncate 新标题 after formal title-cap removal."""
+    import json as _j
+    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+    assert len(long_title) > 20
+    canned = _j.dumps({
+        "密令动作": "更新", "目标密令编号": 6,
+        "新标题": long_title, "新内容": "查明事实并回奏",
+        "期限月数": 3,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    act = cb.extract_minister_actions(
+        "把标题改全些", "臣遵旨",
+        [{"id": 6, "title": "旧标题", "content": "旧内容"}], is_consort=False,
+    )
+    assert act["secret_action"] == "更新"
+    assert act["new_title"] == long_title
+    assert len(act["new_title"]) == len(long_title)
 
 def test_extract_minister_actions_none(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))

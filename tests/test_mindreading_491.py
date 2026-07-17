@@ -265,3 +265,21 @@ def test_mindreading_payload_keeps_reply_boundary_safe_for_ascii_axes(game):
     assert "loyalty=98" not in str(payload)
     assert "ability=12" not in str(payload)
     assert "已略去" in payload["reply_text"]
+
+
+def test_mindreading_reply_text_rejects_approximate_raw_score_prose(game):
+    """Player-visible mindreading reply_text must redline approximate score forms."""
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = "此人忠诚接近40，士气不及20，军心跌破30，能力约70，补给在30左右。"
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    assert "接近40" not in payload["reply_text"]
+    assert "不及20" not in payload["reply_text"]
+    assert "跌破30" not in payload["reply_text"]
+    assert "约70" not in payload["reply_text"]
+    assert "30左右" not in payload["reply_text"]
+    assert "已略去" in payload["reply_text"]
