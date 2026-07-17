@@ -610,8 +610,14 @@ def build_minister_tools(character: Character, context: CourtContext,
         return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
+        # Non-create production pin: latest held user oral for this audience (#976).
+        # stage_pending_action does not auto-pin non-create (pure-public API);
+        # tools must supply explicit origin_chat_message_id when held oral exists.
+        pinned = context.db.attach_secret_oral_pin(
+            character.name, int(context.state.turn), payload,
+        )
         return "__secret_action__" + json.dumps(
-            {"action": action_name, "order_id": int(order_id), "payload": payload},
+            {"action": action_name, "order_id": int(order_id), "payload": pinned},
             ensure_ascii=False,
         )
 

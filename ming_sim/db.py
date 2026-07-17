@@ -8325,6 +8325,27 @@ class GameDB:
             return None
         return mid if mid > 0 else None
 
+    def attach_secret_oral_pin(
+        self,
+        minister_name: str,
+        turn: int,
+        payload: Optional[Mapping[str, object]] = None,
+    ) -> Dict[str, object]:
+        """Production non-create seam: pin latest held user when oral exists (#976).
+
+        ``stage_pending_action`` only auto-pins 新建 (pure-public non-create must
+        not invent bloodline).  Session/tools production paths call this so a
+        live held oral line is explicit pin → commit classify → withheld, never
+        settle-release into shared character_knowledge_sources.
+        """
+        out: Dict[str, object] = dict(payload or {})
+        if self._parse_origin_chat_message_id(out) is not None:
+            return out
+        mid = self._latest_held_user_chat_message_id(minister_name, int(turn))
+        if mid is not None:
+            out["origin_chat_message_id"] = int(mid)
+        return out
+
     def _resolve_secret_oral_pins(
         self,
         state: GameState,
