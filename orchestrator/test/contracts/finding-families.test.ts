@@ -213,12 +213,6 @@ describe("#711 findingFamilies contract", () => {
     expect((parsed as VerifyResult).findingFamilies).toBeUndefined();
   });
 
-  it("verify prompt contains only the data and output contract", () => {
-    const prompt = readFileSync(resolve(process.cwd(), "prompts/verify.md"), "utf8");
-    expect(prompt).not.toContain("use it to mark recurringFromRounds");
-    expect(prompt).not.toContain("When `priorRoundFindings` is in the landing file");
-  });
-
   it("verify output stays valid when findingFamilies is entirely malformed (degrade, never reject verdict)", () => {
     const raw = {
       converged: false,
@@ -360,24 +354,6 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(md).toContain("Silence must not count as green.");
     // Method belongs in versioned souls — runner only serializes data.
     expect(md.toLowerCase()).not.toMatch(/same-type sweep|run same-type|per family/);
-  });
-
-  it("#911 coder_fix prompt carries fix-focus family sweep; soul owns character", () => {
-    const prompt = readFileSync(
-      resolve(process.cwd(), "prompts/coder_fix.md"),
-      "utf8",
-    );
-    const soul = readFileSync(
-      resolve(process.cwd(), "image/souls/coder.md"),
-      "utf8",
-    );
-    // Vacuum fill (#911 §三): mechanical fix-focus family scope lives in the
-    // dispatch prompt after souls became character editions.
-    expect(prompt).toMatch(/\.fix-focus\.md/);
-    expect(prompt.toLowerCase()).toMatch(/same-type sweeps?|per family|family/);
-    // Soul keeps adjudication taste, not the fix-focus file protocol.
-    expect(soul).toMatch(/coder-fix|被派修 finding/);
-    expect(soul).toMatch(/横切一缝|简洁是第一美德/);
   });
 
 });

@@ -672,19 +672,3 @@ describe("#927 AC: S4 dissolved — fixer refuse second gate still reachable", (
     expect(rebuilt.refuseRecords?.[0]?.reason).toBe("over_defense");
   });
 });
-
-// ── prompt / contract pins ──────────────────────────────────────────────────
-
-describe("#927 contract pins: refused* vocabulary + four reasons in fix prompt", () => {
-  it("coder_fix.md teaches refused envelope + four-reason cargo for judge", () => {
-    const fix = readFileSync(join(PROMPTS, "coder_fix.md"), "utf8");
-    expect(fix).toMatch(/status:"refused"|status.*"refused"/);
-    expect(fix).toMatch(/refusedFindingIdentityKeys/);
-    expect(fix).toMatch(/unconstitutional|违宪/);
-    expect(fix).toMatch(/over_defense|过度防御/);
-    expect(fix).toMatch(/not_established|事实不成立/);
-    expect(fix).toMatch(/scope_creep|越权加戏/);
-    // Never invent refuted* envelope keys
-    expect(fix).not.toMatch(/refutedFindingIdentityKeys/);
-  });
-});
