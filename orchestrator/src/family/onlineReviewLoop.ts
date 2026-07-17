@@ -828,7 +828,6 @@ export async function runOnlineReviewLoopStage(
   dispatch: OnlineReviewLoopDispatch,
   opts?: {
     readonly initialRound?: number;
-    readonly initialFixCommitSha?: string;
     /** Durable fixer authorization reconstructed for a post-crash recheck. */
     readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     /** Durable identity-to-thread bindings reconstructed for fixer landing. */

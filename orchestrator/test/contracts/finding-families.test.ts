@@ -676,7 +676,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
       },
       {
         initialRound: 2,
-        initialFixCommitSha: "sha-r1",
         // MERGE ledger + in-process — either/or loses pre-resume history.
         enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
       },

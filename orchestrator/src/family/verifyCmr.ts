@@ -1440,7 +1440,6 @@ export async function runFamilyOnlineReviewLoop(input: {
   },
       {
         initialRound: loopState.round,
-        initialFixCommitSha: loopState.lastFixSha,
         initialFixMarkedFindingIdentityKeys:
           resumedFixAuthorization.fixMarkedFindingIdentityKeys,
         initialFixMarkedFindingThreads:
