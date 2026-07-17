@@ -1,6 +1,6 @@
 /**
  * merger — thin serial `git merge --no-ff` orchestrator (ADR 0022 decision 3②,
- * #293 seam 2).
+ * #293 seam 2). Family Integration Merge Action entry (#934 ID-010 / #938).
  *
  * The family integration of an already-committed child branch into the family
  * base is a branch-to-branch merge — the Sandcastle library has NO such原语
@@ -9,35 +9,24 @@
  * {@link FamilyBackend} seam, with point-LLM conflict resolution layered on
  * LATER — not the native "整段 LLM solves any conflict" approach.
  *
- * #293 did ONLY the no-conflict happy path: merge one reviewed child branch into
- * the family base, then write its `merged` ledger entry (ADR 0022 decision 5:
- * the entry is written ONLY after the merge commit has landed). #295 LAYERS the
- * conflict fallback HERE — without rewriting the family spine, which only ever
- * calls `mergeChild`:
- *
  *   1. DETERMINISTIC `git merge --no-ff` first (`mergeChildIntoFamilyBase`) —
- *      省额度、可重放. This is the inversion of Sandcastle's native "一上来就整段
- *      LLM" merge (ADR 0022 Considered Options「merger 照搬原生整段 LLM」= 否决).
+ *      省额度、可重放.
  *   2. ONLY when that deterministic merge reports a conflict
  *      (`MergeResult.conflicted`) do we route to the POINT-LLM resolver
  *      `resolveMergeConflict` (an agent under the `merger` soul + the
  *      `resolving-merge-conflicts` skill — see prompts/merger_resolve_conflict.md).
- *      "仅冲突才上 LLM" (acceptance 2).
+ *      Production/test contract guarantees the resolver exists (ID-010).
  *   3. The LLM resolution is NEVER silent: the returned result is flagged
  *      `conflictResolvedByLlm` so the downstream family verify + integrated cmr
- *      (#296) can审 it ("不静默吞", acceptance 3). The merged ledger entry is
- *      written ONLY AFTER a clean OR an LLM-resolved merge lands (decision 5).
- *   4. If the resolver CANNOT resolve — it throws, OR returns a result that is
- *      still `conflicted` — the merger surfaces it (propagates / throws) and NO
- *      `merged` ledger entry is written; an unresolved conflict must never look
- *      like a clean merge. The conflicting merge is left on the family base +
- *      ledger for triage, not swallowed. The resolver seam is OPTIONAL: a
- *      backend that never conflicts need not implement it, and a conflict on a
- *      resolver-less backend fails loud (never silently merges) too.
+ *      (#296) can审 it ("不静默吞"). The merged ledger entry is written ONLY AFTER
+ *      a clean OR an LLM-resolved merge lands (decision 5).
+ *   4. #938 / ID-010: the Action converges the merger worker's completed/raise
+ *      outcome once — no host still-conflicted re-dispatch court / mechanical
+ *      cap. Process-root transport retry lives inside the worker dispatch leg
+ *      (ID-004), not here.
  */
 
 import { recordMerged } from "./ledger.js";
-import { MAX_DISPATCH_ATTEMPTS } from "../dispatchRetry.js";
 import type { FamilyBackend, MergeRequest, MergeResult } from "./types.js";
 
 /**
@@ -56,13 +45,7 @@ import type { FamilyBackend, MergeRequest, MergeResult } from "./types.js";
  * #298: that ledger entry is written with the FULL schema (#298 acceptance-1:
  * `{childIssue, childBranch, childHead, familyHeadBefore, familyHeadAfter,
  * status}`), forwarding the SHAs the resolved {@link MergeResult} reports (so a
- * conflict-then-LLM-resolved merge records the POST-resolve SHAs). The earlier
- * thin `{childIssue, status:"merged"}` write left the ledger末条 without a
- * `familyHeadAfter` baseline, which made the crash-window reconcile branch ②
- * (补账) unreachable in production — a crash-window child would be RE-merged,
- * violating acceptance-2 "不双合" (cmr R1: codex-s1 + agy). #295's territory is
- * the conflict path; #298's is this ledger field set — they compose: the full
- * record is written once a clean OR LLM-resolved merge lands.
+ * conflict-then-LLM-resolved merge records the POST-resolve SHAs).
  */
 export async function mergeChild(
   backend: FamilyBackend,
@@ -73,66 +56,35 @@ export async function mergeChild(
 
   let result: MergeResult;
   if (deterministic.conflicted === true) {
-    // 2. CONFLICT → point-LLM resolver (仅冲突才上 LLM). The resolver seam is
-    //    OPTIONAL (a #293-era backend never reaches here). If a conflict IS hit
-    //    on a backend without it, fail LOUD here — BEFORE the ledger write — so
-    //    the conflict is surfaced, never recorded as `merged` ("不静默吞").
-    if (typeof backend.resolveMergeConflict !== "function") {
-      throw new Error(
-        `merge conflict on child #${request.childIssue} but the family backend has no resolveMergeConflict resolver`,
-      );
-    }
-    // A throw from the resolver propagates out of mergeChild BEFORE the ledger
-    // write — an unresolved conflict is surfaced, never recorded as `merged`
-    // (acceptance 3, "不静默吞").
-    let resolved: MergeResult | undefined;
-    for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
-      resolved = await backend.resolveMergeConflict({
-        childIssue: request.childIssue,
-        childBranch: request.childBranch,
-        ...(request.runId !== undefined ? { runId: request.runId } : {}),
-        ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
-      });
-      if (resolved.escalation !== undefined) return resolved;
-      // A normal worker return with Git still unresolved is a STEP failure, not
-      // a run-level exception. Re-dispatch the merger step with the same
-      // in-progress merge, matching the bounded mechanical retry shape used by
-      // worker dispatch. Git truth remains authoritative on every attempt.
-      if (resolved.conflicted !== true) break;
-    }
-    // Exhaustion is deliberately returned to the family spine as a conflicted
-    // step result. It must not reach the ledger writer, and it must not be thrown
-    // here: the spine owns the bounded step park/escalation boundary.
-    if (resolved?.conflicted === true) return resolved;
+    // 2. CONFLICT → point-LLM resolver (仅冲突才上 LLM). Production/test contract
+    //    guarantees resolveMergeConflict (ID-010); process-root transport retry
+    //    is owned by the worker dispatch leg inside that method, not by a host
+    //    still-conflicted re-dispatch loop here.
+    const resolved = await backend.resolveMergeConflict!({
+      childIssue: request.childIssue,
+      childBranch: request.childBranch,
+      ...(request.runId !== undefined ? { runId: request.runId } : {}),
+      ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
+    });
+    // Structured raise / still-conflicted completed outcome: converge once.
+    if (resolved.escalation !== undefined) return resolved;
+    if (resolved.conflicted === true) return resolved;
     // 3. Flag the resolution so the downstream verify + cmr (#296) sees it.
-    result = { ...resolved!, conflictResolvedByLlm: true };
+    result = { ...resolved, conflictResolvedByLlm: true };
   } else {
     // Clean deterministic merge. The merger is the SOLE source of truth for
-    // `conflictResolvedByLlm` (the type's contract: "Set by the merger AFTER a
-    // successful resolve") — so a backend that accidentally stamped the flag on
-    // a clean `mergeChildIntoFamilyBase` result must NOT leak a false
-    // LLM-resolved signal downstream. Pin it to false here.
+    // `conflictResolvedByLlm` — pin false so a backend stamp cannot leak.
     result = { ...deterministic, conflictResolvedByLlm: false };
   }
 
   // 4. Ledger AFTER a clean OR LLM-resolved merge commit is on the base
   //    (decision 5 ordering). Only reached when the merge actually landed.
-  //    #298: write the FULL schema, forwarding the SHAs the resolved
-  //    {@link MergeResult} reports (so a conflict-then-LLM-resolved merge records
-  //    the POST-resolve SHAs). `recordMerged`/`compact` drop any field the
-  //    Backend left undefined (a #293-era Backend → thin entry, unchanged).
   await recordMerged(backend, {
     childIssue: request.childIssue,
     childBranch: request.childBranch,
     childHead: result.childHead,
     familyHeadBefore: result.familyHeadBefore,
     familyHeadAfter: result.familyHead,
-    // #291 缺口 1: forward the LLM-resolved signal onto the DURABLE ledger entry so
-    // the integrated cmr 承重闸 (which reads only the ledger after a context
-    // compaction) sees WHICH children a machine touched its merge of. Only stamp it
-    // on the LLM-resolved path; a clean deterministic merge omits it (back-compat
-    // with the thin #293 entry + the existing recordMerged shape tests). `compact`
-    // drops the field when undefined.
     ...(result.conflictResolvedByLlm === true
       ? { conflictResolvedByLlm: true }
       : {}),

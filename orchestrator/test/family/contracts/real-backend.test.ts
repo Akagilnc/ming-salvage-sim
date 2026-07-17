@@ -3117,7 +3117,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
   it("preserves a merger failure's wave shape through the real backend seam", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
     await b.escalateFamily({
-      reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+      reason: "merger_worker left child #10 conflict unresolved on the family base",
       familyHeadAfter: "conflicted-10",
       escalationKind: "failure",
       phase: "wave",
@@ -3128,7 +3128,7 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
         status: "escalated",
         event: "escalated",
         phase: "wave",
-        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+        reason: "merger_worker left child #10 conflict unresolved on the family base",
         familyHeadAfter: "conflicted-10",
         escalationKind: "failure",
       }),
