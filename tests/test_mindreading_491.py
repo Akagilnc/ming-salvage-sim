@@ -283,3 +283,29 @@ def test_mindreading_reply_text_rejects_approximate_raw_score_prose(game):
     assert "约70" not in payload["reply_text"]
     assert "30左右" not in payload["reply_text"]
     assert "已略去" in payload["reply_text"]
+
+
+def test_mindreading_reply_text_rejects_residual_approx_raw_score_prose(game):
+    """Residual synonym/composition approx forms must redline on the same reply seam."""
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = (
+        "此人忠诚大概40，能力约莫70，军心跌破到30，"
+        "补给大约在30左右，能力差不多是70，忠诚维持在40。"
+    )
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    for leak in (
+        "大概40",
+        "约莫70",
+        "跌破到30",
+        "大约在30左右",
+        "差不多是70",
+        "维持在40",
+    ):
+        assert leak not in payload["reply_text"], (leak, payload["reply_text"])
+    assert "已略去" in payload["reply_text"]
+    assert not any(ch.isdigit() for ch in payload["reply_text"])
