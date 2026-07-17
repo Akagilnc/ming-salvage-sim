@@ -6801,54 +6801,18 @@ class GameDB:
     def append_chat_message(self, minister_name: str, turn: int, role: str, content: str) -> int:
         """召对聊天单条消息落库（chat_messages）。
 
-        #976 写入接缝结构分流：含密令语境的召对在分类落定前不得进入共享
-        ``character_knowledge_sources``。落库策略：
-        - 皇帝 ``user`` 行：一律 hold（待 create_secret_order 分类 / 月末 release）
-        - 大臣回话：无 active 密令简报时立即放行共享轨；有简报时只进接令者私有事件轨
-        识别靠 provenance（role + 接令者身份 + 分类事件），不靠内容匹配。
-
-        Single commit at the end so background stream workers do not interleave
-        partial knowledge writes with chat_turn message-id updates.
+        #976 不变式：分类落定前，**任何**召对行（不分 role）不得进入共享
+        ``character_knowledge_sources``。此处只 insert + hold；投轨唯一出口是
+        ``release_held_audience_knowledge``（分类后 / 月末）。续聊读
+        ``chat_messages`` 本表，不依赖共享投影即时可见。
         """
         cur = self.conn.execute(
             "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
             "VALUES (?, ?, ?, ?, 'held')",
             (minister_name, turn, role, content),
         )
-        message_id = int(cur.lastrowid)
-        if not minister_name or role not in {"user", "assistant", "minister"}:
-            self.conn.commit()
-            return message_id
-        # Emperor speech is potential secret origin — hold until classification.
-        if role == "user":
-            self.conn.commit()
-            return message_id
-        state = self.load_state()
-        source_id = f"chat_message:{message_id}"
-        # Minister speech after an active brief: private participation only
-        # (参与即知 for the assignee; never shared-ledger material).
-        if self._is_active_secret_order_assignee(minister_name):
-            self.record_character_participation(
-                state, [minister_name], "audience", "召对", content,
-                source_id=source_id, commit=False,
-            )
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='private' WHERE id=?",
-                (message_id,),
-            )
-        else:
-            # Pre-classification minister speech: pure public → shared track now.
-            self.record_participation_record(
-                state,
-                {"participants": [minister_name], "title": "召对", "body": content},
-                kind="audience", source_id=source_id, commit=False,
-            )
-            self.conn.execute(
-                "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
-                (message_id,),
-            )
         self.conn.commit()
-        return message_id
+        return int(cur.lastrowid)
 
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
@@ -10187,9 +10151,14 @@ class GameDB:
         """Classify secret-origin audience bloodline for one assignee (#976).
 
         Structural rule (provenance, not content matching): emperor ``user``
-        chat with this assignee is secret-origin bloodline — never released to
-        shared ``character_knowledge_sources``.  Zero-overlap LLM 润稿 is
-        covered because identity is message role + assignee, not text needles.
+        chat with this assignee is secret-origin bloodline — never released
+        (shared or private events).  Zero-overlap LLM 润稿 is covered because
+        identity is message role + assignee, not text needles.
+
+        Minister/assistant held rows for the same assignee are not withheld
+        here: after the brief exists, ``release_held_audience_knowledge`` sends
+        them to the private track only (never shared), so 臣领密旨-class acks
+        cannot residual in character_knowledge_sources.
         """
         name = str(minister_name or "").strip()
         if not name:
@@ -10215,17 +10184,54 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    def _project_audience_chat_message(
+        self,
+        state: GameState,
+        *,
+        message_id: int,
+        minister_name: str,
+        content: str,
+        commit: bool = False,
+    ) -> str:
+        """Single projection seam for one held audience row (#976 DRY).
+
+        Returns the resulting knowledge_status: ``private`` (active secret
+        assignee — participation events only) or ``released`` (shared track).
+        """
+        source_id = f"chat_message:{int(message_id)}"
+        minister = str(minister_name or "").strip()
+        body = str(content or "")
+        if self._is_active_secret_order_assignee(minister):
+            self.record_character_participation(
+                state, [minister], "audience", "召对", body,
+                source_id=source_id, commit=False,
+            )
+            status = "private"
+        else:
+            self.record_participation_record(
+                state,
+                {"participants": [minister], "title": "召对", "body": body},
+                kind="audience", source_id=source_id, commit=False,
+            )
+            status = "released"
+        self.conn.execute(
+            "UPDATE chat_messages SET knowledge_status=? WHERE id=?",
+            (status, int(message_id)),
+        )
+        if commit:
+            self.conn.commit()
+        return status
+
     def release_held_audience_knowledge(
         self,
         *,
         minister_name: Optional[str] = None,
         commit: bool = True,
     ) -> int:
-        """Release held (non-withheld) audience chat into the shared track (#976).
+        """唯一投轨出口：held → shared 或 private（#976）。
 
-        Called at month-end settlement and after secret-order classification so
-        pure public emperor speech that never became a secret still delivers
-        参与即知.  Withheld secret-origin rows are never released.
+        分类后（upsert_secret_order_brief）与月末 settle 调用。withheld 永不放行。
+        接令者 active brief 时只进私有事件轨，不进共享源。
         """
         name_filter = str(minister_name or "").strip()
         try:
@@ -10252,27 +10258,10 @@ class GameDB:
             content = str(row["content"] or "")
             if not minister:
                 continue
-            source_id = f"chat_message:{mid}"
-            # Active-assignee post-brief: private events only, not shared sources.
-            if self._is_active_secret_order_assignee(minister):
-                self.record_character_participation(
-                    state, [minister], "audience", "召对", content,
-                    source_id=source_id, commit=False,
-                )
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='private' WHERE id=?",
-                    (mid,),
-                )
-            else:
-                self.record_participation_record(
-                    state,
-                    {"participants": [minister], "title": "召对", "body": content},
-                    kind="audience", source_id=source_id, commit=False,
-                )
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='released' WHERE id=?",
-                    (mid,),
-                )
+            self._project_audience_chat_message(
+                state, message_id=mid, minister_name=minister, content=content,
+                commit=False,
+            )
             released += 1
         if commit:
             self.conn.commit()
@@ -10324,20 +10313,6 @@ class GameDB:
         )
         if commit:
             self.conn.commit()
-
-    def _has_active_secret_order_brief(self) -> bool:
-        """True when any active/pending secret still has a private assignee brief.
-
-        Private structure flag.  Public archive writers must NOT treat this
-        alone as "refuse all aggregates" (F3); secret content is kept out by
-        structure (#976 hold-and-release + #883 briefs), not text filtering.
-        """
-        row = self.conn.execute(
-            "SELECT 1 FROM secret_order_briefs b "
-            "INNER JOIN secret_orders o ON o.id = b.order_id "
-            "WHERE o.status IN ('active', 'pending_review') LIMIT 1"
-        ).fetchone()
-        return row is not None
 
     def _has_restricted_source_gate(self, has_shared_exclusions: bool) -> bool:
         """Whether public-archive writers must use source-scoped aggregation only.

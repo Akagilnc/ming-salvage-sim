@@ -242,7 +242,11 @@ def test_883_shared_write_seam_refuses_active_assignee_audience(game):
 
 
 def test_883_public_audience_same_turn_survives_secret_classification(game):
-    """F1：接令者同回合先公开后密令时，公开大臣回话 audience 不得被一并吞掉。"""
+    """F1：接令者同回合先公开后密令时，公开大臣回话不得被吞掉（私有事件轨 参与即知）。
+
+    分类后接令者 active → 非 user held 行进 private 轨（非共享）；
+    臣领密旨类应答不得残留共享 sources。
+    """
     db, state, content = game
     assignee, other = _active_ministers(db, content)[:2]
     public_line = "臣报：京营操练如常，无异常。"
@@ -250,12 +254,22 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
         "着尔密访国丈家产虚实，凡田宅典当与内库往来账目，皆须暗中簿记，"
         "不得走漏半句，亦不可经司礼监转呈。"
     )
+    ack = "臣领密旨，即暗中查办。"
     extracted = "暗访国丈田宅典当及内库往来，事密勿使司礼监知。"
 
     db.append_chat_message(assignee.name, state.turn, "user", "近来京营操练如何？")
-    db.append_chat_message(assignee.name, state.turn, "minister", public_line)
+    mid_public = db.append_chat_message(assignee.name, state.turn, "minister", public_line)
     db.append_chat_message(assignee.name, state.turn, "user", secret_chat)
-    db.append_chat_message(assignee.name, state.turn, "minister", "臣领密旨，即暗中查办。")
+    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    # 分类前：大臣回话也 hold，不可见于共享投影。
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
+    ).fetchone()["knowledge_status"] == "held"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_public}",),
+    ).fetchone()[0] == 0
+
     oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
@@ -271,9 +285,18 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
         for item in [*other_view["events"], *other_view.get("public_events", [])]
     )
 
-    # 公开召对仍在共享见闻 / 接令者参与即知面。
-    assert any(public_line in body for body in shared_bodies + event_bodies)
+    # 公开大臣回话：接令者私有事件轨持有（参与即知），不得进共享 sources。
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_public,)
+    ).fetchone()["knowledge_status"] == "private"
     assert public_line in assignee_text
+    assert any(public_line in body for body in event_bodies)
+    assert all(public_line not in body for body in shared_bodies)
+    # 臣领密旨应答：私有轨，绝不残留共享。
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ack,)
+    ).fetchone()["knowledge_status"] == "private"
+    assert all(ack not in body for body in shared_bodies)
     # 密令原话与润稿不得残留共享存储；他臣不得见。
     assert all(secret_chat not in body for body in shared_bodies)
     assert all(extracted not in body for body in shared_bodies)
@@ -283,7 +306,7 @@ def test_883_public_audience_same_turn_survives_secret_classification(game):
 
 
 def test_883_post_brief_paraphrase_audience_never_enters_shared_sources(game):
-    """F2：brief 已存在后，接令者 audience 只进私有事件轨，不进共享源。"""
+    """F2：brief 已存在后，接令者 audience 经 release 只进私有事件轨，不进共享源。"""
     db, state, content = game
     assignee, other = _active_ministers(db, content)[:2]
     marker_body = "密查阉党余孽在京城私结会所并藏匿禁书"
@@ -295,18 +318,20 @@ def test_883_post_brief_paraphrase_audience_never_enters_shared_sources(game):
     assert "密查阉党" not in paraphrase
 
     mid = db.append_chat_message(assignee.name, state.turn, "minister", paraphrase)
-    shared = list(
-        db.conn.execute(
-            "SELECT body, kind FROM character_knowledge_sources WHERE source_id=?",
-            (f"chat_message:{mid}",),
-        ).fetchall()
-    )
-    assert shared == []
+    # 分类后仍 hold，直至 release 单点投轨。
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"] == "held"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0] == 0
+
+    db.release_held_audience_knowledge()
     status = db.conn.execute(
         "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
     ).fetchone()["knowledge_status"]
     assert status == "private"
-    # Private participation for the assignee (参与即知), not shared.
     private = db.conn.execute(
         "SELECT body FROM character_knowledge_events "
         "WHERE character_name=? AND source_id=?",
@@ -428,7 +453,8 @@ def test_883_zero_overlap_semantic_rewrite_withholds_prior_audience_origin(game)
 def test_883_thematic_public_audience_survives_secret_create(game):
     """同主题纯公开召对不得被密令分类误伤（S3 参与即知）。
 
-    公开句与密令 title/body 共享主题词时，大臣公开回话仍应保留在共享源。
+    全 hold 后分类：接令者大臣公开回话进 private 轨（不进共享 sources）；
+    接令者仍从私有事件读到；密令润稿不进他臣面。
     """
     db, state, content = game
     assignee, other = _active_ministers(db, content)[:2]
@@ -436,24 +462,26 @@ def test_883_thematic_public_audience_survives_secret_create(game):
     sec_title = "密查京营操练"
     sec_body = "密查京营兵士点卯虚实，勿使外廷知"
 
-    db.append_chat_message(assignee.name, state.turn, "minister", public_line)
-    before_sources = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE body LIKE ?",
-        (f"%{public_line}%",),
-    ).fetchone()["n"]
-    before_events = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
-        (f"%{public_line}%",),
-    ).fetchone()["n"]
-    assert before_sources >= 1 and before_events >= 1
+    mid = db.append_chat_message(assignee.name, state.turn, "minister", public_line)
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"] == "held"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0] == 0
 
     oid = db.create_secret_order(state, assignee.name, sec_title, sec_body, [])
     assert oid > 0
 
-    after_sources = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources WHERE body LIKE ?",
-        (f"%{public_line}%",),
-    ).fetchone()["n"]
+    status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"]
+    assert status == "private"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0] == 0
     after_events = db.conn.execute(
         "SELECT COUNT(*) AS n FROM character_knowledge_events WHERE body LIKE ?",
         (f"%{public_line}%",),
@@ -469,11 +497,90 @@ def test_883_thematic_public_audience_survives_secret_create(game):
         for item in [*other_view["events"], *other_view.get("public_events", [])]
     )
 
-    assert after_sources >= 1
     assert after_events >= 1
     assert public_line in assignee_text
-    # 密令润稿本身仍不得进他臣共享面
+    assert all(public_line not in body for body in _shared_bodies(db))
     assert sec_body not in other_text
+
+
+def test_976_minister_reply_not_shared_before_classification(game):
+    """#976 must：分类前大臣回话不可见于共享投影（负）。"""
+    db, state, content = game
+    minister = _active_ministers(db, content)[0]
+    reply = "臣报：山东漕运本月起运如常。"
+
+    mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"] == "held"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()[0] == 0
+    assert all(reply not in body for body in _shared_bodies(db))
+    assert all(reply not in body for body in _event_bodies(db))
+
+
+def test_976_pure_public_minister_reply_released_after_settle(game):
+    """#976 must：纯公开召对的大臣回话 settle 后正常放行共享轨（正）。"""
+    db, state, content = game
+    minister = _active_ministers(db, content)[0]
+    reply = "臣报：京营点卯无缺，操练如常。"
+
+    mid = db.append_chat_message(minister.name, state.turn, "minister", reply)
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        narrative="本月朝局平缓。",
+    )
+    status = db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["knowledge_status"]
+    assert status == "released"
+    row = db.conn.execute(
+        "SELECT body FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()
+    assert row is not None and reply in (row["body"] or "")
+
+
+def test_976_assignee_ack_goes_private_not_shared_on_secret_create(game):
+    """#976 must：接令者应答进私有轨；密令简报持有密令正文（正）。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    origin = "着尔密访国丈家产，勿使外廷知。"
+    ack = "臣领密旨，即暗中查办，不敢外泄。"
+    extracted = "暗访国丈家产虚实"
+
+    db.append_chat_message(assignee.name, state.turn, "user", origin)
+    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
+    assert oid > 0
+
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ack,)
+    ).fetchone()["knowledge_status"] == "private"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_ack}",),
+    ).fetchone()[0] == 0
+    private = db.conn.execute(
+        "SELECT body FROM character_knowledge_events "
+        "WHERE character_name=? AND source_id=?",
+        (assignee.name, f"chat_message:{mid_ack}"),
+    ).fetchone()
+    assert private is not None and ack in (private["body"] or "")
+    brief = db.conn.execute(
+        "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    assert brief is not None and extracted in (brief["body"] or "")
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view.get("public_events", [])]
+    )
+    assert ack not in other_text
+    assert origin not in other_text
+    assert extracted not in other_text
 
 
 def test_883_shared_archive_bypass_positive_and_negative(game):
