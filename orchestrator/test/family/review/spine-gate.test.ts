@@ -42,6 +42,7 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import type {
+
   FamilyAbortedEvent,
   FamilyBackend,
   FamilyEpic,
@@ -54,6 +55,7 @@ import type {
   MergeRequest,
   ReconcileGit,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -103,6 +105,18 @@ function makeFamilyDocReleaseRepo(): string {
 }
 
 class CapableFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly merges: MergeRequest[] = [];
   readonly verifyCalls: FamilyVerifyRequest[] = [];
@@ -666,6 +680,18 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
     // ignores the hook's `ran` flag and acts on `ok`, so the hook must fail-safe to
     // ok:false (verify_failed at the final phase) rather than the nothing-ran no-op.
     class VerifyOnlySpineBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       readonly verifyCalls: FamilyVerifyRequest[] = [];
       async mergeChildIntoFamilyBase(c: MergeRequest): Promise<{ familyHead: string }> {

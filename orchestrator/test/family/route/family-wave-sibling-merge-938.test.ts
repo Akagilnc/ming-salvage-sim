@@ -28,6 +28,7 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   ConflictResolveRequest,
   FamilyBackend,
   FamilyEscalation,
@@ -36,6 +37,7 @@ import type {
   MergeRequest,
   MergeResult,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -84,6 +86,18 @@ class SiblingFailBackend extends OkChildBackend {
 }
 
 class RecordingFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   readonly mergeOrder: number[] = [];
   readonly resolverCalls: ConflictResolveRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];

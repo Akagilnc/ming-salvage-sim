@@ -2,13 +2,13 @@
  * Family review-loop worker outcome seam (#596).
  *
  * Defines the typed payload shapes and compatibility results consumed by the
- * family S9 verify / S10 fixer / S12 docRelease agent outcomes plus the
+ * family S9 verify / S10 fixer / S12 landing agent outcomes plus the
  * host-deterministic S11 cleanup result.
  */
 
 import type {
   CleanupResult,
-  DocReleaseResult,
+  LandingResult,
   FixerResult,
   StepOutput,
   VerifyResult,
@@ -71,8 +71,8 @@ export function stubCleanupResult(): CleanupResult {
  * Deterministic family offline/test skeleton for S12 文档发布.
  * Live paths must not use this unconditionally (#735) — only the offline hatch.
  */
-export function stubDocReleaseResult(): DocReleaseResult {
-  return { kind: "docRelease", released: true };
+export function stubLandingResult(): LandingResult {
+  return { kind: "landing", released: true };
 }
 
 /**
@@ -87,8 +87,8 @@ export function skeletonReviewLoopWorkerResult(
       return { kind: "completed", output: stubVerifyResult() };
     case "fixer":
       return { kind: "completed", output: stubFixerResult() };
-    case "docRelease":
-      return { kind: "completed", output: stubDocReleaseResult() };
+    case "landing":
+      return { kind: "completed", output: stubLandingResult() };
     default:
       return undefined;
   }

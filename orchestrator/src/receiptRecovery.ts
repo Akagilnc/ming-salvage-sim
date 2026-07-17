@@ -178,7 +178,7 @@ export function mergerReceiptOutput(
 /**
  * #919 CR T2 — family online-review-loop gate station receipt Output.object.
  * Schema lives in {@link onlineReviewStationReceiptSchema}
- * (T2 / stationReceiptContracts). Shared by verify/fixer/cleanup/docRelease.
+ * (T2 / stationReceiptContracts). Shared by verify/fixer/cleanup/landing.
  */
 export function onlineReviewReceiptOutput(
   schema: z.ZodType,

@@ -143,7 +143,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
         "verify=gpt-5.6-sol",
         "fixer=sonnet",
         "cleanup=sonnet",
-        "docRelease=sonnet",
+        "landing=sonnet",
         "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );

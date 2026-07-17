@@ -38,6 +38,7 @@ import {
   RealFamilyBackend,
   SANDBOX_AGY_DIR,
 } from "../../src/family/realFamilyBackend.js";
+import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const imageDir = join(here, "..", "..", "image");
@@ -152,6 +153,18 @@ describe("#911 container home environment dual-mount", () => {
 
 describe("#911 family dual-mount (RealFamilyBackend)", () => {
   class FamilyProbe extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
     public mergerCfg() {
       return this.mergerSandboxConfig({});
     }

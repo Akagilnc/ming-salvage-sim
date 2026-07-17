@@ -7,7 +7,7 @@ import { runOrchestrator } from "../../src/runner.js";
 import { decodeReviewerOpenCountReceipt } from "../../src/receiptRecovery.js";
 import {
   dispatchWorker,
-  docReleaseWorkerSpec,
+  landingWorkerSpec,
   fixerWorkerSpec,
   legacyDispatchWorker,
   stepSpecToWorkerSpec,
@@ -1223,14 +1223,14 @@ describe("#796 Coder-Rec host dispatch", () => {
         verify: "gpt-5.6-terra",
         fixer: "sonnet",
         cleanup: "grok-4.5",
-        docRelease: "agy",
+        landing: "agy",
       },
     };
 
     expect(familyShipWorkerSpec(route).host).toBe("agy");
     expect(verifyWorkerSpec(route).host).toBe("codex");
     expect(fixerWorkerSpec(route).host).toBe("claude");
-    expect(docReleaseWorkerSpec(route).host).toBe("agy");
+    expect(landingWorkerSpec(route).host).toBe("agy");
   });
 
   it("rebuilds the dispatched S2 spec after a real quota relay", async () => {

@@ -12,6 +12,11 @@
 import type { StopSummary } from "../stopSummary.js";
 
 /** Per-stage family terminal failure names (PRD #919 / issue #922). */
+/**
+ * Public stage-failure ABI tokens (#922 / #942 freeze).
+ * `cleanup_failed` remains for exit-code table stability until #942 cutover —
+ * production landing never emits it (host cleanup-fail court deleted in #941).
+ */
 export const FAMILY_STAGE_FAILURE_STATUSES = [
   "verify_failed",
   "cmr_failed",
@@ -39,8 +44,10 @@ const DEFAULT_SUMMARY: Readonly<Record<FamilyStageFailureStatus, string>> = {
   cmr_failed: "family integrated CMR barrier failed",
   ship_failed: "family ship stage failed",
   online_review_failed: "family online review stage failed",
-  merge_failed: "family auto-merge stage failed",
-  cleanup_failed: "family post-merge cleanup stage failed",
+  // #941: landing owns merge; keep token merge_failed until #942 public ABI.
+  merge_failed: "family landing merge stage failed",
+  // Legacy ABI token only — production never sets this after #941.
+  cleanup_failed: "family post-merge cleanup stage failed (legacy token)",
 };
 
 const DEFAULT_REPAIR: Readonly<Record<FamilyStageFailureStatus, string>> = {
@@ -53,10 +60,10 @@ const DEFAULT_REPAIR: Readonly<Record<FamilyStageFailureStatus, string>> = {
   online_review_failed:
     "resolve remaining online review findings or answer the decision gate, then re-feed the family run",
   merge_failed:
-    "resolve merge blockers or answer the decision gate, then re-feed the family run",
+    "resolve landing/merge blockers or answer the decision gate, then re-enter landing",
   cleanup_failed:
-    "verify PR is MERGED with matching head, then re-run the family final barrier",
-};
+    "legacy token only — re-enter landing after live MERGED; leftovers never fail the run",
+}
 
 /**
  * Build a stage-named stop summary. `reason` is always the stage token so

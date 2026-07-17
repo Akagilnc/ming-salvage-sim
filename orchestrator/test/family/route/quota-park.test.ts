@@ -42,11 +42,13 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import type {
+
   FamilyBackend,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 const CODER_REC_BODY = "Coder-Rec: grok-4.5 → terra@med → luna@med";
 const BROKEN_CODER_REC_BODY = "Coder-Rec: totally-bogus → also-fake";
@@ -120,6 +122,18 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
   async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
     return { ok: true };
   }
@@ -271,7 +285,7 @@ function stubGrokCmrPreset(): void {
           verify: "gpt-5.6-sol",
           fixer: "sonnet",
           cleanup: "sonnet",
-          docRelease: "sonnet",
+          landing: "sonnet",
         },
         legCollections: {
           cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
@@ -794,7 +808,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toEqual(["fixer"]);
     expect(
       familyRelaySlotsForWall({ phase: "online_review", wallStep: "S12" }),
-    ).toEqual(["docRelease"]);
+    ).toEqual(["landing"]);
     expect(familyRelaySlotsForWall({ phase: "merge", wallStep: "S1" })).toEqual(
       ["merger"],
     );

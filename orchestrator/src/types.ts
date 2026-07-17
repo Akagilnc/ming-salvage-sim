@@ -103,7 +103,7 @@ export type StepRole =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /** Terminal handoff status (ADR 0018 / PRD #244 route table). */
 export type HandoffStatus = "success" | "escalate" | "error";
@@ -131,7 +131,7 @@ export type StepSoul =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -670,7 +670,7 @@ export type WorkerKind =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
 export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
@@ -1288,16 +1288,16 @@ export interface CleanupResult {
 }
 
 /**
- * 文档发布 worker output (#735 / S12). Thin schema only: skill success
+ * Landing worker output (#735 / S12 / #941). Thin schema only: skill success
  * (including 文档发布空跑) → `released:true`; crash / hang / skill fail /
  * required push fail → `released:false`. Tip continues via ledger `branchHEAD`.
- * Offline/test may still synthesize a green stub under the offline hatch only.
+ * Landing Action owns merge only after released:true; no offline green stub.
  */
-export interface DocReleaseResult {
-  readonly kind: "docRelease";
+export interface LandingResult {
+  readonly kind: "landing";
   /**
    * Whether 文档发布 finished successfully (true includes empty-run; false
-   * blocks auto-merge).
+   * fails the landing Action before merge).
    */
   readonly released: boolean;
 }
@@ -1313,7 +1313,7 @@ export type WorkerOutput =
   | VerifyResult
   | FixerResult
   | CleanupResult
-  | DocReleaseResult;
+  | LandingResult;
 
 /**
  * The result of dispatching ONE worker — a discriminated union so the runner can
