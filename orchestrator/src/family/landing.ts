@@ -47,6 +47,7 @@ import {
   mergedSet,
   recordPostMergeCleanup,
   recordPrMerged,
+  recordReviewLoopConverged,
 } from "./ledger.js";
 import { billingPoolForFamilyWorker } from "./familyWorkerSlots.js";
 import { dispatchFamilyWorkerOrAbort } from "./familyProcessRootDispatch.js";
@@ -214,6 +215,25 @@ function ghSh(): (file: string, args: string[]) => string {
 }
 
 /**
+ * Live family HEAD for completion markers / resume lookup. Docs landing may
+ * advance HEAD past the pre-doc review_loop_converged OID; markers and
+ * already_done must key the head resume will re-read.
+ */
+async function resolveLandingMarkerHead(
+  backend: FamilyBackend,
+  familyBase: string,
+  fallback: string,
+): Promise<string> {
+  if (backend.readFamilyHead === undefined) return fallback;
+  try {
+    const head = (await backend.readFamilyHead(familyBase)).trim();
+    return head.length > 0 ? head : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Landing Action — docs worker → merge → MERGED confirm → close/cleanup leftovers.
  *
  * close/cleanup failures become leftovers only (ID-013); never park/fail/flip
@@ -240,15 +260,27 @@ export async function runLandingAction(
   }
 
   const ledger = await input.familyBackend.readFamilyLedger();
-  const priorCleanup = familyPostMergeCleanupForHead(
-    ledger,
+  // Resume keys live HEAD first (post-docs), then pre-doc fallback for older
+  // markers stamped before this invariant.
+  const liveMarkerHead = await resolveLandingMarkerHead(
+    input.familyBackend,
+    input.familyBase,
     input.convergedHeadOid,
   );
+  const priorCleanup =
+    familyPostMergeCleanupForHead(ledger, liveMarkerHead) ??
+    (liveMarkerHead !== input.convergedHeadOid
+      ? familyPostMergeCleanupForHead(ledger, input.convergedHeadOid)
+      : undefined);
   if (priorCleanup !== undefined) {
     return { ok: true, terminalState: "already_done" };
   }
 
-  const priorMerged = familyPrMergedForHead(ledger, input.convergedHeadOid);
+  const priorMerged =
+    familyPrMergedForHead(ledger, liveMarkerHead) ??
+    (liveMarkerHead !== input.convergedHeadOid
+      ? familyPrMergedForHead(ledger, input.convergedHeadOid)
+      : undefined);
   const sh = ghSh();
   // Explicit live surface only — no silent non-live pr:// MERGED hatch (ID-013).
   const liveHooks =
@@ -325,6 +357,25 @@ export async function runLandingAction(
     }
   }
 
+  // Docs may have advanced family HEAD. Completion markers + resume lookup key
+  // that live HEAD (not the stale pre-doc review_loop_converged OID).
+  const completionHeadOid = await resolveLandingMarkerHead(
+    input.familyBackend,
+    input.familyBase,
+    input.convergedHeadOid,
+  );
+  if (
+    priorMerged === undefined &&
+    completionHeadOid !== input.convergedHeadOid
+  ) {
+    // Re-stamp so runner's already-converged short path (live HEAD equality)
+    // still finds review_loop_converged after a non-empty docs push.
+    await recordReviewLoopConverged(input.familyBackend, {
+      pr: prUrl,
+      familyHeadAfter: completionHeadOid,
+    });
+  }
+
   // ── 2. Merge + live MERGED confirm (Action-owned; no host auto-merge court)
   // No 伪 PR synthetic MERGED: tests inject live hooks; production uses gh.
   let mergeRecord: PrMergedTerminalRecord | undefined =
@@ -334,7 +385,7 @@ export async function runLandingAction(
           prNumber: priorMerged.prNumber,
           remoteBranchName: priorMerged.remoteBranchName,
           mergedHeadOid: priorMerged.mergedHeadOid,
-          convergedHeadOid: input.convergedHeadOid,
+          convergedHeadOid: completionHeadOid,
         }
       : undefined;
 
@@ -360,7 +411,7 @@ export async function runLandingAction(
         prNumber: live.prNumber,
         remoteBranchName: live.headRefName,
         mergedHeadOid: live.headOid,
-        convergedHeadOid: input.convergedHeadOid,
+        convergedHeadOid: completionHeadOid,
       };
     } else if (live.state.toUpperCase() === "CLOSED") {
       return {
@@ -465,7 +516,7 @@ export async function runLandingAction(
             prNumber: live.prNumber,
             remoteBranchName: live.headRefName,
             mergedHeadOid: live.headOid,
-            convergedHeadOid: input.convergedHeadOid,
+            convergedHeadOid: completionHeadOid,
           };
           break;
         }
@@ -508,7 +559,7 @@ export async function runLandingAction(
                 prNumber: after.prNumber,
                 remoteBranchName: after.headRefName,
                 mergedHeadOid: after.headOid,
-                convergedHeadOid: input.convergedHeadOid,
+                convergedHeadOid: completionHeadOid,
               };
             }
           } catch {
@@ -535,7 +586,7 @@ export async function runLandingAction(
       prNumber: mergeRecord.prNumber,
       remoteBranchName: mergeRecord.remoteBranchName,
       mergedHeadOid: mergeRecord.mergedHeadOid,
-      familyHeadAfter: input.convergedHeadOid,
+      familyHeadAfter: completionHeadOid,
     });
   }
 
@@ -597,18 +648,18 @@ export async function runLandingAction(
         : {}),
     });
   } catch (err) {
-    // Never flip completed after MERGED — leftover only
+    // Never flip completed after MERGED — leftover only.
+    // Set skippedReasons only; the ok+terminal branch below folds them into
+    // leftovers once (do not push here — that double-counted).
     const detail = err instanceof Error ? err.message : String(err);
-    if (isMissingGitRefError(err)) {
-      leftovers.push("branch_already_gone");
-    } else {
-      leftovers.push(`cleanup_exception:${detail}`);
-    }
+    const reason = isMissingGitRefError(err)
+      ? "branch_already_gone"
+      : `cleanup_exception:${detail}`;
     cleanupOutput = {
       kind: "cleanup",
       terminal: true,
       ok: true,
-      skippedReasons: [...leftovers],
+      skippedReasons: [reason],
       branchOutcome: "already_gone",
     };
   }
@@ -642,7 +693,7 @@ export async function runLandingAction(
   );
 
   await recordPostMergeCleanup(input.familyBackend, {
-    familyHeadAfter: input.convergedHeadOid,
+    familyHeadAfter: completionHeadOid,
     cleanupOutput,
   });
 
