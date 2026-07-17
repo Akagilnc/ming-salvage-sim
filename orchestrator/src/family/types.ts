@@ -533,30 +533,10 @@ export interface FamilyBackend {
    */
   mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult>;
   /**
-   * merger CONFLICT-fallback seam (ADR 0022 decision 3② "冲突才上 LLM", #295).
-   *
-   * Invoked by the merger ONLY when {@link mergeChildIntoFamilyBase} reports a
-   * conflict ({@link MergeResult.conflicted}) — the "确定性优先、仅冲突上 LLM"
-   * inversion of Sandcastle's native "一上来就整段 LLM" merge. The real Backend
-   * starts ONE agent under the `merger` soul + the `resolving-merge-conflicts`
-   * skill, scoped to THIS one in-progress conflicting merge: it resolves each
-   * hunk (preserving both intents where possible; never inventing behaviour;
-   * never `--abort`), stages, and commits the merge — leaving the resolved result
-   * on the family base for the downstream family verify + integrated cmr (#296)
-   * to审 ("不静默吞"). The fake injects a synthetic resolved head.
-   *
-   * Returns the family base HEAD after the LLM-resolved merge commit lands. If the
-   * resolver CANNOT resolve (it throws / rejects, OR returns a still-`conflicted`
-   * result), the merger does NOT write a `merged` ledger entry — an unresolved
-   * conflict must never look clean.
-   *
-   * OPTIONAL: a #293-era backend (the no-op default, the existing zero-container
-   * fakes) does not implement it — it is reached ONLY on the conflict path, which
-   * those backends never take. If a conflict IS hit on a backend without this
-   * method, the merger fails loud (throws a descriptive error) rather than writing
-   * a `merged` ledger entry — the conflict is surfaced, never swallowed. (Same
-   * optional-capability pattern the sibling verify-cmr seams use, so existing
-   * fakes need no throwing stub.)
+   * Conflict-only merger worker leg (#934 ID-010 / #938). Production/conflict
+   * tests guarantee it; clean-merge fakes may omit. Action converges once;
+   * process-root retry is ID-004 inside the impl. Still-conflicted/throw ⇒ no
+   * `merged` ledger entry.
    */
   resolveMergeConflict?(req: ConflictResolveRequest): Promise<MergeResult>;
   /**
@@ -1066,6 +1046,13 @@ export interface FamilyChildEscalation {
   readonly sessionId?: string;
 }
 
+/** Per-sibling root cause (#934 ID-009 / #938) — not a second outer cause. */
+export interface FamilyChildDiagnostic {
+  readonly issue: number;
+  readonly cause: string;
+  readonly kind: "process" | "child_execution" | "merger_worker";
+}
+
 /** Per-child outcome record in the family result. */
 export interface FamilyChildResult {
   readonly issue: number;
@@ -1078,6 +1065,8 @@ export interface FamilyChildResult {
    * `child_decision_parked` ledger row and resumes from.
    */
   readonly escalation?: FamilyChildEscalation;
+  /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */
+  readonly failureCause?: string;
 }
 
 /**
@@ -1146,6 +1135,8 @@ export interface FamilyRunResult {
   readonly stopSummary: StopSummary;
   /** Per-child outcomes, in execution order. */
   readonly children: ReadonlyArray<FamilyChildResult>;
+  /** Wave sibling root causes (#938 / ID-009); outer status until #942 cutover. */
+  readonly diagnostics?: ReadonlyArray<FamilyChildDiagnostic>;
   /** Non-runnable children excluded before wave scheduling, if any. */
   readonly admissionSkipped?: ReadonlyArray<FamilyAdmissionSkippedChild>;
 }

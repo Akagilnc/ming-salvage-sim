@@ -155,8 +155,8 @@ describe("#291 B7 — concurrent wave fan-out", () => {
 
     expect(result.status).toBe("incomplete");
     expect(result.children).toEqual([
-      { issue: 10, status: "merged", branch: "feat/child-10" },
-      { issue: 11, status: "failed", branch: undefined },
+      expect.objectContaining({ issue: 10, status: "merged", branch: "feat/child-10" }),
+      expect.objectContaining({ issue: 11, status: "failed" }),
     ]);
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
     expect(result.stopSummary.summary).toContain("#11:failed");

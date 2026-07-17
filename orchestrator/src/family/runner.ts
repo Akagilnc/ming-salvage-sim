@@ -68,7 +68,7 @@ import type {
   StepId,
 } from "../types.js";
 import { escalateOf, isValidEscalation } from "../validate.js";
-import { assertAcyclic, selectWave } from "./commander.js";
+import { assertAcyclic, DependencyCycleError, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
   familyEscalationState,
@@ -116,6 +116,7 @@ import {
 import type {
   ChildSlice,
   FamilyBackend,
+  FamilyChildDiagnostic,
   FamilyChildEscalation,
   FamilyChildResult,
   FamilyLedgerEntry,
@@ -1529,25 +1530,10 @@ export async function runFamily(
   // REBUILD the dependency graph from LIVE GitHub metadata, NOT the cached epic
   // (decision 4 不信缓存; else a stale cycle re-escalates, agy R2). Absent ⇒ the
   // passed `epic` is used unchanged (a fresh run). The commander then schedules
-  // off the live graph below — and #294's cycle guard validates THIS live graph
-  // (so a re-entry whose human edit broke the cycle is NOT re-rejected off the
-  // stale cached edges).
+  // off the live graph below.
   const epic =
     input.refetchEpic !== undefined ? await input.refetchEpic() : input.epic;
-  // ── #294: fail-closed cycle guard (ADR 0022 decisions 3①/4) ────────────────
-  // BEFORE any scheduling (but AFTER the #298 live re-fetch above, so the guard
-  // sees the live graph): validate the children's intra-family `blocked_by`
-  // graph is acyclic. A cycle makes selectWave return an empty wave forever (a
-  // SILENT deadlock — the members never unblock), so the commander throws a
-  // DependencyCycleError here and runFamily fails closed (the caller escalates to
-  // a human per decision 4, who fixes the to-issues edges and re-runs). This runs
-  // up front so nothing is fanned out / merged before the deadlock is caught.
-  assertAcyclic(epic.children);
-  // The set of THIS family's child issue numbers — used to split a child's
-  // `blocked_by` into intra-family blockers (the commander can ledger-merge them)
-  // vs external blockers (never in the family ledger; filtered at family admission
-  // per `filterExternalBlockedChildren`, #934 ID-002 — NOT relied upon at S0).
-  // Invariant for the run (epic.children is fixed), so computed once.
+  // ID-009: no startup whole-family cycle guard (residual probe is at empty-wave).
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // ── #604 slice 5: child decision-escalation re-entry ────────────────────────
   // Read the family ledger for children PARKED on a decision题 (a `child_decision_parked`
@@ -1675,7 +1661,14 @@ export async function runFamily(
   // identical either way (ADR 0022 decision 3④/⑤/⑥; acceptance-4 seam boundary).
   const verifyCmr = input.verifyCmr ?? runVerifyCmr;
   const childResults: FamilyChildResult[] = [];
+  /** Wave-aggregated sibling root causes (#938 / ID-009). */
+  const waveDiagnostics: FamilyChildDiagnostic[] = [];
   let familyHead: string | undefined;
+
+  const attachDiagnostics = <T extends FamilyRunResult>(result: T): T => {
+    if (waveDiagnostics.length === 0) return result;
+    return { ...result, diagnostics: [...waveDiagnostics] };
+  };
 
   // Build the family result, accounting for EVERY epic child, and deriving an
   // HONEST family status (decision 3⑤ "不静默吞" — the result must not silently
@@ -1801,7 +1794,7 @@ export async function runFamily(
             },
           }
         : computedStopSummary;
-    return {
+    return attachDiagnostics({
       status,
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
@@ -1817,7 +1810,7 @@ export async function runFamily(
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-    };
+    });
   };
 
   // #604 slice 5: build the family result when a CHILD decision escalation parked
@@ -1973,33 +1966,56 @@ export async function runFamily(
     const wave = selectWave(epic.children, merged).filter(
       (c) => !attempted.has(c.issue),
     );
-    if (wave.length === 0) break;
+    if (wave.length === 0) {
+      // ID-009: residual cycle only at empty-wave + still-unmerged residual.
+      const residual = epic.children.filter((c) => !merged.has(c.issue));
+      if (residual.length > 0) {
+        try {
+          assertAcyclic(residual);
+        } catch (err) {
+          if (!(err instanceof DependencyCycleError)) throw err;
+          const children: FamilyChildResult[] = epic.children.map((c) => {
+            const recorded = childResults.find((entry) => entry.issue === c.issue);
+            if (recorded !== undefined) return recorded;
+            return merged.has(c.issue)
+              ? { issue: c.issue, status: "already_done" as const }
+              : { issue: c.issue, status: "skipped" as const };
+          });
+          const escalationReason = `dependency_cycle: ${err.cycle.map((n) => `#${n}`).join(" → ")}`;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason,
+          });
+          await familyBackend.escalateFamily?.({
+            reason: escalationReason,
+            diagnosis: err.message,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+            escalationKind: "failure",
+            phase: "wave",
+          });
+          return attachDiagnostics({
+            status: "escalated" as const,
+            familyBase,
+            familyHead,
+            escalation: { reason: escalationReason, diagnosis: err.message },
+            stopSummary,
+            children,
+            ...(epic.admissionSkipped !== undefined &&
+            epic.admissionSkipped.length > 0
+              ? { admissionSkipped: epic.admissionSkipped }
+              : {}),
+          });
+        }
+      }
+      break;
+    }
 
-    // ── fan out the wave: each child through the reused single-slice runner ──
-    // ADR 0022 decision 2 (native fork + distinct branch) is the RealBackend's
-    // job (each child run cuts its own distinct branch in the shared clone). The
-    // wave-level fan-out POLICY — how the wave's children are run relative to each
-    // other — lives in THIS loop, not in the Backend (the Backend interface is
-    // per-child: prepareWorktree / runStep / push; it has no whole-wave method).
-    //
-    // #291 B7 (the deferred US7 work this comment foretold): the wave's children
-    // run CONCURRENTLY — `Promise.allSettled(wave.map(runChild))` — so their LLM
-    // work overlaps instead of串行. This is the local fan-out change the seam
-    // boundary anticipated: the wave/MERGE/verify structure around it is unchanged
-    // (the merge loop below is still serial + in wave order). Distinct child
-    // branches isolate the LOGICAL work but NOT git-level locks; concurrent
-    // `git worktree add` / ref updates on the one shared clone contend on
-    // `.git/index.lock`, so the git-MUTATING critical sections are serialised by a
-    // per-clone mutex INSIDE the RealBackend (gitMutex, NOT the spine) — LLM
-    // concurrent, git临界区 serial. `allSettled` preserves input order, so `ran` is
-    // still in wave order for the serial merge.
-    //
-    // FAIL-CLOSED preservation: a child whose single-slice run THROWS (e.g. its own
-    // S0 backstop rejects a blocker that RE-opened after the admission gate cleared
-    // it — decision 6③ soundness) must still fail the whole run, exactly as the prior
-    // `for…await` let the throw propagate. So after settling we RE-THROW the first
-    // rejection before recording any wave result (nothing is merged on a thrown wave —
-    // the cycle / admission external-blocker guards stay fail-closed).
+    // Concurrent fan-out (allSettled, wave order); serial merge below.
+    // #938: rethrow-first deleted — keep every sibling outcome.
     logDriverStage(
       "dispatch",
       `wave n=${wave.length} issues=${wave.map((c) => c.issue).join(",")}`,
@@ -2018,14 +2034,37 @@ export async function runFamily(
         ),
       ),
     );
-    const firstRejected = settled.find((s) => s.status === "rejected");
-    if (firstRejected !== undefined && firstRejected.status === "rejected") {
-      throw firstRejected.reason;
-    }
-    const ran: FamilyChildResult[] = settled.map((s) => {
-      // Every entry is fulfilled here (a rejection re-threw above); the cast is
-      // narrowing for TS, not a runtime assumption.
-      return (s as PromiseFulfilledResult<FamilyChildResult>).value;
+    const ran: FamilyChildResult[] = settled.map((s, i) => {
+      if (s.status === "fulfilled") {
+        const value = s.value;
+        if (value.status === "failed") {
+          const cause =
+            value.failureCause ??
+            `child #${value.issue} single-slice execution did not succeed`;
+          waveDiagnostics.push({
+            issue: value.issue,
+            cause,
+            kind: "child_execution",
+          });
+          return value.failureCause !== undefined
+            ? value
+            : { ...value, failureCause: cause };
+        }
+        return value;
+      }
+      const child = wave[i]!;
+      const cause =
+        s.reason instanceof Error ? s.reason.message : String(s.reason);
+      waveDiagnostics.push({
+        issue: child.issue,
+        cause,
+        kind: "process",
+      });
+      return {
+        issue: child.issue,
+        status: "failed" as const,
+        failureCause: cause,
+      };
     });
 
     // ── serial merge: each reviewed child branch into the family base ──────────
@@ -2107,7 +2146,7 @@ export async function runFamily(
             escalationKind: "decision",
             phase: "wave",
           });
-          return {
+          return attachDiagnostics({
             status: "escalated" as const,
             familyBase,
             familyHead,
@@ -2117,52 +2156,21 @@ export async function runFamily(
             },
             stopSummary,
             children,
-          };
+          });
         }
         if (mergeResult.conflicted === true) {
-          // A merger step that exhausted its bounded mechanical re-dispatch is
-          // a family-level escalation boundary, not an uncaught run exception.
-          // The merge result is intentionally not ledger-recorded by merger.ts;
-          // preserve the Git-observed head and stop before scheduling another
-          // wave on an unresolved MERGE_HEAD/conflict state.
+          // ID-010: trust merger worker once; stop serial merge on conflicted base.
           familyHead = mergeResult.familyHead;
-          childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
-          const ledgerMerged = await currentMerged(familyBackend);
-          const children = epic.children.map((child) => {
-            const recorded = childResults.find((entry) => entry.issue === child.issue);
-            if (recorded !== undefined) return recorded;
-            return ledgerMerged.has(child.issue)
-              ? { issue: child.issue, status: "already_done" as const }
-              : { issue: child.issue, status: "skipped" as const };
+          const cause =
+            `merger_worker left child #${r.issue} conflict unresolved on the family base`;
+          waveDiagnostics.push({ issue: r.issue, cause, kind: "merger_worker" });
+          childResults.push({
+            issue: r.issue,
+            status: "failed",
+            branch: r.branch,
+            failureCause: cause,
           });
-          const escalationReason =
-            `merger step for child #${r.issue} exhausted bounded still-conflicted retries`;
-          const stopSummary = familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead,
-            children,
-            escalationReason,
-          });
-          await familyBackend.escalateFamily?.({
-            reason: escalationReason,
-            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-            stopSummary,
-            escalationKind: "failure",
-            phase: "wave",
-          });
-          return {
-            status: "escalated" as const,
-            familyBase,
-            familyHead,
-            escalation: {
-              reason: escalationReason,
-              diagnosis:
-                "Git still reports an unresolved merge after the bounded merger-step re-dispatch; repair the conflict and rerun the family.",
-            },
-            stopSummary,
-            children,
-          };
+          return await finalize();
         }
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
@@ -2172,6 +2180,9 @@ export async function runFamily(
           status: r.status,
           branch: r.branch,
           ...(r.escalation !== undefined ? { escalation: r.escalation } : {}),
+          ...(r.failureCause !== undefined
+            ? { failureCause: r.failureCause }
+            : {}),
         });
       }
     }
