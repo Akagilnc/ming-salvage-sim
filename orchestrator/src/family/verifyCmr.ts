@@ -24,7 +24,10 @@ import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { shWithClock } from "../externalCall.js";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
-import { runLandingAction } from "./landing.js";
+import {
+  classifyLandingActionResult,
+  runLandingAction,
+} from "./landing.js";
 import {
   buildRoundTrigger,
   convergenceHeadToRecord,
@@ -116,6 +119,7 @@ import {
   recordCmrFixCommitted,
   recordCmrPassed,
   recordCmrReviewed,
+  recordFamilyEscalated,
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
@@ -1045,25 +1049,6 @@ function familyOnlineReviewLoopFailureStopSummary(
   });
 }
 
-async function dispatchFamilyReviewWorker(
-  familyBackend: FamilyBackend,
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-  opts?: {
-    readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
-  },
-): Promise<WorkerResult> {
-  const primary = await dispatchOrAbort(
-    familyBackend,
-    spec,
-    ctx,
-    landing,
-    opts,
-  );
-  return primary;
-}
-
 export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
@@ -1229,7 +1214,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     dispatchVerify: async (landing, round) => {
       let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
       const verifyPool = poolForKind("verify");
-      const result = await dispatchFamilyReviewWorker(
+      const result = await dispatchOrAbort(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
         {
@@ -1306,7 +1291,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       lastFixMarkedFindingThreads = landing.fixMarkedFindingThreads ?? [];
       lastFixerOnlineReviewRound = round;
       const fixerPool = poolForKind("fixer");
-      const result = await dispatchFamilyReviewWorker(
+      const result = await dispatchOrAbort(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
         {
@@ -2703,37 +2688,51 @@ export async function runVerifyCmr(
     ...scopedPoolFields,
   });
   if (!landing.ok) {
-    const stopSummary =
-      landing.stopSummary ??
-      decisionGateParkStopSummary({
-        summary: `family landing did not complete (${landing.terminalState})`,
-        repairHint:
-          "resolve landing blockers or answer the decision gate, then re-enter landing",
+    // family/914 CR R1 Std M1: one durable re-entry shape for landing parks —
+    // recordFamilyEscalated(decision), same as ensureLandingForResume. Do not
+    // dual-author park as aborted-only (familyEscalationState stops at
+    // review_loop_converged and would hide an aborted-only park).
+    const classified = classifyLandingActionResult(landing);
+    if (classified.kind === "park") {
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: "decision",
+        phase: "final",
+        reason: classified.stopSummary.summary,
+        familyHeadAfter: convergedFamilyHead,
+        stopSummary: classified.stopSummary,
       });
-    const isPark =
-      landing.terminalState === "decision_gate" ||
-      stopSummary.reason === "decision_gate_park";
+      // failedStatus omitted → spine finalize escalates via barrier stopSummary
+      return { ok: false, ran: true };
+    }
+    // hard_fail (classify never returns ok when !landing.ok)
+    const hard =
+      classified.kind === "hard_fail"
+        ? classified.stopSummary
+        : decisionGateParkStopSummary({
+            summary: `family landing did not complete (${landing.terminalState})`,
+            repairHint:
+              "repair landing and re-run the family final barrier",
+          });
+    const failStop = stageFailureStopSummary({
+      status: "merge_failed",
+      summary: hard.summary,
+      repairHint:
+        hard.repairHint ??
+        "repair landing and re-run the family final barrier",
+    });
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
-      errorPackage: { reason: stopSummary.summary },
+      errorPackage: { reason: failStop.summary },
       familyHeadAfter: convergedFamilyHead,
     });
     await recordDurableAbort(familyBackend, {
       phase,
-      reason: stopSummary.summary,
+      reason: failStop.summary,
       familyHeadAfter: convergedFamilyHead,
-      stopSummary: isPark
-        ? stopSummary
-        : stageFailureStopSummary({
-            status: "merge_failed",
-            summary: stopSummary.summary,
-            repairHint:
-              stopSummary.repairHint ??
-              "repair landing and re-run the family final barrier",
-          }),
+      stopSummary: failStop,
     });
-    return isPark ? { ok: false, ran: true } : stageGate("merge_failed");
+    return stageGate("merge_failed");
   }
   return { ok: true, ran: true };
 }

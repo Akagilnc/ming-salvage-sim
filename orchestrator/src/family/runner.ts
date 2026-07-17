@@ -93,7 +93,10 @@ import {
   runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
-import { runLandingAction } from "./landing.js";
+import {
+  classifyLandingActionResult,
+  runLandingAction,
+} from "./landing.js";
 import { buildFamilyModuleContext } from "./moduleDeclaration.js";
 import {
   decisionGateParkStopSummary,
@@ -1011,12 +1014,112 @@ async function readCurrentFamilyHead(
 }
 
 /**
+ * Std S1 — one final-quota wall wrap around {@link ensureLandingForResume}.
+ * Resume tails (already-converged / shipped-resume) sit outside the primary
+ * final barrier and must share this helper; open-shipped is already inside the
+ * wall and calls ensureLandingForResume directly.
+ *
+ * @returns terminal FamilyRunResult on park/fail; ok carries post-barrier route
+ *          + baton binding so callers stitch activeRoute / runRelayBilling.
+ */
+async function runLandingUnderFinalQuotaWall(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly singleSliceBackend: Backend;
+  readonly familyBase: string;
+  readonly familyHead: string;
+  readonly runId: string;
+  readonly modelRoute: ResolvedModelRoute;
+  readonly recordedResults: ReadonlyArray<FamilyChildResult>;
+  readonly epicChildren: ReadonlyArray<ChildSlice>;
+  readonly epicIssue: number;
+  readonly relayHandoffs: { count: number };
+  readonly wallHitBillingPools: Set<BillingPoolId>;
+  readonly prUrl: string;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly runRelayBilling?: FamilyRelayBillingBinding;
+  readonly applyRelayBatonToRoute?: ApplyRelayBatonToRouteFn;
+  readonly relayPools?: FamilyRunInput["relayPools"];
+  readonly now?: () => Date;
+  readonly admissionSkipped?: ReadonlyArray<{
+    readonly issue: number;
+    readonly reason: string;
+    readonly message: string;
+  }>;
+}): Promise<
+  | { readonly kind: "terminal"; readonly result: FamilyRunResult }
+  | {
+      readonly kind: "ok";
+      readonly route: ResolvedModelRoute;
+      readonly relayBilling: FamilyRelayBillingBinding | undefined;
+    }
+> {
+  const landingBarrier = await runFamilyBarrierWithQuotaRelay({
+    phase: "final",
+    familyBackend: input.familyBackend,
+    singleSliceBackend: input.singleSliceBackend,
+    familyBase: input.familyBase,
+    familyHead: input.familyHead,
+    runId: input.runId,
+    modelRoute: input.modelRoute,
+    recordedResults: input.recordedResults,
+    epicChildren: input.epicChildren,
+    epicIssue: input.epicIssue,
+    relayHandoffs: input.relayHandoffs,
+    wallHitBillingPools: input.wallHitBillingPools,
+    ...(input.runRelayBilling !== undefined
+      ? { initialRelayBilling: input.runRelayBilling }
+      : {}),
+    ...(input.applyRelayBatonToRoute !== undefined
+      ? { applyRelayBatonToRoute: input.applyRelayBatonToRoute }
+      : {}),
+    ...(input.relayPools !== undefined ? { relayPools: input.relayPools } : {}),
+    ...(input.now !== undefined ? { now: input.now } : {}),
+    ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
+      ? { admissionSkipped: input.admissionSkipped }
+      : {}),
+    run: (route, relayBilling) =>
+      ensureLandingForResume({
+        familyBackend: input.familyBackend,
+        familyBase: input.familyBase,
+        runId: input.runId,
+        familyHeadAfter: input.familyHead,
+        prUrl: input.prUrl,
+        familyIssue: input.epicIssue,
+        resolvedRoute: route,
+        children: input.children,
+        ...(relayBilling !== undefined
+          ? {
+              billingPool: relayBilling.pool,
+              billingPoolSlots: relayBilling.slots,
+            }
+          : {}),
+        ...(input.admissionSkipped !== undefined &&
+        input.admissionSkipped.length > 0
+          ? { admissionSkipped: input.admissionSkipped }
+          : {}),
+      }),
+  });
+  if (landingBarrier.kind === "park") {
+    return { kind: "terminal", result: landingBarrier.result };
+  }
+  if (landingBarrier.value !== undefined) {
+    return { kind: "terminal", result: landingBarrier.value };
+  }
+  return {
+    kind: "ok",
+    route: landingBarrier.route,
+    relayBilling: landingBarrier.relayBilling,
+  };
+}
+
+/**
  * #941 — resume/already_done re-enters landing Action (docs/merge/close/cleanup).
  * Host auto-merge + cleanup-fail courts are deleted. Undefined means the caller
  * may report already_done / success.
  *
  * Callers on resume tails MUST wrap this in {@link runFamilyBarrierWithQuotaRelay}
- * (ID-004): landing docs 429 rethrows from process-root and needs park/relay.
+ * / {@link runLandingUnderFinalQuotaWall} (ID-004): landing docs 429 rethrows
+ * from process-root and needs park/relay.
  * Thread {@link billingPool}/{@link billingPoolSlots} so post-relay baton pool
  * reaches the landing seat (slot-scoped).
  */
@@ -1053,38 +1156,40 @@ async function ensureLandingForResume(input: {
       : {}),
   });
   if (landing.ok) return undefined;
-  const stopSummary =
-    landing.stopSummary ??
-    decisionGateParkStopSummary({
-      summary: `family landing did not complete (${landing.terminalState})`,
-      repairHint: "resolve landing blockers or answer the decision gate, then re-enter landing",
-    });
-  const isPark =
-    landing.terminalState === "decision_gate" ||
-    stopSummary.reason === "decision_gate_park";
-  if (isPark) {
+  // family/914 CR R1 Std M1 — same classifier + escalated park ledger as
+  // verifyCmr fresh final barrier (one authority; not aborted-only).
+  const classified = classifyLandingActionResult(landing);
+  if (classified.kind === "park") {
     await recordFamilyEscalated(input.familyBackend, {
       escalationKind: "decision",
       phase: "final",
-      reason: stopSummary.summary,
+      reason: classified.stopSummary.summary,
       familyHeadAfter: input.familyHeadAfter,
-      stopSummary,
+      stopSummary: classified.stopSummary,
     });
     return {
       status: "escalated",
       familyBase: input.familyBase,
       familyHead: input.familyHeadAfter,
-      stopSummary,
+      stopSummary: classified.stopSummary,
       children: [...input.children],
       ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
         ? { admissionSkipped: input.admissionSkipped }
         : {}),
     };
   }
+  const failSummary =
+    classified.kind === "hard_fail"
+      ? classified.stopSummary
+      : decisionGateParkStopSummary({
+          summary: `family landing did not complete (${landing.terminalState})`,
+          repairHint:
+            "resolve landing blockers or answer the decision gate, then re-enter landing",
+        });
   const failStop = stageFailureStopSummary({
     status: "merge_failed",
-    summary: stopSummary.summary,
-    repairHint: stopSummary.repairHint,
+    summary: failSummary.summary,
+    repairHint: failSummary.repairHint,
   });
   await input.familyBackend.appendFamilyLedger({
     status: "aborted",
@@ -1284,6 +1389,12 @@ export function pendingPriorCmrFindingIdentityKeysByPass(
   ) as Partial<Record<IntegratedCmrPass, ReadonlyArray<string>>>;
 }
 
+/**
+ * Barrier terminal stopSummary for finalize: durable `aborted` rows (stage
+ * failures + legacy parks) **or** decision parks authored as `escalated`
+ * (family/914 CR R1 Std M1 — landing park is escalated-only so
+ * familyEscalationState can see it after review_loop_converged).
+ */
 function latestAbortedStopSummary(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   phase: VerifyCmrPhase | undefined,
@@ -1291,10 +1402,17 @@ function latestAbortedStopSummary(
 ): StopSummary | undefined {
   for (let i = ledger.length - 1; i >= minIndex; i--) {
     const entry = ledger[i]!;
+    if (entry.stopSummary == null) continue;
+    if (phase !== undefined && entry.phase !== phase) continue;
+    if (entry.status === "aborted") {
+      return entry.stopSummary;
+    }
+    // Landing / answerable decision park durable shape (not aborted).
     if (
-      entry.status === "aborted" &&
-      (phase === undefined || entry.phase === phase) &&
-      entry.stopSummary != null
+      entry.status === "escalated" &&
+      entry.event === "escalated" &&
+      entry.escalationKind === "decision" &&
+      entry.stopSummary.reason === "decision_gate_park"
     ) {
       return entry.stopSummary;
     }
@@ -2437,15 +2555,13 @@ export async function runFamily(
     );
 
     // #941: single re-entry through landing Action (no host auto-merge courts).
-    // ID-004: wrap in family quota wall so landing docs 429 parks/relays
-    // (resume tail is outside the primary final barrier).
+    // ID-004 / Std S1: shared final-quota wrap (resume tail outside primary barrier).
     familyHead = preFinalFamilyHead;
-    const landingBarrier = await runFamilyBarrierWithQuotaRelay({
-      phase: "final",
+    const landingWall = await runLandingUnderFinalQuotaWall({
       familyBackend,
       singleSliceBackend,
       familyBase,
-      familyHead: preFinalFamilyHead,
+      familyHead: preFinalFamilyHead!,
       runId,
       modelRoute: activeRoute,
       recordedResults: children,
@@ -2453,8 +2569,10 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
+      prUrl: convergedRecord.pr,
+      children,
       ...(runRelayBilling !== undefined
-        ? { initialRelayBilling: runRelayBilling }
+        ? { runRelayBilling }
         : {}),
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
@@ -2464,35 +2582,12 @@ export async function runFamily(
       ...(Array.isArray(epic.admissionSkipped) && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-      run: (route, relayBilling) =>
-        ensureLandingForResume({
-          familyBackend,
-          familyBase,
-          runId,
-          familyHeadAfter: preFinalFamilyHead!,
-          prUrl: convergedRecord.pr,
-          familyIssue: epic.issue,
-          resolvedRoute: route,
-          children,
-          ...(relayBilling !== undefined
-            ? {
-                billingPool: relayBilling.pool,
-                billingPoolSlots: relayBilling.slots,
-              }
-            : {}),
-          ...(Array.isArray(epic.admissionSkipped) &&
-          epic.admissionSkipped.length > 0
-            ? { admissionSkipped: epic.admissionSkipped }
-            : {}),
-        }),
     });
-    if (landingBarrier.kind === "park") return landingBarrier.result;
-    activeRoute = landingBarrier.route;
-    if (landingBarrier.relayBilling !== undefined) {
-      runRelayBilling = landingBarrier.relayBilling;
+    if (landingWall.kind === "terminal") return landingWall.result;
+    activeRoute = landingWall.route;
+    if (landingWall.relayBilling !== undefined) {
+      runRelayBilling = landingWall.relayBilling;
     }
-    const landingBlocked = landingBarrier.value;
-    if (landingBlocked !== undefined) return landingBlocked;
     const convergedVerifiedCmrHead =
       convergedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
       preFinalFamilyHead;
@@ -2650,10 +2745,8 @@ export async function runFamily(
         : {}),
     });
     familyHead = convergedHead;
-    // ID-004: landing after shipped-resume is outside the online_review barrier —
-    // wrap so docs 429 parks/relays with baton pool threaded to the landing seat.
-    const landingBarrier = await runFamilyBarrierWithQuotaRelay({
-      phase: "final",
+    // ID-004 / Std S1: shared final-quota wrap (shipped-resume outside primary barrier).
+    const landingWall = await runLandingUnderFinalQuotaWall({
       familyBackend,
       singleSliceBackend,
       familyBase,
@@ -2665,8 +2758,10 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
+      prUrl: shippedRecord.pr,
+      children,
       ...(runRelayBilling !== undefined
-        ? { initialRelayBilling: runRelayBilling }
+        ? { runRelayBilling }
         : {}),
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
@@ -2676,35 +2771,12 @@ export async function runFamily(
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
-      run: (route, relayBilling) =>
-        ensureLandingForResume({
-          familyBackend,
-          familyBase,
-          runId,
-          familyHeadAfter: convergedHead,
-          prUrl: shippedRecord.pr,
-          familyIssue: epic.issue,
-          resolvedRoute: route,
-          children,
-          ...(relayBilling !== undefined
-            ? {
-                billingPool: relayBilling.pool,
-                billingPoolSlots: relayBilling.slots,
-              }
-            : {}),
-          ...(epic.admissionSkipped !== undefined &&
-          epic.admissionSkipped.length > 0
-            ? { admissionSkipped: epic.admissionSkipped }
-            : {}),
-        }),
     });
-    if (landingBarrier.kind === "park") return landingBarrier.result;
-    activeRoute = landingBarrier.route;
-    if (landingBarrier.relayBilling !== undefined) {
-      runRelayBilling = landingBarrier.relayBilling;
+    if (landingWall.kind === "terminal") return landingWall.result;
+    activeRoute = landingWall.route;
+    if (landingWall.relayBilling !== undefined) {
+      runRelayBilling = landingWall.relayBilling;
     }
-    const landingBlocked = landingBarrier.value;
-    if (landingBlocked !== undefined) return landingBlocked;
     return {
       status: "success",
       familyBase,
