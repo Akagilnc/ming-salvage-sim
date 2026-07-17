@@ -129,8 +129,9 @@ function residualOpenReviewer(
     kind: "reviewer",
     findings: [...findings],
     findingsCount,
-    fixPacketBody,
+    // Mandatory body after ...extra so callers cannot override ADR 0138 cargo.
     ...extra,
+    fixPacketBody,
   } as WorkerOutput;
 }
 
