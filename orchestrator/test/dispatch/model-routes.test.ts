@@ -398,7 +398,7 @@ describe("#422 model route presets", () => {
     const backend = new RecordingBackend();
     const result = await runOrchestrator({ issueNumber: 422, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.specs.filter((spec) => spec.id === "S2").map((spec) => spec.model)).toEqual([
       "grok-4.5",
     ]);

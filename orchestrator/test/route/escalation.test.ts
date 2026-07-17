@@ -130,7 +130,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
     });
 
     it("does NOT proceed to S7 local handoff (runner stops immediately)", async () => {
@@ -214,7 +214,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
       // escalate wins over the committed:true edge.
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       expect(result.stepLedger.map((e) => e.step)).not.toContain("S7");
     });
   });
@@ -228,7 +228,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       // ADR 0030: a committed build reaches S7 only after S3/S4 find no blocking
       // review findings.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
@@ -246,7 +246,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
     });
 
     it("null escalate field on coder output (real backend JSON) is not treated as escalate", async () => {
@@ -264,7 +264,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       const result = await runOrchestrator({ issueNumber: 251, backend });
 
       // null escalate must not divert to handoff(status=escalate).
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       // The normal S7 local handoff must still have been reached.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
     });
@@ -305,7 +305,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
       // The only escalation data in the result comes from the model output
       // verbatim — the runner adds nothing beyond status=escalate.
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("parked");
       // No extra classification key added by runner.
       const resultKeys = Object.keys(result);
       expect(resultKeys).not.toContain("escalateKind");

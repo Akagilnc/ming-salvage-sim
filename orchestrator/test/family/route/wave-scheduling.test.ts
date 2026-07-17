@@ -193,7 +193,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
 
     expect(familyBackend.resolverCalls).toEqual([10, 11]);
     expect(familyBackend.ledger.map((entry) => entry.childIssue)).toEqual([10, 11]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.children.every((child) => child.status === "merged")).toBe(true);
   });
 
@@ -217,7 +217,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
     expect(familyBackend.resolverCalls).toEqual([10]);
     expect(familyBackend.mergeOrder).toEqual([10]);
     expect(familyBackend.escalationCalls).toEqual([]);
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children.find((child) => child.issue === 10)?.status).toBe("failed");
     // #938: same-wave peer already allSettled as ran — honest `ran`, not fake skipped.
     expect(result.children.find((child) => child.issue === 11)?.status).toBe("ran");
@@ -234,7 +234,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(familyBackend.resolverCalls).toEqual([10]);
     expect(familyBackend.escalationCalls[0]).toEqual(
       expect.objectContaining({
@@ -273,7 +273,7 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
     // Topological merge order regardless of input order: 10, then 11, then 12.
     expect(familyBackend.mergeOrder).toEqual([10, 11, 12]);
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("a blocked child is NOT scheduled until its blocker's MERGED ledger entry exists", async () => {
@@ -351,7 +351,7 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
     //口径 released it AND its own S0 honoured the same口径.
     expect(familyBackend.mergeOrder).toEqual([10, 11]);
     expect(result.children.every((c) => c.status === "merged")).toBe(true);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("a child blocked by a TRULY-OPEN external blocker (not a family child, not merged) is still rejected by S0", async () => {
@@ -387,7 +387,7 @@ describe("#294 acceptance 2 — unblock is ledger-merged, incl. the child's own 
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children).toEqual([
       expect.objectContaining({ issue: 10, status: "failed" }),
     ]);
@@ -416,7 +416,7 @@ describe("#294/#938 acceptance 3 — residual blocked_by cycle (no silent empty 
       familyBase: "family/291-base",
     });
     expect(familyBackend.mergeOrder).toEqual([]);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
   });
 
@@ -436,11 +436,14 @@ describe("#294/#938 acceptance 3 — residual blocked_by cycle (no silent empty 
       familyBackend,
       singleSliceBackend,
       familyBase: "family/291-base",
+      // Stub verify/IC so residual-cycle detection is not masked by a missing-CMR
+      // checkpoint failure on this bare FakeFamilyBackend (#961).
+      verifyCmr: async () => ({ ok: true, ran: true }),
     });
     // ID-009: cycle does not block already-runnable components.
     expect(familyBackend.mergeOrder).toEqual([99]);
     expect(result.children.find((c) => c.issue === 99)?.status).toBe("merged");
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
   });
 });

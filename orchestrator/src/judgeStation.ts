@@ -20,6 +20,11 @@ import type {
   WorkerSessionMode,
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
+import {
+  OPEN_FINDING_STORE_STATUS,
+  recordFindingStoreFlip,
+  type FindingStoreStatus,
+} from "./findingsStateStore.js";
 import type {
   JudgeVerdict,
   LegalRefuseReason,
@@ -68,6 +73,7 @@ export function isLegalJudgeReviewLegSession(
 /**
  * Envelope consistency: converged must not coexist with live dispositions.
  * Pure check for tests / seat self-check — runner does not re-judge.
+ * Suppress / refute terminals do not block converged (only `live` does).
  */
 export function liveFindingsBlockConverged(
   dispositions: ReadonlyArray<{ readonly action: string }> | undefined,
@@ -76,38 +82,126 @@ export function liveFindingsBlockConverged(
 }
 
 /**
- * Map judge kill dispositions to ledger findings-store flips (`refuted`).
- * Live rows stay out of the terminal ledger flip set (they remain open).
+ * Push a successful store flip into the terminal ledger list, or fail loud.
+ * Local to {@link judgeTerminalsToLedgerDispositions} (refute + suppress).
  */
-export function judgeKillsToLedgerDispositions(
+function pushTerminalOrThrow(
+  out: FindingDisposition[],
+  written: ReturnType<typeof recordFindingStoreFlip>,
+): void {
+  if (!written.ok) {
+    throw new Error(written.reason);
+  }
+  out.push(written.value);
+}
+
+/**
+ * Map judge terminal dispositions to ledger findings-store flips:
+ * - `refute` → `refuted` (#925)
+ * - `suppress` → `suppressed` (#952; internal terminal, not public ABI)
+ *
+ * Live rows stay out of the terminal ledger flip set (they remain open).
+ * Transitions go through {@link recordFindingStoreFlip} (single write-point
+ * source — ADR 0129). Illegal store flips fail loud (throw with store reason).
+ *
+ * #952 R6-C2: `currentStoreStatusByIdentity` supplies the actual prior store
+ * status as `from` when known. Absent key → treat as open (backward compat for
+ * pure unit tests / first write). Production callers that accumulate store
+ * rows must pass the map so illegal terminal→terminal morphs are rejected.
+ */
+export function judgeTerminalsToLedgerDispositions(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
   severity: Finding["severity"] = "medium",
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
+  /**
+   * #982: identity-keyed severity from cargo findings. Missing keys fall back
+   * to the `severity` argument (default medium).
+   */
+  severityByIdentity?: Readonly<Partial<Record<string, Finding["severity"]>>>,
 ): FindingDisposition[] {
   const out: FindingDisposition[] = [];
+  // Working copy so same-table sequential flips see prior terminal status
+  // (illegal terminal→terminal morph fails loud; no open hardcode laundering).
+  const known: Partial<Record<string, FindingStoreStatus>> = {
+    ...(currentStoreStatusByIdentity ?? {}),
+  };
   for (const d of dispositions) {
-    if (d.action !== "refute") continue;
-    out.push({
-      identityKey: d.identityKey,
-      status: "refuted",
-      reason: `${d.reason}: ${d.evidence}`,
-      severity,
-      source: "judge_kill",
-      scope: d.reason,
-    });
+    const from = known[d.identityKey] ?? OPEN_FINDING_STORE_STATUS;
+    const rowSeverity = severityByIdentity?.[d.identityKey] ?? severity;
+    if (d.action === "refute") {
+      pushTerminalOrThrow(
+        out,
+        recordFindingStoreFlip({
+          identityKey: d.identityKey,
+          from,
+          to: "refuted",
+          reason: `${d.reason}: ${d.evidence}`,
+          severity: rowSeverity,
+          source: "judge_kill",
+          scope: d.reason,
+        }),
+      );
+      known[d.identityKey] = "refuted";
+      continue;
+    }
+    if (d.action === "suppress") {
+      const groundKind =
+        "groundTicket" in d && d.groundTicket !== undefined
+          ? "groundTicket"
+          : "ownerRecordPointer";
+      const groundSource =
+        groundKind === "groundTicket"
+          ? `groundTicket:${d.groundTicket}`
+          : d.ownerRecordPointer;
+      pushTerminalOrThrow(
+        out,
+        recordFindingStoreFlip({
+          identityKey: d.identityKey,
+          from,
+          to: "suppressed",
+          reason: d.evidence,
+          severity: rowSeverity,
+          source: groundSource,
+          scope: groundKind,
+        }),
+      );
+      known[d.identityKey] = "suppressed";
+    }
   }
   return out;
 }
 
 /**
+ * Build identityKey → latest store status from accumulated ledger store rows.
+ * Last row wins per key (mirrors live accumulation order).
+ */
+export function storeStatusByIdentityFromDispositions(
+  storeRows: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly status: FindingStoreStatus;
+  }>,
+): Partial<Record<string, FindingStoreStatus>> {
+  const map: Partial<Record<string, FindingStoreStatus>> = {};
+  for (const row of storeRows) {
+    map[row.identityKey] = row.status;
+  }
+  return map;
+}
+
+/**
  * Filter findings cargo to only the live (open) identity keys from the
- * disposition table. Dead/refuted keys never enter S5 dispatch.
+ * disposition table. Dead / refuted / suppressed keys never enter S5 dispatch.
  *
- * Filtering is by schema identity keys — not by prose parsing.
+ * Filtering is by schema identity keys — not by prose parsing. Only
+ * `action: "live"` enters the fixer live-set (#952: suppressed is archived).
  *
  * Empty live set is a cargo filter result only — NOT topology authorization.
  * Family (#919 M1) and single-slice (#919 M6) both fail-loud when
- * status:continue projects zero live identity keys; callers must gate empty
- * continue before dispatching coder-fix / S5.
+ * status:continue projects **true empty** (0 live AND 0 terminal flips).
+ * Terminal-only continue (0 live + non-empty refute/suppress flips) is court
+ * closure via {@link isTerminalOnlyContinue} — not empty-spin (#952).
  */
 export function openFindingsForFixer(
   findings: ReadonlyArray<Finding>,
@@ -117,13 +211,12 @@ export function openFindingsForFixer(
     dispositions.filter((d) => d.action === "live").map((d) => d.identityKey),
   );
   // Cargo filter only: empty table / zero live keys → yield []. Topology
-  // authorization for empty continue is the caller's fail-loud gate (M1/M6).
+  // authorization: true empty continue fail-loud (M1/M6); terminal-only → close.
   if (dispositions.length > 0 || liveKeys.size > 0) {
     return findings.filter((f) => liveKeys.has(findingIdentityKey(f)));
   }
   return [];
 }
-
 /** Live identity keys only (control envelope for S5). */
 export function liveFindingIdentityKeys(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
@@ -304,16 +397,93 @@ export function judgeResultFromVerdict(
       diagnosis: verdict.diagnosis,
     });
   }
-  // continue
+  // continue — ADR 0138: fixPacketBody is traffic on the envelope; cargo may
+  // still ride findings siblings but is never the coder-fix packet path.
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: verdict.findingDispositions,
+    fixPacketBody: verdict.fixPacketBody,
     ...(verdict.advanceCoder !== undefined
       ? { advanceCoder: verdict.advanceCoder }
       : {}),
     ...(findingsCargo !== undefined ? { findings: findingsCargo } : {}),
   };
+}
+
+/**
+ * ADR 0138 — sole coder-fix packet body path: judge continue `fixPacketBody`,
+ * verbatim. Missing / empty is loud failure; never fall back to bare findings.
+ *
+ * Runner topology may still read disposition identity keys as thin control
+ * envelope; this helper never reads findings cargo for packet content.
+ */
+export function requireFixPacketBody(output: {
+  readonly status?: string;
+  readonly fixPacketBody?: unknown;
+}): string {
+  if (output.status !== "continue") {
+    throw new Error(
+      "fixPacketBody is only authorized on judge status:continue (ADR 0138)",
+    );
+  }
+  if (typeof output.fixPacketBody !== "string") {
+    throw new Error(
+      "judge continue missing fixPacketBody (ADR 0138; no bare-findings fallback)",
+    );
+  }
+  // Verbatim transport: do not rewrite whitespace. Empty / whitespace-only is
+  // contract drift (same fail-loud class as empty live set).
+  if (
+    output.fixPacketBody.length === 0 ||
+    output.fixPacketBody.trim().length === 0
+  ) {
+    throw new Error(
+      "judge continue fixPacketBody is empty (ADR 0138; no bare-findings fallback)",
+    );
+  }
+  return output.fixPacketBody;
+}
+
+/**
+ * ADR 0138 / #978 — single helper for coder-fix landing writers (single-slice
+ * `dispatchWorker` + family `writeFamilyFixFindingsFile`).
+ *
+ * - Present non-empty body → return **verbatim** (no trim rewrite).
+ * - Open set present (keys length > 0 or count > 0) without usable body and
+ *   `requireBodyWhenOpen` (default true for coder-fix) → fail loud (no
+ *   soft-omit second channel).
+ * - No open set / keys-only re-adjudicate (`requireBodyWhenOpen: false`) /
+ *   raw-artifacts-only → `undefined` (not a fixer content packet).
+ */
+export function materializeLandingFixPacketBody(input: {
+  readonly fixPacketBody?: unknown;
+  readonly blockingFindingIdentityKeys?: readonly string[];
+  readonly blockingFindingCount?: number;
+  /**
+   * Coder-fix content landings default true. S6 judge re-adjudicate landings
+   * that carry identity keys without a fix packet set this false.
+   */
+  readonly requireBodyWhenOpen?: boolean;
+}): string | undefined {
+  const keysLen = input.blockingFindingIdentityKeys?.length ?? 0;
+  const count = input.blockingFindingCount ?? 0;
+  const hasOpenSet = keysLen > 0 || count > 0;
+  const requireBody = input.requireBodyWhenOpen !== false;
+  const raw =
+    typeof input.fixPacketBody === "string" ? input.fixPacketBody : undefined;
+  const usable =
+    raw !== undefined && raw.length > 0 && raw.trim().length > 0
+      ? raw
+      : undefined;
+  if (usable !== undefined) return usable;
+  if (hasOpenSet && requireBody) {
+    throw new Error(
+      "coder-fix landing missing non-empty fixPacketBody with live open set " +
+        "(ADR 0138; no bare-findings fallback / no soft-omit)",
+    );
+  }
+  return undefined;
 }
 
 /** Convenience: build a continue verdict table from live finding rows. */
@@ -368,12 +538,19 @@ export function liveDispositionsForOpenCount(
  *     historical single-slice paper). Positive count → continue is resume
  *     compatibility only — not a second live court.
  *
+ * ADR 0138 / #978: never invent a residual placeholder `fixPacketBody`.
+ * When historical paper already carries an authored non-empty body, pass it
+ * through **verbatim** (transport only). When absent, omit the field — live
+ * coder-fix edges fail loud via {@link requireFixPacketBody} /
+ * {@link materializeLandingFixPacketBody}; do not synthesise runner cargo.
+ *
  * Returns undefined when count is not a positive open-count (caller maps
  * zero / escalate / unusable separately).
  */
 export function judgeContinueFromOpenCount(
   findingsCount: number,
   findings: ReadonlyArray<Finding> = [],
+  fixPacketBody?: unknown,
 ): JudgeResult | undefined {
   if (
     typeof findingsCount !== "number" ||
@@ -383,11 +560,19 @@ export function judgeContinueFromOpenCount(
     return undefined;
   }
   const cargo = [...findings];
+  // Pass-through only — never invent residual placeholder bodies (ADR 0138).
+  const authored =
+    typeof fixPacketBody === "string" &&
+    fixPacketBody.length > 0 &&
+    fixPacketBody.trim().length > 0
+      ? fixPacketBody
+      : undefined;
   return {
     kind: "judge",
     status: "continue",
     findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
     findings: cargo,
+    ...(authored !== undefined ? { fixPacketBody: authored } : {}),
   };
 }
 
@@ -403,13 +588,16 @@ export function judgeContinueFromOpenCount(
  * emit T2 `kind:"judge"` tri-state directly.
  *
  * - escalate present → T2 kind:"judge" status:"escalate" (wins over count)
- * - positive open-count → continue (via {@link judgeContinueFromOpenCount})
+ * - positive open-count → continue (via {@link judgeContinueFromOpenCount});
+ *   body only when residual paper already authored one (verbatim pass-through)
  * - zero / missing / non-integer → undefined (caller maps unusable; never silent clean)
  */
 export function projectResidualReviewerToJudge(residual: {
   readonly findingsCount: number;
   readonly findings?: ReadonlyArray<Finding>;
   readonly escalate?: Escalation;
+  /** Optional authored packet body already on residual paper — transport only. */
+  readonly fixPacketBody?: unknown;
 }): JudgeResult | undefined {
   if (residual.escalate !== undefined) {
     return mintJudgeEscalate(residual.escalate);
@@ -417,36 +605,108 @@ export function projectResidualReviewerToJudge(residual: {
   return judgeContinueFromOpenCount(
     residual.findingsCount,
     residual.findings ?? [],
+    residual.fixPacketBody,
   );
 }
 
 /**
  * Live-path projection of a judge `continue` verdict into the S5 open set
- * (kills → refuted flips; live keys only). Shared by the in-process continue
- * edge and crash/resume ledger rebuild (F2).
+ * (terminals → store flips; live keys only) plus optional ADR 0138 packet body.
+ * Shared by the in-process continue edge and crash/resume ledger rebuild (F2).
+ *
+ * Packet content for coder-fix is {@link fixPacketBody} only — callers must
+ * {@link requireFixPacketBody} (or the non-empty field here) before dispatch;
+ * `blocking` findings cargo is residual/telemetry and is **not** the packet path.
  */
-export function projectJudgeContinueBlocking(output: {
-  readonly status: string;
-  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  readonly findings?: ReadonlyArray<Finding>;
-}): {
+export function projectJudgeContinueBlocking(
+  output: {
+    readonly status: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly findings?: ReadonlyArray<Finding>;
+    readonly fixPacketBody?: string;
+  },
+  /**
+   * #952 R6-C2: prior store statuses (identityKey → status) for legal
+   * transition checks. Production live/resume paths pass accumulated
+   * findingDispositions via {@link storeStatusByIdentityFromDispositions}.
+   */
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
+): {
   readonly blocking: Finding[];
   readonly blockingIdentityKeys: string[];
   readonly blockingFindingCount: number;
-  readonly killDispositions: FindingDisposition[];
+  readonly terminalDispositions: FindingDisposition[];
+  readonly fixPacketBody?: string;
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
-  const kills = judgeKillsToLedgerDispositions(dispositions);
   const cargo = output.findings ?? [];
+  // #982: preserve cargo severity on terminal ledger flips (fallback medium).
+  const severityByIdentity: Partial<Record<string, Finding["severity"]>> = {};
+  for (const f of cargo) {
+    severityByIdentity[findingIdentityKey(f)] = f.severity;
+  }
+  const terminals = judgeTerminalsToLedgerDispositions(
+    dispositions,
+    "medium",
+    currentStoreStatusByIdentity,
+    severityByIdentity,
+  );
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
+  const rawBody =
+    typeof output.fixPacketBody === "string" ? output.fixPacketBody : undefined;
   return {
     blocking,
     blockingIdentityKeys,
     blockingFindingCount: blockingIdentityKeys.length,
-    killDispositions: kills,
+    terminalDispositions: terminals,
+    ...(rawBody !== undefined ? { fixPacketBody: rawBody } : {}),
   };
+}
+
+/**
+ * #952 — terminal-only continue is court closure, not empty contract drift.
+ *
+ * Disposition-table pure check (no cargo walk / store flip): `status:continue`
+ * with **0 live** AND **≥1 refute|suppress** means the judge finished the open
+ * set by parking/killing everything — no fixer open set remains. Topology
+ * routes like **converged** (single-slice S7 / family pass) after callers apply
+ * flips. True empty continue (no live AND no terminals) remains fail-loud
+ * (M1/M6). Prefer this over inventing a new public result/cause.
+ *
+ * Used by {@link judgeStatusFromOutput} so route never materializes cargo keys.
+ */
+export function isTerminalOnlyContinueDispositions(
+  dispositions: ReadonlyArray<{ readonly action: string }> | undefined,
+): boolean {
+  const rows = dispositions ?? [];
+  if (rows.length === 0) return false;
+  let hasLive = false;
+  let hasTerminal = false;
+  for (const d of rows) {
+    if (d.action === "live") hasLive = true;
+    if (d.action === "refute" || d.action === "suppress") hasTerminal = true;
+  }
+  return !hasLive && hasTerminal;
+}
+
+/**
+ * Projection form of {@link isTerminalOnlyContinueDispositions} for gates that
+ * already hold {@link projectJudgeContinueBlocking} output.
+ */
+export function isTerminalOnlyContinue(projected: {
+  readonly blockingFindingCount: number;
+  readonly blockingIdentityKeys: ReadonlyArray<string>;
+  readonly terminalDispositions: ReadonlyArray<unknown>;
+}): boolean {
+  return (
+    projected.blockingFindingCount === 0 &&
+    projected.blockingIdentityKeys.length === 0 &&
+    projected.terminalDispositions.length > 0
+  );
 }
 
 /**
@@ -469,7 +729,9 @@ export type FamilyJudgeClosure =
       readonly blocking: Finding[];
       readonly blockingIdentityKeys: string[];
       readonly blockingFindingCount: number;
-      readonly killDispositions: FindingDisposition[];
+      readonly terminalDispositions: FindingDisposition[];
+      /** ADR 0138: judge-authored packet body (required before coder-fix). */
+      readonly fixPacketBody?: string;
     }
   | {
       readonly action: "escalate";
@@ -482,6 +744,16 @@ export function closeFamilyCourtFromJudgeOutput(
   // Accept any worker / fixture shape; only kind:"judge" is a family closer.
   // `unknown` keeps callers free of WorkerOutput index-signature fights.
   output: unknown,
+  /**
+   * #952 R7-C1: prior findings-store statuses (identityKey → status) so
+   * terminal→terminal morphs fail at the shared write point. Family production
+   * builds this from ledger prior schema dispositions (refute→refuted,
+   * suppress→suppressed) via {@link storeStatusByIdentityFromDispositions}.
+   * Absent → treat as open (backward compat for pure unit tests / first write).
+   */
+  currentStoreStatusByIdentity?: Readonly<
+    Partial<Record<string, FindingStoreStatus>>
+  >,
 ): FamilyJudgeClosure {
   if (
     output === null ||
@@ -500,6 +772,7 @@ export function closeFamilyCourtFromJudgeOutput(
     readonly status?: unknown;
     readonly findingDispositions?: unknown;
     readonly findings?: unknown;
+    readonly fixPacketBody?: unknown;
     readonly reason?: unknown;
     readonly diagnosis?: unknown;
     readonly escalate?: unknown;
@@ -516,17 +789,34 @@ export function closeFamilyCourtFromJudgeOutput(
       const findings = Array.isArray(rec.findings)
         ? (rec.findings as ReadonlyArray<Finding>)
         : undefined;
-      const projected = projectJudgeContinueBlocking({
-        status: "continue",
-        findingDispositions: dispositions,
-        findings,
-      });
+      const fixPacketBody =
+        typeof rec.fixPacketBody === "string" ? rec.fixPacketBody : undefined;
+      // #952 R7-C1: thread real prior store `from` (mirrors runner/residual R6-C2).
+      const projected = projectJudgeContinueBlocking(
+        {
+          status: "continue",
+          findingDispositions: dispositions,
+          findings,
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
+        },
+        currentStoreStatusByIdentity,
+      );
+      // #952: 0 live + non-empty terminal flips = court closed (like converged).
+      // True empty continue stays `continue` with empty open set for the M1 gate.
+      if (projected !== undefined && isTerminalOnlyContinue(projected)) {
+        return { action: "pass" };
+      }
       return {
         action: "continue",
         blocking: projected?.blocking ?? [],
         blockingIdentityKeys: projected?.blockingIdentityKeys ?? [],
         blockingFindingCount: projected?.blockingFindingCount ?? 0,
-        killDispositions: projected?.killDispositions ?? [],
+        terminalDispositions: projected?.terminalDispositions ?? [],
+        ...(projected?.fixPacketBody !== undefined
+          ? { fixPacketBody: projected.fixPacketBody }
+          : fixPacketBody !== undefined
+            ? { fixPacketBody }
+            : {}),
       };
     }
     if (status === "escalate") {
@@ -649,7 +939,17 @@ export function judgeStatusFromOutput(
   const projected = projectJudgeSeatOutput(output);
   if (projected.kind === "judge") {
     if (projected.status === "converged") return "converged";
-    if (projected.status === "continue") return "continue";
+    if (projected.status === "continue") {
+      // #952: terminal-only continue (suppress/refute flips, 0 live) routes like
+      // converged so single-slice S7 / resume do not empty-spin S5. Envelope
+      // status string stays `continue` on the ledger for queryable flips.
+      // Disposition-table only — never walk findings cargo here (opaque/residual
+      // rows must not crash topology; store flips stay on the live gate).
+      if (isTerminalOnlyContinueDispositions(projected.findingDispositions)) {
+        return "converged";
+      }
+      return "continue";
+    }
     return "escalate";
   }
   return "unusable";

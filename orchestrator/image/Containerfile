@@ -122,7 +122,9 @@ USER agent
 RUN set -eux; \
     NPM_CONFIG_PREFIX=/home/agent/.npm-global; \
     export NPM_CONFIG_PREFIX PATH="$NPM_CONFIG_PREFIX/bin:$PATH"; \
-    npm install -g @xai-official/grok@0.2.93; \
+    # #964: pin ≥0.2.102 so headless auth death fail-fasts ("Not signed in")
+    # instead of entering interactive device-code wait (0.2.93 flight3 hang).
+    npm install -g @xai-official/grok@0.2.102; \
     test -x "$NPM_CONFIG_PREFIX/bin/grok" || command -v grok
 USER root
 RUN set -eux; \
@@ -137,7 +139,7 @@ RUN set -eux; \
     touch /home/agent/.grok/auth.json; \
     chown agent /home/agent/.grok /home/agent/.grok/auth.json; \
     chmod 600 /home/agent/.grok/auth.json; \
-    /usr/local/bin/grok --version | grep -F "0.2.93"
+    /usr/local/bin/grok --version | grep -F "0.2.102"
 # The base image exposes its npm-global bin first. Keep the copied executable
 # first at runtime so an auth bind mount can never replace the resolved grok.
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

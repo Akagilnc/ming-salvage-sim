@@ -123,13 +123,13 @@ describe("#877 residual read-word fate forks — survival", () => {
   it("R1: S6 empty findings without priorFindingDispositions ships (disposition court demolished)", async () => {
     // Findings count=0 is the only channel; disposition prose is not required.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
       { kind: "judge", status: "converged" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary?.reason).not.toBe("contract_drift");
     expect(backend.dispatched).toEqual(
       expect.arrayContaining(["S3:verify", "S5:coder", "S6:verify"]),
@@ -141,13 +141,13 @@ describe("#877 residual read-word fate forks — survival", () => {
     // empty rounds escalated as "review/fix loop made no progress". Post-#877:
     // findings=[] closes via findings-count channel.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
       { kind: "judge", status: "converged" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
   });
 

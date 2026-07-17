@@ -175,7 +175,7 @@ export async function parkQuotaWaitForReset(opts: {
       ? ` (resetAt ${ledgerEntry.resetAt})`
       : "";
   return {
-    status: "escalate",
+    status: "parked",
     stepLedger: ledger,
     stopSummary: {
       reason: "provider_degraded",

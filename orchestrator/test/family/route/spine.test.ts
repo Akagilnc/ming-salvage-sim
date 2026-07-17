@@ -182,7 +182,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       "merged",
     ]);
     // A complete clean run is observably "success" (green barriers + all merged).
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 
   it("already-shipped resume reports already_done instead of a generic success summary", async () => {
@@ -207,7 +207,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary).toMatchObject({
       reason: "already_done",
       summary: "family run already converged for the current family HEAD",
@@ -262,7 +262,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(verifyDispatches).toBe(1);
     expect(familyBackend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
     expect(familyBackend.ledger.some((e) => e.status === "review_loop_converged")).toBe(true);
@@ -296,7 +296,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/classified as failure/i);
     expect(barrierCalls).toBe(0);
   });
@@ -345,7 +345,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary?.reason).toBe("already_done");
     expect(familyBackend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
     expect(
@@ -390,7 +390,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     });
 
     // #941 / ID-013: close/cleanup failure is leftover only — never fail completed
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary?.reason).toBe("already_done");
     expect(
       familyBackend.ledger.filter((e) => e.status === "post_merge_cleanup"),
@@ -429,7 +429,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stopSummary?.reason).toBe("already_done");
     const cleanupRows = familyBackend.ledger.filter(
       (e) => e.status === "post_merge_cleanup",
@@ -512,7 +512,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       // verifyCmr left default → real runVerifyCmr executes the fresh ship + recordReviewLoopConverged path
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const convergedRows = familyBackend.ledger.filter(
       (e) => e.status === "review_loop_converged",
     );
@@ -640,7 +640,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children).toEqual([
       { issue: 10, status: "merged", branch: "feat/child-10" },
       {
@@ -679,7 +679,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
       },
     });
 
-    expect(result.status).toBe("cmr_failed");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary).toMatchObject({
       reason: "cmr_failed",
       summary: "same-module CMR finding still red",

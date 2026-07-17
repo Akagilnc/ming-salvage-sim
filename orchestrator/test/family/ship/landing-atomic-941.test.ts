@@ -1763,7 +1763,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
       familyBase: "family/epic-941",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("decision_gate_park");
     const escalated = familyBackend.ledger.filter(
       (e) => e.status === "escalated" && e.event === "escalated",
@@ -2194,7 +2194,7 @@ describe("#941 public runFamily driver re-enters landing (ID-013)", () => {
       familyBase: "family/epic-941",
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(
       familyBackend.ledger.filter((e) => e.status === "pr_merged"),
     ).toHaveLength(1);
@@ -2356,7 +2356,7 @@ describe("#941 public runFamily driver re-enters landing (ID-013)", () => {
     });
 
     expect(landingCalls).toBe(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     // Park durable marker from the resume landing barrier (not uncaught throw).

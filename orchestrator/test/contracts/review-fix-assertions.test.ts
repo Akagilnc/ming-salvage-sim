@@ -328,12 +328,12 @@ describe("#677 legal refuse one finding, fix the others", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [overturn], findingsCount: 1,
+            kind: "reviewer", findings: [overturn], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "still-active" },
               { identityKey: otherKey, status: "verified-closed" },
@@ -377,7 +377,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
     const firstS6 = backend.dispatched.indexOf("S6:verify");
     expect(firstS6).toBeGreaterThan(backend.dispatched.indexOf("S5:coder"));
     // Must not park at S5 refuse
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
   });
 });
 
@@ -407,7 +407,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [finding], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         {
           kind: "completed",
@@ -430,7 +430,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [finding], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         {
           kind: "completed",
@@ -510,7 +510,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       backend: countingBackend,
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = countingBackend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     expect(countingBackend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
@@ -545,7 +545,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
     const backend = new NoWorktreeHeadTelemetryBackend({
       worktree,
       reviewerResults: [
-        { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" } },
         {
           kind: "completed",
           output: { kind: "judge", status: "converged" },
@@ -572,7 +572,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
   });
@@ -613,12 +613,12 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1 },
+          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer", findings: [overturn], findingsCount: 1,
+            kind: "reviewer", findings: [overturn], findingsCount: 1, fixPacketBody: "fixture residual authored body",
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "still-active" },
               { identityKey: otherKey, status: "verified-closed" },
@@ -647,7 +647,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
     });
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     // #919 M3: refuse traffic keys sole on thin ctx; landing = refuseRecords only.
@@ -783,7 +783,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
           commitsAdded: 1,
         }),
         persistent("S3", beforeFix, {
-          kind: "reviewer", findings: [overturn], findingsCount: 1,
+          kind: "reviewer", findings: [overturn], findingsCount: 1, fixPacketBody: "fixture residual authored body",
         }),
         persistent("S4", beforeFix),
         persistent("S5", afterFix, {
@@ -808,7 +808,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
     });
 
     const result = await runOrchestrator({ issueNumber: 677, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
 
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
