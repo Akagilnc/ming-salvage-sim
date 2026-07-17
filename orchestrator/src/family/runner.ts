@@ -1742,9 +1742,11 @@ export async function runFamily(
   //   - ANSWERED → the answer is fed into runChild, which injects it into the
   //     child's single-slice ledger so its own planResume → resumeSession reopens
   //     the paused step IN PLACE (原 sessionId, 退出-重入 per ADR 0062).
-  //   - UNANSWERED → the family stays PAUSED: return `status:"escalated"` before the
-  //     wave loop rather than fruitlessly re-running the parked child (which would
-  //     just re-escalate). Supports multiple children parked + answered separately.
+  //   - UNANSWERED → the family stays PAUSED: return public `status:"parked"`
+  //     (#942 completed|parked|failed) before the wave loop rather than fruitlessly
+  //     re-running the parked child (which would just re-escalate). Child result
+  //     status may still be internal `"escalated"`; ledger park rows stay as-is.
+  //     Supports multiple children parked + answered separately.
   const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
   {
     // #970 type-split: inject into runChild ONLY when the ledger proves a
@@ -1756,7 +1758,7 @@ export async function runFamily(
     // `unansweredChildEscalations` returns ONLY the still-unanswered parked
     // children. To also resume the ANSWERED ones we look up each parked child's
     // answer directly: answered → feed it into runChild (resume in place);
-    // unanswered → keep the family paused (return escalated).
+    // unanswered → keep the family paused (return public parked).
     // Single reverse pass → latest park per child (ledger authority predicate).
     const latestParkByChild = new Map<
       number,
@@ -1791,12 +1793,12 @@ export async function runFamily(
       const ledgerMerged = mergedSet(initialFamilyLedger);
       const first = unanswered[0]!;
       // #604 F8: an UNANSWERED parked child re-entered before the wave loop must
-      // map to `"escalated"` (its decision-gate park state), NOT `"skipped"`. The
-      // wave-loop parking path finalizes these via `finalizeDecisionPark` →
-      // `"escalated"`; the early-exit re-entry path must stay consistent, else the
-      // driver sees the parked child as skipped and mis-reads the run. Carry the
-      // escalation payload read from the `child_decision_parked` ledger row so the
-      // driver has the same reason/diagnosis/sessionId either path.
+      // map child status to internal `"escalated"` (decision-gate park payload),
+      // NOT `"skipped"`. Public family status from either path is `"parked"`
+      // (#942): wave-loop via `finalizeDecisionPark`, early-exit re-entry here.
+      // Keep both paths consistent so the driver does not mis-read the parked
+      // child as skipped. Carry the escalation payload from the
+      // `child_decision_parked` ledger row (reason/diagnosis/sessionId).
       const parkedByIssue = new Map<number, FamilyChildEscalation>();
       for (const row of unanswered) {
         parkedByIssue.set(row.childIssue, {
@@ -2099,8 +2101,10 @@ export async function runFamily(
   //     for each ancestor-confirmed child, so `currentMerged` (re-read each wave)
   //     skips it (no double-merge); a never-merged child (childHead absent / not an
   //     ancestor) is left OUT and the existing wave loop re-runs it (no漏合);
-  //   - branch ③ (inconsistent live HEAD): bail fail-closed to `status:"escalated"`
-  //     BEFORE any merge (decision 5 真有未落/不一致 → 升级; decision 4 escalate).
+  //   - branch ③ (inconsistent live HEAD): bail fail-closed to public
+  //     `status:"failed"` (+ cause; #942 completed|parked|failed) BEFORE any merge
+  //     (decision 5 真有未落/不一致 → fail-closed; ledger may still record an
+  //     internal escalated/failure row for triage — not public ABI).
   // Absent ⇒ a fresh run, the #293 behaviour unchanged. The reconcile LOGIC lives
   // in reconcile.ts; the spine only CALLS it + appends its补账条 (acceptance-4
   // seam boundary — the spine never carries the reconcile algorithm).
