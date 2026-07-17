@@ -2491,8 +2491,9 @@ describe("#600 r26 runner-owned isRecheck", () => {
       applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
         resolveFixCommitSha: async (envelopeFixSha) => {
-          // #940: envelope SHA is host-owned via resolveFixCommitSha only
-          // (applySideEffects deleted; worker owns GitHub side effects).
+          // #940 / K1: envelope SHA is host-owned via resolveFixCommitSha only
+          // (not via applySideEffects). GH cargo remains dual-owner: worker first,
+          // host fail-safe applySideEffects still applies residual plan.
           fixingSha = envelopeFixSha;
           return "fix-sha-round1";
         },
@@ -2633,8 +2634,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         ],
       }),
       dispatchVerify: async () => {
-        // #940: host no longer re-applies side effects; capture worker disposition
-        // at the verify dispatch seam.
+        // #940 / K1: capture worker disposition at the verify dispatch seam.
+        // Host still applies residual cargo via applySideEffects (fail-safe).
         accountedVerify = { kind: "verify", converged: true };
         return accountedVerify;
       },
@@ -3013,8 +3014,9 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
         expect(envelopeFixSha).toBe("crash-landed-sha");
-        // #940: host no longer threads fixing SHA through applySideEffects;
-        // envelope SHA is owned by resolveFixCommitSha + recheck landing only.
+        // #940 / K1: fixing SHA is owned by resolveFixCommitSha + recheck landing
+        // only — not threaded through applySideEffects (which remains the dual-owner
+        // host fail-safe for GH cargo, not SHA resolution).
         fixingSha = envelopeFixSha;
         return envelopeFixSha ?? "should-not-read-git";
       },

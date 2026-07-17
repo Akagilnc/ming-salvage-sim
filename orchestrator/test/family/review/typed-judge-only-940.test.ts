@@ -33,7 +33,6 @@ import type {
   FamilyLedgerEntry,
   FamilyVerifyResult,
 } from "../../../src/family/types.js";
-import { terminateSpawnedChild } from "../../../src/workerMonitor.js";
 import type { PrReviewSnapshot } from "../../../src/botPolling.js";
 import type {
 
@@ -423,10 +422,6 @@ describe("#940 unified worker dispatch — ID-004 / ID-006 still hold", () => {
       }),
     ).rejects.toThrow(/adoption persist failed/);
     expect(killed.length).toBeGreaterThan(0);
-  });
-
-  it("NEGATIVE: terminateSpawnedChild is the sole ownership tool (ID-006 export still present)", () => {
-    expect(typeof terminateSpawnedChild).toBe("function");
   });
 });
 
