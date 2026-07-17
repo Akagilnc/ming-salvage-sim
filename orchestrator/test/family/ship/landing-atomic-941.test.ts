@@ -28,8 +28,14 @@ import { landingWorkerSpec } from "../../../src/dispatchWorker.js";
 import { runOnlineReviewLoopStage } from "../../../src/family/onlineReviewLoop.js";
 import {
   buildExplicitLandingLiveHooks,
+  classifyLandingActionResult,
+  LANDING_CI_FETCH_FAILURE_LIMIT,
   runLandingAction,
 } from "../../../src/family/landing.js";
+import {
+  familyEscalationState,
+  recordFamilyEscalated,
+} from "../../../src/family/ledger.js";
 import { runFamily } from "../../../src/family/runner.js";
 import type {
   FamilyBackend,
@@ -38,6 +44,7 @@ import type {
   FamilyVerifyResult,
   MergeRequest,
 } from "../../../src/family/types.js";
+import { decisionGateParkStopSummary } from "../../../src/stopSummary.js";
 import {
   resolveRouteModels,
   routeSmokeEntries,
@@ -465,6 +472,291 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(mergeExecuted.n).toBe(1);
   });
 
+  it("NEGATIVE Std S4: repeated mid-loop fetchState failures park as decision_gate", async () => {
+    let fetchCalls = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => {
+          fetchCalls += 1;
+          // First call enters CI-pending loop (OPEN+CLEAN + pending checks).
+          // Mid-loop refresh always dies — pre-fix keep-prior would spin forever.
+          if (fetchCalls === 1) {
+            return {
+              prNumber: 941,
+              prUrl: STAGE_SHIP.pr!,
+              state: "OPEN",
+              headOid: "head-941",
+              headRefName: "family/epic-941",
+              mergeStateStatus: "CLEAN",
+            };
+          }
+          throw new Error("gh auth dead");
+        },
+        executeMerge: () => {
+          throw new Error("must not merge while fetch is dead");
+        },
+        pollSnapshot: async () => PENDING_CI_SNAPSHOT,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stopSummary?.summary).toMatch(/fetch failed repeatedly/i);
+    // initial + LANDING_CI_FETCH_FAILURE_LIMIT consecutive mid-loop failures
+    expect(fetchCalls).toBe(1 + LANDING_CI_FETCH_FAILURE_LIMIT);
+  });
+
+});
+
+describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authority)", () => {
+  it("classifyLandingActionResult: decision_gate → park; landing_failed → hard_fail", () => {
+    const park = classifyLandingActionResult({
+      ok: false,
+      terminalState: "decision_gate",
+      stopSummary: decisionGateParkStopSummary({
+        summary: "landing merge blocked: ruleset",
+        repairHint: "fix ruleset",
+      }),
+    });
+    expect(park).toEqual({
+      kind: "park",
+      stopSummary: expect.objectContaining({ reason: "decision_gate_park" }),
+    });
+
+    const hard = classifyLandingActionResult({
+      ok: false,
+      terminalState: "landing_failed",
+      stopSummary: {
+        reason: "infra_failure",
+        summary: "docs worker died",
+        repairHint: "retry",
+      },
+    });
+    expect(hard.kind).toBe("hard_fail");
+
+    expect(classifyLandingActionResult({ ok: true, terminalState: "completed" })).toEqual({
+      kind: "ok",
+    });
+  });
+
+  it("ledger honesty: escalated AFTER review_loop_converged is answerable; aborted-only is not", async () => {
+    const converged: FamilyLedgerEntry = {
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr: "pr://family/941-landing",
+      familyHeadAfter: "head-941",
+    };
+    const parkStop = decisionGateParkStopSummary({
+      summary: "landing merge blocked: ruleset",
+      repairHint: "fix ruleset",
+    });
+
+    // Fresh-path defect shape (pre-fix): aborted after converged → hidden.
+    const abortedOnly: FamilyLedgerEntry[] = [
+      converged,
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: parkStop.summary,
+        familyHeadAfter: "head-941",
+        stopSummary: parkStop,
+      },
+    ];
+    expect(familyEscalationState(abortedOnly)).toBeUndefined();
+
+    // Unified durable shape: escalated decision after converged → answerable.
+    class MemBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [converged];
+      async mergeChildIntoFamilyBase(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async resolveMergeConflict(): Promise<never> {
+        throw new Error("n/a");
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-941";
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(): Promise<never> {
+        throw new Error("n/a");
+      }
+    }
+    const backend = new MemBackend();
+    await recordFamilyEscalated(backend, {
+      escalationKind: "decision",
+      phase: "final",
+      reason: parkStop.summary,
+      familyHeadAfter: "head-941",
+      stopSummary: parkStop,
+    });
+    expect(familyEscalationState(backend.ledger)).toMatchObject({
+      escalation: {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "decision",
+      },
+    });
+  });
+
+  it("POSITIVE: runFamily resume landing decision_gate writes escalated (not aborted-only)", async () => {
+    class ChildBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(
+        issueNumber: number,
+        base: string,
+      ): Promise<WorktreeHandle> {
+        return {
+          branch: `feat/child-${issueNumber}`,
+          base,
+          path: `/wt/${issueNumber}`,
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
+    }
+
+    class ParkFamilyBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [];
+      head = "family-base-941";
+      resolveLandingLiveHooks() {
+        return {
+          fetchState: () => ({
+            prNumber: 941,
+            prUrl: "pr://family/941-landing",
+            state: "OPEN",
+            headOid: "family-base-941",
+            headRefName: "family/epic-941",
+            mergeStateStatus: "BLOCKED",
+          }),
+          executeMerge: () => {
+            throw new Error("must not merge when ruleset blocked");
+          },
+          pollSnapshot: async () => BASE_SNAPSHOT,
+        };
+      }
+      async mergeChildIntoFamilyBase(
+        child: MergeRequest,
+      ): Promise<{ familyHead: string }> {
+        this.head = `+${child.childIssue}`;
+        return { familyHead: this.head };
+      }
+      async resolveMergeConflict(): Promise<never> {
+        throw new Error("resolveMergeConflict not used in this test");
+      }
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(entry);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+      async readFamilyHead(): Promise<string> {
+        return this.head;
+      }
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "landing") {
+          return {
+            kind: "completed",
+            output: { kind: "landing", released: true },
+          };
+        }
+        throw new Error(`unexpected ${spec.kind}`);
+      }
+    }
+
+    const familyBackend = new ParkFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        childIssue: 9411,
+        status: "merged",
+        familyHeadAfter: "family-base-941",
+      },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/941-landing",
+        familyHeadAfter: "family-base-941",
+      },
+    );
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 941,
+        children: [{ issue: 9411, blockedBy: [] }],
+      },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/epic-941",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("decision_gate_park");
+    const escalated = familyBackend.ledger.filter(
+      (e) => e.status === "escalated" && e.event === "escalated",
+    );
+    expect(escalated).toHaveLength(1);
+    expect(escalated[0]).toMatchObject({
+      escalationKind: "decision",
+      phase: "final",
+    });
+    // Must not leave only an aborted park that familyEscalationState cannot see.
+    expect(familyEscalationState(familyBackend.ledger)).toMatchObject({
+      escalation: { escalationKind: "decision" },
+    });
+  });
 });
 
 describe("#941 public driver — ID-015 cleanup already-gone", () => {

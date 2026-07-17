@@ -68,6 +68,41 @@ export interface LandingActionResult {
   readonly record?: PrMergedTerminalRecord;
 }
 
+/**
+ * Single authority for landing Action terminal → park vs hard-fail (family/914
+ * CR R1 Std M1 / CLAUDE #19). Fresh final-barrier and resume re-entry must
+ * share this classifier — do not re-copy isPark at call sites.
+ *
+ * - `decision_gate` / `decision_gate_park` → park (answerable decision)
+ * - other non-ok → hard_fail (merge_failed stage)
+ */
+export type LandingActionClassification =
+  | { readonly kind: "ok" }
+  | { readonly kind: "park"; readonly stopSummary: StopSummary }
+  | { readonly kind: "hard_fail"; readonly stopSummary: StopSummary };
+
+export function classifyLandingActionResult(
+  landing: LandingActionResult,
+): LandingActionClassification {
+  if (landing.ok) return { kind: "ok" };
+  const stopSummary =
+    landing.stopSummary ??
+    decisionGateParkStopSummary({
+      summary: `family landing did not complete (${landing.terminalState})`,
+      repairHint:
+        "resolve landing blockers or answer the decision gate, then re-enter landing",
+    });
+  const isPark =
+    landing.terminalState === "decision_gate" ||
+    stopSummary.reason === "decision_gate_park";
+  return isPark
+    ? { kind: "park", stopSummary }
+    : { kind: "hard_fail", stopSummary };
+}
+
+/** Consecutive mid-loop `fetchState` failures before landing parks (Std S4). */
+export const LANDING_CI_FETCH_FAILURE_LIMIT = 3;
+
 /** Injectable live GitHub/git surface for tests — production uses gh defaults. */
 export interface LandingLiveHooks {
   readonly fetchState: () => PrMergeLiveState;
@@ -349,6 +384,9 @@ export async function runLandingAction(
       };
 
       let readiness = assessMergeReadiness(live, await pollOnce());
+      // Std S4: repeated mid-loop fetchState failures → decision_gate (not
+      // infinite keep-prior on stale OPEN+ci_pending after auth/API death).
+      let consecutiveFetchFailures = 0;
       while (!readiness.ready) {
         const pendingOnly =
           readiness.blockers.length > 0 &&
@@ -368,8 +406,22 @@ export async function runLandingAction(
         await sleepPendingCiPollInterval();
         try {
           live = fetchState();
-        } catch {
-          /* keep prior live */
+          consecutiveFetchFailures = 0;
+        } catch (err) {
+          consecutiveFetchFailures += 1;
+          if (consecutiveFetchFailures >= LANDING_CI_FETCH_FAILURE_LIMIT) {
+            const detail = err instanceof Error ? err.message : String(err);
+            return {
+              ok: false,
+              terminalState: "decision_gate",
+              stopSummary: decisionGateParkStopSummary({
+                summary: `landing PR state fetch failed repeatedly during CI poll: ${detail}`,
+                repairHint:
+                  "restore gh/auth connectivity or answer the decision gate, then re-enter landing",
+              }),
+            };
+          }
+          /* keep prior live for a single/transient blip */
         }
         if (live.state.toUpperCase() === "MERGED") {
           mergeRecord = {
