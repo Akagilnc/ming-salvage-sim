@@ -149,45 +149,52 @@ class DispatchCapableBackend implements FamilyBackend {
 }
 
 describe("#940 public driver — ID-012 online review typed judge only", () => {
-  it("POSITIVE: host loop has no applySideEffects seam and no mechanical round cap export", async () => {
-    // Module-level: deleted host side-effect module + mechanical cap.
+  it("POSITIVE: host loop has applySideEffects seam and no mechanical round cap export", async () => {
+    // Correctness K1: host fail-safe applicator restored; mechanical cap stays gone.
     const loopMod = await import("../../../src/family/onlineReviewLoop.js");
     expect("MAX_ONLINE_REVIEW_ROUNDS" in loopMod).toBe(false);
-    expect("applyVerifySideEffects" in loopMod).toBe(false);
-    expect("applySideEffects" in loopMod).toBe(false);
     const srcDir = join(
       dirname(fileURLToPath(import.meta.url)),
       "../../../src",
     );
-    expect(existsSync(join(srcDir, "onlineReviewSideEffects.ts"))).toBe(false);
-    expect(existsSync(join(srcDir, "onlineReviewSideEffects.js"))).toBe(false);
+    expect(existsSync(join(srcDir, "onlineReviewSideEffects.ts"))).toBe(true);
+    const sideFx = await import("../../../src/onlineReviewSideEffects.js");
+    expect(typeof sideFx.applyVerifySideEffects).toBe("function");
   });
 
-  it("POSITIVE: worker-owned side effects — host routes disposition without cargo plan fields", async () => {
-    // #940 / ID-012: side effects run inside the verify worker before three-state
-    // self-report. Host entry accepts bare disposition (no threadReplies /
-    // threadsToResolve / deferredIssueUrls plan) and never re-applies cargo.
+  it("POSITIVE: host invokes applySideEffects before accepting mergeable (K1 fail-safe)", async () => {
+    // Worker may report bare converged; host must still call applySideEffects
+    // before mergeable — never green solely on disposition without the seam.
     const verifyMd = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../../../prompts/verify.md"),
       "utf8",
     );
     expect(verifyMd).toMatch(/Execute.*side effects yourself/i);
     expect(verifyMd).toMatch(/before.*self-report/i);
-    expect(verifyMd).not.toContain('"threadReplies"');
-    expect(verifyMd).not.toContain('"threadsToResolve"');
-    expect(verifyMd).not.toContain('"deferredIssueUrls"');
+    expect(verifyMd).toMatch(/fail-safe/i);
+    expect(verifyMd).toContain('"threadReplies"');
 
+    let applyCalls = 0;
+    let applySawCargo = false;
     const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
       poll: async () => BASE_SNAPSHOT,
-      // Worker reports converged only after effects succeeded — host sees no plan.
       dispatchVerify: async () =>
-        ({ kind: "verify", converged: true }) satisfies VerifyResult,
+        ({
+          kind: "verify",
+          converged: true,
+          threadReplies: [{ threadId: "1", body: "fixed: evidence" }],
+        }) satisfies VerifyResult,
       dispatchFixer: async () => {
-        throw new Error("fixer must not run on worker-owned converged");
+        throw new Error("fixer must not run on converged");
       },
       dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => {
+        applyCalls += 1;
+        applySawCargo = (verify.threadReplies?.length ?? 0) > 0;
+        return verify;
+      },
       retriggerAfterFix: () => {
-        throw new Error("retrigger must not run on worker-owned converged");
+        throw new Error("retrigger must not run on converged");
       },
     });
     expect(result).toEqual({
@@ -195,6 +202,8 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       terminalState: "mergeable",
       round: 1,
     });
+    expect(applyCalls).toBe(1);
+    expect(applySawCargo).toBe(true);
   });
 
   it("POSITIVE: continue disposition past former 3-round cap still routes until worker converges", async () => {
@@ -231,6 +240,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         };
       },
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (sha) => sha,
     });
@@ -258,6 +268,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchDocRelease: async () => {
         throw new Error("docRelease must not run after escalate disposition");
       },
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
     expect(result.ok).toBe(false);
@@ -288,6 +299,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         fixCommitSha: "fix-sha",
       }),
       dispatchDocRelease: async () => true,
+            applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
     });
