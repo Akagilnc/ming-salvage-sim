@@ -15,15 +15,13 @@
  *   (`FindingDispositionKind` + priorFindingDispositions prompts) — different
  *   seam for reviewer-side accepted suppression with source/scope/boundedReopen.
  *   Keep both vocabularies; do not alias or silently invent a third token.
+ *
+ * Ledger row shape is {@link FindingDisposition} in types.ts (status tokens
+ * single-sourced here; severity from Finding — no parallel record type).
  */
 
-/** Severity tokens mirrored from Finding — keep local to avoid circular imports. */
-export type FindingStoreSeverity =
-  | "critical"
-  | "high"
-  | "medium"
-  | "low"
-  | "clarity";
+import type { ContractResult } from "./stationReceiptContracts.js";
+import type { Finding, FindingDisposition } from "./types.js";
 
 /**
  * Canonical findings-store status tokens (ledger `FindingDisposition.status`).
@@ -42,25 +40,6 @@ export const FINDING_STORE_STATUSES = [
 ] as const;
 
 export type FindingStoreStatus = (typeof FINDING_STORE_STATUSES)[number];
-
-/**
- * Ledger disposition row shape produced at the store write point.
- * Field-compatible with `FindingDisposition` in types.ts (status tokens
- * single-sourced here).
- */
-export interface FindingStoreRecord {
-  readonly identityKey: string;
-  readonly status: FindingStoreStatus;
-  readonly reason: string;
-  readonly severity: FindingStoreSeverity;
-  readonly source?: string;
-  readonly scope?: string;
-  readonly boundedReopen?: string;
-}
-
-export type ContractResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly reason: string };
 
 function ok<T>(value: T): ContractResult<T> {
   return { ok: true, value };
@@ -112,21 +91,22 @@ export function validateFindingStoreTransition(
   }
   return fail(`illegal findings-store transition ${from} → ${to}`);
 }
+
 /**
  * Write-point flip: validates transition then returns a ledger disposition row.
  * Sole construction path for judge/store terminal flips that need transition
- * checks (refute / suppress).
+ * checks (refute / suppress). Row shape = {@link FindingDisposition} (types.ts).
  */
 export function recordFindingStoreFlip(input: {
   readonly identityKey: string;
   readonly from: FindingStoreStatus | undefined;
   readonly to: FindingStoreStatus;
   readonly reason: string;
-  readonly severity: FindingStoreSeverity;
+  readonly severity: Finding["severity"];
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
-}): ContractResult<FindingStoreRecord> {
+}): ContractResult<FindingDisposition> {
   const transition = validateFindingStoreTransition(input.from, input.to);
   if (!transition.ok) return transition;
 

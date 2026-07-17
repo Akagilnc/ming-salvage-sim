@@ -20,7 +20,7 @@ import {
   isJudgeSeat,
   isLegalJudgeReviewLegSession,
   judgeContinueFromOpenCount,
-  judgeKillsToLedgerDispositions,
+  judgeTerminalsToLedgerDispositions,
   judgeReviewLegSessionMode,
   liveDispositionsForOpenCount,
   liveFindingsBlockConverged,
@@ -245,10 +245,10 @@ describe("#925 pure: disposition → open-only + refuted flips", () => {
     expect(open).toEqual([live]);
     expect(open.some((f) => findingIdentityKey(f) === deadKey)).toBe(false);
 
-    const kills = judgeKillsToLedgerDispositions(dispositions);
-    expect(kills).toHaveLength(1);
-    expect(kills[0]!.status).toBe("refuted");
-    expect(kills[0]!.identityKey).toBe(deadKey);
+    const terminals = judgeTerminalsToLedgerDispositions(dispositions);
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]!.status).toBe("refuted");
+    expect(terminals[0]!.identityKey).toBe(deadKey);
   });
 
   it("live findings block converged (negative consistency)", () => {
@@ -272,7 +272,7 @@ describe("#952 pure: suppress disposition → suppressed store + fixer exclusion
         groundTicket: 949,
       },
     ];
-    const flips = judgeKillsToLedgerDispositions(dispositions);
+    const flips = judgeTerminalsToLedgerDispositions(dispositions);
     expect(flips).toHaveLength(1);
     expect(flips[0]).toMatchObject({
       identityKey: key,
@@ -307,11 +307,11 @@ describe("#952 pure: suppress disposition → suppressed store + fixer exclusion
       findings: [live, suppressed],
     });
     expect(projected?.blocking).toEqual([live]);
-    expect(projected?.killDispositions.some((d) => d.status === "suppressed")).toBe(
+    expect(projected?.terminalDispositions.some((d) => d.status === "suppressed")).toBe(
       true,
     );
     expect(
-      projected?.killDispositions.some((d) => d.identityKey === suppressedKey),
+      projected?.terminalDispositions.some((d) => d.identityKey === suppressedKey),
     ).toBe(true);
   });
 
@@ -1103,8 +1103,8 @@ describe("#925 F3: single open-count → continue projection", () => {
     });
     const projected = projectJudgeContinueBlocking(out);
     expect(projected?.blockingIdentityKeys).toEqual([findingIdentityKey(live)]);
-    expect(projected?.killDispositions).toHaveLength(1);
-    expect(projected?.killDispositions[0]!.status).toBe("refuted");
+    expect(projected?.terminalDispositions).toHaveLength(1);
+    expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
   });
 });
 

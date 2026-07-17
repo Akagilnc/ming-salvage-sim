@@ -3707,10 +3707,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const projected = projectJudgeContinueBlocking(output);
               if (projected !== undefined) {
                 // Apply kill flips first, then gate empty live set (#919 M6).
-                if (projected.killDispositions.length > 0) {
+                if (projected.terminalDispositions.length > 0) {
                   findingDispositions = [
                     ...findingDispositions,
-                    ...projected.killDispositions,
+                    ...projected.terminalDispositions,
                   ];
                 }
                 pendingBlockingFindings = projected.blocking;

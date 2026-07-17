@@ -136,10 +136,10 @@ export function rebuildBlockingFromLedger(
     ) {
       const projected = projectJudgeContinueBlocking(entry.output);
       if (projected !== undefined) {
-        if (projected.killDispositions.length > 0) {
+        if (projected.terminalDispositions.length > 0) {
           findingDispositions = [
             ...findingDispositions,
-            ...projected.killDispositions,
+            ...projected.terminalDispositions,
           ];
         }
         pendingBlockingFindings = projected.blocking;

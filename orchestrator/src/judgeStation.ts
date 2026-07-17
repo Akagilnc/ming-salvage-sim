@@ -87,7 +87,7 @@ export function liveFindingsBlockConverged(
  * source — ADR 0129). Illegal transitions are skipped (caller/seat already
  * validated disposition shape; store only records legal open→terminal flips).
  */
-export function judgeKillsToLedgerDispositions(
+export function judgeTerminalsToLedgerDispositions(
   dispositions: ReadonlyArray<JudgeFindingDisposition>,
   severity: Finding["severity"] = "medium",
 ): FindingDisposition[] {
@@ -453,7 +453,7 @@ export function projectResidualReviewerToJudge(residual: {
 
 /**
  * Live-path projection of a judge `continue` verdict into the S5 open set
- * (kills → refuted flips; live keys only). Shared by the in-process continue
+ * (terminals → store flips; live keys only). Shared by the in-process continue
  * edge and crash/resume ledger rebuild (F2).
  */
 export function projectJudgeContinueBlocking(output: {
@@ -464,11 +464,11 @@ export function projectJudgeContinueBlocking(output: {
   readonly blocking: Finding[];
   readonly blockingIdentityKeys: string[];
   readonly blockingFindingCount: number;
-  readonly killDispositions: FindingDisposition[];
+  readonly terminalDispositions: FindingDisposition[];
 } | undefined {
   if (output.status !== "continue") return undefined;
   const dispositions = output.findingDispositions ?? [];
-  const kills = judgeKillsToLedgerDispositions(dispositions);
+  const terminals = judgeTerminalsToLedgerDispositions(dispositions);
   const cargo = output.findings ?? [];
   const blocking = openFindingsForFixer(cargo, dispositions);
   const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
@@ -476,7 +476,7 @@ export function projectJudgeContinueBlocking(output: {
     blocking,
     blockingIdentityKeys,
     blockingFindingCount: blockingIdentityKeys.length,
-    killDispositions: kills,
+    terminalDispositions: terminals,
   };
 }
 
@@ -500,7 +500,7 @@ export type FamilyJudgeClosure =
       readonly blocking: Finding[];
       readonly blockingIdentityKeys: string[];
       readonly blockingFindingCount: number;
-      readonly killDispositions: FindingDisposition[];
+      readonly terminalDispositions: FindingDisposition[];
     }
   | {
       readonly action: "escalate";
@@ -557,7 +557,7 @@ export function closeFamilyCourtFromJudgeOutput(
         blocking: projected?.blocking ?? [],
         blockingIdentityKeys: projected?.blockingIdentityKeys ?? [],
         blockingFindingCount: projected?.blockingFindingCount ?? 0,
-        killDispositions: projected?.killDispositions ?? [],
+        terminalDispositions: projected?.terminalDispositions ?? [],
       };
     }
     if (status === "escalate") {
