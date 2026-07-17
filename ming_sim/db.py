@@ -10132,6 +10132,23 @@ class GameDB:
                     return True
         return False
 
+    def _delete_shared_knowledge_source_ids(
+        self, source_ids: Iterable[str], *, commit: bool = True,
+    ) -> None:
+        """Delete shared ledger rows by source_id (events + sources)."""
+        ids = list(dict.fromkeys(str(sid) for sid in source_ids if str(sid or "").strip()))
+        if not ids:
+            return
+        for sid in ids:
+            self.conn.execute(
+                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
+            )
+            self.conn.execute(
+                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
+            )
+        if commit:
+            self.conn.commit()
+
     def _scrub_secret_text_from_shared_knowledge(
         self, *texts: str, commit: bool = True,
     ) -> None:
@@ -10142,6 +10159,10 @@ class GameDB:
         secret write mouth keeps isolation structural rather than read-path
         filtering.  Scope is the audience/chat channel only — other restricted
         kinds keep their own exclusion machinery.
+
+        Text needles alone miss paraphrased 召对原话; pair with
+        ``_scrub_assignee_audience_chat_shared_knowledge`` for turn+assignee
+        structural lineage.
         """
         needles = self._secret_text_needles(*texts)
         if not needles:
@@ -10162,17 +10183,85 @@ class GameDB:
                 if any(needle in blob for needle in needles):
                     if sid and sid not in source_ids:
                         source_ids.append(sid)
-        if not source_ids:
+        self._delete_shared_knowledge_source_ids(source_ids, commit=commit)
+
+    def _scrub_assignee_audience_chat_shared_knowledge(
+        self,
+        state: GameState,
+        minister_name: str,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Structural origin hygiene: same-turn audience/chat rows for assignee (#883).
+
+        Real 召对 deposits chat_message rows into shared knowledge before the
+        secret is materialised.  LLM extraction often rewrites title/body so
+        exact text needles miss the emperor's original wording.  Scrub by
+        turn + assignee bloodline on the audience/chat channel only — other
+        ministers' same-turn audience and non-audience kinds are untouched.
+        Assignee still reads the secret via secret_order_briefs.
+        """
+        name = str(minister_name or "").strip()
+        if not name:
             return
-        for sid in source_ids:
-            self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id = ?", (sid,),
-            )
-            self.conn.execute(
-                "DELETE FROM character_knowledge_sources WHERE source_id = ?", (sid,),
-            )
-        if commit:
-            self.conn.commit()
+        turn = int(state.turn)
+        source_ids: List[str] = []
+
+        # Durable chat_messages are the bloodline source for chat_message:* ids.
+        try:
+            chat_rows = self.conn.execute(
+                "SELECT id FROM chat_messages WHERE minister_name=? AND turn=?",
+                (name, turn),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            chat_rows = []
+        for row in chat_rows:
+            sid = f"chat_message:{int(row['id'])}"
+            if sid not in source_ids:
+                source_ids.append(sid)
+
+        # Shared sources: same-turn audience channel whose roster includes assignee.
+        try:
+            source_rows = self.conn.execute(
+                "SELECT source_id, kind, participant_roster FROM character_knowledge_sources "
+                "WHERE turn=?",
+                (turn,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            source_rows = []
+        for row in source_rows:
+            sid = str(row["source_id"] or "")
+            if not self._is_audience_chat_shared_channel(row["kind"], sid):
+                continue
+            try:
+                roster = json.loads(row["participant_roster"] or "[]")
+            except (TypeError, ValueError):
+                roster = []
+            names = {
+                str(item.get("character_id") or item.get("name") or "").strip()
+                for item in roster
+                if isinstance(item, dict)
+            }
+            if name in names and sid and sid not in source_ids:
+                source_ids.append(sid)
+
+        # Participation events: same-turn audience/chat for this character.
+        try:
+            event_rows = self.conn.execute(
+                "SELECT source_id, kind FROM character_knowledge_events "
+                "WHERE turn=? AND character_name=?",
+                (turn, name),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            event_rows = []
+        for row in event_rows:
+            sid = str(row["source_id"] or "")
+            if not self._is_audience_chat_shared_channel(row["kind"], sid):
+                continue
+            if sid and sid not in source_ids:
+                source_ids.append(sid)
+
+        self._delete_shared_knowledge_source_ids(source_ids, commit=commit)
 
     def register_character_knowledge_source(
         self, state: GameState, participant_roster: Iterable[Mapping[str, object]],
@@ -10251,8 +10340,13 @@ class GameDB:
             "title=excluded.title,body=excluded.body,updated_at=CURRENT_TIMESTAMP",
             (int(order_id), state.turn, state.year, state.period, minister_name, title, body),
         )
-        # Origin hygiene: prior audience/chat shared rows that already deposited
-        # this wording must leave the shared ledger.
+        # Origin hygiene (two layers, both audience/chat only):
+        # 1) structural: same-turn assignee audience/chat_message rows leave
+        #    shared storage even when 召对原话 ≠ extracted title/body
+        # 2) text needle: restatements that carry the brief wording
+        self._scrub_assignee_audience_chat_shared_knowledge(
+            state, minister_name, commit=False,
+        )
         self._scrub_secret_text_from_shared_knowledge(title, body, commit=False)
         if commit:
             self.conn.commit()
