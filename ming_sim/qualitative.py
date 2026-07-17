@@ -103,22 +103,23 @@ _ABSTRACT_BAND_WORD = "|".join(
     )
 )
 # Approximate / comparator connectors used in natural LLM historical prose.
-# Longer alternatives first so ``大约`` / ``约等于`` / ``大概`` win over bare ``约``.
+# Longer alternatives first so ``大约`` / ``约等于`` / ``约略`` / ``大概`` win
+# over bare ``约`` (``能力约略70`` must not fall through as ``约`` + ``略70``).
 _ABSTRACT_SCORE_CONNECTOR = (
     r"由|为|达|高达|至|是|从|"
     r"不足|不到|低于|少于|不满|超过|高于|大于|"
     r"接近|近于|近乎|将近|不及|逼近|几乎|"
-    r"约等于?|大约|大概|大致|约莫|约摸|约|差不多|"
+    r"约等于?|大约|大概|大致|约莫|约摸|约略|约计|约|差不多|"
     r"跌破|突破|冲破|到了"
 )
 # After a connector, natural prose may add a directional complement or copula:
 # ``跌破到30`` / ``接近到40`` / ``差不多是70`` / ``大约是70``.
 _ABSTRACT_CONNECTOR_COMPLEMENT = r"(?:到|至|了|是)?"
 # Softener / state word before ``在 + number`` constructions:
-# ``大约在30左右`` / ``已在70左右`` / ``维持在40``.
+# ``大约在30左右`` / ``约略在70左右`` / ``已在70左右`` / ``维持在40``.
 _ABSTRACT_AT_PREFIX = (
     r"(?:已(?:经|然)?|则|仍(?:然)?|尚|"
-    r"大约|大概|大致|约莫|约摸|差不多|约|"
+    r"大约|大概|大致|约莫|约摸|约略|约计|差不多|约|"
     r"维持|保持|稳定|停留)?"
 )
 # Shared numeric tail: optional percent / 分, never a countable unit, optional 左右.
@@ -155,12 +156,16 @@ _ABSTRACT_STATE_MODIFIER = (
     r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
     r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"
 )
+# Directional change verbs allow optional 高/低 then optional 至/到 so
+# ``升高到`` / ``降低到`` match as one verb (not ``升高`` + leftover ``到``).
 _ABSTRACT_STATE_VERB = (
-    r"(?:升(?:高|至|到)?|降(?:低|至|到)?|提高(?:至|到)?|提升(?:至|到)?|"
+    r"(?:升(?:高)?(?:至|到)?|降(?:低)?(?:至|到)?|"
+    r"提高(?:至|到)?|提升(?:至|到)?|"
+    r"回落(?:至|到)?|下滑(?:至|到)?|下跌(?:至|到)?|"
     r"跌破(?:至|到|了)?|跌(?:至|到|了)?|恶化(?:至|到)?|改善(?:至|到)?|"
     r"达到?|变为?|到了|"
     r"接近(?:至|到)?|近于|不及|逼近|几乎|"
-    r"约等于?|大约|大概|大致|约莫|约摸|约|差不多|"
+    r"约等于?|大约|大概|大致|约莫|约摸|约略|约计|约|差不多|"
     r"只有|仅有|仅|为|至|有|余|剩)"
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
