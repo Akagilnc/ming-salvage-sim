@@ -1854,11 +1854,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }).success).toBe(true);
   });
 
-  it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
-    // #899: only findingsCount is typed; legs/evidence/families are cargo passthrough.
+  it("keeps opaque evidence cargo on an otherwise typed CMR verdict", () => {
+    // #899: only findingsCount is typed; legs/evidence are cargo passthrough.
     expect(workerReceiptSchema().safeParse({
       findingsCount: 0,
-      findingFamilies: [{ identityKeys: ["correctness|x|y"] }],
+      evidencePaths: ["cmr/review.json"],
     }).success).toBe(true);
     expect(workerReceiptSchema().safeParse({
       findingsCount: 0,

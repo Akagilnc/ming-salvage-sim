@@ -59,7 +59,7 @@ import {
   mergePriorRoundFindings,
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
-} from "../findingFamilies.js";
+} from "../priorRoundFindings.js";
 import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 
 import {
@@ -89,7 +89,6 @@ import type {
   DispatchContext,
   EscalationAnswerPayload,
   Finding,
-  FindingFamily,
   ShipResult,
   ReviewFixRefuseRecord,
   VerifyResult,
@@ -592,7 +591,6 @@ async function runCmrCoderFix(input: {
   readonly blockingFindingCount?: number;
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
@@ -612,7 +610,6 @@ async function runCmrCoderFix(input: {
     blockingFindingCount,
     blockingFindingIdentityKeys,
     rawReviewerArtifacts,
-    findingFamilies,
     familyHeadBefore,
     escalationAnswer,
     familyIssue,
@@ -651,7 +648,6 @@ async function runCmrCoderFix(input: {
     {
       blockingFindings,
       ...(rawReviewerArtifacts !== undefined ? { rawReviewerArtifacts } : {}),
-      ...(findingFamilies !== undefined ? { findingFamilies } : {}),
     },
   );
   // #878: observation failure must surface as unknown, never as a false
@@ -1853,7 +1849,7 @@ async function runIntegratedCmrPass(input: {
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.advanceCoder : undefined;
-  // S3: findingFamilies / skippedLegs must not drop on kind:judge (cargo rides).
+  // S3: skippedLegs must not drop on kind:judge (cargo rides).
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"
       ? (rawOutput as {
@@ -1861,11 +1857,9 @@ async function runIntegratedCmrPass(input: {
             readonly slug: string;
             readonly reason: string;
           }>;
-          readonly findingFamilies?: ReadonlyArray<FindingFamily>;
         })
       : undefined;
   const skippedLegs = cargoSource?.skippedLegs;
-  const findingFamilies = cargoSource?.findingFamilies;
 
   if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>
@@ -2109,7 +2103,6 @@ async function runIntegratedCmrPass(input: {
         reviewerMonitorHandle,
         cmrResult.sessionId,
       ),
-      ...(findingFamilies !== undefined ? { findingFamilies } : {}),
       familyHeadBefore: fixFamilyHeadBefore,
       escalationAnswer,
       familyIssue,
