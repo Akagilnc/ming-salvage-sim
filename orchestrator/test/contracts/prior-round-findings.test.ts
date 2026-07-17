@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,28 +18,43 @@ import type { PrReviewSnapshot } from "../../src/botPolling.js";
 
 /**
  * ADR 0137 residual ban — live tree must not reintroduce the deleted pattern
- * brief side channel. Historical ADR / campaign notes under docs/adr are
- * excluded by scanning orchestrator only. Patterns are built at runtime so
- * this file does not contain the banned spellings as contiguous literals.
+ * brief side channel. Scope matches AC: whole-repo zero hits, historical ADR
+ * under docs/adr/** excepted. Patterns are built at runtime so this file does
+ * not contain the banned spellings as contiguous literals. Case-insensitive
+ * so camelCase / PascalCase / snake_case aliases collapse cheaply.
  */
 function bannedResidual(): RegExp {
   const parts = [
     "finding" + "Families",
+    "finding" + "Family",
+    "finding" + "_families",
+    "finding" + "_family",
     "fix" + "Focus",
+    "fix" + "_focus",
     "fix" + "-focus",
-    "Finding" + "Family",
-    "SANDBOX_FIX_" + "FOCUS",
-    "ORCHESTRATOR_FIX_" + "FOCUS",
-    "writeFamilyFix" + "Focus",
-    "formatFix" + "FocusMarkdown",
   ];
-  return new RegExp(parts.join("|"));
+  return new RegExp(parts.join("|"), "i");
+}
+
+/** Repo root: orchestrator/test/contracts → ../../.. */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const ORCH_ROOT = join(REPO_ROOT, "orchestrator");
+
+function relPosix(file: string): string {
+  return relative(REPO_ROOT, file).split("\\").join("/");
+}
+
+/** AC exception: historical ADR / campaign notes live under docs/adr. */
+function isHistoricalAdr(path: string): boolean {
+  const rel = relPosix(path);
+  return rel === "docs/adr" || rel.startsWith("docs/adr/");
 }
 
 function walkFiles(root: string, acc: string[] = []): string[] {
   for (const name of readdirSync(root)) {
     if (name === "node_modules" || name === "dist" || name === ".git") continue;
     const full = join(root, name);
+    if (isHistoricalAdr(full)) continue;
     const st = statSync(full);
     if (st.isDirectory()) walkFiles(full, acc);
     else if (/\.(ts|md|json|js|mjs|cjs)$/.test(name)) acc.push(full);
@@ -47,16 +63,15 @@ function walkFiles(root: string, acc: string[] = []): string[] {
 }
 
 describe("#977 ADR 0137 residual ban (pattern-brief side channel)", () => {
-  it("orchestrator tree has zero residual side-channel hits", () => {
+  it("repo has zero residual side-channel hits outside docs/adr", () => {
     const re = bannedResidual();
-    const root = resolve(process.cwd());
     const hits: string[] = [];
-    for (const file of walkFiles(root)) {
+    for (const file of walkFiles(REPO_ROOT)) {
       const text = readFileSync(file, "utf8");
       if (!re.test(text)) continue;
       for (const [i, line] of text.split(/\r?\n/).entries()) {
         if (re.test(line)) {
-          hits.push(`${file}:${i + 1}:${line.trim()}`);
+          hits.push(`${relPosix(file)}:${i + 1}:${line.trim()}`);
         }
       }
     }
@@ -65,7 +80,7 @@ describe("#977 ADR 0137 residual ban (pattern-brief side channel)", () => {
 
   it("coder_fix prompt has no pattern-brief family sweep clause", () => {
     const prompt = readFileSync(
-      resolve(process.cwd(), "prompts/coder_fix.md"),
+      join(ORCH_ROOT, "prompts/coder_fix.md"),
       "utf8",
     );
     const re = bannedResidual();
@@ -154,7 +169,7 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
 
   it("verify prompt contains only the data and output contract", () => {
     const prompt = readFileSync(
-      resolve(process.cwd(), "prompts/verify.md"),
+      join(ORCH_ROOT, "prompts/verify.md"),
       "utf8",
     );
     expect(prompt).not.toContain("use it to mark recurringFromRounds");
