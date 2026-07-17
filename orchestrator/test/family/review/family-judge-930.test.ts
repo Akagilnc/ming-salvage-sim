@@ -293,6 +293,46 @@ describe("#930 pure family judge closure", () => {
     expect(closure.action).toBe("pass");
   });
 
+  // #952 R7-C1: family court must thread real prior store status so illegal
+  // terminal→terminal morphs fail loud (no open hardcode laundering).
+  it("#952 R7-C1: prior refuted + judge suppress fails loud (not pass)", () => {
+    const parked = sampleFinding("already-refuted", "refuted.ts:1");
+    const key = findingIdentityKey(parked);
+    const verdict = judgeContinue([parked], {
+      suppress: [
+        {
+          identityKey: key,
+          action: "suppress",
+          evidence: "illegal morph from refuted on family path",
+          groundTicket: 952,
+        },
+      ],
+    });
+    // Without prior store status this would launder as open→suppress → pass.
+    expect(() =>
+      closeFamilyCourtFromJudgeOutput(verdict, { [key]: "refuted" }),
+    ).toThrow(/transition|terminal|illegal/i);
+  });
+
+  it("#952 R7-C1: open/unrepaired + suppress-only still closes as pass", () => {
+    const parked = sampleFinding("still-open", "open.ts:1");
+    const key = findingIdentityKey(parked);
+    const verdict = judgeContinue([parked], {
+      suppress: [
+        {
+          identityKey: key,
+          action: "suppress",
+          evidence: "legal open suppress on family path",
+          groundTicket: 952,
+        },
+      ],
+    });
+    const closure = closeFamilyCourtFromJudgeOutput(verdict, {
+      [key]: "unrepaired",
+    });
+    expect(closure.action).toBe("pass");
+  });
+
   it("escalate → escalate action with reason/diagnosis", () => {
     expect(closeFamilyCourtFromJudgeOutput(judgeEscalate("stuck", "need owner"))).toEqual({
       action: "escalate",

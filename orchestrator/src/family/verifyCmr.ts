@@ -106,7 +106,9 @@ import {
   familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
   requireFixPacketBody,
+  storeStatusByIdentityFromDispositions,
 } from "../judgeStation.js";
+import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import {
   buildReviewRoundStamp,
@@ -1903,7 +1905,35 @@ async function runIntegratedCmrPass(input: {
   // open-count second closer). Live kind:"judge" is direct.
   const rawOutput = cmrResult.output;
   const judgeTraffic = rawOutput;
-  const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
+  // #952 R7-C1: family ledger stores T2 schema dispositions (refute/suppress/live)
+  // on prior court rows — map terminals to store statuses so illegal
+  // refuted→suppressed morphs fail at the shared write point (R6-C2 consumer).
+  // Do not invent a second store; reuse priorJudgeVerdicts already loaded above.
+  const priorSchemaStoreRows: Array<{
+    readonly identityKey: string;
+    readonly status: FindingStoreStatus;
+  }> = [];
+  for (const row of priorJudgeVerdicts) {
+    for (const d of row.findingDispositions ?? []) {
+      if (d.action === "refute") {
+        priorSchemaStoreRows.push({
+          identityKey: d.identityKey,
+          status: "refuted",
+        });
+      } else if (d.action === "suppress") {
+        priorSchemaStoreRows.push({
+          identityKey: d.identityKey,
+          status: "suppressed",
+        });
+      }
+    }
+  }
+  const currentStoreStatusByIdentity =
+    storeStatusByIdentityFromDispositions(priorSchemaStoreRows);
+  const closure = closeFamilyCourtFromJudgeOutput(
+    judgeTraffic,
+    currentStoreStatusByIdentity,
+  );
   const openedJudgeSessionId =
     typeof cmrResult.sessionId === "string" && cmrResult.sessionId.length > 0
       ? cmrResult.sessionId
@@ -1911,11 +1941,10 @@ async function runIntegratedCmrPass(input: {
   const judgeStatusForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.status : undefined;
   // Schema disposition table (refute/suppress/live) — queryable suppress is
-  // action:"suppress" on this table (#952). Store-status flips
-  // (status:"suppressed") are single-slice ledger shape via
-  // projectJudgeContinueBlocking.terminalDispositions; family reuses that
-  // helper for the live open set (closeFamilyCourtFromJudgeOutput) but
-  // persists the T2 schema here for prior-verdict resume (no dual ABI).
+  // action:"suppress" on this table (#952). Family persists T2 schema for
+  // prior-verdict resume (no dual store-status ABI on the ledger). R7-C1 maps
+  // prior schema terminals → store from-status into closeFamilyCourt so
+  // projectJudgeContinueBlocking rejects illegal terminal→terminal morphs.
   const judgeDispositionsForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
