@@ -3,20 +3,23 @@
  *
  * Seams under test (real entry, not internals):
  *   1. grokAgent buildPrintCommand — headless-only CLI shape (never interactive login form)
- *   2. Containerfile grok pin — fail-fast non-interactive auth CLI (0.2.102+)
- *      (canonical pin assert; Containerfile string-match only — live CLI probe not required)
- *   3. runMergerAgent / resolveMergeConflict / mergeChild — Sandcastle AgentError becomes
+ *   2. Containerfile grok pin — production mechanism for fail-fast non-interactive auth
+ *      (0.2.102+; 0.2.93 entered device-code wait under headless empty auth)
+ *   3. Live headless empty-auth probe against real/baked grok — short hard timeout proves
+ *      fail-fast ("Not signed in") rather than interactive device-auth hang
+ *   4. runMergerAgent / resolveMergeConflict / mergeChild — Sandcastle AgentError becomes
  *      Action-typed failure (structured non-resolve → conflicted + reason), never uncaught
  *      FiberFailure
- *   4. public ABI — no new cause token like auth_expired
- *   5. route-smoke bare-ping shape — startup auth probe not rewritten
+ *   5. public ABI — no new cause token like auth_expired
+ *   6. route-smoke bare-ping shape — startup auth probe not rewritten
  *
  * Authority: #964 AC + voided owner comment (native fail-fast only; no log parse /
- * monitor kill / run fuse / auth_expired public cause).
+ * monitor kill / run fuse / auth_expired public cause). Pin 0.2.102 is the production
+ * hang fix; the live probe guards regression if a hangy CLI reappears on PATH / image.
  */
 
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +47,12 @@ const orchestratorRoot = join(here, "..", "..");
 const promptsDir = join(orchestratorRoot, "prompts");
 const soulsDir = join(orchestratorRoot, "image", "souls");
 
+/** Production pin (Containerfile); live probe prefers a binary matching this. */
+const GROK_FAIL_FAST_PIN = "0.2.102";
+/** Short hard wall — hangy device-auth wait must not survive this (8–15s band). */
+const HEADLESS_AUTH_PROBE_TIMEOUT_MS = 15_000;
+const DEFAULT_GROK_PROBE_IMAGE = "ming-orchestrator-coder:latest";
+
 const tmpDirs: string[] = [];
 function mkDir(prefix: string): string {
   const d = mkdtempSync(join(tmpdir(), prefix));
@@ -54,6 +63,164 @@ afterEach(() => {
   for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
   tmpDirs.length = 0;
 });
+
+function whichBinary(name: string): string | null {
+  const r = spawnSync("which", [name], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const p = (r.stdout ?? "").trim();
+  return p.length > 0 ? p : null;
+}
+
+function hostGrokVersion(bin: string): string {
+  const r = spawnSync(bin, ["--version"], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
+}
+
+function dockerGrokVersion(image: string): string | null {
+  const r = spawnSync(
+    "docker",
+    ["run", "--rm", "--entrypoint", "/usr/local/bin/grok", image, "--version"],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  if (r.status !== 0) return null;
+  return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
+}
+
+type GrokProbeTarget =
+  | { kind: "host"; bin: string; version: string }
+  | { kind: "docker"; image: string; version: string };
+
+/**
+ * Resolve a real grok that matches the production fail-fast pin.
+ * Prefer host (GROK_BIN / PATH); fall back to docker image with baked pin.
+ * Skip only when neither yields a pin-matching binary (or docker is absent).
+ */
+function resolveGrokProbeTarget(): GrokProbeTarget | null {
+  const fromEnv = process.env.GROK_BIN?.trim();
+  const hostCandidates = [
+    fromEnv && existsSync(fromEnv) ? fromEnv : null,
+    whichBinary("grok"),
+  ].filter((p): p is string => typeof p === "string" && p.length > 0);
+
+  for (const bin of hostCandidates) {
+    const version = hostGrokVersion(bin);
+    if (version.includes(GROK_FAIL_FAST_PIN)) {
+      return { kind: "host", bin, version };
+    }
+  }
+
+  if (!whichBinary("docker")) return null;
+  const image =
+    process.env.GROK_PROBE_IMAGE?.trim() || DEFAULT_GROK_PROBE_IMAGE;
+  // Cheap presence check — missing image → no docker target.
+  const inspect = spawnSync("docker", ["image", "inspect", image], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  if (inspect.status !== 0) return null;
+  const version = dockerGrokVersion(image);
+  if (version && version.includes(GROK_FAIL_FAST_PIN)) {
+    return { kind: "docker", image, version };
+  }
+  return null;
+}
+
+/** Env for empty/no credentials: isolated HOME, strip API-key auth env. */
+function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+  delete env.XAI_API_KEY;
+  delete env.GROK_API_KEY;
+  delete env.XAI_KEY;
+  return env;
+}
+
+/**
+ * Production worker print shape (grokAgent buildPrintCommand): prompt-file stdin +
+ * streaming-json + always-approve. Never `grok login` / device-code.
+ */
+const HEADLESS_PRINT_ARGS = [
+  "--prompt-file",
+  "/dev/stdin",
+  "--output-format",
+  "streaming-json",
+  "--always-approve",
+  "--permission-mode",
+  "bypassPermissions",
+] as const;
+
+function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  combined: string;
+  elapsedMs: number;
+} {
+  const emptyHome = mkDir("964-empty-auth-home-");
+  const env = emptyAuthEnv(emptyHome);
+  const t0 = Date.now();
+  if (target.kind === "host") {
+    const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
+      encoding: "utf8",
+      input: "ping\n",
+      env,
+      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+      maxBuffer: 2 * 1024 * 1024,
+      killSignal: "SIGKILL",
+    });
+    const timedOut =
+      r.error?.message?.includes("TIMEDOUT") === true ||
+      r.signal === "SIGTERM" ||
+      r.signal === "SIGKILL";
+    return {
+      status: r.status,
+      signal: r.signal,
+      timedOut,
+      combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+      elapsedMs: Date.now() - t0,
+    };
+  }
+  // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
+  // treated as present credentials → 401, not the native "Not signed in" path).
+  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  const r = spawnSync(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "-i",
+      "--entrypoint",
+      "/usr/local/bin/grok",
+      "-e",
+      "HOME=/tmp/964-empty-home",
+      "-v",
+      `${emptyHome}:/tmp/964-empty-home`,
+      target.image,
+      ...HEADLESS_PRINT_ARGS,
+    ],
+    {
+      encoding: "utf8",
+      input: "ping\n",
+      env: emptyAuthEnv(emptyHome),
+      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+      maxBuffer: 2 * 1024 * 1024,
+      killSignal: "SIGKILL",
+    },
+  );
+  const timedOut =
+    r.error?.message?.includes("TIMEDOUT") === true ||
+    r.signal === "SIGTERM" ||
+    r.signal === "SIGKILL";
+  return {
+    status: r.status,
+    signal: r.signal,
+    timedOut,
+    combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+    elapsedMs: Date.now() - t0,
+  };
+}
 
 function makeRepo(): string {
   const repo = mkDir("964-merger-repo-");
@@ -179,9 +346,10 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
   });
 
   it("pins container grok to a fail-fast non-interactive release (0.2.102+)", () => {
-    // Canonical pin assert (#964 CR R1 N2/N4): string-match Containerfile only.
-    // 0.2.93 headless empty-auth entered device-code wait (flight3); 0.2.102
-    // fails with "Not signed in" immediately. Live CLI probe not required for AC.
+    // Production mechanism (#964): pin ≥0.2.102 so headless auth death fail-fasts
+    // ("Not signed in") instead of interactive device-code wait (0.2.93 flight3).
+    // Companion live probe below guards hang regression when a matching binary
+    // is available (GROK_BIN / PATH / baked image).
     const containerfile = readFileSync(
       join(orchestratorRoot, "image", "Containerfile"),
       "utf8",
@@ -192,6 +360,42 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     expect(containerfile).toMatch(/grok --version \| grep -F "0\.2\.102"/);
     expect(containerfile).not.toMatch(/@xai-official\/grok@0\.2\.93/);
   });
+
+  it(
+    "live headless empty-auth fails fast before timeout (no device-auth hang)",
+    () => {
+      // #964 AC: real worker print shape + empty credentials must not enter
+      // interactive device-code wait. Pin 0.2.102 is the production hang fix;
+      // this probe exercises a real binary (host pin or baked image pin).
+      // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
+      const target = resolveGrokProbeTarget();
+      if (!target) {
+        // Loud skip reason — CI with rebaked image / host pin should not hit this.
+        console.warn(
+          `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN ` +
+            `and no docker image with that pin (set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
+            `override image via GROK_PROBE_IMAGE). Pin ${GROK_FAIL_FAST_PIN} remains the production mechanism.`,
+        );
+        return;
+      }
+
+      const result = runHeadlessEmptyAuthProbe(target);
+      // Must exit on its own (non-zero fail-fast), not be killed by our wall clock.
+      expect(
+        result.timedOut,
+        `grok empty-auth hung until hard timeout (${HEADLESS_AUTH_PROBE_TIMEOUT_MS}ms) ` +
+          `via ${target.kind}=${target.kind === "host" ? target.bin : target.image} ` +
+          `version=${target.version}; expected native fail-fast (pin ${GROK_FAIL_FAST_PIN})`,
+      ).toBe(false);
+      expect(result.status, result.combined).not.toBeNull();
+      expect(result.status, result.combined).not.toBe(0);
+      // Fail-fast class outcome (native CLI message on pin ≥0.2.102).
+      expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
+      // Well under the wall — hang regression would burn the full timeout.
+      expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
+    },
+    HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
+  );
 
   it("route-smoke bare-ping keeps the same headless shape (startup auth not rewritten)", () => {
     const built = barePingArgv(
