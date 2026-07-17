@@ -224,11 +224,13 @@ def augment_secret_orders_with_due_commitments(
     db: GameDB,
     state: GameState,
 ) -> Dict[str, List[Dict[str, object]]]:
-    """复用密令待核议 payload 通道，追加 form③ 到期待裁承诺。
+    """把 form③ 到期待裁承诺并入 secret_orders 分组（extractor 轨复用待核议通道）。
 
     ADR 0013 D3/D9 要求：无 ongoing_effects、仅 end_turn 的未来一次性承诺，到期不 close，
-    但要从 active_issues 背景顶成本回合显式待裁输入。这里不建 due_commitments 顶层结构，
-    只在既有 `secret_orders["待核议"]` 通道里追加带 entry_kind 的条目。
+    但要从 active_issues 背景顶成本回合显式待裁输入。本函数在分组的
+    `secret_orders["待核议"]` 里追加带 `entry_kind:"due_commitment"` 的条目；
+    simulator 轨另由 `build_simulator_payload` 从分组抠出扁平顶层 `due_commitments`
+    （公开轨），分组本身只留给 extractor。
     """
     rows = db.conn.execute(
         """

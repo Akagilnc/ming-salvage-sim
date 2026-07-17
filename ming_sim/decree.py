@@ -124,7 +124,7 @@ def _record_settlement_narrative_sources(
     # Audience chat is not an input to the month-end simulator.  Its presence
     # in the same turn therefore cannot taint an independently produced public
     # settlement narrative.  Other restricted shared sources still block it.
-    # #883: undisclosed secret-order briefs are private structure, not shared
+    # #883: active secret-order briefs are private structure, not shared
     # sources — their presence alone also blocks recording the aggregate as
     # an audience source (secrets never pre-feed the public monthly judge).
     restricted_kinds = set()
