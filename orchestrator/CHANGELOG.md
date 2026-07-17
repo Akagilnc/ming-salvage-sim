@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [0.31.0.0] - 2026-07-17
+
+### 新增 / 变更 / 修复
+- **#934 family W1**：#936 ignition·#937 dispatch 终态·#939 family verify 合入 family/934；CR R1–R8 与 main（#955/#965）合流。详见根 CHANGELOG。
+
 ### 新增
 - **#686 接力派工（relay dispatch）**：`<relay>` 的 `decision_gate` 按键存在即 park，字段细节只作 cargo；resource/blocked 常规 relay 形状保持校验。route 池表（ADR 0124，与 #767 Coder-Rec 正交）+ 三段式 park/relay（ADR 0125，在 #683/#937 显式 429/capacity 处置点分叉）；下一棒走同一张 Coder-Rec 表 + 池正交查表（ADR 0126：同模型换马甲 → 顺位换模型）；resource failure 永不 reset（守 #661）；`state_summary` 进 ledger；收口棒完成进常规评审闸。**#937：删除 worktree `.relay-focus.md` 文件**——接力 brief 仅 ephemeral 自 ledger memory 渲染，不再落盘 focus 文件。relay 改写最终 route 后须再过 tight re-admit（#934 ID-002），违者 fail-closed 停派。
 - **#683 / #937 额度与静默**：仅显式 typed 429/capacity 走 park/relay——`quota_wait_for_reset` ledger（含 resetAt）+ runner park 家族（status escalate，非 S8 error abort；re-feed 重回 parked step）；#686 在此分叉 park vs relay。**静默只 observational**（复用 existing log last-activity 整分钟报告）——不 probe 额度、不 kill host/PID-tree、不因 quiet 触发 retry/relay/park/fail。per-pool 配置随 model ref 映射。生产路径：`RealBackend` + runner 消费 `QuotaWaitForResetError` / capacity handoff（S2/S3/S5/S6/S7）。旧 idle→probe→hang 判刑整条已删（#937 / ID-007）。
