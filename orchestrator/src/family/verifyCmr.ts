@@ -775,6 +775,14 @@ async function runCmrCoderFix(input: {
     return { result: stageGate("cmr_failed"), familyHeadAfter };
   }
 
+  // #979 CR R1 S1: one pack site class-wide (mirror openedJudgeSessionId).
+  // Prefer provider-surfaced id; else keep the ledger-derived resume id so a
+  // silent-complete resume still re-records the same-chain session.
+  const openedFixerSessionId =
+    typeof fixResult.sessionId === "string" && fixResult.sessionId.length > 0
+      ? fixResult.sessionId
+      : resumeSessionId;
+
   if (fixResult.output.kind !== "coder") {
     await recordCmrFixCommitted(familyBackend, {
       cmrPass: pass,
@@ -782,10 +790,8 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       blockingFindingIdentityKeys,
       reason: `${reasonPrefix}: completed coder receipt carried another shape; family judge will re-open on the diff`,
-      // #979: still capture session when the provider surfaced one.
-      ...(typeof fixResult.sessionId === "string" &&
-      fixResult.sessionId.length > 0
-        ? { sessionId: fixResult.sessionId }
+      ...(openedFixerSessionId !== undefined
+        ? { sessionId: openedFixerSessionId }
         : {}),
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
@@ -840,10 +846,8 @@ async function runCmrCoderFix(input: {
         : // Keep "fresh reviewer will judge findings" phrasing for ledger grep stability
           // while the re-open is the same family judge court (#930).
           `${reasonPrefix}: coder-fix completed; fresh reviewer will judge findings`,
-    // #979: durable same-chain resume id for the next fix round.
-    ...(typeof fixResult.sessionId === "string" &&
-    fixResult.sessionId.length > 0
-      ? { sessionId: fixResult.sessionId }
+    ...(openedFixerSessionId !== undefined
+      ? { sessionId: openedFixerSessionId }
       : {}),
   });
   return {

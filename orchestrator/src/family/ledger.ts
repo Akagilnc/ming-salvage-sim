@@ -489,7 +489,11 @@ export function familyCoderFixResumeSessionIdFromLedger(
     if (status === "cmr_fix_committed") {
       if (entry.cmrPass !== pass) continue;
       const sid = entry.sessionId;
-      return typeof sid === "string" && sid.length > 0 ? sid : undefined;
+      // Align with recordCmrFixCommitted write-path trim: whitespace-only →
+      // absent / fresh (never hand a blank token to Sandcastle resume).
+      if (typeof sid !== "string") return undefined;
+      const trimmed = sid.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
     }
   }
   return undefined;

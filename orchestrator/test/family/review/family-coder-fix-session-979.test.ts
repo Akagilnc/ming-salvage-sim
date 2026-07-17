@@ -303,6 +303,32 @@ describe("#979 pure ledger helper — familyCoderFixResumeSessionIdFromLedger", 
       expected: undefined,
     },
     {
+      name: "whitespace-only sessionId means fresh (trim align write path)",
+      ledger: [
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "  \t  ",
+        },
+      ] as FamilyLedgerEntry[],
+      pass: "completeness",
+      expected: undefined,
+    },
+    {
+      name: "sessionId with surrounding whitespace is trimmed on read",
+      ledger: [
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          cmrPass: "completeness",
+          sessionId: "  padded-sess  ",
+        },
+      ] as FamilyLedgerEntry[],
+      pass: "completeness",
+      expected: "padded-sess",
+    },
+    {
       name: "other pass fix does not supply this pass resume id",
       ledger: [
         {
@@ -534,6 +560,79 @@ describe("#979 family coder-fix chain resume from ledger", () => {
     });
     expect(ledger[0]?.sessionId).toBe(FIXER_SESSION);
     expect(ledger[0]?.status).toBe("cmr_fix_committed");
+  });
+
+  it("recordCmrFixCommitted trims sessionId; whitespace-only is omitted", async () => {
+    const ledger: FamilyLedgerEntry[] = [];
+    const backend: Pick<FamilyBackend, "appendFamilyLedger"> = {
+      async appendFamilyLedger(entry) {
+        ledger.push(entry);
+      },
+    };
+    await recordCmrFixCommitted(backend as FamilyBackend, {
+      cmrPass: "completeness",
+      familyHeadAfter: "abc",
+      blockingFindingIdentityKeys: ["k"],
+      sessionId: `  ${FIXER_SESSION}  `,
+    });
+    expect(ledger[0]?.sessionId).toBe(FIXER_SESSION);
+
+    await recordCmrFixCommitted(backend as FamilyBackend, {
+      cmrPass: "completeness",
+      familyHeadAfter: "abc",
+      blockingFindingIdentityKeys: ["k"],
+      sessionId: "   \t",
+    });
+    expect(ledger[1]?.sessionId).toBeUndefined();
+  });
+
+  it("coder_advance after prior fix invalidates resume through runVerifyCmr entry", async () => {
+    // Real entry (not pure-helper-only): seed ledger as a prior fix chain that
+    // was later advanced; runVerifyCmr → runCmrCoderFix must open fresh.
+    const backend = new FamilyCoderFixLedgerBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING_R1]), "judge-979-adv");
+        }
+        return completedJudge(judgeConverged(), "judge-979-adv");
+      },
+      coder: (_round, ctx) => {
+        expect(ctx.resumeSessionId).toBeUndefined();
+        return completedCoder("post-advance-fresh-979");
+      },
+    });
+    backend.ledger.push(
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        sessionId: FIXER_SESSION,
+        ts: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        status: "coder_advance",
+        event: "coder_advance",
+        phase: "final",
+        cmrPass: "completeness",
+        fromModelId: "gpt-5.6-terra",
+        toModelId: "gpt-5.6-sol",
+        ts: "2026-01-01T00:01:00.000Z",
+      },
+    );
+    const route = await resumeCapableCoderFixRoute();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/979-advance-entry",
+      familyBackend: backend,
+      modelRoute: route,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+
+    const coderDispatches = backend.dispatches.filter((d) => d.kind === "coder");
+    expect(coderDispatches.length).toBeGreaterThanOrEqual(1);
+    expect(coderDispatches[0]?.session).toBe("fresh");
+    expect(coderDispatches[0]?.resumeSessionId).toBeUndefined();
   });
 });
 
