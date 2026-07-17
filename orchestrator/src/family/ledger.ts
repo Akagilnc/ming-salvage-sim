@@ -478,6 +478,8 @@ export async function recordCmrFixCommitted(
  * (never resurrect an older id under a fresh-open row — same CR-10 as #966).
  * A later `coder_advance` (model change) after any prior fix invalidates resume
  * so the new coder opens fresh; `coder_advance_stay_put` does not invalidate.
+ * A later same-pass `cmr_passed` ends that findings chain — do not walk past it
+ * to an older pre-pass fix session (R6-C1); a fix after pass is a new chain.
  */
 export function familyCoderFixResumeSessionIdFromLedger(
   ledger: ReadonlyArray<{
@@ -495,6 +497,15 @@ export function familyCoderFixResumeSessionIdFromLedger(
       // Seat reassigned after a prior fix — do not hand the old conversation to
       // the new model binding.
       return undefined;
+    }
+    if (status === "cmr_passed") {
+      // Converged court ends this pass's findings chain. Prefer same-pass match;
+      // if the pass field is absent on the event, treat as chain boundary too
+      // (fail closed: never resume across an unscoped pass marker).
+      if (entry.cmrPass === undefined || entry.cmrPass === pass) {
+        return undefined;
+      }
+      continue;
     }
     if (status === "cmr_fix_committed") {
       if (entry.cmrPass !== pass) continue;

@@ -10,6 +10,7 @@ import {
   isJudgeSeat,
   projectJudgeContinueBlocking,
   projectResidualReviewerToJudge,
+  storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
   isStepId,
@@ -141,7 +142,12 @@ export function rebuildBlockingFromLedger(
       entry.output?.kind === "judge" &&
       entry.output.status === "continue"
     ) {
-      const projected = projectJudgeContinueBlocking(entry.output);
+      // #952 R6-C2: accumulated store rows from earlier continue rounds are
+      // the real `from` status (mirrors live runner path).
+      const projected = projectJudgeContinueBlocking(
+        entry.output,
+        storeStatusByIdentityFromDispositions(findingDispositions),
+      );
       if (projected !== undefined) {
         if (projected.terminalDispositions.length > 0) {
           findingDispositions = [

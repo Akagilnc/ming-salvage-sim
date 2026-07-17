@@ -128,6 +128,7 @@ import {
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
   requireFixPacketBody,
+  storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
   rebuildBlockingFromLedger,
@@ -3858,7 +3859,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   }),
                 });
               }
-              const projected = projectJudgeContinueBlocking(output);
+              // #952 R6-C2: pass accumulated store statuses so terminal→terminal
+              // morphs fail at the write point (no open hardcode laundering).
+              const projected = projectJudgeContinueBlocking(
+                output,
+                storeStatusByIdentityFromDispositions(findingDispositions),
+              );
               if (projected !== undefined) {
                 // Apply terminal store flips first, then gate empty live set (#919 M6).
                 if (projected.terminalDispositions.length > 0) {
