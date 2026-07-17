@@ -486,14 +486,18 @@ export interface QuotaWaitForResetEvent {
 }
 
 /**
- * #686 / #937 — baton handoff on a resource failure (quota wall / capacity /
- * self-reported blocked). `state_summary` is rendered as an ephemeral dispatch
- * brief from ledger memory (no `.relay-focus.md` file). Worktree drift is
- * preserved (no reset). Shape mirrors
+ * #686 / #937 — baton handoff on a resource failure (quota wall / capacity
+ * only; free-log self-report deleted with #937). `state_summary` is rendered as
+ * an ephemeral dispatch brief from ledger memory (no `.relay-focus.md` file).
+ * Worktree drift is preserved (no reset). Shape mirrors
  * {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
  */
 export interface RelayBatonHandoffEvent {
   readonly event: "relay_baton_handoff";
+  /**
+   * Live writes: `quota_wall` | `capacity`. Historical ledger rows may carry
+   * retired tags (see `LegacyRelayHandoffTrigger` in relayDispatch).
+   */
   readonly trigger: string;
   readonly state_summary: string;
   readonly remaining?: string;
