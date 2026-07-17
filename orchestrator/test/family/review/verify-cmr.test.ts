@@ -22,7 +22,10 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import {
+  mechanicalRedispatchAttemptsFromFamilyLedger,
+  runVerifyCmr,
+} from "../../../src/family/verifyCmr.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
@@ -1561,6 +1564,85 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
       ran: true,
       failedStatus: "cmr_failed",
     });
+  });
+});
+
+// ═══════════════════ durable family mechanical redispatch budget (#934) ═══════════════════
+
+describe("#934 family mechanical redispatch budget reconstruction", () => {
+  it("reads trailing failure markers for the workerStep (crash re-entry continues budget)", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "cmr:completeness",
+        mechanicalRedispatchAttempt: 1,
+        reason: "boom-1",
+      },
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        // spawn adoption between retries — no attempt counter
+      },
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "cmr:completeness",
+        mechanicalRedispatchAttempt: 4,
+        reason: "boom-4",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "cmr:completeness"),
+    ).toBe(4);
+  });
+
+  it("resets budget after a later non-marker phase outcome (no inherit across success)", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "coder",
+        mechanicalRedispatchAttempt: 3,
+        reason: "old streak",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+      },
+    ];
+    expect(mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "coder")).toBe(0);
+  });
+
+  it("does not count a different workerStep's markers", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "ship",
+        mechanicalRedispatchAttempt: 5,
+        reason: "ship crash",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "cmr:correctness"),
+    ).toBe(0);
+    expect(mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "ship")).toBe(5);
+  });
+
+  it("exhausted durable budget equals MAX_DISPATCH_ATTEMPTS", () => {
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "verify",
+        mechanicalRedispatchAttempt: MAX_DISPATCH_ATTEMPTS,
+        reason: "last attempt failed",
+      },
+    ];
+    expect(
+      mechanicalRedispatchAttemptsFromFamilyLedger(ledger, "verify"),
+    ).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 

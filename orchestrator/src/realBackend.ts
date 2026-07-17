@@ -347,13 +347,35 @@ export function isClosedIssue(json: GhIssueJson): boolean {
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
  * against — PRD #244 S0).
+ *
+ * #934 / trust boundary: when `trustedAuthor` is supplied, issue body is only
+ * exposed for Coder-Rec when the issue author matches repo owner (same
+ * executable-instruction seam as family `readIssueBody`).
  */
 export function buildIssueMeta(
   issueNumber: number,
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  opts?: { readonly trustedAuthor?: string },
 ): IssueMeta {
+  const rawBody = typeof json.body === "string" ? json.body : undefined;
+  let body = rawBody;
+  if (body !== undefined && opts?.trustedAuthor !== undefined) {
+    const authorLogin =
+      (typeof json.author?.login === "string" ? json.author.login : undefined) ??
+      (typeof json.user?.login === "string" ? json.user.login : undefined) ??
+      "";
+    const auth = checkExecutableInstructionSource({
+      sourceKind: "issue body",
+      instructionKind: "Coder-Rec",
+      trustedAuthor: opts.trustedAuthor,
+      candidateAuthor: authorLogin,
+    });
+    if (!auth.accepted) {
+      body = undefined;
+    }
+  }
   return {
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
@@ -363,7 +385,7 @@ export function buildIssueMeta(
       .filter((d) => d.state !== "closed")
       .map((d) => d.number),
     // #767: body is cheap (unlike comments) and lets S0 parse Coder-Rec.
-    ...(typeof json.body === "string" ? { body: json.body } : {}),
+    ...(body !== undefined ? { body } : {}),
   };
 }
 
@@ -2370,11 +2392,10 @@ export class RealBackend implements Backend {
     const errors: string[] = [];
     try {
       json = this.phase("S0", "fetchIssueView", () => {
-      // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
-      // comments — that would trigger gh's paginated preloadIssueComments for
-      // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
-      // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
-      // before the first worker dispatch.
+      // S0 reads the gate fields + body + author (#767 Coder-Rec, #934 trust
+      // boundary). It does NOT pull comments — that would trigger gh's
+      // paginated preloadIssueComments for no S0 consumer (#329 perf). Body
+      // alone is cheap; author gates executable Coder-Rec input.
       const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
@@ -2382,7 +2403,7 @@ export class RealBackend implements Backend {
         "--repo",
         this.opts.repo,
         "--json",
-        "number,labels,state,body",
+        "number,labels,state,body,author",
       ]));
       return JSON.parse(raw) as GhIssueJson;
       });
@@ -2404,7 +2425,9 @@ export class RealBackend implements Backend {
         `S0 issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`,
       );
     }
-    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
+    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount, {
+      trustedAuthor: this.ownerLogin,
+    });
   }
 
   /**

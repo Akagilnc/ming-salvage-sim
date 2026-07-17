@@ -124,6 +124,28 @@ describe("#598 withMechanicalRetry", () => {
     expect(delays).toEqual([15_000, 15_000]);
   });
 
+  it("re-entry with attemptsAlreadyUsed>0 sleeps the next 15s slot before first dispatch (#934 ID-004)", async () => {
+    // Durable crash re-entry: attempts 1–2 already recorded; the next process
+    // must still honor interval[1] (attempt 3) rather than skip sleep because
+    // it is the first attempt of *this* invocation.
+    const delays: number[] = [];
+    let calls = 0;
+    const result = await withMechanicalRetry(coderSpec(), {}, async () => {
+      calls += 1;
+      if (calls === 1) return { kind: "failed", reason: "still flaky" } as const;
+      return COMPLETED;
+    }, {
+      attemptsAlreadyUsed: 2,
+      sleepMs: async (ms) => {
+        delays.push(ms);
+      },
+    });
+    expect(result).toEqual(COMPLETED);
+    expect(calls).toBe(2);
+    // attempt 3 (re-entry first) + attempt 4 (in-process retry) → two 15s slots
+    expect(delays).toEqual([15_000, 15_000]);
+  });
+
   it("a returned `failed` on attempt 1 then `completed` on attempt 2 → completed, dispatched twice", async () => {
     const { dispatch, seen } = scripted([
       { kind: "failed", reason: "worker crashed mid-run" },

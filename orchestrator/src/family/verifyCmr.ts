@@ -144,6 +144,7 @@ import {
 } from "../stopSummary.js";
 import type {
   FamilyBackend,
+  FamilyLedgerEntry,
   FamilyVerifyResult,
   IntegratedCmrPass,
 } from "./types.js";
@@ -1496,6 +1497,53 @@ export async function runFamilyOnlineReviewLoop(input: {
   }
 }
 
+/**
+ * Reconstruct durable process-root attempts already consumed for a family
+ * worker step (#934 ID-004 / #937). Mirrors single-slice
+ * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
+ * failure markers for this workerStep, stop at any non-spawn boundary so a
+ * later successful phase does not inherit an earlier crash streak.
+ */
+export function mechanicalRedispatchAttemptsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  workerStep: string,
+): number {
+  let durableAttempts = 0;
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    const attempt = entry.mechanicalRedispatchAttempt;
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.workerStep === workerStep &&
+      typeof attempt === "number" &&
+      Number.isSafeInteger(attempt) &&
+      attempt >= 1
+    ) {
+      durableAttempts = Math.max(durableAttempts, attempt);
+      continue;
+    }
+    // Spawn adoption / advisory git telemetry: worker_dispatched without a
+    // retry counter — skip so inter-retry spawn rows do not reset the streak.
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.mechanicalRedispatchAttempt === undefined
+    ) {
+      continue;
+    }
+    // Any other durable fact (phase success, escalate, merge, …) is a budget
+    // boundary for this workerStep.
+    break;
+  }
+  return durableAttempts;
+}
+
+function familyWorkerStepKey(
+  spec: Parameters<typeof dispatchFamilyWorker>[1],
+  ctx: Parameters<typeof dispatchFamilyWorker>[2],
+): string {
+  return `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`;
+}
+
 async function dispatchOrAbort(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
@@ -1510,6 +1558,14 @@ async function dispatchOrAbort(
     // session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS — every role,
     // read-only and write-capable alike. Every RESOLVED result (failed / malformed /
     // completed / escalated) is DEFERRED to this gate's own rich terminal handling.
+    // #934 ID-004: durable mechanical_redispatch markers bind the budget across
+    // process re-entry (same contract as single-slice runner.ts).
+    const workerStep = familyWorkerStepKey(spec, ctx);
+    const ledger = await familyBackend.readFamilyLedger();
+    const attemptsAlreadyUsed = mechanicalRedispatchAttemptsFromFamilyLedger(
+      ledger,
+      workerStep,
+    );
     return await withMechanicalRetry(
       spec,
       ctx,
@@ -1545,6 +1601,7 @@ async function dispatchOrAbort(
         return workerResult!;
       },
       {
+        attemptsAlreadyUsed,
         onFailure: async (outcome, attempt) => {
           const reason =
             "result" in outcome
@@ -1557,7 +1614,7 @@ async function dispatchOrAbort(
           await familyBackend.appendFamilyLedger({
             status: "worker_dispatched",
             event: "worker_dispatched",
-            workerStep: `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`,
+            workerStep,
             mechanicalRedispatchAttempt: attempt,
             reason,
           });

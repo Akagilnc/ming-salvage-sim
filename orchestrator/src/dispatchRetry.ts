@@ -195,10 +195,15 @@ export async function withMechanicalRetry(
     const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
     // #934 ID-004/006 / #937: process-root redispatch preserves the current
     // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
-    if (!firstAttemptThisInvocation) {
+    // Sleep binds to absolute attempt index (not first-in-this-process): a
+    // durable re-entry with attemptsAlreadyUsed>0 must still honor the 15s
+    // interval before the next dispatch (five 15s slots across six attempts).
+    if (attempt > 1) {
       const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
-      const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
-      await sleepMs(delayMs);
+      if (delayMs !== undefined) {
+        const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
+        await sleepMs(delayMs);
+      }
     }
     // #934 ID-004 / #937: durable attempt markers are written only after a
     // process-level failure classification. Explicit 429/quota / capacity /
