@@ -284,7 +284,7 @@ describe("#604 slice 5 — child decision escalation parks the family (core)", (
     });
 
     // The family run PARKS on the decision escalation, not verify_failed / incomplete.
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
 
     // An INDEPENDENT child_decision_parked event was recorded, bound to the child issue.
     const childEscalated = familyBackend.ledger.filter(
@@ -328,7 +328,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       singleSliceBackend,
       familyBase: "family/604-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
     const parked = familyBackend.ledger.find((e) => e.event === "child_decision_parked");
     expect(parked?.childIssue).toBe(11);
     expect(parked?.sessionId).toBe(ORIGINAL_SESSION_ID);
@@ -359,7 +359,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       familyBase: "family/604-base",
     });
 
-    expect(second.status).toBe("success");
+    expect(second.status).toBe("completed");
     // #604 F7: the child was RESUMED in its ORIGINAL session (退出-重入, not from
     // scratch, and not a WRONG session). Pin the full [issue, step, sessionId]
     // tuple against the escalated session captured above — injecting a
@@ -388,7 +388,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       singleSliceBackend,
       familyBase: "family/604-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
 
     const parkedIndex = familyBackend.ledger.findIndex(
       (entry) => entry.status === "child_decision_parked",
@@ -425,7 +425,7 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       reconcileGit: new FakeReconcileGit(parked?.familyHeadAfter ?? "wrong-head"),
     });
 
-    expect(second.status).toBe("success");
+    expect(second.status).toBe("completed");
     expect(singleSliceBackend.resumeSessionCalls.some(([issue]) => issue === 11)).toBe(true);
     expect(familyBackend.merges.some((merge) => merge.childIssue === 11)).toBe(true);
     expect(
@@ -461,7 +461,7 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
       singleSliceBackend,
       familyBase: "family/604-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
     expect(
       familyBackend.ledger.find((e) => e.event === "child_decision_parked")?.childIssue,
     ).toBe(11);
@@ -484,7 +484,7 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
       familyBase: "family/604-base",
     });
 
-    expect(second.status).toBe("success");
+    expect(second.status).toBe("completed");
     // #604 F7: resume reopened the ORIGINAL escalated session in place — pin the
     // full [issue, step, sessionId] tuple, not just the child issue.
     expect(singleSliceBackend.resumeSessionCalls).toContainEqual([
@@ -532,7 +532,7 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
       singleSliceBackend,
       familyBase: "family/604-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
     const parkedRow = familyBackend.ledger.find(
       (e) => e.event === "child_decision_parked",
     );
@@ -547,7 +547,7 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
       familyBase: "family/604-base",
     });
 
-    expect(second.status).toBe("escalated");
+    expect(second.status).toBe("parked");
     // F8: the parked child maps to `escalated` (NOT skipped), carrying the
     // escalation payload read from the child_decision_parked ledger row.
     const child11 = second.children.find((c) => c.issue === 11);
@@ -609,7 +609,7 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
       familyBase: "family/706-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
     // #706 pin: early-exit ledgerMerged branch (runner.ts ~1048) must use the
     // FamilyChildStatus contract literal — prior-run proven ⇒ already_done, not
@@ -651,7 +651,7 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
       singleSliceBackend,
       familyBase: "family/604-base",
     });
-    expect(first.status).toBe("escalated");
+    expect(first.status).toBe("parked");
 
     // ── human answers #11 ──
     await recordFamilyEscalationAnswered(familyBackend, {
@@ -675,7 +675,7 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
     });
 
     // Fail-closed: NOT a fabricated success, NOT merged.
-    expect(second.status).not.toBe("success");
+    expect(second.status).not.toBe("completed");
     expect(second.children.find((c) => c.issue === 11)?.status).toBe("failed");
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
     // And it did NOT re-run the child from scratch (no new S2 dispatch on resume).
@@ -786,7 +786,7 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
 
     // A-class precedence: the run is NOT a B-class decision park.
     expect(result.status).not.toBe("escalated");
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
     // No decision-park row was recorded — the real failure is not hidden behind one.
     expect(

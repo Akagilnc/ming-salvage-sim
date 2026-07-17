@@ -792,7 +792,7 @@ function escalationKindForHandoff(
 ): EscalationKind | undefined {
   // This call site only transports route()'s worker-raised decision gate.
   // Process failures use escalateTermination(..., "failure") directly.
-  return status === "escalate" ? "decision" : undefined;
+  return status === "parked" ? "decision" : undefined;
 }
 
 /**
@@ -900,12 +900,26 @@ function planResume(
   // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
   if (
     lastEntry.step === "S8" &&
-    lastEntry.handoffStatus === "escalate" &&
+    lastEntry.handoffStatus !== undefined &&
+    (lastEntry.handoffStatus as string) !== "completed" &&
+    (lastEntry.handoffStatus as string) !== "parked" &&
+    (lastEntry.handoffStatus as string) !== "failed"
+  ) {
+    return {
+      terminalStatus: "failed",
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
+  if (
+    lastEntry.step === "S8" &&
+    (lastEntry.handoffStatus === "parked" || lastEntry.handoffStatus === "failed") &&
     lastEntry.escalationKind !== undefined
   ) {
     if (lastEntry.escalationKind === "failure") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -913,7 +927,7 @@ function planResume(
     }
     if (lastEntry.escalationKind !== "decision") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -945,7 +959,7 @@ function planResume(
       (answer === undefined && continueFixingRepair === undefined)
     ) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -955,7 +969,7 @@ function planResume(
     if (decisionStep === "S4") {
       if (continueFixingRepair === undefined) {
         return {
-          terminalStatus: "escalate",
+          terminalStatus: "parked",
           resumeStep: "S8",
           lastOutput: agentEntry?.output,
           priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -995,7 +1009,7 @@ function planResume(
     }
 
     return {
-      terminalStatus: "escalate",
+      terminalStatus: "parked",
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1021,7 +1035,7 @@ function planResume(
   // escalate has S8(escalate) plus a later answer row — NOT error — so it still
   // resumes here.)
   const lastIsTaggedError =
-    lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
+    lastEntry.step === "S8" && lastEntry.handoffStatus === "failed";
   const agentEscalate = escalateOf(agentEntry?.output);
   if (
     !lastIsTaggedError &&
@@ -1042,7 +1056,7 @@ function planResume(
     );
     if (answer === undefined) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1389,7 +1403,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
     return {
-      status: "error",
+      status: "failed",
       errorPackage: { failedStep: "S0", reason },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
@@ -1406,7 +1420,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (earlyPlan.terminalStatus !== undefined) {
       const worktree = scene.state.worktree;
       const ledger = earlyPlan.priorLedger;
-      if (earlyPlan.terminalStatus === "error") {
+      if (earlyPlan.terminalStatus === "failed") {
         const reason =
           "prior run terminated with an error handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
@@ -1417,14 +1431,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
         return {
-          status: "error",
+          status: "failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
         };
       }
       const stopSummary: StopSummary =
-        earlyPlan.terminalStatus === "success"
+        earlyPlan.terminalStatus === "completed"
           ? {
               reason: "already_done",
               summary: "prior run already reached a success handoff",
@@ -1436,7 +1450,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
       return {
         status: earlyPlan.terminalStatus,
-        branch: earlyPlan.terminalStatus === "success" ? worktree.branch : undefined,
+        branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
       };
@@ -1451,7 +1465,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
     const isTight = admitted.escalation.reason === "tight route violation";
     return {
-      status: isTight ? "escalate" : "error",
+      status: "failed",
       errorPackage: {
         failedStep: "S0",
         reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
@@ -1649,14 +1663,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "S8",
       undefined,
       undefined,
-      "escalate",
+      "failed",
       undefined,
       undefined,
       "failure",
       stopSummary,
     );
+    const cause =
+      escalation.reason === "tight route violation" ||
+      /route/i.test(escalation.reason)
+        ? ("route_config_invalid" as const)
+        : ("coder_rec_invalid" as const);
     return {
-      status: "escalate",
+      status: "failed",
+      cause,
       errorPackage: {
         failedStep: "S0",
         reason: `${escalation.reason}: ${escalation.diagnosis}`,
@@ -2333,7 +2353,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "S8",
       undefined,
       undefined,
-      "error",
+      "failed",
       undefined,
       undefined,
       undefined,
@@ -2345,7 +2365,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // runner-visible S3/S4/S5/S6 steps; deferral tracking belongs to the later
     // family/integrated gates, not this error path.
     return {
-      status: "error",
+      status: "failed",
       errorPackage,
       stepLedger: ledger,
       stopSummary,
@@ -2392,21 +2412,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // modelSlug is written by emitLedger for worker steps (same seat model).
       await persistBestEffort(failedStep, output, undefined, undefined, sessionId);
     }
+    // #942 ID-001: decision parks are public parked/2; failure escalations are failed/1.
+    const publicStatus = escalationKind === "decision" ? "parked" : "failed";
     ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
       "S8",
       undefined,
       undefined,
-      "escalate",
+      publicStatus,
       undefined,
       undefined,
       escalationKind,
       stopSummary,
     );
     return {
-      status: "escalate",
+      status: publicStatus,
+      ...(publicStatus === "failed"
+        ? { cause: "runner_internal_error" as const }
+        : {}),
       // Surface the escalation as the error package so the caller can read the
-      // reason/diagnosis (resume指引) — same diagnostic channel, escalate status.
+      // reason/diagnosis for callers.
       errorPackage: {
         failedStep,
         reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
@@ -2465,7 +2490,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const reason =
         "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
       return {
-        status: "error",
+        status: "failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
@@ -2494,7 +2519,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       return {
-        status: "error",
+        status: "failed",
         errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
@@ -2513,7 +2538,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     );
     if (smokeFailure !== undefined) {
       return {
-        status: "error",
+        status: "failed",
         errorPackage: { failedStep: "S0", reason: smokeFailure },
         stepLedger: [],
         stopSummary: infraFailureStopSummary({
@@ -2695,7 +2720,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // an already-finished run's reported status). Report the
       // TRUE terminal status (success / error / escalate), never a hardcoded
       // success (#255: a prior error/escalate must not masquerade as success).
-      if (plan.terminalStatus === "error") {
+      if (plan.terminalStatus === "failed") {
         const reason =
           "prior run terminated with an error handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
@@ -2706,14 +2731,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
         return {
-          status: "error",
+          status: "failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
         };
       }
       const stopSummary: StopSummary =
-        plan.terminalStatus === "success"
+        plan.terminalStatus === "completed"
           ? {
               reason: "already_done",
               summary: "prior run already reached a success handoff",
@@ -2725,7 +2750,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
       return {
         status: plan.terminalStatus,
-        branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
+        branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
       };
@@ -3919,9 +3944,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     if (decision.kind === "handoff") {
       const handoffStopSummary: StopSummary =
-        decision.status === "success"
+        decision.status === "completed"
           ? successSummaryForCurrentState({ findingDispositions })
-          : decision.status === "error"
+          : decision.status === "failed"
             ? stopSummaryForErrorPackage({
                 failedStep: step,
                 reason: buildErrorReason(step, lastOutput),
@@ -3986,21 +4011,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           "S8",
           undefined,
           undefined,
-          "error",
+          "failed",
           undefined,
           undefined,
           undefined,
           stopSummary,
         );
         return {
-          status: "error",
+          status: "failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
         };
       }
 
-      if (decision.status === "error") {
+      if (decision.status === "failed") {
         // Build an error package from the current step context so the developer
         // can diagnose without re-running the pipeline (#252 / US#30).
         const reason = buildErrorReason(step, lastOutput);
@@ -4010,7 +4035,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           branchHead: worktree?.branch,
         };
         return {
-          status: "error",
+          status: "failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
@@ -4019,7 +4044,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
       return {
         status: decision.status,
-        branch: decision.status === "success" ? worktree?.branch : undefined,
+        branch: decision.status === "completed" ? worktree?.branch : undefined,
         stepLedger: ledger,
         stopSummary: handoffStopSummary,
       };

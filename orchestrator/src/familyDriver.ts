@@ -1051,12 +1051,7 @@ export function admissionSkippedFromLedger(
   return out;
 }
 
-/**
- * Current-schema terminal replay for a resident family ledger (ID-005).
- * Returns a FamilyRunResult when the durable scene is already terminal
- * (completed cleanup, or unresolved escalation park/fail). Non-terminal
- * resident state returns undefined so admission + spine resume continue.
- */
+/** Current-schema terminal replay (ID-005); undefined when non-terminal. */
 export function planFamilyTerminalReplay(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   familyBase: string,
@@ -1099,7 +1094,7 @@ export function planFamilyTerminalReplay(
       ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
     };
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       ...(familyHead !== undefined ? { familyHead } : {}),
       stopSummary: {
@@ -1148,7 +1143,10 @@ export function planFamilyTerminalReplay(
         }
       : undefined;
   return {
-    status: "escalated",
+    status: decisionGatePark ? "parked" : "failed",
+    ...(decisionGatePark
+      ? {}
+      : { cause: "runner_internal_error" as const }),
     familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
     escalation: { reason, diagnosis },
@@ -1218,7 +1216,7 @@ export async function runFamilyDriver(
   });
   if (familyScene.kind === "corrupted") {
     return {
-      status: "escalated",
+      status: "failed", cause: "resume_state_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: "resume state invalid",
@@ -1248,7 +1246,7 @@ export async function runFamilyDriver(
   if (admitted.kind === "stop") {
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
     return {
-      status: "escalated",
+      status: "failed", cause: "route_config_invalid",
       familyBase: options.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1277,7 +1275,7 @@ export async function runFamilyDriver(
         `root epic #${options.epicIssue} is blocked by open upstream issue(s): ` +
         err.openBlockers.map((n) => `#${n}`).join(", ");
       return {
-        status: "escalated",
+        status: "parked",
         familyBase: options.familyBase,
         escalation: { reason: err.message, diagnosis },
         stopSummary: decisionGateParkStopSummary({
@@ -1294,7 +1292,7 @@ export async function runFamilyDriver(
     // issue_metadata_unavailable (deterministic bad data / exhausted durable).
     if (isGithubAuthFailure(err)) {
       return {
-        status: "escalated",
+        status: "parked",
         familyBase: options.familyBase,
         escalation: {
           reason: "GitHub authentication required",
@@ -1309,7 +1307,7 @@ export async function runFamilyDriver(
       };
     }
     return {
-      status: "escalated",
+      status: "failed", cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: "issue metadata unavailable", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1324,7 +1322,7 @@ export async function runFamilyDriver(
   // not gate success on parent Coder-Rec validity or worksite creation.
   if (epic.children.length === 0) {
     return {
-      status: "success",
+      status: "completed",
       familyBase: options.familyBase,
       stopSummary: {
         reason: "already_done",
@@ -1380,7 +1378,7 @@ export async function runFamilyDriver(
   if (coderRecErrors.length > 0) {
     const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
     return {
-      status: "escalated",
+      status: "failed", cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1399,7 +1397,7 @@ export async function runFamilyDriver(
     // exhaustiveness net for the type checker.
     const diagnosis = parentCoderRec.escalation.diagnosis;
     return {
-      status: "escalated",
+      status: "failed", cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
       stopSummary: infraFailureStopSummary({
@@ -1537,7 +1535,7 @@ function routeSmokeFailureResult(
   escalation: { readonly reason: string; readonly diagnosis: string },
 ): FamilyRunResult {
   return {
-    status: "escalated",
+    status: "failed", cause: "worktree_prepare_failed",
     familyBase: options.familyBase,
     escalation,
     stopSummary: infraFailureStopSummary({
@@ -1570,8 +1568,7 @@ export function resolveImageTag(envTag: string | undefined): string {
   return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
 }
 
-// #929 — re-export the pure exit-code map so launchers that only import
-// familyDriver can shell process.exit(map(result.status)) without a second import.
+// Exit-code map re-export for launchers that only import familyDriver.
 export {
   TERMINAL_EXIT_CODES,
   TERMINAL_EXIT_STATUSES,

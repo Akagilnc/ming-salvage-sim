@@ -15,6 +15,7 @@
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
+import type { PublicFailedCause } from "./publicResult.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 // Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
 import type {
@@ -22,7 +23,7 @@ import type {
   JudgeVerdictStatus,
 } from "./stationReceiptContracts.js";
 
-export type { JudgeFindingDisposition, JudgeVerdictStatus };
+export type { JudgeFindingDisposition, JudgeVerdictStatus, PublicFailedCause };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -105,8 +106,8 @@ export type StepRole =
   | "cleanup"
   | "landing";
 
-/** Terminal handoff status (ADR 0018 / PRD #244 route table). */
-export type HandoffStatus = "success" | "escalate" | "error";
+/** Public handoff: completed | parked | failed (#942 / ID-001). */
+export type HandoffStatus = "completed" | "parked" | "failed";
 
 // ───────────────────────────── step spec ─────────────────────────────
 
@@ -1915,15 +1916,13 @@ export interface ErrorPackage {
   readonly branchHead?: string;
 }
 
-/** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
+/** Final handoff (S8); public completed|parked|failed. */
 export interface RunResult {
   readonly status: HandoffStatus;
-  /** The reviewed local slice branch handed to the family merger on success. */
+  /** ID-001 failed cause when status is failed. */
+  readonly cause?: PublicFailedCause;
   readonly branch?: string;
-  /**
-   * Diagnostic error payload — set when status=error (#252).
-   * Undefined for success and escalate outcomes.
-   */
+  /** Error package when status is failed. */
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;

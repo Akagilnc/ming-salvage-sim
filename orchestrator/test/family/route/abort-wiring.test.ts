@@ -198,7 +198,7 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBe("wave");
 
     // The seam still fired (back-compat).
@@ -240,7 +240,7 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
       familyBase: "family/291-base",
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("failed");
     expect(result.failedPhase).toBe("final");
 
     const aborts = backend.ledger.filter((e) => e.status === "aborted");

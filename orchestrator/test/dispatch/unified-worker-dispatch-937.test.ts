@@ -483,7 +483,7 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
         backend,
         now: () => new Date("2026-07-10T12:00:00.000Z"),
       });
-      expect(result.status).toBe("success");
+      expect(result.status).toBe("completed");
       // Quiet child exited 0 on its own — not signal-killed (exitCode null).
       expect(cliExitCodes).toContain(0);
       expect(cliExitCodes.every((c) => c === 0)).toBe(true);
@@ -903,7 +903,7 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
     });
 
     // After return-to-judge cycle still no baton → park (ID-001), not S8 error.
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("parked");
     expect(result.status).not.toBe("error");
     expect(result.stopSummary?.reason).toBe("provider_degraded");
     expect(result.stopSummary?.summary ?? "").toMatch(/quota wait for reset/i);
@@ -1004,7 +1004,7 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
       now: () => new Date("2026-07-10T12:00:00.000Z"),
     });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(result.errorPackage?.reason ?? "").toMatch(
       /record_persist_failed.*coder_advance_stay_put/i,
     );

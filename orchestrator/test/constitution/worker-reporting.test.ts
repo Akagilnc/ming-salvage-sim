@@ -106,7 +106,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
       return validWorkerResult(spec);
     });
     const result = await runOrchestrator({ issueNumber: 825, backend });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({
       kind: "coder", committed: false, commitsAdded: 0,
     });
@@ -119,7 +119,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
         : validWorkerResult(spec));
     const result = await runOrchestrator({ issueNumber: 825, backend });
     expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(2);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({ committed: true });
   });
 
@@ -137,7 +137,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatches.filter((row) => row.startsWith("S2:")).length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
   });
@@ -156,7 +156,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("failed");
     expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(
       MAX_DISPATCH_ATTEMPTS,
     );
@@ -173,7 +173,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
 
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
     expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(1);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
@@ -359,7 +359,7 @@ describe("#825 Group C — durable decision park and in-place resume", () => {
             diagnosis: "choose A or B",
           },
         }, "session-decision-825"),
-        { ...row("S8"), handoffStatus: "escalate", escalationKind: "decision" },
+        { ...row("S8"), handoffStatus: "parked", escalationKind: "decision" },
         {
           ...row("S2"), event: "escalation_answered", forStep: "S2",
           answer: "choose A", source: "human",
@@ -379,7 +379,7 @@ describe("#825 Group C — durable decision park and in-place resume", () => {
     const backend = new ResumeDecisionBackend();
     const result = await runOrchestrator({ issueNumber: 825, backend });
     expect(resumed[0]).toEqual(["S2", "session-decision-825"]);
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("completed");
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       step: "S2",
       output: expect.objectContaining({ kind: "coder", committed: true, commitsAdded: 1 }),

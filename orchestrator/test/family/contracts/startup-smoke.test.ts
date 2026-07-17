@@ -40,7 +40,7 @@ describe("family startup smoke gate (#685)", () => {
       familyBase: "family/685-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/smoke executor/i);
     expect(result.children).toEqual([{ issue: 686, status: "skipped" }]);
   });
@@ -64,7 +64,7 @@ describe("family startup smoke gate (#685)", () => {
       familyBase: "family/685-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/route smoke failed/i);
     expect(result.children).toEqual([{ issue: 687, status: "skipped" }]);
   });

@@ -284,7 +284,7 @@ async function decideFamilyQuotaWall(opts: {
     return {
       kind: "park",
       result: {
-        status: "escalated",
+        status: "parked",
         familyBase: opts.familyBase,
         familyHead: opts.familyHead,
         escalation: escalation ?? {
@@ -674,6 +674,8 @@ function familyHeadMetadata(input: {
 
 function familyStopSummary(input: {
   readonly status: FamilyRunStatus;
+  /** Diagnostic stage token when status is failed from a barrier (#922 / #942). */
+  readonly stage?: FamilyStageFailureStatus;
   readonly failedPhase?: VerifyCmrPhase;
   readonly familyHead?: string;
   readonly headMetadata?: StopSummary["metadata"];
@@ -684,9 +686,8 @@ function familyStopSummary(input: {
   /**
    * B-class (#604 F2, ADR 0062 A/B分家): a HUMAN DECISION GATE parked this run
    * awaiting an answer (a child's own single-slice decision题). When true the
-   * `escalated`-status summary carries the `decision_gate_park` reason instead of
-   * the A-class `infra_failure` word — a park is answerable + resumable, not a
-   * failure to repair.
+   * parked summary carries the `decision_gate_park` reason instead of a
+   * failure word — a park is answerable + resumable, not a failure to repair.
    */
   readonly decisionGatePark?: boolean;
   readonly admissionSkipped?: ReadonlyArray<{
@@ -706,7 +707,7 @@ function familyStopSummary(input: {
       reportedFamilyHead: input.familyHead,
       actualFamilyHead: input.familyHead,
     });
-  if (input.status === "success") {
+  if (input.status === "completed") {
     const hasMetadata =
       metadata?.heads != null ||
       (input.admissionSkipped?.length ?? 0) > 0 ||
@@ -725,16 +726,19 @@ function familyStopSummary(input: {
         : undefined,
     );
   }
-  // #922 — stage failure status and stopSummary.reason share the same token.
-  if (isFamilyStageFailureStatus(input.status)) {
-    const synced = syncStopSummaryToStageFailure(
-      input.status,
-      input.barrierStopSummary,
-    );
+  // Stage diagnostic stopSummary when a barrier named the stage (public status is failed).
+  const stage =
+    input.stage ??
+    (input.barrierStopSummary !== undefined &&
+    isFamilyStageFailureStatus(input.barrierStopSummary.reason)
+      ? input.barrierStopSummary.reason
+      : undefined);
+  if (input.status === "failed" && stage !== undefined) {
+    const synced = syncStopSummaryToStageFailure(stage, input.barrierStopSummary);
     if (input.barrierStopSummary == null && input.failedPhase !== undefined) {
       return stageFailureStopSummary({
-        status: input.status,
-        summary: `family ${input.failedPhase} ${input.status.replace(/_failed$/, "")} barrier failed`,
+        status: stage,
+        summary: `family ${input.failedPhase} ${stage.replace(/_failed$/, "")} barrier failed`,
         repairHint: synced.repairHint,
         ...(metadata?.heads != null ? { metadata: { heads: metadata.heads } } : {}),
       });
@@ -747,20 +751,39 @@ function familyStopSummary(input: {
     }
     return synced;
   }
-  if (input.status === "incomplete") {
+  if (input.status === "failed") {
+// Explicit escalationReason owns summary over incomplete-children diagnostic.
+    if (
+      input.escalationReason !== undefined &&
+      input.escalationReason.trim().length > 0
+    ) {
+      return {
+        reason: "infra_failure",
+        summary: input.escalationReason,
+        repairHint: "inspect the family ledger and repair before rerun",
+        ...(metadata !== undefined ? { metadata } : {}),
+      };
+    }
     const blocked = input.children
       .filter((child) => child.status !== "merged" && child.status !== "already_done")
       .map((child) => `#${child.issue}:${child.status}`)
       .join(", ");
+    if (blocked.length > 0) {
+      return {
+        reason: "owning_issue_still_red",
+        summary: `family run failed; unmerged children: ${blocked}`,
+        repairHint: "repair or complete the listed child slices and rerun the family",
+      };
+    }
     return {
-      reason: "owning_issue_still_red",
-      summary: `family run is incomplete; unmerged children: ${blocked}`,
-      repairHint: "repair or complete the listed child slices and rerun the family",
+      reason: "infra_failure",
+      summary: "family run failed",
+      repairHint: "inspect the family ledger and repair before rerun",
+      ...(metadata !== undefined ? { metadata } : {}),
     };
   }
-  // B-class: a human decision gate parked the run (#604 F2). Answerable +
-  // resumable — never the A-class `infra_failure` word.
-  if (input.decisionGatePark === true) {
+  // parked (public) — answerable decision / intervention gate.
+  if (input.decisionGatePark === true || input.status === "parked") {
     return {
       reason: "decision_gate_park",
       summary: input.escalationReason ?? "family run parked on a decision gate",
@@ -771,7 +794,7 @@ function familyStopSummary(input: {
   }
   return {
     reason: "infra_failure",
-    summary: input.escalationReason ?? "family run escalated",
+    summary: input.escalationReason ?? "family run failed",
     repairHint: "inspect the family ledger escalation entry and repair before rerun",
     ...(metadata !== undefined ? { metadata } : {}),
   };
@@ -966,7 +989,7 @@ async function runChild(
       mergedBlockers: child.blockedBy.filter((b) => familyChildIssues.has(b)),
     },
   });
-  if (result.status === "success" && result.branch !== undefined) {
+  if (result.status === "completed" && result.branch !== undefined) {
     // The single-slice run succeeded and produced a reviewed branch — but it is
     // NOT merged yet (the spine's serial-merge step does that, then flips this to
     // "merged" once the merge commit lands — ADR 0022 decision 5). So runChild
@@ -974,11 +997,10 @@ async function runChild(
     return { issue: child.issue, status: "ran", branch: result.branch };
   }
   // #604 slice 5 (A/B分家): a child that PARKED on a product/design DECISION题
-  // (`escalationKind:"decision"`) is `"escalated"`, NOT `"failed"` — an answerable
-  // pause the family can resume IN PLACE. Only the decision bucket parks; a
-  // `"failure"` escalate (infra / retries exhausted) and every other non-success
-  // outcome keep the current `"failed"` behaviour below.
-  if (result.status === "escalate") {
+  // (`escalationKind:"decision"`) is child-status `"escalated"`, NOT `"failed"` —
+  // an answerable pause the family can resume IN PLACE. Public single-slice
+  // status is `parked` (#942); only the decision bucket parks.
+  if (result.status === "parked") {
     const escalation = readChildDecisionEscalation(result.stepLedger);
     if (escalation !== undefined) {
       return { issue: child.issue, status: "escalated", escalation };
@@ -1165,7 +1187,7 @@ async function ensureLandingForResume(input: {
   );
   if (recorded.kind === "park") {
     return {
-      status: "escalated",
+      status: "parked",
       familyBase: input.familyBase,
       familyHead: input.familyHeadAfter,
       stopSummary: recorded.stopSummary,
@@ -1176,7 +1198,7 @@ async function ensureLandingForResume(input: {
     };
   }
   return {
-    status: "merge_failed",
+    status: "failed", cause: "landing_worker_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
     failedPhase: "final",
@@ -1496,7 +1518,7 @@ export async function runFamily(
     }));
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
     return {
-      status: "escalated",
+      status: "failed", cause: "route_config_invalid",
       familyBase: input.familyBase,
       escalation: {
         reason: admitted.escalation.reason,
@@ -1523,7 +1545,7 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     return {
-      status: "escalated",
+      status: "failed", cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: reason },
       stopSummary: infraFailureStopSummary({
@@ -1556,7 +1578,7 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     return {
-      status: "escalated",
+      status: "failed", cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
       stopSummary: infraFailureStopSummary({
@@ -1575,7 +1597,7 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     return {
-      status: "escalated",
+      status: "failed", cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
       stopSummary: infraFailureStopSummary({
@@ -1641,8 +1663,14 @@ export async function runFamily(
     const { escalation, answer } = priorEscalation;
     if (escalation.escalationKind !== "decision" || answer === undefined) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
+      const decisionPark =
+        escalation.escalationKind === "decision" && answer === undefined;
+      const publicStatus = decisionPark ? "parked" : "failed";
       return {
-        status: "escalated",
+        status: publicStatus,
+        ...(publicStatus === "failed"
+          ? { cause: "runner_internal_error" as const }
+          : {}),
         familyBase,
         ...(typeof escalation.familyHeadAfter === "string" &&
         escalation.familyHeadAfter.trim().length > 0
@@ -1661,7 +1689,7 @@ export async function runFamily(
               : "Prior family decision escalation has no later valid escalation_answered ledger event.",
         },
         stopSummary: familyStopSummary({
-          status: "escalated",
+          status: publicStatus,
           familyBase,
           familyHead:
             typeof escalation.familyHeadAfter === "string" &&
@@ -1680,7 +1708,7 @@ export async function runFamily(
           // DECISION escalation is an answerable park, not an A-class repair
           // failure — carry `decision_gate_park`, mirroring the child-park path
           // (F8). A `failure`/missing-kind escalation stays `infra_failure`.
-          decisionGatePark: escalation.escalationKind === "decision",
+          decisionGatePark: decisionPark,
         }),
         children: input.epic.children.map((child) => ({
           issue: child.issue,
@@ -1788,7 +1816,7 @@ export async function runFamily(
       });
       const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
       return {
-        status: "escalated",
+        status: "parked",
         familyBase,
         ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
           ? { familyHead: first.familyHeadAfter }
@@ -1800,7 +1828,7 @@ export async function runFamily(
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
         },
         stopSummary: familyStopSummary({
-          status: "escalated",
+          status: "parked",
           familyBase,
           ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
             ? { familyHead: first.familyHeadAfter }
@@ -1904,13 +1932,19 @@ export async function runFamily(
           })
         : undefined;
     const status: FamilyRunStatus =
-      terminal?.kind === "escalated"
-        ? "escalated"
-        : terminal?.kind === "stage"
-          ? terminal.status
+      terminal?.kind === "parked"
+        ? "parked"
+        : terminal?.kind === "failed"
+          ? "failed"
           : children.every((c) => c.status === "merged" || c.status === "already_done")
-            ? "success"
-            : "incomplete";
+            ? "completed"
+            : "failed";
+    const publicCause =
+      terminal?.kind === "failed"
+        ? terminal.cause
+        : status === "failed"
+          ? ("child_execution_failed" as const)
+          : undefined;
     const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
     const headMetadata = familyHeadMetadata({
       reportedFamilyHead: familyHead,
@@ -1929,15 +1963,16 @@ export async function runFamily(
         source: "family child already_done result",
       }));
     const allChildrenAlreadyDone =
-      status === "success" &&
+      status === "completed" &&
       childResults.length === 0 &&
       children.length > 0 &&
       alreadyDone.length === children.length;
     const computedStopSummary =
-      terminal?.kind === "escalated"
+      terminal?.kind === "parked"
         ? terminal.stopSummary
         : familyStopSummary({
             status,
+            ...(terminal?.kind === "failed" ? { stage: terminal.stage } : {}),
             failedPhase: verifyFailedPhase,
             familyBase,
             familyHead,
@@ -1948,7 +1983,7 @@ export async function runFamily(
             alreadyDone,
           });
     const materialSuccessStopSummary =
-      status === "success"
+      status === "completed"
         ? (latestSuccessfulFinalShippedStopSummary(
             familyLedger,
             barrierLedgerStartIndex,
@@ -1967,6 +2002,7 @@ export async function runFamily(
         : computedStopSummary;
     return attachDiagnostics({
       status,
+      ...(publicCause !== undefined ? { cause: publicCause } : {}),
       ...(verifyFailedPhase !== undefined ? { failedPhase: verifyFailedPhase } : {}),
       familyBase,
       familyHead,
@@ -2008,7 +2044,7 @@ export async function runFamily(
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
     return {
-      status: "escalated",
+      status: "parked",
       familyBase,
       familyHead,
       escalation: {
@@ -2016,7 +2052,7 @@ export async function runFamily(
         diagnosis: parked.escalation.diagnosis,
       },
       stopSummary: familyStopSummary({
-        status: "escalated",
+        status: "parked",
         familyBase,
         familyHead,
         children,
@@ -2069,11 +2105,11 @@ export async function runFamily(
         familyHeadAfter: plan.liveHead,
       });
       return {
-        status: "escalated",
+        status: "failed", cause: "runner_internal_error",
         familyBase,
         familyHead,
         stopSummary: familyStopSummary({
-          status: "escalated",
+          status: "failed",
           familyBase,
           familyHead,
           children,
@@ -2154,7 +2190,7 @@ export async function runFamily(
           });
           const escalationReason = `dependency_cycle: ${err.cycle.map((n) => `#${n}`).join(" → ")}`;
           const stopSummary = familyStopSummary({
-            status: "escalated",
+            status: "failed",
             familyBase,
             familyHead,
             children,
@@ -2169,7 +2205,8 @@ export async function runFamily(
             phase: "wave",
           });
           return attachDiagnostics({
-            status: "escalated" as const,
+            status: "failed",
+            cause: "dependency_cycle",
             familyBase,
             familyHead,
             escalation: { reason: escalationReason, diagnosis: err.message },
@@ -2333,11 +2370,12 @@ export async function runFamily(
           const children = await residualChildrenAfterDrain();
           const escalation = mergeResult.escalation;
           const stopSummary = familyStopSummary({
-            status: "escalated",
+            status: "parked",
             familyBase,
             familyHead,
             children,
             escalationReason: escalation.reason,
+            decisionGatePark: true,
           });
           await familyBackend.escalateFamily?.({
             ...escalation,
@@ -2347,7 +2385,7 @@ export async function runFamily(
             phase: "wave",
           });
           return attachDiagnostics({
-            status: "escalated" as const,
+            status: "parked",
             familyBase,
             familyHead,
             escalation: {
@@ -2588,7 +2626,7 @@ export async function runFamily(
       },
     };
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       familyHead,
       stopSummary: alreadyDoneSummary,
@@ -2671,7 +2709,7 @@ export async function runFamily(
       const rawStop =
         reviewLoop.stopSummary ??
         stageFailureStopSummary({
-          status: "online_review_failed",
+      status: "online_review_failed",
           summary: "family online review loop did not converge during shipped resume",
           repairHint: "repair or answer the worker-reported stop, then re-feed the family run",
         });
@@ -2679,7 +2717,7 @@ export async function runFamily(
         stage: "online_review_failed",
         stopSummary: rawStop,
       });
-      if (terminal.status === "escalated") {
+      if (terminal.status === "parked") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
           phase: "final",
@@ -2699,11 +2737,10 @@ export async function runFamily(
       }
       return {
         status: terminal.status,
+        ...(terminal.cause !== undefined ? { cause: terminal.cause } : {}),
         familyBase,
         familyHead: preFinalFamilyHead,
-        ...(terminal.status === "online_review_failed"
-          ? { failedPhase: "final" as const }
-          : {}),
+        ...(terminal.status === "failed" ? { failedPhase: "final" as const } : {}),
         stopSummary: terminal.stopSummary,
         children,
       };
@@ -2754,7 +2791,7 @@ export async function runFamily(
       runRelayBilling = landingWall.relayBilling;
     }
     return {
-      status: "success",
+      status: "completed",
       familyBase,
       familyHead,
       stopSummary: {
@@ -2846,7 +2883,7 @@ export async function runFamily(
           const rawStop =
             reviewLoop.stopSummary ??
             stageFailureStopSummary({
-              status: "online_review_failed",
+      status: "online_review_failed",
               summary:
                 "family online review loop did not converge during open-shipped re-entry",
               repairHint:
@@ -2856,7 +2893,7 @@ export async function runFamily(
             stage: "online_review_failed",
             stopSummary: rawStop,
           });
-          if (terminal.status === "escalated") {
+          if (terminal.status === "parked") {
             await recordFamilyEscalated(familyBackend, {
               escalationKind: "decision",
               phase: "final",
@@ -2876,11 +2913,10 @@ export async function runFamily(
           }
           openShippedTerminal = {
             status: terminal.status,
+            ...(terminal.cause !== undefined ? { cause: terminal.cause } : {}),
             familyBase,
             familyHead: barrierHead,
-            ...(terminal.status === "online_review_failed"
-              ? { failedPhase: "final" as const }
-              : {}),
+            ...(terminal.status === "failed" ? { failedPhase: "final" as const } : {}),
             stopSummary: terminal.stopSummary,
             children: openChildren,
             ...(epic.admissionSkipped !== undefined &&
@@ -2928,7 +2964,7 @@ export async function runFamily(
           return { ok: false, ran: true };
         }
         openShippedTerminal = {
-          status: "success",
+          status: "completed",
           familyBase,
           familyHead: convergedHead,
           stopSummary: {

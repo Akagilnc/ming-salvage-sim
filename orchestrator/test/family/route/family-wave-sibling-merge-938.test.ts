@@ -182,7 +182,7 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
         expect.objectContaining({ issue: 11, status: "failed" }),
       ]),
     );
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     // Per-sibling root causes ride diagnostics — not a blank incomplete.
     expect(result.diagnostics ?? []).toEqual(
       expect.arrayContaining([
@@ -226,7 +226,7 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     const failed = result.children.find((c) => c.issue === 11);
     expect(failed?.status).toBe("failed");
     // Settled wave cause must survive the childResults push (must-1).
@@ -265,7 +265,7 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
 
     // ID-009: wave aggregation keeps every sibling — no whole-wave wipe.
     expect(familyBackend.mergeOrder).toEqual([10]);
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("merged");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
     expect(result.diagnostics ?? []).toEqual(
@@ -306,9 +306,9 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
     expect(familyBackend.mergeOrder).toEqual([99]);
     expect(result.children.find((c) => c.issue === 99)?.status).toBe("merged");
     // Residual cycle is the typed outer boundary (not silent empty-wave success).
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
-    expect(result.stopSummary.summary).toMatch(/dependency_cycle/i);
+    expect(result.escalation?.reason ?? result.stopSummary.summary).toMatch(/dependency_cycle/i);
     // Cycle members never merged.
     expect(result.children.find((c) => c.issue === 10)?.status).not.toBe("merged");
     expect(result.children.find((c) => c.issue === 11)?.status).not.toBe("merged");
@@ -331,7 +331,7 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
     });
 
     expect(familyBackend.mergeOrder).toEqual([]);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("failed");
     expect(result.escalation?.reason).toMatch(/dependency_cycle/i);
     // Not an uncaught throw from startup assertAcyclic.
     expect(result.children).toHaveLength(2);
@@ -413,7 +413,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     });
 
     expect(familyBackend.resolverCalls).toHaveLength(1);
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     // No host "still-conflicted retries" court language.
     expect(JSON.stringify(result)).not.toMatch(/still-conflicted retries/i);
@@ -447,7 +447,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     expect(result.diagnostics ?? []).toEqual(
       expect.arrayContaining([
@@ -482,7 +482,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(JSON.stringify(result)).not.toMatch(/still-conflicted retries/i);
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
     // Sibling that never reached merge (serial stop on conflicted base) is honest.
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.diagnostics ?? []).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -512,7 +512,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("failed");
     expect(result.children.find((c) => c.issue === 10)).toEqual(
       expect.objectContaining({
         issue: 10,
@@ -553,7 +553,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
     const peer = result.children.find((c) => c.issue === 11);
@@ -614,7 +614,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       now: () => now,
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     // The merge-target child and the same-wave peer both already ran single-slice.
     for (const issue of [10, 11] as const) {
@@ -676,7 +676,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       now: () => now,
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("ran");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");

@@ -182,7 +182,7 @@ describe("#604 r5 E2 — child decision-park forwards the surfaced sessionId", (
       familyBase: "family/604-base",
     });
 
-    expect(result.status).toBe("escalated");
+    expect(result.status).toBe("parked");
 
     const parked = familyBackend.ledger.filter(
       (e) => e.event === "child_decision_parked",
