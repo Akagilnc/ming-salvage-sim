@@ -583,6 +583,76 @@ def test_976_assignee_ack_goes_private_not_shared_on_secret_create(game):
     assert extracted not in other_text
 
 
+def test_976_withhold_does_not_yank_old_released_public_user(game):
+    """S1：withhold 不连坐抽回久远已放行的纯公开 user 召对。
+
+    旧公开已 released 且 turn 远早于 settle 窗口时，后下密令不得把它从共享源抹掉。
+    跨回合 held 原话仍须 withheld（既有 F4 / zero-overlap 钉）。
+    """
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    old_public = "问卿：山东漕粮起运是否如期？"
+    secret_origin = "着尔密访国丈家产虚实，勿使外廷知。"
+
+    mid_old = db.append_chat_message(assignee.name, state.turn, "user", old_public)
+    db.release_held_audience_knowledge()
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_old,)
+    ).fetchone()["knowledge_status"] == "released"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_old}",),
+    ).fetchone()[0] == 1
+
+    # 远离开 settle 窗口（>1 回合）。
+    state.turn = int(state.turn) + 5
+    db.save_state(state)
+    mid_secret = db.append_chat_message(assignee.name, state.turn, "user", secret_origin)
+    oid = db.create_secret_order(
+        state, assignee.name, "密查国丈", "暗访国丈家产", [],
+    )
+    assert oid > 0
+
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_old,)
+    ).fetchone()["knowledge_status"] == "released"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid_old}",),
+    ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_secret,)
+    ).fetchone()["knowledge_status"] == "withheld"
+    assert all(secret_origin not in body for body in _shared_bodies(db))
+    assert any(old_public in body for body in _shared_bodies(db))
+
+
+def test_976_release_stamps_original_message_turn(game):
+    """N1：投轨盖章用发话 turn，不是 release 时的 state.turn。"""
+    db, state, content = game
+    minister = _active_ministers(db, content)[0]
+    reply = "臣报：本月辽饷解送如常。"
+    origin_turn = int(state.turn)
+    mid = db.append_chat_message(minister.name, origin_turn, "minister", reply)
+
+    state.turn = origin_turn + 3
+    db.save_state(state)
+    db.release_held_audience_knowledge()
+
+    row = db.conn.execute(
+        "SELECT turn FROM character_knowledge_sources WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()
+    assert row is not None
+    assert int(row["turn"]) == origin_turn
+    event = db.conn.execute(
+        "SELECT turn FROM character_knowledge_events WHERE source_id=?",
+        (f"chat_message:{mid}",),
+    ).fetchone()
+    assert event is not None
+    assert int(event["turn"]) == origin_turn
+
+
 def test_883_shared_archive_bypass_positive_and_negative(game):
     """复审员旁路：结构保证——密令简报不自动入档；纯公开文可入（有/无 brief 皆然）。"""
     db, state, content = game
