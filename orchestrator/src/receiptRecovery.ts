@@ -287,14 +287,14 @@ const RECEIPT_RECOVERY_MESSAGE =
   /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i;
 
 /**
- * Walk Effect/Fiber wrappers that Sandcastle may put around a native
- * {@link sc.StructuredOutputError} (observed under concurrent vitest load as
- * FiberFailure → ExecError / Die.defect). Production #598 disposition must
- * still see the receipt-recovery class through the wrap.
+ * Walk Effect/Fiber wrappers that Sandcastle may put around a native error
+ * (observed under concurrent vitest load as FiberFailure → ExecError / Die.defect).
+ * Shared by receipt recovery (#598 SOE) and #964 AgentError recognition so both
+ * courts see the same chain shape.
  *
  * Follows `cause` → `error` → `defect` (Effect Die) in that order per hop.
  */
-function* walkErrorChain(error: unknown): Generator<unknown> {
+export function* walkErrorChain(error: unknown): Generator<unknown> {
   let current: unknown = error;
   for (let depth = 0; depth < 8 && current != null; depth += 1) {
     yield current;
