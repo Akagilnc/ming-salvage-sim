@@ -1249,6 +1249,25 @@ export async function runFamilyDriver(
       children: [],
     };
   }
+  // #934 ID-002 / ID-003: all-filtered is unconditional completed/0 with full
+  // skip inventory. Parent is not a planned runnable slice on this path — do
+  // not gate success on parent Coder-Rec validity or worksite creation.
+  if (epic.children.length === 0) {
+    return {
+      status: "success",
+      familyBase: options.familyBase,
+      stopSummary: {
+        reason: "already_done",
+        summary: "family admission skipped every native child; no worksite was created",
+        metadata: { admissionSkipped: epic.admissionSkipped ?? [] },
+      },
+      children: [],
+      ...(epic.admissionSkipped !== undefined
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  }
+
   // #934 ID-003: parent + every planned child Coder-Rec aggregated once.
   // Parent failure must not short-circuit the child pass — decide only after
   // the full planned-issue inventory is collected.
@@ -1264,22 +1283,6 @@ export async function runFamilyDriver(
     );
   } else {
     plannedRoutes.push(parentCoderRec.route);
-  }
-
-  if (epic.children.length === 0 && coderRecErrors.length === 0) {
-    return {
-      status: "success",
-      familyBase: options.familyBase,
-      stopSummary: {
-        reason: "already_done",
-        summary: "family admission skipped every native child; no worksite was created",
-        metadata: { admissionSkipped: epic.admissionSkipped ?? [] },
-      },
-      children: [],
-      ...(epic.admissionSkipped !== undefined
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
-    };
   }
 
   for (const child of epic.children) {

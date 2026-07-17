@@ -233,6 +233,55 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(cloneCalls).toBe(0);
   });
 
+  it("public family driver: all-filtered success ignores invalid parent Coder-Rec", async () => {
+    // #934 ID-002 / ID-003: all-filtered returns completed/0 with full skip
+    // inventory. Parent is not a planned runnable slice on this path, so an
+    // invalid epic Coder-Rec must not block success or create a worksite.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    let cloneCalls = 0;
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          { number: 935, state: "CLOSED", labels: [{ name: "ready-for-agent" }] },
+          { number: 936, state: "OPEN", labels: [] },
+        ]);
+      }
+      if (joined.includes("dependencies/blocked_by")) return "[]";
+      if (joined.includes("issue view")) {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "Coder-Rec: missing-parent-model",
+          author: { login: "Akagilnc" },
+        });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936-all-filtered-bad-parent-rec",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("all-filtered must not create a worksite for parent Coder-Rec");
+      },
+    });
+    expect(result.status).toBe("success");
+    expect(result.children).toEqual([]);
+    expect(result.admissionSkipped?.map((child) => child.issue)).toEqual([935, 936]);
+    expect(result.stopSummary?.reason).toBe("already_done");
+    expect(result.escalation).toBeUndefined();
+    expect(cloneCalls).toBe(0);
+  });
+
   it("public family driver: malformed blocked_by schema fails closed before worksite", async () => {
     // #934 ID-003: deterministic dependency schema errors must not soft-empty
     // into unblocked admission.
