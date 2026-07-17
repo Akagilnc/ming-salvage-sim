@@ -1,0 +1,181 @@
+"""契约钉 #883·密令源头隔离。
+
+密令及一切派生只进 ①密令本体表 ②接令者专用密令简报表；
+不进任何共享存储；披露事件是唯一公开化通道；
+公共产出 LLM 输入构建器永不预读密令。
+"""
+
+from __future__ import annotations
+
+from ming_sim import issues
+from ming_sim.decree import settle_with_delta
+from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+
+
+def _active_ministers(db, content):
+    return [
+        character
+        for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+
+
+def test_883_two_turn_probe_secret_never_enters_shared_archives(game):
+    """两回合探针：T1 下密令 → T2 结算 → 共享档无派生；接令者简报表有。"""
+    db, state, content = game
+    assignee, other = _active_ministers(db, content)[:2]
+    marker = "乙巳密查内廷账目883探针"
+
+    oid = db.create_secret_order(state, assignee.name, "乙巳密查", marker, [])
+    assert oid > 0
+
+    # T1 → T2：推进一回合再写共享汇总（跨回合旁路才是病灶）。
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        narrative=f"本月朝局平缓。{marker} 之类密事不得入邸报。",
+    )
+    db.save_turn_report(state, f"邸报复述：{marker}")
+    db.save_chapter_memory(state, "朝局", f"章节复述：{marker}")
+
+    brief = db.conn.execute(
+        "SELECT body, minister_name FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    source_count = db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
+    ).fetchone()[0]
+    chapter_text = " ".join(item["body"] for item in db.list_chapter_memories())
+    report_text = " ".join(item["report"] for item in db.list_turn_reports())
+    other_view = db.get_character_knowledge(state, other.name)
+    other_text = " ".join(
+        item.get("body", "")
+        for item in [*other_view["events"], *other_view["public_events"]]
+    )
+    assignee_view = db.get_character_knowledge(state, assignee.name)
+    assignee_text = " ".join(item.get("body", "") for item in assignee_view["events"])
+
+    assert brief is not None
+    assert brief["minister_name"] == assignee.name
+    assert marker in (brief["body"] or "")
+    assert source_count == 0
+    assert marker not in chapter_text
+    assert marker not in report_text
+    assert marker not in other_text
+    assert marker in assignee_text
+
+
+def test_883_shared_summary_write_seam_rejects_secret_order_source(game):
+    """共享汇总写入接缝单点拒收：secret_order 不得进 character_knowledge_sources。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    marker = "共享源拒收密令正文883"
+
+    raised = False
+    try:
+        db.register_character_knowledge_source(
+            state,
+            [{"character_id": assignee.name, "tier": "主办"}],
+            "secret_order",
+            "密查",
+            marker,
+            source_id="secret_order:force-shared",
+        )
+    except ValueError:
+        raised = True
+
+    count = db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE 'secret_order:%'"
+    ).fetchone()[0]
+    assert raised or count == 0
+    assert count == 0
+    bodies = [
+        row["body"]
+        for row in db.conn.execute("SELECT body FROM character_knowledge_sources").fetchall()
+    ]
+    assert all(marker not in (body or "") for body in bodies)
+
+
+def test_883_shared_archive_bypass_positive_and_negative(game):
+    """复审员旁路：共享汇总正负断言——有密令时 raw 报告不得原样入档；无密令时公开文可入。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    secret_marker = "旁路密令正负883"
+    public_marker = "旁路公开正负883"
+
+    # 负向：存在未公开密令时，聚合 raw 报告不得把密令正文写入共享档。
+    db.create_secret_order(state, assignee.name, "旁路密查", secret_marker, [])
+    db.save_turn_report(state, f"公开句；{secret_marker}")
+    db.save_chapter_memory(state, "朝局", f"公开句；{secret_marker}")
+    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
+    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
+    assert secret_marker not in report_blob
+    assert secret_marker not in chapter_blob
+
+    # 正向：无未公开密令简报时，纯公开正文可落共享档。
+    db.conn.execute("DELETE FROM secret_order_briefs")
+    db.conn.execute("DELETE FROM secret_orders")
+    db.conn.commit()
+    db.save_turn_report(state, public_marker)
+    db.save_chapter_memory(state, "朝局公开", public_marker)
+    report_blob = " ".join(item["report"] for item in db.list_turn_reports())
+    chapter_blob = " ".join(item["body"] for item in db.list_chapter_memories())
+    assert public_marker in report_blob
+    assert public_marker in chapter_blob
+
+
+def test_883_only_explicit_leak_conclusion_promotes_secret_order_to_public(game):
+    """泄漏接线：无泄漏结论不公开；显式泄漏结论 → 披露事件 → 进入公共面。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    oid = db.create_secret_order(state, assignee.name, "密查盐案", "甲子密查盐案883", [])
+
+    hidden = issues.apply_score_extraction(
+        db, state,
+        {"secret_order_updates": [{"order_id": oid, "sim_note": "风声渐起"}]},
+        content=content,
+    )
+    assert hidden["secret_order_updates"][0]["disclosed"] is False
+    assert not any(
+        str(item.get("source_id") or "").startswith("secret_order_disclosure:")
+        for item in db._character_knowledge_events("")
+    )
+
+    shown = issues.apply_score_extraction(
+        db, state,
+        {"secret_order_updates": [
+            {"order_id": oid, "sim_note": "密事已公开883", "disclosed": True},
+        ]},
+        content=content,
+    )
+    assert shown["secret_order_updates"][0]["disclosed"] is True
+    public_events = db._character_knowledge_events("")
+    assert any(
+        str(item.get("source_id") or "").startswith("secret_order_disclosure:")
+        and "密事已公开883" in (item.get("body") or "")
+        for item in public_events
+    )
+
+
+def test_883_public_llm_contexts_never_preload_secret_orders(game):
+    """契约钉 #883：仅 personnel_secret 可读密令；公共 LLM 输入不得预读。"""
+    db, state, _content = game
+    marker = "乙巳密查内廷账目公共输入"
+    secret_orders = {"在办": [{"id": 883, "content": marker}], "待核议": []}
+
+    simulator_payload = build_simulator_payload(
+        state, db, "", "", secret_orders=secret_orders,
+    )
+    public_contexts = [
+        build_extractor_shared_context(
+            db, state, "", "", secret_orders=secret_orders, module=module,
+        )
+        for module in ("internal", "military_external", "issues")
+    ]
+    secret_context = build_extractor_shared_context(
+        db, state, "", "", secret_orders=secret_orders, module="personnel_secret",
+    )
+
+    assert "secret_orders" not in simulator_payload
+    assert marker not in str(simulator_payload)
+    assert all(marker not in str(context) for context in public_contexts)
+    assert secret_context["secret_orders"]["在办"][0]["content"] == marker

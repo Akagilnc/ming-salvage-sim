@@ -134,6 +134,7 @@ ITEM_FIELD_ALIASES = {
     "approved": "approved", "准许": "approved",
     "order_id": "order_id", "密令编号": "order_id",
     "sim_note": "sim_note", "推演备注": "sim_note",
+    "disclosed": "disclosed", "泄漏结论": "disclosed",
     "result": "result", "结果": "result",
     "stance": "stance", "立场": "stance",
     "action": "action", "行动": "action",
@@ -218,6 +219,7 @@ ITEM_FIELD_LABELS = {
     "approved": "准许",
     "order_id": "密令编号",
     "sim_note": "推演备注",
+    "disclosed": "泄漏结论",
     "result": "结果",
     "stance": "立场",
     "impact": "影响",
@@ -327,6 +329,15 @@ def build_simulator_payload(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
+    # #883: due commitments are public review work, unlike actual secret
+    # orders.  Keep them on a separately named public rail; never pre-load
+    # secret-order prose into the monthly judge.
+    grouped_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
+    due_commitments = [
+        item for group in (grouped_orders.values() if isinstance(grouped_orders, dict) else [])
+        for item in (group if isinstance(group, list) else [])
+        if isinstance(item, dict) and item.get("entry_kind") == "due_commitment"
+    ]
     active = db.list_active_issues()
     issues_payload = [
         issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1), db=db, state=state)
@@ -400,13 +411,13 @@ def build_simulator_payload(
         "deaths_this_turn": deaths_this_turn or [],
         "debuts_this_turn": debuts_this_turn or [],
         "relevant_memories": relevant_memories or [],
-        "secret_orders": augment_secret_orders_with_due_commitments(secret_orders, db, state),
+        "due_commitments": due_commitments,
         # HITL：本回合 simulator 至少应产出的重大决策点数（全局玩法设置，0=不强制）。
         "hitl_min_decisions": _load_hitl_min_decisions(),
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。secret_orders 为皇帝密令/到期待裁承诺分组对象（两组：在办=承办中、待核议=待本回合核议裁决），独立于 relevant_memories；真实密令条目含 id/minister_name/title/content/turn_issued/due_turn/progress/sim_note；到期待裁承诺条目带 entry_kind=due_commitment 与 issue_id。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
     }
 
 
@@ -693,6 +704,7 @@ def build_extractor_shared_context(
     decree_text: str,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
+    module: str = "",
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -701,7 +713,12 @@ def build_extractor_shared_context(
     校验集（region_ids/army_ids/class_names/power_ids/fiscal_config）+ offstage_ministers
     （court_roster 不含离场，任命查重需要）+ turn/narrative。在朝大臣/势力/派系/阶级
     （active_ministers/powers/factions/classes）也剔除——simulator_payload 已有等价视图，
-    extractor prompt 指向从那读。"""
+    extractor prompt 指向从那读。
+
+    #883: only the secret-order extractor may receive order prose.  The public
+    monthly judge and all other extractors must see a disclosure event after
+    promotion, never an undisclosed order beforehand.
+    """
     base = _extractor_context_payload(
         db, state, narrative, decree_text,
         relevant_memories=relevant_memories,
@@ -709,6 +726,8 @@ def build_extractor_shared_context(
     )
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    if module == "personnel_secret":
+        slim["secret_orders"] = compat["secret_orders"]
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

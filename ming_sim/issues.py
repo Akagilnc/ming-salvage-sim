@@ -7354,6 +7354,7 @@ def apply_score_extraction(
             continue
         raw_id = item.get("order_id")
         sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
@@ -7386,8 +7387,18 @@ def apply_score_extraction(
                 period=state.period,
                 commit=commit_now,
             )
+            if disclosed:
+                # Disclosure is the only promotion from the assignee-only
+                # brief into a public knowledge event (#883).
+                db.record_public_knowledge_event(
+                    state, str(order["title"]), sim_note,
+                    source_id=f"secret_order_disclosure:{real_id}:{state.turn}",
+                    commit=commit_now,
+                )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
-            applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
+            applied_secret_orders.append({
+                "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
+            })
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 

@@ -105,7 +105,7 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
 
 
 def test_settle_persists_public_and_restricted_sources_before_archive_projection(game):
-    """生产结算先落逐 source 事项，聚合邸报不能成为泄密边界。"""
+    """生产结算先落逐 source 事项；#883 密令只进专用简报，不进共享源。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -122,7 +122,12 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         excluded_names=[excluded.name],
     )
     before_turn = state.turn
-    source_id = f"secret_order:{order}"
+    source_id = f"restricted:settlement-private"
+    db.register_character_knowledge_source(
+        state, [{"character_id": knower.name, "tier": "主办"}], "private_matter",
+        "生产链密查", "生产链受限事项", source_id=source_id,
+        excluded_names=[excluded.name],
+    )
     db.record_public_knowledge_event(
         state, "生产链公开事项", "生产链公开事项", source_id="test:settlement-public",
     )
@@ -148,6 +153,15 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     assert f"settlement:narrative:{before_turn}" not in by_source
     assert source_id in by_source
     assert excluded.name in by_source[source_id]["excluded_names"]
+    # #883: secret order itself never materializes into the shared ledger.
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
+        (f"secret_order:{order}",),
+    ).fetchone()[0] == 0
+    brief = db.conn.execute(
+        "SELECT body FROM secret_order_briefs WHERE order_id=?", (order,)
+    ).fetchone()
+    assert brief is not None and "生产链受限事项" in (brief["body"] or "")
 
     excluded_text = " ".join(
         item.get("body", "")
