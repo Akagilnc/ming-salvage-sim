@@ -1511,27 +1511,32 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
     expect(result).toEqual({ ok: true, ran: true });
   });
 
-  it("a backend with verify but WITHOUT cmr (final phase) FAILS-SAFE to ok:false — it does NOT report a pass the 承重闸 never ran", async () => {
-    // verify present, cmr absent: green verify, then the cmr capability is missing
-    // → #296 must not throw AND must not fabricate a pass. A real verify ran, so the
-    // hook cannot return the nothing-ran no-op {ok:true}; that would make the spine
-    // call the run "success" with the load-bearing integrated cmr never executed
-    // (decision 3⑥). It fails-safe to {ok:false, ran:true} (verify_failed at final).
-    class VerifyOnlyBackend extends BareFamilyBackend {
+  it("#940: cmr worker process failure after green verify is cmr_failed — never empty-success", async () => {
+    // #940 / ID-012: production/test contract guarantees dispatchWorker; the
+    // host no longer has a missing-capability fake exit. A real dispatch that
+    // fails still fails the final barrier (not a silent pass).
+    class CmrWorkerFailedBackend extends BareFamilyBackend {
       readonly verifyCalls: FamilyVerifyRequest[] = [];
       async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
         this.verifyCalls.push(req);
         return { ok: true };
       }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "failed",
+            reason: "family cmr worker unavailable: test pin",
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      }
     }
-    const backend = new VerifyOnlyBackend();
+    const backend = new CmrWorkerFailedBackend();
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    // Verify ran (ran:true), but with no cmr capability the hook reports a red
-    // final barrier (ok:false) — NOT a false success.
     expect(backend.verifyCalls).toHaveLength(1);
     expect(result).toMatchObject({
       ok: false,
@@ -1540,20 +1545,25 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
     });
   });
 
-  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — residual boolean green is not a court pass", async () => {
-    // No dispatchWorker → legacy residual IntegratedCmrResult only.
-    // #919 M2: residual never silent-cleans from converged:true alone; official
-    // green is kind:judge from the live seat. Fail-safe is cmr_failed (not a
-    // false ship success). Production RealFamilyBackend always has dispatchWorker.
-    class VerifyAndCmrBackend extends BareFamilyBackend {
+  it("#940: residual IntegratedCmrResult alone is not a court pass (live judge required)", async () => {
+    // Live dispatchWorker returns residual unusable paper; #919 M2 residual
+    // never silent-cleans from boolean green. Fail-safe is cmr_failed.
+    class ResidualOnlyBackend extends BareFamilyBackend {
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
       }
-      async runIntegratedCmr(): Promise<IntegratedCmrResult> {
-        return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            // residual open-count paper — not kind:judge
+            output: { kind: "reviewer", findingsCount: 0, findings: [] },
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
       }
     }
-    const backend = new VerifyAndCmrBackend();
+    const backend = new ResidualOnlyBackend();
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",

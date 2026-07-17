@@ -535,7 +535,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         };
       },
       dispatchDocRelease: async () => true,
-      applySideEffects: (_landing, verify) => verify,
       resolveFixCommitSha: async (sha) => {
         const lastFixer = fixerLandings[fixerLandings.length - 1]!;
         familyLedger.push({
@@ -661,7 +660,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
           };
         },
         dispatchDocRelease: async () => true,
-        applySideEffects: (_landing, verify) => verify,
         resolveFixCommitSha: async (sha) => {
           const lastFixer = fixerLandings[fixerLandings.length - 1]!;
           familyLedger.push({
@@ -747,7 +745,6 @@ describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline
         };
       },
       dispatchDocRelease: async () => true,
-      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
 
