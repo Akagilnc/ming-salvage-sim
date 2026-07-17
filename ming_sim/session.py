@@ -1879,6 +1879,9 @@ class GameSession:
                 "DELETE FROM character_knowledge_sources WHERE source_id=?",
                 (f"secret_order:{int(order_id)}",),
             )
+            self.db.conn.execute(
+                "DELETE FROM secret_order_briefs WHERE order_id=?", (int(order_id),)
+            )
         return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:

@@ -105,7 +105,7 @@ def test_update_recanonicalizes_new_secrecy_clause_and_preserves_long_text(game)
     assert excluded.name in json.loads(row["excluded_names"])
 
 
-def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
+def test_update_by_id_refreshes_assignee_only_brief_after_restore(game):
     db, state, _ = game
     oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
     refreshed = []
@@ -116,13 +116,12 @@ def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     )
 
     source = db.conn.execute(
-        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
-        (f"secret_order:{oid}",),
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert dict(source) == {"title": "新标题", "body": "新内容"}
     assert refreshed == ["保签官"]
 
-    # The durable source, rather than a live registry cache, is the restore
+    # The durable brief, rather than a live registry cache, is the restore
     # boundary.  A reopened save must project the revised order to its assignee.
     path = db.path
     content = db.content
@@ -132,8 +131,7 @@ def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     restored_state = restored.load_state()
     knowledge = restored.get_character_knowledge(restored_state, "保签官")
     source = restored.conn.execute(
-        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
-        (f"secret_order:{oid}",),
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert dict(source) == {"title": "新标题", "body": "新内容"}
     assert any(
@@ -143,8 +141,8 @@ def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     restored.close()
 
 
-def test_update_by_id_keeps_knowledge_source_identical_to_persisted_order(game):
-    """知识源是密令的持久投影，须使用数据库接受后的标题。"""
+def test_update_by_id_keeps_assignee_brief_identical_to_persisted_order(game):
+    """专用密令简报须使用数据库接受后的标题。"""
     db, state, _ = game
     oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
     requested_title = "超过密令数据库标题二十字上限的更新版本标题甲乙丙"
@@ -155,19 +153,18 @@ def test_update_by_id_keeps_knowledge_source_identical_to_persisted_order(game):
         "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
     ).fetchone()
     source = db.conn.execute(
-        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
-        (f"secret_order:{oid}",),
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
     assert dict(source) == {"title": order["title"], "body": order["content"]}
 
 
-def test_creation_knowledge_source_uses_persisted_truncated_title(game):
+def test_creation_brief_uses_persisted_truncated_title(game):
     db, state, _ = game
     requested = "超过密令数据库标题二十字上限的初始版本标题甲乙丙"
     oid = db.create_secret_order(state, "保签官", requested, "密查内容", [])
 
     order = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
-    source = db.conn.execute("SELECT title FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)).fetchone()
+    source = db.conn.execute("SELECT title FROM secret_order_briefs WHERE order_id=?", (oid,)).fetchone()
     assert source["title"] == order["title"]
 
 
