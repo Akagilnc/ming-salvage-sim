@@ -8339,22 +8339,12 @@ class GameDB:
         Prefer explicit stage/API pins; if none, auto-capture latest held user for
         speaker then assignee so direct mutations still withhold the oral line.
         """
-        pinned_ids: List[int] = []
+        explicit: List[object] = []
         if origin_chat_message_ids is not None:
-            for raw in origin_chat_message_ids:
-                try:
-                    mid = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if mid > 0 and mid not in pinned_ids:
-                    pinned_ids.append(mid)
+            explicit.extend(origin_chat_message_ids)
         if origin_chat_message_id is not None:
-            try:
-                mid = int(origin_chat_message_id)
-            except (TypeError, ValueError):
-                mid = 0
-            if mid > 0 and mid not in pinned_ids:
-                pinned_ids.append(mid)
+            explicit.append(origin_chat_message_id)
+        pinned_ids = self._coerce_positive_message_ids(explicit)
         if not pinned_ids:
             # Auto-capture: any still-held user bloodline (cross-turn F4 included).
             # Prefer same-turn first so pure-public earlier-turn held is not
@@ -10330,7 +10320,7 @@ class GameDB:
             self.conn.commit()
 
     def _coerce_positive_message_ids(
-        self, message_ids: Optional[Iterable[int]],
+        self, message_ids: Optional[Iterable[Any]] = None,
     ) -> List[int]:
         """Normalize chat_message id pins to a stable unique positive list."""
         out: List[int] = []
@@ -10418,21 +10408,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return live_ids
-
-    def _withhold_assignee_user_audience_origin(
-        self, state: GameState, minister_name: str, *,
-        origin_chat_message_ids: Optional[Iterable[int]] = None,
-        commit: bool = True,
-    ) -> None:
-        """Compat wrapper → message-level ``_withhold_origin_chat_messages``.
-
-        ``minister_name`` is ignored: origin bloodline follows message id, not
-        (assignee, role=user).  Kept so historical call sites keep compiling.
-        """
-        del state, minister_name  # message-level; not assignee-scoped
-        self._withhold_origin_chat_messages(
-            origin_chat_message_ids, commit=commit,
-        )
 
     def _project_audience_chat_message(
         self,
@@ -10625,7 +10600,10 @@ class GameDB:
            into the shared ledger (disease root 1).
         """
         pins = self._coerce_positive_message_ids(origin_chat_message_ids)
-        pins_json = json.dumps(pins, ensure_ascii=False)
+        pins_json = safe_json_dumps(pins, ensure_ascii=False)
+        # ON CONFLICT replaces origin_chat_message_ids (overwrite, not merge).
+        # Acceptable: withhold is monotonic; registered origin set reflects the
+        # latest classification event for this order_id, not a historical union.
         self.conn.execute(
             "INSERT INTO secret_order_briefs "
             "(order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids) "
