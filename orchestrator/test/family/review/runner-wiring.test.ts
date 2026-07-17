@@ -151,8 +151,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       familyBase: "family/293-base",
       verifyCmr,
     });
-    // One wave (all independent) → one "wave" barrier call + one "final" call.
-    expect(calls.map((c) => c.phase)).toEqual(["wave", "final"]);
+    // One wave (all independent) → wave verify + #961 IC checkpoint + final.
+    expect(calls.map((c) => c.phase)).toEqual([
+      "wave",
+      "correctness_checkpoint",
+      "final",
+    ]);
     // Each carries the family base + the family backend (the #296 context).
     expect(calls.every((c) => c.familyBase === "family/293-base")).toBe(true);
     expect(calls.every((c) => typeof c.familyBackend.appendFamilyLedger === "function")).toBe(

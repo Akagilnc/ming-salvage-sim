@@ -364,10 +364,10 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     // inline host PR path — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
-    expect(backend.cmrCalls).toEqual([
-      { familyBase, cmrPass: "completeness" },
-      { familyBase, cmrPass: "correctness" },
-    ]);
+    // #961: at least one IC checkpoint correctness + final completeness.
+    expect(backend.cmrCalls.some((c) => c.cmrPass === "completeness")).toBe(true);
+    expect(backend.cmrCalls.some((c) => c.cmrPass === "correctness")).toBe(true);
+    expect(backend.cmrCalls.every((c) => c.familyBase === familyBase)).toBe(true);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
   });

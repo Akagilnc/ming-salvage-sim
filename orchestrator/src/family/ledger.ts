@@ -36,6 +36,7 @@ import {
   type FamilyLedgerEntry,
   type IntegratedCmrPass,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /**
  * The full-schema fields a #298 `merged` event can carry (ADR 0022 decision 5).
@@ -72,7 +73,7 @@ export interface MergedRecord {
  */
 export interface AbortedRecord {
   /** Which verify barrier was red. */
-  readonly phase: "wave" | "final";
+  readonly phase: VerifyCmrPhase;
   /** Which integrated CMR pass failed, when the abort came from a CMR pass. */
   readonly cmrPass?: IntegratedCmrPass;
   /** Human-readable abort reason (the verify error / cmr non-convergence). */
@@ -148,6 +149,11 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
+  /**
+   * Barrier phase that produced this green pass. Defaults to `"final"`.
+   * `#961` incremental IC checkpoints write `"correctness_checkpoint"`.
+   */
+  readonly phase?: VerifyCmrPhase;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /** #930 — family judge session id for resume / prior-verdict rows. */
@@ -169,6 +175,8 @@ export interface CmrReviewedRecord {
   readonly cmrPass: IntegratedCmrPass;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
+  /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
+  readonly phase?: VerifyCmrPhase;
   /**
    * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
    * the blocking findings the runner must route through coder-fix. The runner
@@ -199,6 +207,8 @@ export interface CmrFixCommittedRecord {
   readonly familyHeadAfter?: string;
   readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
+  /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
+  readonly phase?: VerifyCmrPhase;
   /**
    * #979 — Sandcastle session id of this coder-fix open. Ledger sole truth for
    * same-chain fix-round resume (mirrors #966 judge sessionId on cmr_reviewed).
@@ -210,7 +220,7 @@ export interface CmrFixCommittedRecord {
 /** A PHASE-LEVEL family escalation marker (#439). */
 export interface FamilyEscalatedRecord {
   readonly escalationKind: EscalationKind;
-  readonly phase?: "wave" | "final";
+  readonly phase?: VerifyCmrPhase;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary (#450). */
@@ -353,7 +363,7 @@ export async function recordCmrPassed(
     compact({
       status: "cmr_passed",
       event: "cmr_passed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
@@ -386,7 +396,7 @@ export async function recordCmrReviewed(
     compact({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
@@ -427,7 +437,7 @@ export async function recordCmrFixCommitted(
     compact({
       status: "cmr_fix_committed",
       event: "cmr_fix_committed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadBefore: record.familyHeadBefore,
@@ -877,11 +887,11 @@ export function familyEscalationState(
 }
 
 /**
- * Heads reachable from `fromHead` by walking ONLY phase:final
- * `cmr_fix_committed` rows that appear AFTER `startIndex` and whose
- * `familyHeadBefore` is already reachable. Used by the #881 live-semantic
- * resume guard: barrier-internal coder-fix commits advance HEAD without
- * invalidating an earlier pass (live final-barrier loop does the same).
+ * Heads reachable from `fromHead` by walking barrier-internal
+ * `cmr_fix_committed` rows (phase `final` or `correctness_checkpoint`) that
+ * appear AFTER `startIndex` and whose `familyHeadBefore` is already reachable.
+ * Used by the #881 live-semantic resume guard: barrier-internal coder-fix
+ * commits advance HEAD without invalidating an earlier pass.
  *
  * Fail closed: incomplete fix rows (missing before/after) never extend the
  * set; pre-pass fix rows are ignored because the scan starts after the pass.
@@ -897,7 +907,7 @@ function barrierInternalHeadsReachableFrom(
     if (
       e.status !== "cmr_fix_committed" ||
       e.event !== "cmr_fix_committed" ||
-      e.phase !== "final"
+      (e.phase !== "final" && e.phase !== "correctness_checkpoint")
     ) {
       continue;
     }
@@ -913,18 +923,18 @@ function barrierInternalHeadsReachableFrom(
 
 /**
  * Did a specific integrated CMR pass already pass for the CURRENT family base
- * HEAD (or an earlier head in the same final barrier whose subsequent advance
- * is explained only by barrier-internal fix commits)?
+ * HEAD (or an earlier head in the same barrier whose subsequent advance is
+ * explained only by barrier-internal fix commits)?
  *
- * Resume guard (#434, revised #881 to match live barrier semantics):
+ * Resume guard (#434, revised #881 to match live barrier semantics; #961
+ * extends to `correctness_checkpoint` phase markers):
  *   - exact head match on a complete `cmr_passed` row → skip
- *   - head advanced ONLY via phase:final `cmr_fix_committed` chain after that
- *     pass marker → skip (live loop does not re-run an earlier pass after a
- *     later pass's coder-fix advances HEAD)
+ *   - head advanced ONLY via barrier-internal `cmr_fix_committed` chain after
+ *     that pass marker → skip
  *   - head advanced without such a chain (barrier-external) → re-verify
  *
  * Fails closed when the current head is missing or the ledger row lacks the
- * complete cmr_passed shape (status/event/phase/pass/head/routeFingerprint).
+ * complete cmr_passed shape (status/event/pass/head/routeFingerprint).
  */
 export function cmrPassAlreadyPassed(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -954,7 +964,8 @@ export function cmrPassAlreadyPassed(
     if (
       e.status !== "cmr_passed" ||
       e.event !== "cmr_passed" ||
-      e.phase !== "final" ||
+      // #961: final and correctness_checkpoint share the same court identity.
+      (e.phase !== "final" && e.phase !== "correctness_checkpoint") ||
       e.cmrPass !== input.cmrPass ||
       e.familyHeadAfter === undefined ||
       e.familyHeadAfter.trim().length === 0 ||
@@ -965,11 +976,38 @@ export function cmrPassAlreadyPassed(
     }
     const passHead = e.familyHeadAfter.trim();
     if (passHead === currentHead) return true;
-    // #881: same final barrier, head advanced only by barrier-internal fixes.
+    // #881: same barrier, head advanced only by barrier-internal fixes.
     const reachable = barrierInternalHeadsReachableFrom(entries, i, passHead);
     if (reachable.has(currentHead)) return true;
   }
   return false;
+}
+
+/**
+ * #961 / ADR 0139 — durable `lastCorrectnessConvergedHead` single source.
+ *
+ * Pure reader over the family ledger: the latest green correctness
+ * `cmr_passed` row's `familyHeadAfter` (checkpoint or final). Written only via
+ * {@link recordCmrPassed} for `cmrPass:"correctness"` (Integrated Correctness
+ * Action / Family Flow). Runner must not read this for admission or park.
+ */
+export function lastCorrectnessConvergedHeadFromLedger(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_passed" ||
+      e.event !== "cmr_passed" ||
+      e.cmrPass !== "correctness"
+    ) {
+      continue;
+    }
+    const head =
+      typeof e.familyHeadAfter === "string" ? e.familyHeadAfter.trim() : "";
+    if (head.length > 0) return head;
+  }
+  return undefined;
 }
 
 /**
