@@ -116,15 +116,24 @@ export function cmrWorkerSpec(
   };
 }
 
-/** Family-level coder-fix worker for blocking CMR findings (#550). */
-export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+/**
+ * Family-level coder-fix worker for blocking CMR findings (#550).
+ *
+ * #979: `session` is `"resume"` only when the runner threads a real
+ * {@link import("../types.js").DispatchContext.resumeSessionId} from the prior
+ * same-chain fix (ledger sole truth). Default remains `"fresh"`.
+ */
+export function familyCoderFixWorkerSpec(
+  route?: ResolvedModelRoute,
+  session: WorkerSessionMode = "fresh",
+): WorkerSpec {
   const model = route?.slots.coderFix ?? modelForSlot("coderFix");
   return {
     id: "S5",
     kind: "coder",
     role: "coder",
     host: workerHostForModel(model),
-    session: "fresh",
+    session,
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_fix.md",
