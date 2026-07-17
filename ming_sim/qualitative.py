@@ -91,7 +91,8 @@ _ABSTRACT_AXIS_PATTERN = "|".join(
      "morale", "training", "equipment", "firearm_equipment", "mobility",
      "military_pressure", "gentry_resistance", "progress"]
 )
-_COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年"
+# Military / fiscal countable units after a number stay lawful (``一营`` / ``三千人``).
+_COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年|营|哨|队|支|标"
 # Qualitative band words may sit between an axis and a raw score
 # (``民心堪忧15分``).  Keep them optional and axis-local so countable facts
 # with unrelated intervening prose stay lawful.
@@ -115,24 +116,33 @@ _ABSTRACT_SCORE_CONNECTOR = (
     r"跌破|突破|冲破"
 )
 # After a connector, natural prose may add a directional complement or copula:
-# ``跌破到30`` / ``接近到40`` / ``差不多是70`` / ``大约是70``.
+# ``跌破到30`` / ``接近到40`` / ``差不多是70`` / ``大约是70`` / ``提升了70``.
 _ABSTRACT_CONNECTOR_COMPLEMENT = r"(?:到|至|了|是)?"
 # Softener / state word before ``在 + number`` constructions:
-# ``大约在30左右`` / ``约略在70左右`` / ``已在70左右`` / ``维持在40``.
+# ``大约在30左右`` / ``约略在70左右`` / ``已在70左右`` / ``维持在40`` / ``处在40``.
 _ABSTRACT_AT_PREFIX = (
     r"(?:已(?:经|然)?|则|仍(?:然)?|尚|"
     r"大约|大概|大致|约莫|约摸|约略|约计|差不多|约|"
-    r"维持|保持|稳定|停留)?"
+    r"维持|保持|稳定|停留|处)?"
 )
-# Shared numeric tail: Arabic or Chinese exact scores, optional percent / 分,
-# never a countable unit, optional 左右. Chinese numerals are the same abstract
-# token class as digits (``能力约七十`` / ``忠诚只有三十``).
-_CHINESE_SCORE_CHARS = r"零〇一二两三四五六七八九十百"
-_ABSTRACT_NUMBER_START = rf"[-+]?\d|[{_CHINESE_SCORE_CHARS}]"
+# Chinese abstract scores use complete numeral shapes only — never a free
+# ``[十百…]+`` run that swallows idioms (``十分出众`` / ``一尘不染``).
+# Bare adjacency stays Arabic-only; Chinese scores need a connector/verb path
+# (``约七十`` / ``只有三十``) so bare ``一`` / ``十`` inside prose stay lawful.
+_CHINESE_SCORE_BODY = (
+    r"(?:一百(?:零[零〇一二两三四五六七八九])?"
+    r"|[二三四五六七八九]十[零〇一二两三四五六七八九]?"
+    r"|十[一二三四五六七八九]"
+    r"|十(?!分)"  # bare 十 = 10 after a connector; never ``十分`` idiom
+    r"|[零〇一二两三四五六七八九])"
+)
+_ABSTRACT_NUMBER_START = r"[-+]?\d"
 _ABSTRACT_SCORE_NUMBER = (
-    rf"(?:[-+]?\d+(?:\.\d+)?|[{_CHINESE_SCORE_CHARS}]+)"
-    rf"(?:\s*/\s*100|\s*%|\s*分)?"
-    rf"(?!\d|[{_CHINESE_SCORE_CHARS}]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
+    rf"(?:"
+    rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
+    rf"|{_CHINESE_SCORE_BODY}"
+    rf")"
+    rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
     rf"(?:\s*(?:左右|上下))?"
 )
 _ABSTRACT_VALUE_RE = re.compile(
@@ -140,11 +150,11 @@ _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
     rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
     rf"(?:"
-    # ``补给在30左右`` / ``大约在30左右`` / ``已在70左右`` / ``维持在40``
+    # ``补给在30左右`` / ``大约在30左右`` / ``已在70左右`` / ``维持在40`` / ``处在40``
     rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*{_ABSTRACT_SCORE_NUMBER}"
     rf"|"
     # ``忠诚接近40`` / ``能力约70`` / ``跌破到30`` / ``差不多是70`` / bare ``忠诚88``
-    # / Chinese ``能力约七十``
+    # / Chinese ``能力约七十`` (connector-bound; no bare Chinese adjacency)
     rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|[（(]\s*|(?={_ABSTRACT_NUMBER_START}))"
     rf"{_ABSTRACT_SCORE_NUMBER}\s*[）)]?"
     rf")",
@@ -164,17 +174,18 @@ _ABSTRACT_STATE_MODIFIER = (
     r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
     r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"
 )
-# Directional change verbs allow optional 高/低 then optional 至/到 so
-# ``升高到`` / ``降低到`` match as one verb (not ``升高`` + leftover ``到``).
+# Directional change verbs allow optional 高/低 then optional 至/到/了 so
+# ``升高到`` / ``降低到`` / ``提升了`` match as one verb (aspect 了 peers 至/到).
 # Bare ``到`` peers bare ``至`` so unlisted stems (``增加/涨/恢复/减少`` + 到)
 # match via the connective bridge without growing the stem list.
+_ABSTRACT_DIR_OR_ASPECT = r"(?:至|到|了)?"
 _ABSTRACT_STATE_VERB = (
-    r"(?:升(?:高)?(?:至|到)?|降(?:低)?(?:至|到)?|"
-    r"提高(?:至|到)?|提升(?:至|到)?|"
-    r"回落(?:至|到)?|下滑(?:至|到)?|下跌(?:至|到)?|"
-    r"跌破(?:至|到|了)?|跌(?:至|到|了)?|恶化(?:至|到)?|改善(?:至|到)?|"
+    rf"(?:升(?:高)?{_ABSTRACT_DIR_OR_ASPECT}|降(?:低)?{_ABSTRACT_DIR_OR_ASPECT}|"
+    rf"提高{_ABSTRACT_DIR_OR_ASPECT}|提升{_ABSTRACT_DIR_OR_ASPECT}|"
+    rf"回落{_ABSTRACT_DIR_OR_ASPECT}|下滑{_ABSTRACT_DIR_OR_ASPECT}|下跌{_ABSTRACT_DIR_OR_ASPECT}|"
+    rf"跌破{_ABSTRACT_DIR_OR_ASPECT}|跌{_ABSTRACT_DIR_OR_ASPECT}|恶化{_ABSTRACT_DIR_OR_ASPECT}|改善{_ABSTRACT_DIR_OR_ASPECT}|"
     r"达到?|变为?|到了|"
-    r"接近(?:至|到)?|近于|不及|逼近|几乎|"
+    rf"接近{_ABSTRACT_DIR_OR_ASPECT}|近于|不及|逼近|几乎|"
     r"约等于?|大约|大概|大致|约莫|约摸|约略|约计|约|差不多|"
     r"只有|仅有|仅|为|至|到|有|余|剩)"
 )

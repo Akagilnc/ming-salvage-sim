@@ -337,3 +337,21 @@ def test_mindreading_reply_text_rejects_chinese_numeral_and_bare_dao_scores(game
         assert leak not in payload["reply_text"], (leak, payload["reply_text"])
     assert "已略去" in payload["reply_text"]
     assert not any(ch.isdigit() for ch in payload["reply_text"])
+
+
+def test_mindreading_reply_text_keeps_lawful_chinese_prose_not_score_idioms(game):
+    """Player-visible reply_text must keep 十分出众/一尘不染/一营 while redlining scores."""
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = "此人能力十分出众，操守一尘不染，军力只有一营，然能力约七十、忠诚处在40左右、能力提升了70。"
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    for keep in ("十分出众", "一尘不染", "一营"):
+        assert keep in payload["reply_text"], (keep, payload["reply_text"])
+    for leak in ("约七十", "处在40左右", "提升了70", "七十", "40"):
+        assert leak not in payload["reply_text"], (leak, payload["reply_text"])
+    assert "已略去" in payload["reply_text"]
+    assert not any(ch.isdigit() for ch in payload["reply_text"])
