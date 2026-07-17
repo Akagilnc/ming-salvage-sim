@@ -20,7 +20,10 @@ import type {
   WorkerSessionMode,
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
-import { recordFindingStoreFlip } from "./findingsStateStore.js";
+import {
+  OPEN_FINDING_STORE_STATUS,
+  recordFindingStoreFlip,
+} from "./findingsStateStore.js";
 import type {
   JudgeVerdict,
   LegalRefuseReason,
@@ -111,7 +114,7 @@ export function judgeTerminalsToLedgerDispositions(
         out,
         recordFindingStoreFlip({
           identityKey: d.identityKey,
-          from: "unrepaired",
+          from: OPEN_FINDING_STORE_STATUS,
           to: "refuted",
           reason: `${d.reason}: ${d.evidence}`,
           severity,
@@ -134,7 +137,7 @@ export function judgeTerminalsToLedgerDispositions(
         out,
         recordFindingStoreFlip({
           identityKey: d.identityKey,
-          from: "unrepaired",
+          from: OPEN_FINDING_STORE_STATUS,
           to: "suppressed",
           reason: d.evidence,
           severity,
