@@ -78,6 +78,20 @@ export function liveFindingsBlockConverged(
 }
 
 /**
+ * Push a successful store flip into the terminal ledger list, or fail loud.
+ * Local to {@link judgeTerminalsToLedgerDispositions} (refute + suppress).
+ */
+function pushTerminalOrThrow(
+  out: FindingDisposition[],
+  written: ReturnType<typeof recordFindingStoreFlip>,
+): void {
+  if (!written.ok) {
+    throw new Error(written.reason);
+  }
+  out.push(written.value);
+}
+
+/**
  * Map judge terminal dispositions to ledger findings-store flips:
  * - `refute` → `refuted` (#925)
  * - `suppress` → `suppressed` (#952; internal terminal, not public ABI)
@@ -93,19 +107,18 @@ export function judgeTerminalsToLedgerDispositions(
   const out: FindingDisposition[] = [];
   for (const d of dispositions) {
     if (d.action === "refute") {
-      const written = recordFindingStoreFlip({
-        identityKey: d.identityKey,
-        from: "unrepaired",
-        to: "refuted",
-        reason: `${d.reason}: ${d.evidence}`,
-        severity,
-        source: "judge_kill",
-        scope: d.reason,
-      });
-      if (!written.ok) {
-        throw new Error(written.reason);
-      }
-      out.push(written.value);
+      pushTerminalOrThrow(
+        out,
+        recordFindingStoreFlip({
+          identityKey: d.identityKey,
+          from: "unrepaired",
+          to: "refuted",
+          reason: `${d.reason}: ${d.evidence}`,
+          severity,
+          source: "judge_kill",
+          scope: d.reason,
+        }),
+      );
       continue;
     }
     if (d.action === "suppress") {
@@ -117,19 +130,18 @@ export function judgeTerminalsToLedgerDispositions(
         groundKind === "groundTicket"
           ? `groundTicket:${d.groundTicket}`
           : d.ownerRecordPointer;
-      const written = recordFindingStoreFlip({
-        identityKey: d.identityKey,
-        from: "unrepaired",
-        to: "suppressed",
-        reason: d.evidence,
-        severity,
-        source: groundSource,
-        scope: groundKind,
-      });
-      if (!written.ok) {
-        throw new Error(written.reason);
-      }
-      out.push(written.value);
+      pushTerminalOrThrow(
+        out,
+        recordFindingStoreFlip({
+          identityKey: d.identityKey,
+          from: "unrepaired",
+          to: "suppressed",
+          reason: d.evidence,
+          severity,
+          source: groundSource,
+          scope: groundKind,
+        }),
+      );
     }
   }
   return out;
