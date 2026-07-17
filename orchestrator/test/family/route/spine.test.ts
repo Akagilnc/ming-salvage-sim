@@ -641,7 +641,12 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.status).toBe("incomplete");
     expect(result.children).toEqual([
       { issue: 10, status: "merged", branch: "feat/child-10" },
-      { issue: 11, status: "failed", branch: undefined },
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
     ]);
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
     expect(result.stopSummary.summary).toContain("#11:failed");

@@ -1064,7 +1064,14 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     // The child failed → it never merged → the family run is "incomplete".
     expect(result.status).toBe("incomplete");
     expect(result.failedPhase).toBeUndefined();
-    expect(result.children).toEqual([{ issue: 11, status: "failed" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
+    ]);
     // No merge / ledger write for a failed child.
     expect(familyBackend.merges).toEqual([]);
     expect(familyBackend.ledger).toEqual([]);
@@ -1096,7 +1103,12 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     expect(result.status).toBe("incomplete");
     expect(result.children).toEqual([
-      { issue: 11, status: "failed" },
+      {
+        issue: 11,
+        status: "failed",
+        branch: undefined,
+        failureCause: "child #11 single-slice execution did not succeed",
+      },
       { issue: 10, status: "already_done" },
     ]);
     expect(result.stopSummary.summary).toContain("#11:failed");

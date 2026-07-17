@@ -2146,7 +2146,7 @@ export async function runFamily(
             escalationKind: "decision",
             phase: "wave",
           });
-          return {
+          return attachDiagnostics({
             status: "escalated" as const,
             familyBase,
             familyHead,
@@ -2156,7 +2156,7 @@ export async function runFamily(
             },
             stopSummary,
             children,
-          };
+          });
         }
         if (mergeResult.conflicted === true) {
           // ID-010: trust merger worker once; stop serial merge on conflicted base.
@@ -2180,6 +2180,9 @@ export async function runFamily(
           status: r.status,
           branch: r.branch,
           ...(r.escalation !== undefined ? { escalation: r.escalation } : {}),
+          ...(r.failureCause !== undefined
+            ? { failureCause: r.failureCause }
+            : {}),
         });
       }
     }
