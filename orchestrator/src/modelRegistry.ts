@@ -93,14 +93,14 @@ type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.Age
 
 const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
   claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
-  // #883 owner order (2026-07-12 「删了它」): session capture is structurally
-  // dead for codex legs — the cmr rules mandate --ephemeral (no session file is
-  // ever written), so the post-run capture ritual can only throw, which killed
-  // two completed #883 coder iterations (completion unrecognized → idle-hang
-  // SIGKILL). Disable capture at the single codex factory seam; Claude legs
-  // keep capture (theirs works and feeds resume/usage parsing).
-  codex: (model, options) =>
-    sc.codex(model, { ...(options as sc.CodexOptions | undefined), captureSessions: false }),
+  // #957: restore Sandcastle-native codex capture + resume. #883 forced
+  // captureSessions:false after capture threw "session not found"; that was a
+  // symptom fix. Host-side CMR legs still use --ephemeral (parallel host
+  // processes share ~/.codex — real collision risk, codex#11435). Inside a
+  // container there is one codex process per worker, so Sandcastle's sc.codex
+  // (no --ephemeral; default captureSessions:true) is correct: sessions land
+  // on disk, capture succeeds, S3→S6 / SO same-session resume works.
+  codex: (model, options) => sc.codex(model, options as sc.CodexOptions | undefined),
   // #905: real Antigravity/Gemini CLI — optional-leg degrade when dead; never
   // substitute opencode/grok under the agy name.
   agy: (model, options) => agyAgent(model, options as AgyAgentOptions | undefined),
