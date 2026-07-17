@@ -129,10 +129,11 @@ describe("#937 spawn ownership (no spawn-ack wall clock)", () => {
         for (const cb of fakeChildState.listeners.get("spawn") ?? []) cb();
       });
       const { child } = await pending;
+      const killCalls: Array<{ pid: number; signal: NodeJS.Signals }> = [];
       await terminateSpawnedChild(child as never, {
         killPid: (pid, signal) => {
+          killCalls.push({ pid, signal });
           fakeChildState.signals.push(signal);
-          void pid;
           // Confirm exit so terminateSpawnedChild does not raise
           // worker_termination_failed (#934 ID-006).
           Object.defineProperty(child, "exitCode", {
@@ -142,7 +143,9 @@ describe("#937 spawn ownership (no spawn-ack wall clock)", () => {
         },
         sleepMs: async () => {},
       });
-      expect(fakeChildState.signals.length).toBeGreaterThan(0);
+      // Exact-handle process-group kill: negative pid + SIGTERM first.
+      expect(killCalls[0]).toEqual({ pid: -4242, signal: "SIGTERM" });
+      expect(fakeChildState.signals).toEqual(["SIGTERM"]);
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

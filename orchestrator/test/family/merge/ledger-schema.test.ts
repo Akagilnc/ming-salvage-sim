@@ -14,7 +14,9 @@
 import { describe, expect, it } from "vitest";
 import {
   familyEscalationState,
+  isFamilyLedgerEntryShape,
   mergedSet,
+  parseFamilyLedgerJsonl,
   recordAborted,
   recordFamilyEscalated,
   recordFamilyEscalationAnswered,
@@ -353,5 +355,44 @@ describe("mergedSet — reconcile補账条 COUNTS (decision 5 / codex R3)", () =
     ] as unknown as FamilyLedgerEntry[];
 
     expect([...mergedSet(entries)].sort()).toEqual([11]);
+  });
+});
+
+describe("isFamilyLedgerEntryShape — childIssue positive safe integer (#934 online CR-5)", () => {
+  it("accepts thin merged rows and phase-level status without childIssue", () => {
+    expect(isFamilyLedgerEntryShape({ status: "merged", childIssue: 10 })).toBe(
+      true,
+    );
+    expect(isFamilyLedgerEntryShape({ status: "aborted" })).toBe(true);
+  });
+
+  it("rejects non-positive / non-integer / unsafe childIssue when present", () => {
+    expect(isFamilyLedgerEntryShape({ status: "merged", childIssue: -1 })).toBe(
+      false,
+    );
+    expect(isFamilyLedgerEntryShape({ status: "merged", childIssue: 0 })).toBe(
+      false,
+    );
+    expect(isFamilyLedgerEntryShape({ status: "merged", childIssue: 1.5 })).toBe(
+      false,
+    );
+    expect(
+      isFamilyLedgerEntryShape({
+        status: "merged",
+        childIssue: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    ).toBe(false);
+    expect(isFamilyLedgerEntryShape({ status: "merged", childIssue: NaN })).toBe(
+      false,
+    );
+  });
+
+  it("parseFamilyLedgerJsonl fail-closes on invalid childIssue lines", () => {
+    expect(() =>
+      parseFamilyLedgerJsonl('{"status":"merged","childIssue":-1}\n'),
+    ).toThrow(/not a valid FamilyLedgerEntry/);
+    expect(() =>
+      parseFamilyLedgerJsonl('{"status":"merged","childIssue":1.5}\n'),
+    ).toThrow(/not a valid FamilyLedgerEntry/);
   });
 });

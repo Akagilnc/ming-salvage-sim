@@ -1497,7 +1497,9 @@ export function isFamilyLedgerEntryShape(
   const childIssue = (value as { childIssue?: unknown }).childIssue;
   if (
     childIssue !== undefined &&
-    (typeof childIssue !== "number" || !Number.isFinite(childIssue))
+    (typeof childIssue !== "number" ||
+      !Number.isSafeInteger(childIssue) ||
+      childIssue <= 0)
   ) {
     return false;
   }

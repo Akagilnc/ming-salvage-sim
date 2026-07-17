@@ -106,8 +106,11 @@ export function fetchPaginatedSubIssues(
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
     const nodes = decodeSubIssueNodes(JSON.parse(raw));
+    // Capture page base before push-during-loop so indices stay contiguous
+    // (all.length + i mid-loop yields 0,2,4… after each push).
+    const pageOffset = all.length;
     for (let i = 0; i < nodes.length; i++) {
-      const index = all.length + i;
+      const index = pageOffset + i;
       const entry = decodeSubIssueEntry(nodes[i], index);
       if (entry.state === undefined) {
         throw new Error(

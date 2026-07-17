@@ -352,6 +352,36 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
       false,
     );
   });
+
+  it("429 park writeLedger failure → status error via errorTermination (not raw rejection)", async () => {
+    class QuotaParkWriteFailBackend extends QuotaParkBackend {
+      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        if (entry.event === "quota_wait_for_reset") {
+          throw new Error("ENOSPC disk full on quota park");
+        }
+        await super.writeLedger(entry);
+      }
+    }
+    const backend = new QuotaParkWriteFailBackend();
+    // Must resolve (not reject) — mirror capacity persist-fail path.
+    const result = await runOrchestrator({
+      issueNumber: 683,
+      backend,
+      relayPools: [
+        {
+          id: "zai",
+          status: "limited",
+          resetAt: new Date("2026-07-08T16:10:00.000Z"),
+          parkThresholdMs: 30 * 60 * 1000,
+          models: ["grok-4.5"],
+        },
+      ],
+    });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason ?? "").toMatch(
+      /record_persist_failed: quota_wait_for_reset:.*ENOSPC disk full on quota park/,
+    );
+  });
 });
 
 describe("#883 codex capture ritual deleted", () => {
