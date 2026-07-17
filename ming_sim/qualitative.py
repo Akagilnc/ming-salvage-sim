@@ -103,13 +103,23 @@ _ABSTRACT_BAND_WORD = "|".join(
     )
 )
 # Approximate / comparator connectors used in natural LLM historical prose.
-# Longer alternatives first so ``大约`` / ``约等于`` win over bare ``约``.
+# Longer alternatives first so ``大约`` / ``约等于`` / ``大概`` win over bare ``约``.
 _ABSTRACT_SCORE_CONNECTOR = (
     r"由|为|达|高达|至|是|从|"
     r"不足|不到|低于|少于|不满|超过|高于|大于|"
-    r"接近|近于|近乎|将近|不及|"
-    r"约等于?|大约|约|差不多|"
-    r"跌破|突破|冲破"
+    r"接近|近于|近乎|将近|不及|逼近|几乎|"
+    r"约等于?|大约|大概|大致|约莫|约摸|约|差不多|"
+    r"跌破|突破|冲破|到了"
+)
+# After a connector, natural prose may add a directional complement or copula:
+# ``跌破到30`` / ``接近到40`` / ``差不多是70`` / ``大约是70``.
+_ABSTRACT_CONNECTOR_COMPLEMENT = r"(?:到|至|了|是)?"
+# Softener / state word before ``在 + number`` constructions:
+# ``大约在30左右`` / ``已在70左右`` / ``维持在40``.
+_ABSTRACT_AT_PREFIX = (
+    r"(?:已(?:经|然)?|则|仍(?:然)?|尚|"
+    r"大约|大概|大致|约莫|约摸|差不多|约|"
+    r"维持|保持|稳定|停留)?"
 )
 # Shared numeric tail: optional percent / 分, never a countable unit, optional 左右.
 _ABSTRACT_SCORE_NUMBER = (
@@ -122,11 +132,11 @@ _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
     rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
     rf"(?:"
-    # ``补给在30左右`` — 在 + number + 左右/上下
-    rf"在\s*{_ABSTRACT_SCORE_NUMBER}"
+    # ``补给在30左右`` / ``大约在30左右`` / ``已在70左右`` / ``维持在40``
+    rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*{_ABSTRACT_SCORE_NUMBER}"
     rf"|"
-    # ``忠诚接近40`` / ``能力约70`` / ``忠诚=98`` / bare ``忠诚88``
-    rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*|[（(]\s*|(?=[-+]?\d))"
+    # ``忠诚接近40`` / ``能力约70`` / ``跌破到30`` / ``差不多是70`` / bare ``忠诚88``
+    rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|[（(]\s*|(?=[-+]?\d))"
     rf"{_ABSTRACT_SCORE_NUMBER}\s*[）)]?"
     rf")",
     re.IGNORECASE,
@@ -147,8 +157,11 @@ _ABSTRACT_STATE_MODIFIER = (
 )
 _ABSTRACT_STATE_VERB = (
     r"(?:升(?:高|至|到)?|降(?:低|至|到)?|提高(?:至|到)?|提升(?:至|到)?|"
-    r"跌(?:破|至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|"
-    r"接近|近于|不及|约|大约|只有|仅有|仅|为|至|有|余|剩)"
+    r"跌破(?:至|到|了)?|跌(?:至|到|了)?|恶化(?:至|到)?|改善(?:至|到)?|"
+    r"达到?|变为?|到了|"
+    r"接近(?:至|到)?|近于|不及|逼近|几乎|"
+    r"约等于?|大约|大概|大致|约莫|约摸|约|差不多|"
+    r"只有|仅有|仅|为|至|有|余|剩)"
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
@@ -174,7 +187,9 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
     pattern = re.compile(
         rf"({names})\s*(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
         rf"(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-        rf"(?:[:：=]\s*|(?:{_ABSTRACT_SCORE_CONNECTOR})\s*|在\s*|(?=[-+]?\d))"
+        rf"(?:[:：=]\s*|"
+        rf"(?:{_ABSTRACT_SCORE_CONNECTOR})\s*{_ABSTRACT_CONNECTOR_COMPLEMENT}\s*|"
+        rf"(?:{_ABSTRACT_AT_PREFIX})\s*在\s*|(?=[-+]?\d))"
         r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%|\s*分)?(?:\s*(?:左右|上下))?",
         re.IGNORECASE,
     )

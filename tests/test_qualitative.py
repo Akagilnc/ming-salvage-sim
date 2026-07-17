@@ -88,17 +88,32 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
         "山东民心堪忧15分",
         "势力将近80",
         "训练约等于50",
+        # Residual synonym / composition holes after the first approx pass.
+        "忠诚大概40",
+        "忠诚大致40",
+        "能力约莫70",
+        "能力约摸70",
+        "军心跌破到30",
+        "忠诚接近到40",
+        "补给大约在30左右",
+        "能力已在70左右",
+        "能力大约是70",
+        "能力差不多是70",
+        "能力逼近70",
+        "能力几乎70",
+        "能力到了70",
+        "忠诚维持在40",
     ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
         assert not any(ch.isdigit() for ch in rendered), (injected, rendered)
 
     # Lawful countable facts beside an approximate leak must survive.
-    mixed = safe_historical_text("忠诚接近40，拨银三万两，已过六个月")
+    mixed = safe_historical_text("忠诚大概40，拨银三万两，已过六个月")
     assert "已略去" in mixed
     assert "拨银三万两" in mixed
     assert "已过六个月" in mixed
-    assert "接近40" not in mixed
+    assert "大概40" not in mixed
 
 
 def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
