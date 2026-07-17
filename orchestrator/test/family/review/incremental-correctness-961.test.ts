@@ -398,4 +398,42 @@ describe("#961 spine — incremental IC after batch verify green", () => {
     );
     expect(runnerSrc).not.toMatch(/\blastCorrectnessConvergedHeadFromLedger\b/);
   });
+
+  // CORR-C1 / #961: Wave1 fires IC → Wave2 coding settles in parallel → IC fails
+  // before merge. Early return must drain settled wave siblings (reuse #938) so
+  // executed children stay honest `ran`, not finalize residual-mapped `skipped`.
+  it("CORR-C1: IC fail after next-wave settle keeps executed sibling as ran (not skipped)", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      }),
+    });
+    const result = await runFamily({
+      epic: TWO_WAVES,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/961-base",
+      verifyCmr: async (input) => {
+        if (input.phase === "wave") return { ok: true, ran: true };
+        if (input.phase === "correctness_checkpoint") {
+          return { ok: false, ran: true, failedStatus: "cmr_failed" };
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failedPhase).toBe("correctness_checkpoint");
+    // Wave1 already merged before IC was fired.
+    expect(result.children.find((c) => c.issue === 1001)).toEqual(
+      expect.objectContaining({ issue: 1001, status: "merged" }),
+    );
+    // Wave2 child allSettled while IC was in flight — must remain honest `ran`.
+    const wave2 = result.children.find((c) => c.issue === 1002);
+    expect(wave2?.status).toBe("ran");
+    expect(wave2?.status).not.toBe("skipped");
+    expect(wave2?.branch).toEqual(expect.stringMatching(/1002/));
+  });
 });

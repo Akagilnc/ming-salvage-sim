@@ -2204,9 +2204,15 @@ export async function runFamily(
   // CMR fix stay serial: await any in-flight checkpoint before the next merge.
   type PendingBarrier = ReturnType<typeof runFamilyBarrierWithQuotaRelay<VerifyCmrResult>>;
   let pendingCorrectnessCheckpoint: PendingBarrier | undefined;
-  const awaitPendingCorrectnessCheckpoint = async (): Promise<
-    FamilyRunResult | undefined
-  > => {
+  /**
+   * Await in-flight #961 IC checkpoint. On hard fail, optional
+   * `beforeFailFinalize` runs first so call sites can #938-drain settled wave
+   * siblings into `childResults` before finalize residual-maps them to fake
+   * `skipped` (CORR-C1).
+   */
+  const awaitPendingCorrectnessCheckpoint = async (opts?: {
+    readonly beforeFailFinalize?: () => void;
+  }): Promise<FamilyRunResult | undefined> => {
     if (pendingCorrectnessCheckpoint === undefined) return undefined;
     const barrier = await pendingCorrectnessCheckpoint;
     pendingCorrectnessCheckpoint = undefined;
@@ -2217,6 +2223,7 @@ export async function runFamily(
     }
     const value = barrier.value;
     if (!value.ok) {
+      opts?.beforeFailFinalize?.();
       return await finalize({
         ...(value.failedStatus !== undefined
           ? { failedStatus: value.failedStatus }
@@ -2404,20 +2411,13 @@ export async function runFamily(
     // here once mergeChild resolves — so a future #295 merge failure can leave the
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
     //
-    // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
-    // serial under Family Flow). Child coding above already ran in parallel with
-    // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
-    {
-      const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint();
-      if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
-    }
-    //
-    // #938: mid-wave early exit (merger decision escalate / still-conflicted)
-    // must drain remaining allSettled siblings into childResults first. Without
-    // that flush, finalize / residual maps map executed peers to fake "skipped".
-    // "skipped" is only for never-schedulable / never-ran children.
+    // #938: mid-wave early exit (merger decision escalate / still-conflicted /
+    // #961 IC-fail before merge) must drain remaining allSettled siblings into
+    // childResults first. Without that flush, finalize residual-maps executed
+    // peers to fake "skipped". "skipped" is only for never-schedulable / never-ran.
     // Spread the whole sibling so optional fields (branch / escalation /
     // failureCause / future FamilyChildResult cargo) are never silently dropped.
+    // Helpers are defined before the IC await so CORR-C1 can reuse the same drain.
     let waveMergedAny = false;
     const recordWaveSibling = (sibling: FamilyChildResult): void => {
       childResults.push({ ...sibling });
@@ -2442,6 +2442,17 @@ export async function runFamily(
           : { issue: child.issue, status: "skipped" as const };
       });
     };
+    // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
+    // serial under Family Flow). Child coding above already ran in parallel with
+    // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
+    // CORR-C1: drain settled current-wave peers before fail-finalize so they
+    // stay honest `ran` / `failed`, not residual `skipped`.
+    {
+      const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint({
+        beforeFailFinalize: drainRemainingWaveSiblings,
+      });
+      if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
+    }
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
         // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
