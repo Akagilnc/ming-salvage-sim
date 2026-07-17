@@ -84,6 +84,7 @@ import {
 } from "../stationReceiptContracts.js";
 import {
   judgeResultFromVerdict,
+  materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
 } from "../judgeStation.js";
 
@@ -1517,20 +1518,26 @@ export class RealFamilyBackend implements FamilyBackend {
                 reason: outcome.reason ?? "family judge escalate",
                 diagnosis: outcome.diagnosis ?? "judge declared escalate",
               }
-            : {
-                station: "judge",
-                status: "continue",
-                findingDispositions: outcome.findingDispositions ?? [],
-                // ADR 0138: required traffic field; empty string fails later at
-                // requireFixPacketBody before family coder-fix dispatch.
-                fixPacketBody:
-                  typeof outcome.fixPacketBody === "string"
-                    ? outcome.fixPacketBody
-                    : "",
-                ...(outcome.advanceCoder !== undefined
-                  ? { advanceCoder: outcome.advanceCoder }
-                  : {}),
-              };
+            : (() => {
+                // ADR 0138 / #978 CR S2: never invent an empty packet body when
+                // missing — fail at projection (schema already requires body on
+                // live continue; empty invent only hides contract drift).
+                if (typeof outcome.fixPacketBody !== "string") {
+                  throw new Error(
+                    "family judge continue missing fixPacketBody " +
+                      "(ADR 0138; refuse invent empty string at projection)",
+                  );
+                }
+                return {
+                  station: "judge" as const,
+                  status: "continue" as const,
+                  findingDispositions: outcome.findingDispositions ?? [],
+                  fixPacketBody: outcome.fixPacketBody,
+                  ...(outcome.advanceCoder !== undefined
+                    ? { advanceCoder: outcome.advanceCoder }
+                    : {}),
+                };
+              })();
       const judge = judgeResultFromVerdict(verdict, outcome.findings);
       return {
         kind: "completed",
@@ -1950,22 +1957,25 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
-    const fixPacketBody =
-      typeof landing?.fixPacketBody === "string" &&
-      landing.fixPacketBody.trim().length > 0
-        ? landing.fixPacketBody
-        : undefined;
+    const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+    // Shared helper with single-slice landing writer — fail-loud when open set
+    // lacks body (raw-artifacts-only path with empty keys still soft-omits).
+    const fixPacketBody = materializeLandingFixPacketBody({
+      fixPacketBody: landing?.fixPacketBody,
+      blockingFindingIdentityKeys: identityKeys,
+      blockingFindingCount: ctx.blockingFindingCount,
+    });
     writeFileSync(
       path,
       `${JSON.stringify(
         {
           // ADR 0138 / #978: sole coder-fix packet content — judge body
-          // verbatim. Bare blockingFindings packing deleted (no second path).
+          // verbatim. Bare findings packing deleted (no second path).
           ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
           ...(rawReviewerArtifacts !== undefined
             ? { rawReviewerArtifacts }
             : {}),
-          blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          blockingFindingIdentityKeys: identityKeys,
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
             : {}),

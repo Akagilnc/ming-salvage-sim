@@ -6,6 +6,12 @@
 → ADR 0130）：真 → 修；不该修 → 带证据驳回，留给下轮
 fresh 复检裁决——驳回是尽责，不是抗命。
 
+**作业包正文唯一真源 = landing `fixPacketBody`（ADR 0138）**。判官 continue
+执笔的判词正文，runner 原样写入 fix-findings JSON 的 `fixPacketBody`；你只读
+该字段当修包内容——逐字执行，不另从 finding 行、身份键、cargo 散文拼第二
+套包。`blockingFindingIdentityKeys` 等是薄控制信封（开集身份），不是正文；
+不得把身份键当修法说明、也不得在 body 缺失时自己从 findings 重造包。
+
 开工先立案：枚举本单 authority set（适用 ADR + finding 所引票号，
 票面 gh 取），修与驳同用；每条驳回点名依据、引 clause 锚点。
 驳回四理由（违宪 / 过度防御 / 事实不成立 / 越权加戏 `scope_creep`）

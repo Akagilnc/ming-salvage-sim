@@ -78,23 +78,21 @@ function judgeGreenOutput(
  * #919 CR N3: live judge continue for dogfood blocking scripts.
  * Prefer this over residual kind:"cmr"+findingsCount (production residual is
  * unusableResidualOpenCountPaper only; court never continues from open-count).
+ *
+ * ADR 0138 / #978 CR nit: callers must pass explicit non-empty `fixPacketBody`.
+ * Never mint body from findings rows (no dual-path dogfood shortcut).
  */
 function judgeContinueOutput(
   findings: ReadonlyArray<Finding>,
   cargo: Record<string, unknown> = {},
 ): WorkerOutput {
-  const fixPacketBody =
-    typeof cargo.fixPacketBody === "string" &&
-    cargo.fixPacketBody.trim().length > 0
-      ? cargo.fixPacketBody
-      : findings.length > 0
-        ? findings
-            .map(
-              (f) =>
-                `${f.severity} ${f.category} @ ${f.location}: ${f.claim_quote}`,
-            )
-            .join("\n")
-        : "dogfood judge continue: live findings remain";
+  const body = cargo.fixPacketBody;
+  if (typeof body !== "string" || body.length === 0 || body.trim().length === 0) {
+    throw new Error(
+      "dogfood judge continue requires explicit non-empty fixPacketBody " +
+        "(ADR 0138; no findings→body mint)",
+    );
+  }
   return {
     kind: "judge",
     status: "continue",
@@ -103,9 +101,18 @@ function judgeContinueOutput(
       identityKey: findingIdentityKey(f),
       action: "live" as const,
     })),
-    fixPacketBody,
     ...cargo,
+    fixPacketBody: body,
   } as WorkerOutput;
+}
+
+/** Dogfood explicit packet body from a single finding (caller-authored, not mint). */
+function dogfoodFixPacketBody(finding: Finding): string {
+  return (
+    `live: ${finding.category}|${finding.location}|${finding.claim_quote}\n` +
+    `authority: dogfood explicit fixPacketBody (ADR 0138)\n` +
+    `boundary: assigned family only`
+  );
 }
 
 export type DogfoodReplayClassification =
@@ -265,6 +272,7 @@ async function familyClassificationScenario(input: {
           findings: [input.finding],
         })
       : judgeContinueOutput([input.finding], {
+          fixPacketBody: dogfoodFixPacketBody(input.finding),
           reason: "dogfood family CMR classification replay",
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
@@ -1158,6 +1166,7 @@ async function familyAttributionReplay(
     action: "fix_now",
   });
   const attributedContinue = judgeContinueOutput([attributedFinding], {
+    fixPacketBody: dogfoodFixPacketBody(attributedFinding),
     reason: "child attribution must stay local",
     successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
     claimedFixedFindingIdentityKeys: [],
@@ -1217,6 +1226,7 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: judgeContinueOutput([selfFixFinding], {
+      fixPacketBody: dogfoodFixPacketBody(selfFixFinding),
       reason:
         "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
