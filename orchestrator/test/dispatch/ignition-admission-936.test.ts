@@ -781,6 +781,83 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
+  it("terminal replay rebuilds admissionSkipped from durable ledger (Codex C1)", async () => {
+    // Online CR: post_merge_cleanup replay must not drop admission_skipped audit.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "definitely-not-a-route-preset");
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-terminal-skip-audit-"));
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        [
+          JSON.stringify({
+            childIssue: 935,
+            status: "admission_skipped",
+            event: "admission_skipped",
+            phase: "wave",
+            reason: "closed",
+            message: "family admission skipped child #935: closed",
+          }),
+          JSON.stringify({
+            status: "merged",
+            event: "reconciled",
+            childIssue: 936,
+            familyHeadAfter: "def456",
+          }),
+          JSON.stringify({
+            status: "post_merge_cleanup",
+            event: "post_merge_cleanup",
+            phase: "final",
+            familyHeadAfter: "def456",
+            cleanupOutput: {
+              kind: "cleanup",
+              terminal: true,
+              ok: true,
+              branchOutcome: "already_gone",
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+      const result = await runFamilyDriver({
+        epicIssue: 934,
+        sourceRepo: "/tmp/no-such-source",
+        repo: "Akagilnc/ming-salvage-sim",
+        familyBase: "family/934-base",
+        base: "main",
+        promptsDir: "/tmp/prompts",
+        familyPromptsDir: "/tmp/family-prompts",
+        soulsDir: "/tmp/souls",
+        ledgerDir,
+        imageName: "img",
+        sh: () => {
+          throw new Error("terminal replay must not read GitHub");
+        },
+        realBackendFactory: () => {
+          throw new Error("terminal replay must not clone");
+        },
+      });
+      expect(result.status).toBe("success");
+      expect(result.admissionSkipped).toEqual([
+        {
+          issue: 935,
+          reason: "closed",
+          message: "family admission skipped child #935: closed",
+        },
+      ]);
+      expect(result.stopSummary?.metadata?.admissionSkipped).toEqual(
+        result.admissionSkipped,
+      );
+      expect(result.children).toEqual(
+        expect.arrayContaining([
+          { issue: 936, status: "already_done" },
+          { issue: 935, status: "skipped" },
+        ]),
+      );
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
   it("public family driver: corrupt resident ledger fails closed with zero external calls", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-corrupt-ledger-"));

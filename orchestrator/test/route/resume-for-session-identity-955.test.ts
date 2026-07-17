@@ -18,7 +18,6 @@ import type {
   DispatchContext,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -151,9 +150,6 @@ class ResumeIdentityBackend implements Backend {
       openBlockedBy: [],
       ...(this.coderRecBody.length > 0 ? { body: this.coderRecBody } : {}),
     } as IssueMeta;
-  }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;

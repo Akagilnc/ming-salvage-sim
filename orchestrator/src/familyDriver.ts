@@ -1020,6 +1020,38 @@ export function discoverFamilyResidentScene(
 }
 
 /**
+ * Rebuild production-admission skip audit from durable ledger rows (#934 ID-005 /
+ * online CR C1). Terminal replay must not drop `admission_skipped` inventory that
+ * the original run exposed on `FamilyRunResult.admissionSkipped`.
+ */
+export function admissionSkippedFromLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): ReadonlyArray<FamilyAdmissionSkippedChild> {
+  const out: FamilyAdmissionSkippedChild[] = [];
+  const seen = new Set<number>();
+  for (const entry of ledger) {
+    if (entry.status !== "admission_skipped" || entry.event !== "admission_skipped") {
+      continue;
+    }
+    if (typeof entry.childIssue !== "number" || !Number.isFinite(entry.childIssue)) {
+      continue;
+    }
+    if (seen.has(entry.childIssue)) continue;
+    seen.add(entry.childIssue);
+    const reason =
+      typeof entry.reason === "string" && entry.reason.trim().length > 0
+        ? entry.reason
+        : "admission_skipped";
+    const message =
+      typeof entry.message === "string" && entry.message.trim().length > 0
+        ? entry.message
+        : reason;
+    out.push({ issue: entry.childIssue, reason, message });
+  }
+  return out;
+}
+
+/**
  * Current-schema terminal replay for a resident family ledger (ID-005).
  * Returns a FamilyRunResult when the durable scene is already terminal
  * (completed cleanup, or unresolved escalation park/fail). Non-terminal
@@ -1038,10 +1070,34 @@ export function planFamilyTerminalReplay(
         break;
       }
     }
-    const children = [...mergedSet(ledger)].map((issue) => ({
-      issue,
-      status: "already_done" as const,
-    }));
+    const admissionSkipped = admissionSkippedFromLedger(ledger);
+    const children = [
+      ...[...mergedSet(ledger)].map((issue) => ({
+        issue,
+        status: "already_done" as const,
+      })),
+      // Codex C1: skipped children are not in mergedSet — surface them as
+      // `"skipped"` so the replay accounts for every epic child.
+      ...admissionSkipped.map((s) => ({
+        issue: s.issue,
+        status: "skipped" as const,
+      })),
+    ];
+    const headsMeta =
+      familyHead !== undefined
+        ? {
+            heads: {
+              actualFamilyHead: familyHead,
+              sources: {
+                actualFamilyHead: "post_merge_cleanup ledger row",
+              },
+            },
+          }
+        : {};
+    const metadata = {
+      ...headsMeta,
+      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+    };
     return {
       status: "success",
       familyBase,
@@ -1050,20 +1106,10 @@ export function planFamilyTerminalReplay(
         reason: "already_done",
         summary:
           "family durable terminal replay: post_merge_cleanup already completed",
-        ...(familyHead !== undefined
-          ? {
-              metadata: {
-                heads: {
-                  actualFamilyHead: familyHead,
-                  sources: {
-                    actualFamilyHead: "post_merge_cleanup ledger row",
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       },
       children,
+      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
     };
   }
 
