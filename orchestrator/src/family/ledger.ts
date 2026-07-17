@@ -154,7 +154,10 @@ export interface CmrPassedRecord {
   readonly sessionId?: string;
   /** #930 — T2 judge status (converged on green pass). */
   readonly judgeStatus?: "converged" | "continue" | "escalate";
-  /** #930 — disposition table (usually empty on green pass). */
+  /**
+   * #930 / #952 — disposition table (usually empty on green pass). Includes
+   * schema `action: "suppress"` when the judge parks a finding (queryable).
+   */
   readonly findingDispositions?: ReadonlyArray<
     import("../types.js").JudgeFindingDisposition
   >;
@@ -177,7 +180,11 @@ export interface CmrReviewedRecord {
   readonly sessionId?: string;
   /** #930 — T2 judge status (continue / escalate / unusable-re-furnace). */
   readonly judgeStatus?: "converged" | "continue" | "escalate";
-  /** #930 — disposition table carried for session-loss prior rows. */
+  /**
+   * #930 / #952 — disposition table for session-loss prior rows. Schema actions
+   * (`refute` / `suppress` / `live`) — suppress is queryable here as
+   * `action: "suppress"` (family does not dual-write store-status rows).
+   */
   readonly findingDispositions?: ReadonlyArray<
     import("../types.js").JudgeFindingDisposition
   >;

@@ -2618,11 +2618,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #925/#877: rebuild pending open-set / kill flips from the prior ledger
-    // (judge continue + residual historical S4/reviewer open-count). Each
-    // projection replaces the pending blocker set; prose dispositions do not
-    // reopen findings. #899: also rebuild raw reviewer artifact pointers so a
-    // crash/resume after S4 still hands the fixer host paths (materialised at
+    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
+    // prior ledger (judge continue + residual historical S4/reviewer open-count).
+    // Each projection replaces the pending blocker set; prose dispositions do
+    // not reopen findings. Terminal flips include refute→refuted and
+    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
+    // a crash/resume after S4 still hands the fixer host paths (materialised at
     // landing).
     const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
     pendingBlockingFindings = [...rebuiltBlocking.blocking];
@@ -3706,7 +3707,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (output.status === "continue") {
               const projected = projectJudgeContinueBlocking(output);
               if (projected !== undefined) {
-                // Apply kill flips first, then gate empty live set (#919 M6).
+                // Apply terminal store flips first, then gate empty live set (#919 M6).
                 if (projected.terminalDispositions.length > 0) {
                   findingDispositions = [
                     ...findingDispositions,
@@ -3814,8 +3815,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // #925 / #919 S1: verdict + kill flips land on judge seats (S4 residual).
-    // Residual S4 still accepts dispositions if a legacy path writes them.
+    // #925 / #919 / #952 S1: verdict + terminal store flips (refute/suppress)
+    // land on judge seats (S4 residual). Residual S4 still accepts dispositions
+    // if a legacy path writes them.
     const stepFindingDispositions =
       isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
 

@@ -5,14 +5,15 @@
  * Seams:
  * 1. status vocabulary single source (includes suppressed)
  * 2. write-point transition validation
- * 3. open-for-fixer predicate (only unrepaired/open)
+ * 3. fixer live-set is action:"live" only (no store-status open predicate)
  */
 
 import { describe, expect, it } from "vitest";
 
 import {
   FINDING_STORE_STATUSES,
-  isOpenForFixer,
+  isTerminalFindingStoreStatus,
+  OPEN_FINDING_STORE_STATUS,
   recordFindingStoreFlip,
   validateFindingStoreTransition,
 } from "../../src/findingsStateStore.js";
@@ -25,13 +26,14 @@ describe("#952 findings state store statuses", () => {
     expect(FINDING_STORE_STATUSES).toContain("accepted_suppressed");
   });
 
-  it("only unrepaired is open for fixer (positive + negative)", () => {
-    expect(isOpenForFixer("unrepaired")).toBe(true);
-    expect(isOpenForFixer("suppressed")).toBe(false);
-    expect(isOpenForFixer("refuted")).toBe(false);
-    expect(isOpenForFixer("accepted_suppressed")).toBe(false);
-    expect(isOpenForFixer("wont_fix")).toBe(false);
-    expect(isOpenForFixer("rejected")).toBe(false);
+  it("only unrepaired is non-terminal; all other store statuses are terminal", () => {
+    expect(OPEN_FINDING_STORE_STATUS).toBe("unrepaired");
+    expect(isTerminalFindingStoreStatus("unrepaired")).toBe(false);
+    expect(isTerminalFindingStoreStatus("suppressed")).toBe(true);
+    expect(isTerminalFindingStoreStatus("refuted")).toBe(true);
+    expect(isTerminalFindingStoreStatus("accepted_suppressed")).toBe(true);
+    expect(isTerminalFindingStoreStatus("wont_fix")).toBe(true);
+    expect(isTerminalFindingStoreStatus("rejected")).toBe(true);
   });
 });
 
@@ -85,7 +87,7 @@ describe("#952 findings state store transitions at write point", () => {
         reason: "owner deferred via ticket",
         source: "groundTicket:949",
       });
-      expect(isOpenForFixer(written.value.status)).toBe(false);
+      expect(isTerminalFindingStoreStatus(written.value.status)).toBe(true);
     }
   });
 
