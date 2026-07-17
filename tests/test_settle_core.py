@@ -233,7 +233,7 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
 
 
 def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
-    """聚合邸报改写密令后，受排除者仍不能从真实结算归档读到它。"""
+    """#883：公共产出不预读密令；夹带简报原文的聚合不得公开，纯公开改写仍可入档（F3）。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -241,21 +241,25 @@ def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
         and db.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
+    secret_body = "核验边镇欠饷密令"
     order = db.create_secret_order(
-        state, knower.name, "改写密查", "核验边镇欠饷密令", [],
+        state, knower.name, "改写密查", secret_body, [],
         excluded_names=[excluded.name],
     )
 
+    # 负向：叙事夹带密令简报原文 → 公共面不得见密令正文。
     settle_with_delta(
         state, db, {}, before_turn=state.turn, content=content,
-        narrative="邸报只说边镇近日另有一番暗中安排，未直书其名。",
+        narrative=f"邸报旁述：{secret_body}；另报山东漕运如常。",
     )
 
     excluded_text = " ".join(
         item.get("body", "")
         for item in db.get_character_knowledge(state, excluded.name)["public_events"]
     )
-    assert "暗中安排" not in excluded_text
+    assert secret_body not in excluded_text
+    # 正向：同叙事中的纯公开句在 brief 存活期仍可入档（F3，不整闸吞公开层）。
+    assert "山东漕运如常" in excluded_text
     assert order > 0
 
 
