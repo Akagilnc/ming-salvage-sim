@@ -131,6 +131,16 @@ export interface PrMergedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/**
+ * Landing docs/VERSION release completion (before merge). Durable so a crash
+ * after push does not re-dispatch the landing worker and duplicate release.
+ */
+export interface DocsReleasedRecord {
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+  readonly stopSummary?: StopSummary;
+}
+
 /** The fields for a green integrated CMR pass audit event (#419). */
 export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
@@ -1278,6 +1288,81 @@ export function familyReviewLoopConvergedForHead(
       ? { stopSummary: converged.stopSummary }
       : {}),
   };
+}
+
+/**
+ * Append the PHASE-LEVEL `docs_released` marker (landing docs before merge).
+ * Keyed by post-release family HEAD so resume skips a second VERSION/CHANGELOG.
+ */
+export async function recordDocsReleased(
+  backend: FamilyBackend,
+  record: DocsReleasedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family docs_released marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family docs_released marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "docs_released",
+      event: "docs_released",
+      phase: "final",
+      pr,
+      familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "docs_released ledger row" },
+          },
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+export function isValidDocsReleased(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly status: "docs_released";
+  readonly event: "docs_released";
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+} {
+  return (
+    entry.status === "docs_released" &&
+    entry.event === "docs_released" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+/** Docs-release completion row for THIS family HEAD (landing crash re-entry). */
+export function familyDocsReleasedForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): DocsReleasedRecord | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  for (const e of entries) {
+    if (!isValidDocsReleased(e)) continue;
+    if (e.familyHeadAfter !== familyHeadAfter) continue;
+    return {
+      pr: e.pr,
+      familyHeadAfter: e.familyHeadAfter,
+      ...(e.stopSummary !== undefined ? { stopSummary: e.stopSummary } : {}),
+    };
+  }
+  return undefined;
 }
 
 /**

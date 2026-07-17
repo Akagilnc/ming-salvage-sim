@@ -2225,7 +2225,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   it("RAW extra keys on landing remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const out = mod.parseLandingOutcome(`<landing>{"released": true, "x": 9}</landing>`);
-    expect(out.kind).toBe("landing");
+    // Pin released (CR-11); unknown extra keys are dropped, not cargo shape.
+    expect(out).toEqual({ kind: "landing", released: true });
   });
 
   // === pinning the canonical family last-complete-block semantics ===

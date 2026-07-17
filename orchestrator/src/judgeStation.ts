@@ -588,16 +588,15 @@ export function priorFamilyJudgeVerdictRowsFromLedger(
 
 /**
  * #966 — latest family-court session id from prior judge rows (ledger sole truth).
- * Scan reverse chronological; empty / missing sessionId means fresh open.
+ * Only the newest row counts: empty / missing sessionId on that row means fresh
+ * open (CR-10) — never resurrect an older conversation under a fresh-open row.
  */
 export function familyJudgeResumeSessionIdFromPriorRows(
   rows: ReadonlyArray<Pick<PriorJudgeVerdictRow, "sessionId">>,
 ): string | undefined {
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const sid = rows[i]?.sessionId;
-    if (typeof sid === "string" && sid.length > 0) return sid;
-  }
-  return undefined;
+  if (rows.length === 0) return undefined;
+  const sid = rows[rows.length - 1]?.sessionId;
+  return typeof sid === "string" && sid.length > 0 ? sid : undefined;
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -386,6 +387,51 @@ describe("#959 captureToHost atomic temp+swap", () => {
 
     // Winner is a complete single version — resumeable.
     expect(await storage.readHostSession(hostCwd, sessionId)).toBe(winnerHistory);
+  });
+
+  it("CR-9: staged symlink is rejected and leaves existing host session untouched", async () => {
+    const hostRoot = tmp("grok-959-host-");
+    const sandboxFs = tmp("grok-959-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const hostCwd = tmp("grok-959-hostcwd-");
+    const sessionId = "019f-959-symlink";
+    const oldHistory = `{"cwd":"${hostCwd}","mark":"KEEP_SYMLINK"}\n`;
+    seedHostSession(hostRoot, hostCwd, sessionId, {
+      "chat_history.jsonl": oldHistory,
+    });
+
+    // Sandbox tree with a symlink that would escape if followed on the host.
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    const outside = tmp("grok-959-outside-");
+    writeFileSync(join(outside, "secret.txt"), "secret-payload\n");
+    const dir = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "chat_history.jsonl"),
+      `{"cwd":"${sandboxCwd}","mark":"evil"}\n`,
+    );
+    symlinkSync(join(outside, "secret.txt"), join(dir, "events.jsonl"));
+
+    const storage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: sbxSessions,
+    });
+
+    await expect(
+      storage.captureToHost({
+        hostCwd,
+        sandboxCwd,
+        sessionId,
+        handle: localHandleWithStdin(sandboxFs),
+      }),
+    ).rejects.toThrow(/unsupported session entry|symlink|integrity/i);
+
+    expect(
+      readFileSync(
+        join(hostRoot, encodeURIComponent(hostCwd), sessionId, "chat_history.jsonl"),
+        "utf8",
+      ),
+    ).toBe(oldHistory);
   });
 
   it("integrity failure after unpack leaves existing host session untouched", async () => {

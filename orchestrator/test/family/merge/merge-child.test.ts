@@ -68,9 +68,9 @@ class FakeFamilyBackend implements FamilyBackend {
     throw new Error("resolveMergeConflict not used in this test");
   }
 
-  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam
-  // no-conflict test merges cleanly and never reaches it (the conflict path has
-  // its own coverage in merger-conflict.test.ts), so the fake omits it.
+  // #934 ID-010 / #938: resolveMergeConflict is a required FamilyBackend seam.
+  // Throwing stub must remain unreachable on this clean/no-conflict path
+  // (conflict path is covered in merger-conflict.test.ts).
   async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
     this.appended.push(entry);
   }

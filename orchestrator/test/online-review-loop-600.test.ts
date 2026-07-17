@@ -731,18 +731,25 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
   });
 
   it("postBotRetriggerComment posts the R2/R3 manual re-trigger body", () => {
-    const calls: string[] = [];
+    const calls: Array<{ file: string; args: string[] }> = [];
     const sh: Sh = (file, args) => {
-      calls.push(`${file} ${args.join(" ")}`);
+      calls.push({ file, args: [...args] });
       if (args.join(" ").includes("pulls/42") && !args.includes("-f")) {
         return JSON.stringify({ head: { sha: "h" }, html_url: "https://github.com/o/r/pull/42" });
       }
       return "{}";
     };
     postBotRetriggerComment(sh, "o/r", 42);
-    expect(calls.some((c) => c.includes(BOT_RETRIGGER_COMMENT.split("\n")[0]!))).toBe(
-      true,
-    );
+    // CR-18: pin full API path + complete retrigger body (not first line only).
+    expect(calls).toContainEqual({
+      file: "gh",
+      args: [
+        "api",
+        "repos/o/r/issues/42/comments",
+        "-f",
+        `body=${BOT_RETRIGGER_COMMENT}`,
+      ],
+    });
   });
 });
 

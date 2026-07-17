@@ -165,7 +165,9 @@ class DispatchCapableBackend implements FamilyBackend {
     return this.ledger;
   }
   async readFamilyHead(): Promise<string> {
-    return "head-after-cmr";
+    // Match live hook headOid ("head-941") — completion head alignment
+    // (CR-7) requires family HEAD and PR tip to agree after docs.
+    return "head-941";
   }
   async runFamilyVerify(): Promise<FamilyVerifyResult> {
     return { ok: true };
@@ -597,6 +599,11 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(landingWorkerCalls).toBe(1);
     expect(mergeExecuted).toBe(1);
 
+    // CR-6: docs release is durable before merge.
+    const docsReleased = backend.ledger.filter((e) => e.status === "docs_released");
+    expect(docsReleased).toHaveLength(1);
+    expect(docsReleased[0]?.familyHeadAfter).toBe(POST_DOC);
+
     const prMerged = backend.ledger.filter((e) => e.status === "pr_merged");
     const cleanups = backend.ledger.filter(
       (e) => e.status === "post_merge_cleanup",
@@ -881,6 +888,149 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.stopSummary?.summary).toMatch(/poll failed repeatedly/i);
     expect(pollCalls).toBe(LANDING_CI_FETCH_FAILURE_LIMIT);
+  });
+
+  it("NEGATIVE R3-G2: mid-loop poll failure fails closed (never merge on stale snapshot)", async () => {
+    let pollCalls = 0;
+    let mergeCalls = 0;
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "OPEN",
+          headOid: "head-941",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "CLEAN",
+        }),
+        executeMerge: () => {
+          mergeCalls += 1;
+        },
+        pollSnapshot: async () => {
+          pollCalls += 1;
+          // Enter CI-pending loop, then fail every subsequent poll. Fail-closed
+          // must not keep a prior snapshot and treat it as ready/merge.
+          if (pollCalls === 1) return PENDING_CI_SNAPSHOT;
+          throw new Error("transient poll blip");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(/poll failed repeatedly/i);
+    expect(mergeCalls).toBe(0);
+    expect(pollCalls).toBe(1 + LANDING_CI_FETCH_FAILURE_LIMIT);
+  });
+
+  it("NEGATIVE CR-7: MERGED with foreign head parks (no cleanup of wrong merge)", async () => {
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: {
+        fetchState: () => ({
+          prNumber: 941,
+          prUrl: STAGE_SHIP.pr!,
+          state: "MERGED",
+          headOid: "foreign-pre-docs-head",
+          headRefName: "family/epic-941",
+          mergeStateStatus: "UNKNOWN",
+        }),
+        executeMerge: () => {
+          throw new Error("must not re-merge on foreign MERGED");
+        },
+        closeIssue: () => {
+          throw new Error("must not close on foreign MERGED");
+        },
+        deleteBranch: () => {
+          throw new Error("must not delete on foreign MERGED");
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.terminalState).toBe("decision_gate");
+    expect(result.stopSummary?.summary).toMatch(
+      /does not match completion head/i,
+    );
+    expect(backend.ledger.some((e) => e.status === "pr_merged")).toBe(false);
+  });
+
+  it("POSITIVE CR-6: durable docs_released skips worker re-dispatch before merge", async () => {
+    let landingWorkerCalls = 0;
+    const mergeExecuted = { n: 0 };
+    const backend = new DispatchCapableBackend(async (spec) => {
+      if (spec.kind === "landing") {
+        landingWorkerCalls += 1;
+        return {
+          kind: "completed",
+          output: { kind: "landing", released: true },
+        };
+      }
+      throw new Error(`unexpected ${spec.kind}`);
+    });
+    backend.ledger.push(
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: STAGE_SHIP.pr!,
+        familyHeadAfter: "head-941",
+      },
+      {
+        status: "docs_released",
+        event: "docs_released",
+        phase: "final",
+        pr: STAGE_SHIP.pr!,
+        familyHeadAfter: "head-941",
+      },
+    );
+
+    const result = await runLandingAction({
+      familyBackend: backend,
+      familyBase: "family/epic-941",
+      convergedHeadOid: "head-941",
+      prUrl: STAGE_SHIP.pr!,
+      resolvedRoute: smokedRoute(),
+      live: liveOpenHooks({ mergeExecuted }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.terminalState).toBe("completed");
+    expect(landingWorkerCalls).toBe(0);
+    expect(mergeExecuted.n).toBe(1);
+    // No second docs_released row on the durable re-entry path.
+    expect(
+      backend.ledger.filter((e) => e.status === "docs_released"),
+    ).toHaveLength(1);
   });
 
 });
@@ -1283,6 +1433,8 @@ describe("#941 public driver — ID-015 cleanup already-gone", () => {
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("completed");
     const leftovers = result.leftovers ?? [];
+    // CR-17: pin exact already-gone classification (not a hollow non-fail predicate).
+    expect(leftovers).toContain("branch_already_gone");
     expect(leftovers.every((l) => !/fail/i.test(l) || /already.?gone/i.test(l))).toBe(
       true,
     );

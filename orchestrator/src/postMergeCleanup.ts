@@ -361,9 +361,10 @@ export function runPostMergeCleanup(
         branchOutcome = "deleted";
       } catch (err) {
         // Concurrent delete / already-gone race: treat missing ref as idempotent
-        // success; other delete errors remain non-terminal failure.
+        // success (terminal ok) but surface branch_already_gone leftover (ID-015).
         if (isMissingGitRefError(err)) {
           branchOutcome = "already_gone";
+          skippedReasons.push("branch_already_gone");
           break;
         }
         const detail = err instanceof Error ? err.message : String(err);
