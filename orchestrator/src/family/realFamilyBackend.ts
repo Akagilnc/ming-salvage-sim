@@ -170,6 +170,10 @@ import {
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
+  formatSandcastleAgentError,
+  isSandcastleAgentError,
+} from "../sandcastleAgentError.js";
+import {
   LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
@@ -751,16 +755,35 @@ export class RealFamilyBackend implements FamilyBackend {
     // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
-    // crash re-throws.
-    const outcome = await retryProcessCrash(async () => {
-      // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
-      // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
-      // landed merge instead (the post-state check below then returns it clean).
-      if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
-        return { resolved: true };
+    // plain crash re-throws. #964: Sandcastle AgentError (incl. native grok
+    // non-interactive auth death) is Action-typed failure — never uncaught
+    // FiberFailure/AgentError at the launcher.
+    let outcome: {
+      resolved: boolean;
+      reason?: string;
+      escalation?: FamilyEscalation;
+    };
+    try {
+      outcome = await retryProcessCrash(async () => {
+        // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
+        // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
+        // landed merge instead (the post-state check below then returns it clean).
+        if (this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo)) {
+          return { resolved: true };
+        }
+        return await this.runMergerAgent(req);
+      });
+    } catch (err) {
+      if (isSandcastleAgentError(err)) {
+        return {
+          familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
+          familyHeadBefore,
+          childHead,
+          conflicted: true,
+        };
       }
-      return await this.runMergerAgent(req);
-    });
+      throw err;
+    }
     if (outcome.escalation !== undefined) {
       return {
         familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
@@ -1005,6 +1028,17 @@ export class RealFamilyBackend implements FamilyBackend {
         } catch (error) {
           telemetry.stampCollect({ kind: "thrown", error });
           await telemetryEnvironmentStamp;
+          // #964: AgentError (native headless auth death / non-zero grok exit) →
+          // structured non-resolve for the owning Merge Action. Do not rethrow
+          // FiberFailure/AgentError (launcher terminal lost on flight3).
+          // Plain infrastructure crashes still throw for #598 retryProcessCrash.
+          if (isSandcastleAgentError(error)) {
+            return {
+              resolved: false,
+              reason:
+                `merger agent invocation failed: ${formatSandcastleAgentError(error)}`,
+            };
+          }
           throw error;
         }
       } finally {

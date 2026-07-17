@@ -173,7 +173,8 @@ describe("#807 grok bare-ping smoke wiring", () => {
       join(dirname(fileURLToPath(import.meta.url)), "..", "..", "image", "Containerfile"),
       "utf8",
     );
-    expect(containerfile).toMatch(/npm install -g @xai-official\/grok@0\.2\.93/);
-    expect(containerfile).toMatch(/grok --version \| grep -F "0\.2\.93"/);
+    // #964: pin fail-fast non-interactive auth CLI (0.2.102+; not 0.2.93 device-wait).
+    expect(containerfile).toMatch(/npm install -g @xai-official\/grok@0\.2\.102/);
+    expect(containerfile).toMatch(/grok --version \| grep -F "0\.2\.102"/);
   });
 });
