@@ -309,3 +309,31 @@ def test_mindreading_reply_text_rejects_residual_approx_raw_score_prose(game):
         assert leak not in payload["reply_text"], (leak, payload["reply_text"])
     assert "已略去" in payload["reply_text"]
     assert not any(ch.isdigit() for ch in payload["reply_text"])
+
+
+def test_mindreading_reply_text_rejects_chinese_numeral_and_bare_dao_scores(game):
+    """Chinese numerals and bare-到 peer of 至 must redline on mindreading reply_text."""
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = (
+        "此人能力约七十，忠诚只有三十，能力增加到50，"
+        "能力涨到80，忠诚恢复到50，能力减少到20。"
+    )
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    for leak in (
+        "约七十",
+        "只有三十",
+        "增加到50",
+        "涨到80",
+        "恢复到50",
+        "减少到20",
+        "七十",
+        "三十",
+    ):
+        assert leak not in payload["reply_text"], (leak, payload["reply_text"])
+    assert "已略去" in payload["reply_text"]
+    assert not any(ch.isdigit() for ch in payload["reply_text"])

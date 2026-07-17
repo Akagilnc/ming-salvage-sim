@@ -115,10 +115,25 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
         "忠诚约略是70",
         "能力约略在70左右",
         "能力约计70",
+        # Chinese-numeral exact scores (same abstract-token class as Arabic).
+        "能力约七十",
+        "忠诚只有三十",
+        "军心降低到三十",
+        "能力约略七十",
+        # Bare 到 free peer of bare 至 (unlisted stems must not leak).
+        "能力增加到50",
+        "能力涨到80",
+        "忠诚恢复到50",
+        "能力减少到20",
+        "能力增至50",
+        "能力涨至80",
+        "忠诚恢复至50",
     ):
         rendered = safe_historical_text(injected)
         assert "已略去" in rendered, injected
         assert not any(ch.isdigit() for ch in rendered), (injected, rendered)
+        for cn in ("七十", "三十", "五十", "八十", "二十"):
+            assert cn not in rendered, (injected, rendered)
 
     # Lawful countable facts beside an approximate leak must survive.
     mixed = safe_historical_text("忠诚大概40，拨银三万两，已过六个月")
@@ -126,6 +141,38 @@ def test_p4_guard_rejects_approximate_and_comparator_raw_scores():
     assert "拨银三万两" in mixed
     assert "已过六个月" in mixed
     assert "大概40" not in mixed
+
+    # Chinese-numeral scores must not erase lawful countable fragments.
+    mixed_cn = safe_historical_text("忠诚只有三十，拨银三万两，已过六个月")
+    assert "已略去" in mixed_cn
+    assert "拨银三万两" in mixed_cn
+    assert "已过六个月" in mixed_cn
+    assert "三十" not in mixed_cn
+
+
+def test_qualitative_audience_text_rejects_multi_number_stem_compounds():
+    """Audience path must not partially rewrite multi-number compounds.
+
+    Unlisted stem+到 after a first-number band sub leaves residual raw digits
+    on intelligence/knowledge seams; early-reject or residual rejector must
+    close the whole fragment.
+    """
+    from ming_sim.qualitative import qualitative_audience_text
+
+    for injected in (
+        "势力从30增加到70",
+        "能力由50增加到80",
+        "势力从30涨到70",
+        "忠诚从20恢复到50",
+        "势力从30减少到10",
+    ):
+        rendered = qualitative_audience_text(injected)
+        assert "已略去" in rendered, (injected, rendered)
+        assert not any(ch.isdigit() for ch in rendered), (injected, rendered)
+        assert "增加到" not in rendered
+        assert "涨到" not in rendered
+        assert "恢复到" not in rendered
+        assert "减少到" not in rendered
 
 
 def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
