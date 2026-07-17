@@ -2,11 +2,16 @@
  * #981 — grok-cap must ignore macOS AppleDouble `._*` and `.DS_Store`.
  * Sidecars break integrity when `._chat_history.jsonl` is parsed as JSONL.
  *
- * Sidecars are planted into the staging tree immediately after a successful
- * host tar-extract (same chokepoint mock as #959). macOS bsdtar cannot be
- * relied on to round-trip `._*` as ordinary members (it treats them as
- * AppleDouble metadata and may exit non-zero), so the fixture injects them
+ * captureToHost: sidecars are planted into the staging tree immediately after
+ * a successful host tar-extract (same chokepoint mock as #959). macOS bsdtar
+ * cannot be relied on to round-trip `._*` as ordinary members (it treats them
+ * as AppleDouble metadata and may exit non-zero), so the fixture injects them
  * where integrity actually walks: the staged session dir.
+ *
+ * resumeIntoSandbox: host session tree is seeded with real cargo plus `._*` /
+ * `.DS_Store` already on disk (accumulated Finder/AFP garbage after capture).
+ * Asserts push succeeds, sandbox tree has no OS metadata, cargo rewrites, and
+ * the live host store is left untouched.
  */
 import { execFile } from "node:child_process";
 import {
@@ -206,5 +211,74 @@ describe("#981 grok-cap ignores AppleDouble / .DS_Store", () => {
     expect(
       existsSync(join(hostRoot, encodeURIComponent(hostCwd), sessionId)),
     ).toBe(false);
+  });
+
+  it("resumeIntoSandbox succeeds when host session has ._* and .DS_Store; sandbox tree excludes them", async () => {
+    // Host sessions can accumulate Finder/AFP sidecars after capture lands.
+    // resumeIntoSandbox must strip them from the scratch copy before push so
+    // sandbox never receives AppleDouble / .DS_Store (real cargo still rewrites).
+    const hostRoot = tmp("grok-981-res-host-");
+    const sandboxFs = tmp("grok-981-res-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const hostCwd = tmp("grok-981-res-hostcwd-");
+    const sessionId = "019f-981-resume-sidecar";
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+
+    const hostDir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(
+      join(hostDir, "chat_history.jsonl"),
+      `{"cwd":"${hostCwd}","mark":"resume-cargo"}\n`,
+    );
+    writeFileSync(
+      join(hostDir, "events.jsonl"),
+      `{"type":"end","mark":"resume-cargo"}\n`,
+    );
+    writeFileSync(join(hostDir, "plan.json"), JSON.stringify({ step: 2 }));
+    // Binary AppleDouble / Finder metadata already on host store.
+    writeFileSync(
+      join(hostDir, "._chat_history.jsonl"),
+      Buffer.from([0x00, 0x05, 0x16, 0x07, 0xff, 0xfe]),
+    );
+    writeFileSync(
+      join(hostDir, "._plan.json"),
+      Buffer.from([0x00, 0x05, 0x16, 0x07, 0xaa, 0xbb]),
+    );
+    writeFileSync(
+      join(hostDir, ".DS_Store"),
+      Buffer.from("Bud1\0\0\0\0fake-ds-store"),
+    );
+
+    const storage = makeGrokSessionStorage({
+      hostSessionsDir: hostRoot,
+      sandboxSessionsDir: sbxSessions,
+    });
+    await storage.resumeIntoSandbox({
+      hostCwd,
+      sandboxCwd,
+      sessionId,
+      handle: localHandleWithStdin(sandboxFs),
+    });
+
+    const pushed = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
+    expect(existsSync(join(pushed, "chat_history.jsonl"))).toBe(true);
+    expect(existsSync(join(pushed, "events.jsonl"))).toBe(true);
+    expect(existsSync(join(pushed, "plan.json"))).toBe(true);
+
+    const sandboxNames = readdirSync(pushed);
+    expect(sandboxNames).not.toContain("._chat_history.jsonl");
+    expect(sandboxNames).not.toContain("._plan.json");
+    expect(sandboxNames).not.toContain(".DS_Store");
+    expect(sandboxNames.every((n) => !n.startsWith("._"))).toBe(true);
+
+    const history = readFileSync(join(pushed, "chat_history.jsonl"), "utf8");
+    expect(history).toContain(sandboxCwd);
+    expect(history).toContain('"mark":"resume-cargo"');
+    expect(history).not.toContain(hostCwd);
+
+    // Host store remains untouched (scratch copy was stripped, not the live dir).
+    const hostNames = readdirSync(hostDir);
+    expect(hostNames).toContain("._chat_history.jsonl");
+    expect(hostNames).toContain(".DS_Store");
   });
 });
