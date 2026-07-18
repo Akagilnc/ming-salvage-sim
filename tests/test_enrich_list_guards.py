@@ -26,9 +26,9 @@ def test_enrich_buildings_non_list_no_crash(monkeypatch):
         assert out["effect_on_resolve"].get("buildings") == []  # 脏非 list 值被源头清成 []（gemini PR#127）
 
 
-def test_apply_economy_list_non_list_no_crash(game):
+def test_apply_economy_list_non_list_no_crash(read_game):
     """_apply_economy_list 的 economy 被给成真值非 list（含 dict）时不抛，返回空 applied（#117）。"""
-    db, state, _content = game
+    db, state, _content = read_game
     for bad in (True, 5, "oops", {"account": "国库", "delta": -10}):
         assert _apply_economy_list(db, state, bad) == []
 
@@ -71,13 +71,13 @@ def test_apply_economy_list_skips_non_dict_items(game):
     assert out[0].get("account") == "国库"  # 只落合法那一项
 
 
-def test_apply_metric_faction_class_dict_non_dict_no_crash(game):
+def test_apply_metric_faction_class_dict_non_dict_no_crash(read_game):
     """metrics/factions/class 被给成真值非 dict（issue-effect 未验证路径）时不抛、返回空（#117 同类）。
 
     faction/class 自迁逐项拒收契约后返回 (已落 delta dict, 拒收项列表)（ADR 0008 决定 1，
     #14/#63），非 dict 入参 → 空 dict + 空拒收列表 `({}, [])`；metric 仍返 dict。
     """
-    db, state, _content = game
+    db, state, _content = read_game
     for bad in (True, 5, "oops", [1, 2]):
         assert _apply_metric_dict(state, bad, db=db) == {}
         assert _apply_faction_dict(db, bad) == ({}, [])

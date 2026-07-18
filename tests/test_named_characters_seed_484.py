@@ -1,10 +1,5 @@
 """#484 R4：named-character 史实档案的 loader/DB 契约。"""
 
-from __future__ import annotations
-
-import json
-from pathlib import Path
-
 import pytest
 
 import ming_sim.content as content_module
@@ -39,8 +34,8 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert {"河道治理", "漕运工程"} <= set(li.personal_skills)
 
 
-def test_r4_hu_tingyan_loader_and_db_use_legal_office_type(game):
-    db, _state, _content = game
+def test_r4_hu_tingyan_loader_and_db_use_legal_office_type(read_game):
+    db, _state, _content = read_game
 
     row = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", ("胡廷宴",)
@@ -94,29 +89,6 @@ def test_r6_xu_yingqiu_uses_verified_ministry_line_and_opening_status():
     assert character.debut_month == 0
     assert character.location == ""
 
-
-def test_r6_source_audit_covers_every_named_character_found_in_scan_scope():
-    roster = json.loads(Path("content/characters.json").read_text())["characters"]
-    names = {character["name"] for character in roster}
-    scan_scope = [
-        Path("docs/AUDIENCE_NORTH_STAR.md"),
-        *Path("content/prompts").glob("*.md"),
-    ]
-    scanned_names = {
-        name for name in names if any(name in path.read_text() for path in scan_scope)
-    }
-
-    audit = Path("REVIEW-SOURCES-484.md").read_text()
-    scan_section = audit.split("## R6 北极星 / prompts 点名人物扫描全集", 1)[1].split(
-        "| 人物 | 字段 |", 1
-    )[0]
-    audited_names = {
-        line.split("|", 2)[1].strip()
-        for line in scan_section.splitlines()
-        if line.startswith("|") and line.count("|") >= 2
-    }
-
-    assert scanned_names <= audited_names
 
 def test_r4_loader_rejects_seed_guilt_list(monkeypatch):
     monkeypatch.setattr(

@@ -34,9 +34,9 @@ def _dummy_agents():
     return {m: object() for m in EXTRACTION_MODULES}
 
 
-def test_parallel_extract_matches_serial(game, monkeypatch):
+def test_parallel_extract_matches_serial(read_game, monkeypatch):
     """并行与串行产出的 merged delta 字节级一致——并行只改取数时机，不改解析/合并。"""
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(simulation, "run_agent_text", _fake_run)
     serial = extract_scores_by_modules_with_agno(
         _dummy_agents(), db, state, "邸报", parallel=False)
@@ -46,8 +46,8 @@ def test_parallel_extract_matches_serial(game, monkeypatch):
     assert serial[1] == parallel[1]      # 本地化 JSON 一致
 
 
-def test_shared_new_issues_from_issues_and_personnel_secret_are_merged(game, monkeypatch):
-    db, state, content = game
+def test_shared_new_issues_from_issues_and_personnel_secret_are_merged(read_game, monkeypatch):
+    db, state, content = read_game
     canned = {
         **_CANNED,
         "issues": '{"new_issues": [{"origin_kind": "decree", "title": "公开月拨", "kind": "initiative", "ongoing_effects": {"economy": [{"account": "国库", "delta": -10, "reason": "公开每月拨款"}]}, "commitment_kind": "until_stop"}]}',
@@ -147,9 +147,9 @@ def test_merge_keeps_distinct_non_recurring_commitments_under_same_origin_ref():
     assert not (merged.get("_module_rejections") or [])
 
 
-def test_parallel_extract_runs_concurrently(game, monkeypatch):
+def test_parallel_extract_runs_concurrently(read_game, monkeypatch):
     """parallel=True 时 4 个 LLM 调用真并发：峰值并发 ≥2，wall-clock 明显短于串行总和。"""
-    db, state, content = game
+    db, state, content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
@@ -174,9 +174,9 @@ def test_parallel_extract_runs_concurrently(game, monkeypatch):
         f"wall-clock {elapsed:.2f}s 未短于串行总和 {delay*len(EXTRACTION_MODULES):.2f}s")
 
 
-def test_serial_extract_stays_serial(game, monkeypatch):
+def test_serial_extract_stays_serial(read_game, monkeypatch):
     """parallel=False（形态1/api 默认）峰值并发==1，串行不受影响。"""
-    db, state, content = game
+    db, state, content = read_game
     active = 0
     max_active = 0
     lock = threading.Lock()
@@ -302,7 +302,7 @@ def test_cli_trace_concurrent_writes_not_corrupted(tmp_path, monkeypatch):
         _json.loads(ln)  # 每行合法 JSON = 无交错损坏
 
 
-def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
+def test_parallel_extract_propagates_extractor_error(read_game, monkeypatch):
     """任一 extractor 抛错经并行路径原样上抛（→ 上层 SettlementAbort），不被并发吞掉。"""
     import pytest
 
@@ -311,7 +311,7 @@ def test_parallel_extract_propagates_extractor_error(game, monkeypatch):
             raise RuntimeError("extractor issues 模拟失败")
         return _fake_run(agent, prompt, tag)
 
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(simulation, "run_agent_text", _one_fails)
     with pytest.raises(RuntimeError, match="extractor issues 模拟失败"):
         extract_scores_by_modules_with_agno(_dummy_agents(), db, state, "邸报", parallel=True)

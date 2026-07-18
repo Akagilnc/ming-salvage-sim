@@ -181,11 +181,11 @@ def test_simulator_payload_secret_orders_has_no_english_enum(game):
     assert "status" not in payload["data_note"]
 
 
-def test_build_simulator_payload_defaults_secret_orders_to_empty_dict(game):
+def test_build_simulator_payload_defaults_secret_orders_to_empty_dict(read_game):
     """不传密令时 secret_orders 默认空 dict（不是空 list）——`secret_orders or {}` 的默认形状。"""
     from ming_sim.simulation import build_simulator_payload
 
-    db, state, _ = game
+    db, state, _ = read_game
     payload = build_simulator_payload(state, db, "", "")
     assert payload["secret_orders"] == {}
 
