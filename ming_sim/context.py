@@ -16,7 +16,7 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import Army, Character, Event, GameState, Region
-from ming_sim.qualitative import qualitative_band, qualitative_bucket
+from ming_sim.qualitative import identity_band, qualitative_band, qualitative_bucket
 
 IDENTITY_BUCKET_CUTOFFS = (40, 80)
 from ming_sim.skills import available_skill_names
@@ -202,10 +202,6 @@ def _character_band(field: str, value: object) -> str:
     return qualitative_band(value, _CHARACTER_BANDS[field])
 
 
-def _identity_band(value: object) -> str:
-    return qualitative_band(value, ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深"), default=50)
-
-
 def _identity_bucket(value: object) -> str:
     return ("low", "middle", "high")[qualitative_bucket(value, IDENTITY_BUCKET_CUTOFFS, default=50)]
 
@@ -251,7 +247,7 @@ def character_context(character: Character) -> str:
         f"能力{_character_band('ability', character.ability)}、"
         f"清廉{_character_band('integrity', character.integrity)}、"
         f"胆略{_character_band('courage', character.courage)}、"
-        f"党派认同{_identity_band(character.identity)}、"
+        f"党派认同{identity_band(character.identity)}、"
         f"阴谋{_INTRIGUE_PLACEHOLDER}。"
     )
 
@@ -293,7 +289,7 @@ def faction_context_with_db(character: Character, db: GameDB) -> str:
         )
     return (
         f"【派系档料】{character.faction}：{faction_text}"
-        f"【党派认同】此人对本派的认同为{_identity_band(character.identity)}。"
+        f"【党派认同】此人对本派的认同为{identity_band(character.identity)}。"
     )
 
 

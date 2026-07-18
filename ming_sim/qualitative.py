@@ -292,6 +292,16 @@ def qualitative_band(value: object, words: tuple[str, ...], default: int = 0) ->
     return words[index]
 
 
+_IDENTITY_BANDS = (
+    "几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深",
+)
+
+
+def identity_band(value: object) -> str:
+    """Render party identity through the one shared qualitative vocabulary."""
+    return qualitative_band(value, _IDENTITY_BANDS, default=50)
+
+
 def building_level_description(value: object) -> str:
     level = qualitative_bucket(value, (2, 3, 4, 5), default=0)
     return ("初设", "成形", "完备", "宏整", "巨构")[level]

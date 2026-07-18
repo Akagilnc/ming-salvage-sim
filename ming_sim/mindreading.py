@@ -12,20 +12,11 @@ import json
 from typing import Any, Dict, Mapping
 
 from ming_sim.models import Character
-from ming_sim.qualitative import safe_historical_text
+from ming_sim.qualitative import identity_band, qualitative_band, safe_historical_text
 
 
 _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
-_IDENTITY_BANDS = ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深")
 _LOYALTY_BANDS = ("未见深交", "略有隔膜", "尚可托付", "颇得倚重", "深受信任")
-
-
-def _band(value: object, words: tuple[str, ...]) -> str:
-    try:
-        score = max(0, min(100, int(value)))
-    except (TypeError, ValueError):
-        score = 50
-    return words[min(score // 20, len(words) - 1)]
 
 
 def _character_field(character: object, field: str) -> object:
@@ -211,8 +202,16 @@ def build_mindreading_payload(
         if row is not None:
             current_target = row
 
-    identity = int(_character_field(current_target, "identity") or 0)
-    loyalty = int(_character_field(current_target, "loyalty") or 0)
+    raw_identity = _character_field(current_target, "identity")
+    try:
+        identity = int(raw_identity)
+    except (TypeError, ValueError):
+        identity = 50
+    raw_loyalty = _character_field(current_target, "loyalty")
+    try:
+        loyalty = int(raw_loyalty)
+    except (TypeError, ValueError):
+        loyalty = 50
     faction = str(_character_field(current_target, "faction") or "未明党籍")
     if identity < 40 and loyalty >= 60:
         relation = "忠而不党"
@@ -231,10 +230,10 @@ def build_mindreading_payload(
         "truths": {
             "党账": (
                 f"名义党派：{faction}；"
-                f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；"
+                f"对本党的认同：{identity_band(raw_identity)}；"
                 f"{_seed_guilt_text(current_target)}"
             ),
-            "君臣账": f"对君的真心：{_band(loyalty, _LOYALTY_BANDS)}。",
+            "君臣账": f"对君的真心：{qualitative_band(raw_loyalty, _LOYALTY_BANDS, default=60)}。",
             "关系判断": relation,
             "潜台词": _infer_subtext(
                 safe_reply,
