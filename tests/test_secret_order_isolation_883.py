@@ -649,30 +649,37 @@ def test_976_withhold_does_not_yank_old_released_public_user(game):
     assert any(old_public in body for body in _shared_bodies(db))
 
 
-def test_976_release_stamps_original_message_turn(game):
-    """N1：投轨盖章用发话 turn，不是 release 时的 state.turn。"""
+def test_976_release_stamps_original_message_date(game):
+    """N1：跨年投轨的 turn/year/period 均用原发话时间。"""
     db, state, content = game
     minister = _active_ministers(db, content)[0]
     reply = "臣报：本月辽饷解送如常。"
     origin_turn = int(state.turn)
+    origin_year = int(state.year)
+    origin_period = int(state.period)
     mid = db.append_chat_message(minister.name, origin_turn, "minister", reply)
 
-    state.turn = origin_turn + 3
+    for _ in range(13):
+        state.next_period()
     db.save_state(state)
     db.release_held_audience_knowledge()
 
     row = db.conn.execute(
-        "SELECT turn FROM character_knowledge_sources WHERE source_id=?",
+        "SELECT turn, year, period FROM character_knowledge_sources WHERE source_id=?",
         (f"chat_message:{mid}",),
     ).fetchone()
     assert row is not None
-    assert int(row["turn"]) == origin_turn
+    assert (int(row["turn"]), int(row["year"]), int(row["period"])) == (
+        origin_turn, origin_year, origin_period,
+    )
     event = db.conn.execute(
-        "SELECT turn FROM character_knowledge_events WHERE source_id=?",
+        "SELECT turn, year, period FROM character_knowledge_events WHERE source_id=?",
         (f"chat_message:{mid}",),
     ).fetchone()
     assert event is not None
-    assert int(event["turn"]) == origin_turn
+    assert (int(event["turn"]), int(event["year"]), int(event["period"])) == (
+        origin_turn, origin_year, origin_period,
+    )
 
 
 def test_883_shared_archive_bypass_positive_and_negative(game):
