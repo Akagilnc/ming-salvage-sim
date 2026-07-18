@@ -19,8 +19,6 @@ import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 import { DEFAULT_PARK_THRESHOLD_MS } from "../../../src/quotaPoolTable.js";
 
-const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-
 import { CoderRecError } from "../../../src/coderRoster.js";
 
 import {
@@ -310,7 +308,6 @@ export {
   familyShipWorkerSpec,
   QuotaWaitForResetError,
   DEFAULT_PARK_THRESHOLD_MS,
-  RELAY_FOCUS_FILENAME,
   CoderRecError,
   applyRelayBatonToRoute,
   familyRelaySlotsForWall,

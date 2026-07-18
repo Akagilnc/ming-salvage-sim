@@ -24,7 +24,6 @@ import {
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
-  RELAY_FOCUS_FILENAME,
   terminateSpawnedChild,
   Backend,
   CliMonitorSpawnSpec,

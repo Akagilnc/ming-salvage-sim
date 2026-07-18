@@ -15,7 +15,6 @@ import {
   familyShipWorkerSpec,
   QuotaWaitForResetError,
   DEFAULT_PARK_THRESHOLD_MS,
-  RELAY_FOCUS_FILENAME,
   CoderRecError,
   applyRelayBatonToRoute,
   familyRelaySlotsForWall,
@@ -43,6 +42,7 @@ import {
   allDeadRelayPools,
   stubGrokCmrPreset,
 } from "./quota-park.shared.js";
+import { expectNoRelayFocusFile } from "../../helpers/relayFocus.js";
 
 describe("#909 family runner consumes QuotaWait park/relay at verify boundary", () => {
   it("wave verify 429 within T → park (escalated + provider_degraded), not uncaught crash", async () => {
@@ -186,7 +186,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalBillingPools[1]).toBe("codex-5h");
 
     // #937: no worktree focus file; baton continuity is ledger + route rewrite.
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
 
     const relayAudit = familyBackend.ledger.filter(
       (e) =>
@@ -289,7 +289,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalRoutes[0]?.slots.cmrCompleteness).not.toBe(
       finalRoutes[1]?.slots.cmrCompleteness,
     );
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
   });
 
   it("LOAD-BEARING: identity applyRelayBaton → positive consumed-slot nail fails", async () => {
@@ -603,7 +603,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     // Soft "relay staged" escalate must NOT pass as park_fallback green.
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
     const parkAudit = familyBackend.ledger.filter(
       (e) =>
         e.status === "worker_dispatched" &&
@@ -645,7 +645,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.status).toBe("parked");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
   });
 
   it("public family: tight-violating relay baton escalates with zero further productive dispatch (ID-002 / R7 F4)", async () => {
@@ -736,7 +736,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     // #942: stopSummary.reason is diagnostic-only (not public ABI); public status
     // above is already parked. infra_failure here is the internal stop token.
     expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
   });
 
   it("NEGATIVE #906: broken Coder-Rec on family path must not silent-default", async () => {
@@ -777,7 +777,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toMatch(/Coder-Rec|CoderRec|unknown model|broken/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
     // Must not have applied a default-order baton as if Coder-Rec was fine.
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
     expect(childBackend.metaFetches).toContain(909);
     // Type-level: CoderRecError remains the fail-closed signal class.
     expect(CoderRecError).toBeDefined();
@@ -820,6 +820,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(
       `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
     ).toMatch(/Coder-Rec|unreadable|meta|snapshot/i);
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(worktree);
   });
 });
