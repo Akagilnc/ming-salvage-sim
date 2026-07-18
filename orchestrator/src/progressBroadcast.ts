@@ -895,7 +895,10 @@ export function renderFamilyStatus(input: {
         break;
       }
       case "merge": {
-        ensure(event.issue);
+        // Disk JSON is only loosely validated (v + kind); require a real issue id.
+        if (typeof event.issue === "number") {
+          ensure(event.issue);
+        }
         break;
       }
       case "wave_close":
@@ -934,9 +937,11 @@ export function renderFamilyStatus(input: {
   const mergedFromLedger = readMergedIssuesFromFamilyLedger(
     input.familyLedgerPath,
   );
-  // progress merge events also mark merged
+  // progress merge events also mark merged (issue must be a number — disk feed)
   for (const event of input.events) {
-    if (event.kind === "merge") mergedFromLedger.add(event.issue);
+    if (event.kind === "merge" && typeof event.issue === "number") {
+      mergedFromLedger.add(event.issue);
+    }
   }
 
   const issues: IssueProgressSnapshot[] = [...byIssue.entries()]

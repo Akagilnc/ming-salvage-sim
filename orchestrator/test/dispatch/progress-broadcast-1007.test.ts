@@ -402,6 +402,39 @@ describe("#1007 status renderer from progress feed + ledger", () => {
     expect(structured.issues).toEqual([]);
     expect(renderFamilyStatusFromDir(ledgerDir)).toMatch(/no progress/i);
   });
+
+  it("#1017 R4: merge events without numeric issue do not poison snapshot", () => {
+    // readProgressEvents only checks v+kind; malformed merge.issue must not
+    // create Map keys / merged flags via ensure / Set.add.
+    const structured = renderFamilyStatus({
+      events: [
+        {
+          v: PROGRESS_SCHEMA_VERSION,
+          ts: "2026-01-01T00:00:00.000Z",
+          kind: "merge",
+          // cast: disk feed can carry non-number after loose parse
+          issue: "not-a-number" as unknown as number,
+        },
+        {
+          v: PROGRESS_SCHEMA_VERSION,
+          ts: "2026-01-01T00:00:01.000Z",
+          kind: "merge",
+          // missing issue entirely
+        } as ProgressEvent,
+        {
+          v: PROGRESS_SCHEMA_VERSION,
+          ts: "2026-01-01T00:00:02.000Z",
+          kind: "merge",
+          issue: 10071,
+        },
+      ],
+    });
+    expect(structured.issues.map((i) => i.issue)).toEqual([10071]);
+    expect(structured.issues[0]).toMatchObject({
+      issue: 10071,
+      merged: true,
+    });
+  });
 });
 
 describe("#1007 optional notify hook (default off, fail-open)", () => {
