@@ -21,6 +21,7 @@ import {
   configureProgressBroadcast,
   countJudgeDispositions,
   countSeverityFromFindings,
+  emitExitProgress,
   emitJudgeProgress,
   emitParkProgress,
   emitProgressEvent,
@@ -36,6 +37,8 @@ import {
 } from "../../src/progressBroadcast.js";
 import { logDriverStage } from "../../src/stageLog.js";
 import type { Finding, JudgeFindingDisposition } from "../../src/types.js";
+import { judgeEscalate } from "../helpers/judge-fixtures.js";
+import { s8 } from "../helpers/resume-fixtures.js";
 
 const tempDirs: string[] = [];
 
@@ -472,6 +475,24 @@ describe("#1007 optional notify hook (default off, fail-open)", () => {
       }),
     ).not.toThrow();
   });
+
+  it("emitExitProgress parked notifies once (park carries notify; terminal silent)", () => {
+    process.env.ORCHESTRATOR_NOTIFY_CMD = "true";
+    const spawn = vi.fn(() => ({ unref() {} }));
+    const ledgerDir = tempLedger();
+    emitExitProgress({
+      ledgerDir,
+      epic: 1007,
+      issue: 1007,
+      status: "parked",
+      stopReason: "decision_gate_park",
+      gateSummary: "needs owner ruling",
+      notifySpawn: spawn,
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const events = readProgressEvents(ledgerDir);
+    expect(events.map((e) => e.kind)).toEqual(["park", "terminal"]);
+  });
 });
 
 describe("#1007 PROGRESS_FILENAME constant", () => {
@@ -650,6 +671,146 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
           (e.status === "completed" ||
             e.status === "parked" ||
             e.status === "failed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("judge escalate emits kind:judge verdict=escalate + park/terminal (AC1)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const ledgerDir = tempLedger("progress-1007-judge-esc-");
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+
+    type Backend = import("../../src/types.js").Backend;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type ResumeState = import("../../src/types.js").ResumeState;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class EscalateJudgeBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState(): Promise<ResumeState | undefined> {
+        return undefined;
+      }
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
+        return {
+          path: join(ledgerDir, `wt-${issueNumber}`),
+          branch: `feat/${issueNumber}`,
+          base: "main",
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return judgeEscalate("needs owner ruling", "scope boundary unclear");
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new EscalateJudgeBackend(),
+    });
+    expect(result.status).toBe("parked");
+    void log;
+
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "judge" &&
+          e.issue === 1007 &&
+          e.verdict === "escalate",
+      ),
+    ).toBe(true);
+    expectParkAndTerminal(ledgerDir, { epic: 1000, issue: 1007 });
+  });
+
+  it("resident durable completed replay emits terminal progress", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const ledgerDir = tempLedger("progress-1007-replay-");
+
+    type Backend = import("../../src/types.js").Backend;
+    type ResumeState = import("../../src/types.js").ResumeState;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+
+    class TerminalResidentBackend implements Backend {
+      async smokeModelRoute(): Promise<never> {
+        throw new Error("durable completed replay must not smoke");
+      }
+      async findResumeState(): Promise<ResumeState> {
+        return {
+          worktree: {
+            branch: "feat/1007",
+            base: "main",
+            path: join(ledgerDir, "wt-1007"),
+          },
+          stateDir: ledgerDir,
+          ledger: [s8("completed")],
+        };
+      }
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        throw new Error("durable completed replay must not resume session");
+      }
+      async fetchIssueMeta(): Promise<never> {
+        throw new Error("durable completed replay must not fetch meta");
+      }
+      async prepareWorktree(): Promise<never> {
+        throw new Error("durable completed replay must not re-cut");
+      }
+      async runStep(): Promise<never> {
+        throw new Error("durable completed replay must not dispatch");
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new TerminalResidentBackend(),
+    });
+    expect(result.status).toBe("completed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "completed" &&
+          e.issue === 1007 &&
+          e.stopReason === "already_done",
       ),
     ).toBe(true);
   });
@@ -1466,6 +1627,222 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
           e.kind === "terminal" &&
           e.status === "failed" &&
           e.epic === 291,
+      ),
+    ).toBe(true);
+  });
+
+  it("family already-converged completed early return emits terminal progress", async () => {
+    const { runFamily } = await import("../../src/family/runner.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-converged-");
+    configureProgressBroadcast({ ledgerDir, epic: 291 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        childIssue: 10,
+        status: "merged",
+        familyHeadAfter: "family-base-0",
+      },
+      {
+        status: "review_loop_converged",
+        event: "review_loop_converged",
+        phase: "final",
+        pr: "pr://family/291-base",
+        familyHeadAfter: "family-base-0",
+      },
+    ];
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "should-not-merge" };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      async readFamilyHead() {
+        return "family-base-0";
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+      async dispatchWorker(spec: { kind: string }) {
+        if (spec.kind === "landing") {
+          return {
+            kind: "completed" as const,
+            output: { kind: "landing" as const, released: true },
+          };
+        }
+        throw new Error(`unexpected ${spec.kind} on already-converged resume`);
+      },
+    } as unknown as FamilyBackend;
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: await makeConvergingChildBackend(),
+      familyBase: "family/291-base",
+    });
+    expect(result.status).toBe("completed");
+    expect(result.stopSummary?.reason).toBe("already_done");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "completed" &&
+          e.epic === 291 &&
+          e.stopReason === "already_done",
+      ),
+    ).toBe(true);
+  });
+
+  it("familyDriver durable terminal replay emits terminal progress", async () => {
+    const { runFamilyDriver } = await import("../../src/familyDriver.js");
+    const { FAMILY_LEDGER_FILENAME } = await import(
+      "../../src/family/realFamilyBackend.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-fd-replay-");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    writeFileSync(
+      join(ledgerDir, FAMILY_LEDGER_FILENAME),
+      `${JSON.stringify({
+        status: "post_merge_cleanup",
+        event: "post_merge_cleanup",
+        phase: "final",
+        familyHeadAfter: "abc123",
+        cleanupOutput: {
+          kind: "cleanup",
+          terminal: true,
+          ok: true,
+          issuesClosed: [1008],
+          skippedReasons: [],
+        },
+      })}\n`,
+    );
+
+    const result = await runFamilyDriver({
+      epicIssue: 1007,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1007-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir,
+      imageName: "img",
+      sh: () => {
+        throw new Error("durable terminal replay must not call GitHub");
+      },
+      realBackendFactory: () => {
+        throw new Error("durable terminal replay must not create worksite");
+      },
+    });
+    expect(result.status).toBe("completed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "completed" &&
+          e.epic === 1007 &&
+          e.stopReason === "already_done",
+      ),
+    ).toBe(true);
+  });
+
+  it("stopForCoderRecTightRoutePolicy emits terminal progress (nit pin)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const ledgerDir = tempLedger("progress-1007-coder-rec-");
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    type Backend = import("../../src/types.js").Backend;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class TightCoderRecBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState() {
+        return undefined;
+      }
+      async resumeSession(spec: StepSpec): Promise<StepOutput> {
+        return this.runStep(spec);
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: terra@med\n",
+        };
+      }
+      async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
+        return {
+          path: join(ledgerDir, `wt-${issueNumber}`),
+          branch: `feat/${issueNumber}`,
+          base: "main",
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new TightCoderRecBackend(),
+    });
+    expect(result.status).toBe("failed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "failed" &&
+          e.issue === 1007,
       ),
     ).toBe(true);
   });

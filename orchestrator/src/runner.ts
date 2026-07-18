@@ -1451,6 +1451,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // #936 / #934 ID-005: Scene Recovery first — resident discovery before
   // admission network work when a durable scene may already exist.
   const scene = await discoverResidentScene(backend, issueNumber);
+  // #1007: bind progress feed as soon as resident stateDir is known so early
+  // terminal/fail exits can dual-write this invocation's progress.jsonl.
+  {
+    const existing = getProgressBroadcastConfig();
+    if (existing.ledgerDir === undefined && scene.kind === "resident") {
+      const residentStateDir = scene.state.stateDir;
+      if (
+        typeof residentStateDir === "string" &&
+        residentStateDir.length > 0
+      ) {
+        configureProgressBroadcast({ ledgerDir: residentStateDir });
+      }
+    }
+  }
   if (scene.kind === "corrupted") {
     const reason = scene.reason;
     const stopSummary = infraFailureStopSummary({
@@ -1495,6 +1509,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        // #1007: durable terminal replay must self-describe this invocation's feed.
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
         return failedRunResult({
           cause: earlyPlan.terminalCause ?? "runner_internal_error",
           errorPackage,
@@ -1513,6 +1535,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               summary: "prior run is paused at an unanswered escalation",
               repairHint: "answer the escalation and rerun",
             };
+      // #1007: durable completed/parked replay — emit terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S8",
+        status: earlyPlan.terminalStatus,
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return {
         status: earlyPlan.terminalStatus,
         branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
@@ -2588,20 +2618,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // (resume truth), reuse the worktree, and continue from the recorded
   // breakpoint — no re-cut from S0, no re-running done steps.
   logDriverStage("reconcile", undefined, { issue: issueNumber });
-  // #1007: single-slice progress feed defaults to child stateDir once known;
-  // family runner may already have configured the durable family ledgerDir.
-  {
-    const existing = getProgressBroadcastConfig();
-    if (existing.ledgerDir === undefined && scene.kind === "resident") {
-      const residentStateDir = scene.state.stateDir;
-      if (
-        typeof residentStateDir === "string" &&
-        residentStateDir.length > 0
-      ) {
-        configureProgressBroadcast({ ledgerDir: residentStateDir });
-      }
-    }
-  }
+  // #1007: progress feed already bound at scene recovery when resident stateDir
+  // was known; S1 still binds after prepareWorktree for fresh runs.
   let resumeState: ResumeState | undefined =
     scene.kind === "resident" ? scene.state : undefined;
   const recordedRouteDegradations = new Set(
@@ -2888,6 +2906,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        // #1007: late durable terminal replay (e.g. repairIntent path) still emits.
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
         return failedRunResult({
           cause: plan.terminalCause ?? "runner_internal_error",
           errorPackage,
@@ -2906,6 +2932,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               summary: "prior run is paused at an unanswered escalation",
               repairHint: "answer the escalation and rerun",
             };
+      // #1007: late durable completed/parked replay — emit terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S8",
+        status: plan.terminalStatus,
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return {
         status: plan.terminalStatus,
         branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
@@ -3921,6 +3955,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
+        // #1007 AC1: always echo typed judge tri-state (including escalate) so
+        // latest verdict/counts are on the feed. Park/terminal alone do not fill
+        // AC1. Open-set projection stays gated on !carriesEscalate below.
+        if (isJudgeSeat({ step }) && output?.kind === "judge") {
+          const judgeRound =
+            ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
+          emitJudgeProgress({
+            issue: issueNumber,
+            step,
+            round: judgeRound,
+            verdict: output.status,
+            findingDispositions: output.findingDispositions,
+            findings: output.findings,
+            cargoPointer:
+              typeof output.fixPacketBody === "string" &&
+              output.fixPacketBody.length > 0
+                ? `ledger://issue-${issueNumber}/${step}/fixPacketBody`
+                : null,
+          });
+        }
         if (!carriesEscalate) {
           // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
           // Production role is always "verify" on those seats; expectedKind OR
@@ -3940,25 +3994,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Seed findingDispositions empty; route() will send unusable → S5.
               lastOutput = output;
               break;
-            }
-            // #1007: echo typed judge tri-state + disposition counts (no prose).
-            {
-              const judgeRound =
-                ledger.filter((e) => e.step === "S3" || e.step === "S6")
-                  .length + 1;
-              emitJudgeProgress({
-                issue: issueNumber,
-                step,
-                round: judgeRound,
-                verdict: output.status,
-                findingDispositions: output.findingDispositions,
-                findings: output.findings,
-                cargoPointer:
-                  typeof output.fixPacketBody === "string" &&
-                  output.fixPacketBody.length > 0
-                    ? `ledger://issue-${issueNumber}/${step}/fixPacketBody`
-                    : null,
-              });
             }
             // Apply continue dispositions via the shared projection helper
             // (same helper resume rebuild uses — F2 single open-set seam).
