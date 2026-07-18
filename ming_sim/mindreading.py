@@ -12,6 +12,7 @@ import json
 from typing import Any, Dict, Mapping
 
 from ming_sim.agents import create_mindreading_agent
+from ming_sim.db import normalize_office
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import Character
@@ -33,11 +34,14 @@ def _character_field(character: object, field: str) -> object:
 
 def is_inner_court_attendant(character: object) -> bool:
     """按御前近臣的职位识别读心者，不把王承恩姓名写死。"""
-    office = str(_character_field(character, "office") or "").replace(" ", "")
+    offices = normalize_office(str(_character_field(character, "office") or ""))
     # 内廷/司礼监是机构，不是御前唯一近臣位。读心权是由当前占据的
     # 槽位授予，而非职位描述中碰巧出现的词；例如「御前近臣候补」不能
     # 因包含槽名而取得旁人底账。名称可变，已登记的槽位标题不可泛化。
-    return office in _INNER_COURT_ATTENDANT_OFFICES
+    return any(
+        office in _INNER_COURT_ATTENDANT_OFFICES
+        for office in offices.split(",")
+    )
 
 
 def current_inner_court_attendant_name(db: Any) -> str:

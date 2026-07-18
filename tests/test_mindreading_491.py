@@ -14,6 +14,7 @@ from ming_sim.exceptions import LLMUnavailable
 from ming_sim.mindreading import (
     build_mindreading_materials,
     build_scouting_precision_payload,
+    current_inner_court_attendant_name,
     generate_mindreading_payload,
     is_inner_court_attendant,
 )
@@ -59,6 +60,27 @@ def test_only_exact_unique_attendant_slots_can_mindread(game):
         content.characters["王承恩"], office="御前近臣候补", office_type="司礼监"
     )
     assert not is_inner_court_attendant(candidate)
+
+
+def test_multi_office_attendant_survives_persistence_without_weakening_unique_slot(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    target = content.characters["温体仁"]
+
+    db.set_character_office(reader.name, "御前近臣，司礼监秉笔太监", "司礼监")
+
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (reader.name,)
+    ).fetchone()["office"] == "御前近臣,司礼监秉笔太监"
+    assert current_inner_court_attendant_name(db) == reader.name
+    assert build_mindreading_materials(
+        db, state, reader, target, "臣有本奏。",
+    )["reader"] == reader.name
+
+    db.set_character_office("曹化淳", "御前近臣候补,司礼监秉笔太监", "司礼监")
+    assert current_inner_court_attendant_name(db) == reader.name
+    db.set_character_office("曹化淳", "御前近臣,司礼监秉笔太监", "司礼监")
+    assert current_inner_court_attendant_name(db) == ""
 
 
 def test_mindreading_agent_has_no_minister_session_history_or_tools():
