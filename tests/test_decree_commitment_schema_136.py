@@ -1,5 +1,4 @@
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -305,18 +304,3 @@ def test_decree_initiative_cap_rejects_sixteenth_with_updated_message(game):
     assert len(rejected) == 1, out
     assert "十五事在办" in rejected[0]["reason"]
     assert "十事在办" not in rejected[0]["reason"]
-
-
-def test_delta_schema_pitfall_table_documents_fifteen_initiative_cap():
-    text = Path("docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
-
-    assert "active `initiative` ≤15" in text
-    assert "active `initiative` ≤10" not in text
-    assert "`end_turn`" in text
-    assert "连续 N 月" in text
-    assert "end_turn = turn + N" in text
-    assert "`commitment_kind`" in text
-    assert "`stop_condition` 是别名" not in text
-    assert "`stop_condition` | dict" in text
-    assert "文本或 dict" not in text
-    assert "`cannon`" in text

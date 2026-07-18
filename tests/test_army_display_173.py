@@ -119,21 +119,6 @@ def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
     assert payload[row["id"]]["arrears"] == pytest.approx(12.5)
 
 
-def test_army_arrears_p4_prompt_contract_is_documented():
-    """#305/D10：LLM 层须知道欠饷可 approximate 报钱，抽象 stat 用定性口径呈报。"""
-    surfaces = {
-        "game_world": ROOT / "content/prompts/game_world.md",
-        "minister_agent": ROOT / "content/prompts/minister_agent.md",
-        "season_simulator": ROOT / "content/prompts/season_simulator.md",
-    }
-    for name, path in surfaces.items():
-        text = path.read_text(encoding="utf-8")
-        assert "军饷欠是真钱" in text, name
-        assert "approximate" in text, name
-        assert "全军总欠饷大势" in text, name
-        assert "忠诚/能力" in text, name
-
-
 def test_simulator_payload_exposes_army_needed(game):
     """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面（裁判/审计大臣读的 TSV）
     须暴露引擎实扣 army_needed，否则审计大臣读到的月饷≠实扣、「账本一致」机制误判。

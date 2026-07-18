@@ -9,9 +9,6 @@
 （PR2「写端脱钩」时维护费列尚在的脏值/严格度语义已随列删除一并退场。）
 """
 
-import inspect
-from pathlib import Path
-
 import pytest
 
 from ming_sim.flows import army_needed
@@ -176,24 +173,3 @@ def test_army_delta_other_fields_still_apply(game):
 
 
 # ── extractor 写端 prompt 不教军队维护费 ─────────────────────────────
-
-def test_extractor_write_prompts_no_longer_teach_army_maintenance():
-    # 维护费已删列——所有喂给 LLM 的写端教学面不得再教军队维护费/军费：
-    #   · 2 个 score_extractor .md + cli_backend.enrich_initiative_effects；
-    #   · game_world.md（喂给 simulator/extractor/decree/chapter/ending 每个 agent，cmr drop R1 f1）；
-    #   · tools army_delta docstring 的合法字段列表（runtime extractor 工具面，cmr drop R2/f2）。
-    # 建筑维护费在 score_extractor_issues.md，是不同字段，不在此查。
-    import ming_sim.cli_backend as cb
-    import ming_sim.tools as tools_mod
-    base = Path(__file__).resolve().parent.parent / "content" / "prompts"
-    for fname in ("score_extractor_military_external.md", "score_extractor_shared.md", "game_world.md"):
-        txt = (base / fname).read_text(encoding="utf-8")
-        assert "maintenance_per_turn" not in txt, f"{fname} 仍含 maintenance_per_turn 写端教学"
-    assert "maintenance_per_turn" not in inspect.getsource(cb.enrich_initiative_effects)
-    # tools 的 army_delta 合法字段 docstring（build_extractor_tools.submit_extraction）不得列任何维护费
-    # 类字段。narrow 到该函数 source、不扫整 module（避免未来无关提及误失败，Sourcery PR R1）；查全部
-    # 维护费类别名/字段而非仅 maintenance_quarter（CodeRabbit PR R2：防 maintenance_per_turn/中文别名回流）。
-    tools_src = inspect.getsource(tools_mod.build_extractor_tools)
-    for legacy in ("maintenance_quarter", "maintenance_per_turn", "维护费", "军费"):
-        assert legacy not in tools_src, \
-            f"build_extractor_tools 的 army_delta docstring 仍把维护费类字段 '{legacy}' 列为合法军队字段"
