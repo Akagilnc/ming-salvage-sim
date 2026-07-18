@@ -13,7 +13,7 @@ Version: **2026-07-18.1**（owner 令补入 `sol@low` / `sol@high`——sol-low 
 | `luna@med` | codex 5h/周 | `gpt-5.6-luna` | fix 轮迭代收敛、交互单修 | fix 主力；别名 `luna@med+fast` |
 | `sol@med` | codex 5h/周 | `gpt-5.6-sol` | 难片收敛、换棒接管 | 非批量默认；别名 `sol@med+fast`；#920 起同模型跨角色合法（可与 review/cmr 同 slug） |
 | `sol@low` | codex 5h/周 | `gpt-5.6-sol-low` | 机械修 / 省额度默认档 | claude-cheap 路线 coder/coderFix/fixer 槽位默认（route preset 已生效） |
-| `sol@high` | codex 5h/周 | `gpt-5.6-sol-high` | 修不动时的判官点名升级档 | 替补链 sol@low → sol@med → sol@high（coder/coderFix 席现行可点；fixer 席通道待 #1002） |
+| `sol@high` | codex 5h/周 | `gpt-5.6-sol-high` | 修不动时的判官点名升级档 | 替补链 sol@low → sol@med → sol@high（coderFix / fixer 修理席均可点；#1002 已接通 online-review fixer 通道） |
 | `sonnet-5` | Claude 池 | `sonnet` | 完整面 / 大活 | grok 枯竭后备选（[#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789)） |
 | `haiku-4.5` | Claude 池 | `haiku` | 小修 / 快速机械活 | grok 枯竭后小活起步；别名 `Haiku 4.5` / `haiku` |
 
