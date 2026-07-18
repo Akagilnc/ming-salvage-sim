@@ -22,7 +22,15 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -187,16 +195,24 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
+  // grok reopens --prompt-file itself. A Node child-process pipe exposed as
+  // /dev/stdin cannot be reopened on Linux (ENXIO), so the probe would fail at
+  // transport before reaching the empty-auth behavior it is meant to test.
+  // Back fd 0 with a regular file while preserving the production argv.
+  const promptPath = join(emptyHome, "prompt.txt");
+  writeFileSync(promptPath, "ping\n", { mode: 0o600 });
   const t0 = Date.now();
   if (target.kind === "host") {
+    const promptFd = openSync(promptPath, "r");
     const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
       encoding: "utf8",
-      input: "ping\n",
+      stdio: [promptFd, "pipe", "pipe"],
       env,
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       killSignal: "SIGKILL",
     });
+    closeSync(promptFd);
     const timedOut =
       r.error?.message?.includes("TIMEDOUT") === true ||
       r.signal === "SIGTERM" ||
@@ -211,25 +227,25 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
-  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  // Redirect from the mounted regular file inside the container so /dev/stdin
+  // remains reopenable there as well.
   const r = spawnSync(
     "docker",
     [
       "run",
       "--rm",
-      "-i",
       "--entrypoint",
-      "/usr/local/bin/grok",
+      "/bin/sh",
       "-e",
       "HOME=/tmp/964-empty-home",
       "-v",
       `${emptyHome}:/tmp/964-empty-home`,
       target.image,
-      ...HEADLESS_PRINT_ARGS,
+      "-c",
+      `/usr/local/bin/grok ${HEADLESS_PRINT_ARGS.join(" ")} < /tmp/964-empty-home/prompt.txt`,
     ],
     {
       encoding: "utf8",
-      input: "ping\n",
       env: emptyAuthEnv(emptyHome),
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
