@@ -939,10 +939,10 @@ def test_pending_directive_count_zero_after_commit(game):
     assert directive_pending == [], "commit 后 pending_directive_count 应为 0"
 
 
-def test_pending_directive_count_zero_without_any_draft(game):
+def test_pending_directive_count_zero_without_any_draft(read_game):
     """无对话式草案时 pending_directive_count 为 0，
     state_payload 不误触发「拟诏」按钮。"""
-    db, state, content = game
+    db, state, content = read_game
     directive_pending = [
         a for a in db.list_pending_actions(state.turn)
         if a["kind"] == "directive"
