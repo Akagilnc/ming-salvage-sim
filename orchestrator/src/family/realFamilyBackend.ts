@@ -3483,8 +3483,11 @@ function softParseSuccessfulLegs(raw: unknown): string[] {
 
 /**
  * Soft-parse optional per-leg transports from cargo (#1005 / ADR 0141).
- * Chatty / non-array values → undefined (fall back to successfulLegs list).
- * Well-formed rows feed {@link successfulLegsFromTransports}.
+ * Non-array / undefined → undefined (fall back to successfulLegs list).
+ * Empty array or all-invalid rows after filter → undefined (same fall-back
+ * as transport-absent — chatty garbage must not force successfulLegs=[]).
+ * Well-formed rows (including dead transports) feed
+ * {@link successfulLegsFromTransports}.
  */
 function softParseLegTransports(
   raw: unknown,
@@ -3513,20 +3516,31 @@ function softParseLegTransports(
       stdout: rec.stdout as string | null | undefined,
     });
   }
-  return kept;
+  // No legal rows after filter ≡ transport-absent (fall back).
+  return kept.length > 0 ? kept : undefined;
 }
 
 /**
  * Production panel path: pull host-observed leg transports off a sandbox
- * result when present (ADR 0141). Absent → undefined; cargo soft path may
- * still rebuild from payload `legTransports`.
+ * result when present (ADR 0141). Looks at real production shapes:
+ *   1. top-level `result.legTransports` (host / producer field)
+ *   2. typed-output soft cargo `result.output.legTransports` (SO passthrough)
+ * Absent → undefined; cargo soft path may still rebuild from payload.
  */
 function legTransportsFromCmrSandboxResult(
   result: unknown,
 ): ReadonlyArray<LegTransport> | undefined {
   if (result === null || typeof result !== "object") return undefined;
   const rec = result as Record<string, unknown>;
-  return softParseLegTransports(rec.legTransports);
+  const topLevel = softParseLegTransports(rec.legTransports);
+  if (topLevel !== undefined) return topLevel;
+  const output = rec.output;
+  if (output !== null && typeof output === "object" && !Array.isArray(output)) {
+    return softParseLegTransports(
+      (output as Record<string, unknown>).legTransports,
+    );
+  }
+  return undefined;
 }
 function softParseSkippedLegs(
   raw: unknown,
