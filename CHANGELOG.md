@@ -4,6 +4,15 @@
 
 ## [未发布]
 
+## [0.35.1.0] — 2026-07-19
+
+### Fixed
+- **#1019 跨 launcher 复飞**：答闸后的 park 子片在 session 已死/缺 resume 时降级为 fresh re-dispatch（答案进新 worker 上下文），不再终态回放旧 park/failed；failed 子片新 launcher 可重派且失败史留台账；mixed-wave 仍 durable 写 `child_decision_parked` 供后续答闸；真 infra 再派仍响亮失败。
+- **#964 live probe 假红**：docker 路径不再把空 `HOME` 传给宿主机 CLI（修 sock 连不上）；选 target 前要求 `docker info` 通，无 daemon 则 soft-skip。
+
+### Changed
+- 废除 `child_answer_without_parked_state` fail-closed；改 `child_answer_fresh_redispatch` 审计路径；#970/#604 相关测试与契约注释对齐 #1019。
+
 ## [0.35.0.0] — 2026-07-18
 
 ### Added

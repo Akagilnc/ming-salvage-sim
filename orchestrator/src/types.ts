@@ -1910,6 +1910,12 @@ export interface RunInput {
    */
   readonly family?: FamilyContext;
   /**
+   * #1019 — family-level child decision answer when in-place resume residue is
+   * dead/missing. Carried into the first coder dispatch (fix-findings landing)
+   * on fresh redispatch; does not invent single-slice resume truth.
+   */
+  readonly familyEscalationAnswer?: EscalationAnswerPayload;
+  /**
    * #686 / #909 — optional route pool table override for park-vs-relay at the
    * #683 disposition point. When present, the table is authoritative. When
    * absent, wall-hit pool is `limited` and other pools stay not-live unless
