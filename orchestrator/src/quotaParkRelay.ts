@@ -21,6 +21,7 @@ import {
   renderEphemeralRelayBrief,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
+import { emitExitProgress } from "./progressBroadcast.js";
 import type {
   Backend,
   LedgerEntry,
@@ -174,15 +175,24 @@ export async function parkQuotaWaitForReset(opts: {
     ledgerEntry.resetAt !== undefined
       ? ` (resetAt ${ledgerEntry.resetAt})`
       : "";
+  const stopSummary = {
+    reason: "provider_degraded" as const,
+    summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
+    repairHint:
+      "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+  };
+  // #1007: shared park helper emits park+terminal (fail-open; call sites cannot forget).
+  emitExitProgress({
+    issue: null,
+    step,
+    status: "parked",
+    stopReason: stopSummary.reason,
+    gateSummary: stopSummary.summary,
+  });
   return {
     status: "parked",
     stepLedger: ledger,
-    stopSummary: {
-      reason: "provider_degraded",
-      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
-      repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
-    },
+    stopSummary,
   };
 }
 

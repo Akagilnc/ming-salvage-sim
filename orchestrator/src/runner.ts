@@ -56,9 +56,8 @@ import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
   configureProgressBroadcast,
+  emitExitProgress,
   emitJudgeProgress,
-  emitParkProgress,
-  emitTerminalProgress,
   getProgressBroadcastConfig,
 } from "./progressBroadcast.js";
 import {
@@ -1458,6 +1457,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       summary: reason,
       repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
+    // #1007: startup fail before shared helpers — dual-write terminal (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause: "resume_state_invalid",
       errorPackage: { failedStep: "S0", reason },
@@ -1527,6 +1534,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       : /coder-rec|coder_rec/i.test(admitted.escalation.reason)
         ? "coder_rec_invalid"
         : "route_config_invalid";
+    // #1007: startup route fail before shared helpers — dual-write terminal.
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage: {
@@ -1757,6 +1772,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       /route/i.test(escalation.reason)
         ? "route_config_invalid"
         : "coder_rec_invalid";
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage: {
@@ -2460,6 +2482,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       (reason.startsWith("record_persist_failed")
         ? "record_persist_failed"
         : "runner_internal_error");
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage,
@@ -2526,6 +2556,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
       branchHead: worktree?.branch,
     };
+    // #1007: decision escalate → park+terminal (notify via park); failure → terminal.
+    // Shared helper so every escalateTermination consumer dual-writes progress.
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: publicStatus,
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary ?? escalation.diagnosis ?? escalation.reason,
+    });
     if (publicStatus === "failed") {
       return failedRunResult({
         cause: "runner_internal_error",
@@ -2600,18 +2639,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let dispatchStageLogged = false;
 
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
-    if (typeof backend.smokeModelRoute !== "function") {
-      const reason =
-        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+    const smokeFailed = (reason: string): RunResult => {
+      const stopSummary = infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          reason.includes("did not provide smokeModelRoute")
+            ? "provide a real model×pipe smoke executor before dispatching workers"
+            : reason.startsWith("route smoke failed:")
+              ? "repair the selected model×pipe tool smoke before dispatching workers"
+              : "rerun the route smoke or repair the selected model×pipe",
+      });
+      // #1007: smoke/startup fail — dual-write terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S0",
+        status: "failed",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return failedRunResult({
         cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: reason,
-          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
-        }),
+        stopSummary,
       });
+    };
+    if (typeof backend.smokeModelRoute !== "function") {
+      return smokeFailed(
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      );
     }
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
@@ -2632,15 +2688,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return failedRunResult({
-        cause: "route_smoke_failed",
-        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: `route smoke failed: ${reason}`,
-          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
-        }),
-      });
+      return smokeFailed(`route smoke failed: ${reason}`);
     }
     const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
     modelRoute = degradation.route;
@@ -2651,15 +2699,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions,
     );
     if (smokeFailure !== undefined) {
-      return failedRunResult({
-        cause: "route_smoke_failed",
-        errorPackage: { failedStep: "S0", reason: smokeFailure },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: smokeFailure,
-          repairHint: "rerun the route smoke or repair the selected model×pipe",
-        }),
-      });
+      return smokeFailed(smokeFailure);
     }
     for (const dropped of degradation.dropped) {
       console.error(
@@ -4249,6 +4289,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           undefined,
           stopSummary,
         );
+        // #1007: S8 handoff persist fail — dual-write terminal (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
         return failedRunResult({
           cause: "record_persist_failed",
           errorPackage,
@@ -4266,11 +4314,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
-        // #1007: terminal broadcast (fail-open).
-        emitTerminalProgress({
+        // #1007: terminal broadcast via shared dual-write helper (fail-open).
+        emitExitProgress({
           issue: issueNumber,
+          step,
           status: "failed",
           stopReason: handoffStopSummary.reason,
+          gateSummary: handoffStopSummary.summary,
         });
         return failedRunResult({
           cause: "runner_internal_error",
@@ -4281,25 +4331,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       // #1007: park / completed terminal echo (typed stop reason only).
-      if (decision.status === "parked") {
-        emitParkProgress({
-          issue: issueNumber,
-          step,
-          gateSummary: handoffStopSummary.summary,
-          reason: handoffStopSummary.reason,
-        });
-        emitTerminalProgress({
-          issue: issueNumber,
-          status: "parked",
-          stopReason: handoffStopSummary.reason,
-        });
-      } else {
-        emitTerminalProgress({
-          issue: issueNumber,
-          status: "completed",
-          stopReason: handoffStopSummary.reason,
-        });
-      }
+      emitExitProgress({
+        issue: issueNumber,
+        step,
+        status: decision.status,
+        stopReason: handoffStopSummary.reason,
+        gateSummary: handoffStopSummary.summary,
+      });
 
       return {
         status: decision.status,
