@@ -24,10 +24,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
-  writeFileSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -170,38 +172,35 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   return env;
 }
 
-/**
- * Production worker print shape (grokAgent buildPrintCommand): prompt-file stdin +
- * streaming-json + always-approve. Never `grok login` / device-code.
- */
-function headlessPrintArgs(promptFile: string): string[] {
-  return [
-    "--prompt-file",
-    promptFile,
-    "--output-format",
-    "streaming-json",
-    "--always-approve",
-    "--permission-mode",
-    "bypassPermissions",
-  ];
-}
-
 function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   status: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
   combined: string;
   elapsedMs: number;
+  stagedFiles: string[];
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
-  const hostPromptFile = join(emptyHome, "prompt.txt");
-  writeFileSync(hostPromptFile, "ping\n", "utf8");
+  const staging = join(emptyHome, "staging");
+  mkdirSync(staging);
+  const built = grokAgent("grok-4.5").buildPrintCommand({
+    prompt: "ping\n",
+    dangerouslySkipPermissions: true,
+  });
   const t0 = Date.now();
   if (target.kind === "host") {
-    const r = spawnSync(target.bin, headlessPrintArgs(hostPromptFile), {
+    const binDir = join(emptyHome, "bin");
+    mkdirSync(binDir);
+    symlinkSync(target.bin, join(binDir, "grok"));
+    const r = spawnSync("bash", ["-c", built.command], {
       encoding: "utf8",
-      env,
+      input: built.stdin,
+      env: {
+        ...env,
+        PATH: `${binDir}:${env.PATH ?? ""}`,
+        TMPDIR: staging,
+      },
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       killSignal: "SIGKILL",
@@ -216,6 +215,7 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
       timedOut,
       combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
       elapsedMs: Date.now() - t0,
+      stagedFiles: readdirSync(staging),
     };
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
@@ -228,16 +228,20 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
       "--rm",
       "-i",
       "--entrypoint",
-      "/usr/local/bin/grok",
+      "/bin/sh",
       "-e",
       "HOME=/tmp/964-empty-home",
+      "-e",
+      "TMPDIR=/tmp/964-empty-home/staging",
       "-v",
       `${emptyHome}:/tmp/964-empty-home`,
       target.image,
-      ...headlessPrintArgs("/tmp/964-empty-home/prompt.txt"),
+      "-c",
+      built.command,
     ],
     {
       encoding: "utf8",
+      input: built.stdin,
       env: emptyAuthEnv(emptyHome),
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
@@ -254,6 +258,7 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
     timedOut,
     combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
     elapsedMs: Date.now() - t0,
+    stagedFiles: readdirSync(staging),
   };
 }
 
@@ -374,7 +379,8 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     expect(cmd.command).toContain("grok ");
     expect(cmd.command).toContain("cat > \"$prompt_file\"");
     expect(cmd.command).toContain("--prompt-file \"$prompt_file\"");
-    expect(cmd.command).toContain("trap 'rm -f \"$prompt_file\"' EXIT");
+    expect(cmd.command).toContain("trap cleanup_prompt EXIT");
+    expect(cmd.command).toContain("trap 'relay_signal TERM' TERM");
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).not.toMatch(/\blogin\b/);
@@ -430,6 +436,7 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
       // Well under the wall — hang regression would burn the full timeout.
       expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
+      expect(result.stagedFiles).toEqual([]);
     },
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
@@ -441,11 +448,11 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       "Reply with exactly: nonce-964",
     );
     expect(built.file).toBe("grok");
-    expect(built.args).toContain("--single");
-    expect(built.args).toContain("Reply with exactly: nonce-964");
+    expect(built.args).toContain("--prompt-file");
+    expect(built.args).toContain("/dev/stdin");
     expect(built.args).toContain("--always-approve");
     expect(built.args).not.toContain("-p");
-    expect(built.input).toBeUndefined();
+    expect(built.input).toBe("Reply with exactly: nonce-964");
   });
 
   it("does not introduce an auth_expired (or other new) public failed cause", () => {

@@ -203,20 +203,20 @@ export function barePingArgv(
       };
     }
     case "grok":
-      // Route smoke prompts are deliberately tiny, so use the native single-turn
-      // argument instead of the worker's large-prompt temporary-file shell path.
-      // Plain text (no streaming-json) keeps the nonce directly observable.
+      // Align with grokAgent headless: prompt on stdin (not -p argv).
+      // Plain text (no streaming-json) so barePingNonceSatisfied still sees the nonce line.
       return {
         file: "grok",
         args: [
-          "--single",
-          prompt,
+          "--prompt-file",
+          "/dev/stdin",
           "-m",
           model,
           "--always-approve",
           "--permission-mode",
           "bypassPermissions",
         ],
+        input: prompt,
       };
     case "cursor":
       // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).

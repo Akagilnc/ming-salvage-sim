@@ -3,7 +3,18 @@
  * Route smoke is bare-ping only (#884); old bash/nonce-file evidence helpers are gone.
  */
 
-import { describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createGrokStreamParser,
@@ -19,6 +30,28 @@ import {
 import { barePingArgv, barePingNonceSatisfied } from "../../src/realBackend.js";
 import { routeSmokeEntries, resolveRouteModels } from "../../src/modelRoutes.js";
 
+const transportDirs: string[] = [];
+afterEach(() => {
+  for (const dir of transportDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function transportDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  transportDirs.push(dir);
+  return dir;
+}
+
+function fakeGrokPath(binDir: string): string {
+  const path = join(binDir, "grok");
+  writeFileSync(
+    path,
+    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then while :; do sleep 1; done; fi\nexit 0\n",
+    "utf8",
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
 describe("#807 grokAgent AgentProvider", () => {
   it("builds a headless grok command with stdin prompt (not sc.pi)", () => {
     const agent = grokAgent("grok-4.5");
@@ -30,12 +63,81 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(cmd.command).toContain("grok ");
     expect(cmd.command).toContain("cat > \"$prompt_file\"");
     expect(cmd.command).toContain("--prompt-file \"$prompt_file\"");
-    expect(cmd.command).toContain("trap 'rm -f \"$prompt_file\"' EXIT");
+    expect(cmd.command).toContain("trap cleanup_prompt EXIT");
+    expect(cmd.command).toContain("trap 'relay_signal TERM' TERM");
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).toContain("-m grok-4.5");
     expect(cmd.command).not.toMatch(/\bpi\b/);
     expect(cmd.stdin).toBe("echo OK");
+  });
+
+  it("stages a large prompt byte-for-byte and removes the prompt file on normal exit", async () => {
+    const root = transportDir("grok-transport-normal-");
+    const bin = join(root, "bin");
+    const staging = join(root, "staging");
+    const pathOut = join(root, "prompt-path");
+    await import("node:fs/promises").then(({ mkdir }) => Promise.all([
+      mkdir(bin),
+      mkdir(staging),
+    ]));
+    fakeGrokPath(bin);
+    const prompt = `start-${"明".repeat(70_000)}-end`;
+    const built = grokAgent("grok-4.5").buildPrintCommand({
+      prompt,
+      dangerouslySkipPermissions: true,
+    });
+    const result = await new Promise<{ stdout: string; code: number | null }>((resolve) => {
+      const child = spawn("bash", ["-c", built.command], {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          TMPDIR: staging,
+          GROK_PROMPT_PATH_OUT: pathOut,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+      child.on("close", (code) => resolve({ stdout, code }));
+      child.stdin.end(built.stdin);
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe(prompt);
+    expect(readFileSync(pathOut, "utf8")).toMatch(/^.+$/);
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it("removes the staged prompt and exits when the worker process group is terminated", async () => {
+    const root = transportDir("grok-transport-term-");
+    const bin = join(root, "bin");
+    const staging = join(root, "staging");
+    const pathOut = join(root, "prompt-path");
+    await import("node:fs/promises").then(({ mkdir }) => Promise.all([
+      mkdir(bin),
+      mkdir(staging),
+    ]));
+    fakeGrokPath(bin);
+    const built = grokAgent("grok-4.5").buildPrintCommand({
+      prompt: "sensitive worker context",
+      dangerouslySkipPermissions: true,
+    });
+    const child = spawn("bash", ["-c", built.command], {
+      detached: true,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        TMPDIR: staging,
+        GROK_PROMPT_PATH_OUT: pathOut,
+        GROK_HOLD_OPEN: "1",
+      },
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    child.stdin.end(built.stdin);
+    await expect.poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 }).toMatch(/^.+$/);
+    process.kill(-child.pid!, "SIGTERM");
+    await new Promise<void>((resolve) => child.on("close", () => resolve()));
+    expect(readdirSync(staging)).toEqual([]);
   });
 
 
@@ -142,11 +244,11 @@ describe("#807 grok bare-ping smoke wiring", () => {
   it("builds a one-shot grok CLI bare-ping argv (no docker/tool loop)", () => {
     const built = barePingArgv("grok", "grok-4.5", "Reply with exactly: nonce-807");
     expect(built.file).toBe("grok");
-    // Smoke prompts are bounded and use Grok's native single-turn argument;
-    // worker prompts retain the temporary-file path for large payloads.
-    expect(built.args).toContain("--single");
-    expect(built.args).toContain("Reply with exactly: nonce-807");
-    expect(built.input).toBeUndefined();
+    // Same headless shape as grokAgent: prompt on stdin, not -p argv.
+    expect(built.args).toContain("--prompt-file");
+    expect(built.args).toContain("/dev/stdin");
+    expect(built.input).toBe("Reply with exactly: nonce-807");
+    expect(built.args).not.toContain("-p");
     expect(built.args).toContain("-m");
     expect(built.args).toContain("grok-4.5");
   });
