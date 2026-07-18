@@ -95,6 +95,10 @@ import {
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
 } from "../judgeStation.js";
+import {
+  successfulLegsFromTransports,
+  type LegTransport,
+} from "../legPaper.js";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -1831,12 +1835,16 @@ export class RealFamilyBackend implements FamilyBackend {
           (result as { readonly output?: unknown }).output,
           "family CMR",
         )
+        // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
+        // host rebuilds successfulLegs transport-only (production panel path).
+        const legTransports = legTransportsFromCmrSandboxResult(result);
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
             output: typed,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
+            ...(legTransports !== undefined ? { legTransports } : {}),
           }),
           lastSessionIdIfPresent(result),
         );
@@ -3387,31 +3395,63 @@ export type MergerAuth = FamilyWorkerAuthCore;
  * Sidecar/stdout are cargo only — never override a schema-validated judge
  * envelope or admit an unvalidated decision bell into the human loop (#899).
  * Residual open-count paper is transport-only (project at worker boundary).
+ *
+ * #1005 / ADR 0141: when host-observed {@link LegTransport}s are supplied
+ * (argument or soft cargo `legTransports`), rebuild `successfulLegs` via
+ * {@link successfulLegsFromTransports} — pure prose / unanchored exit0
+ * stdout is present paper; content shape is never a gate.
  */
 export function cmrOutcomeFromResult(result: {
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
+  /**
+   * Host-observed per-leg transports. When present, authority for
+   * `successfulLegs` presence under ADR 0141 (overlays cargo lists).
+   */
+  legTransports?: ReadonlyArray<LegTransport>;
   outcomePath?: string;
   output?: unknown;
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
   // Typed Output.object is the sole live fate channel (judge tri-state + gate).
+  let outcome: CmrWorkerOutcome;
   if (result.output !== undefined) {
-    return classifyCmrOutcomePayload(result.output, "CMR typed receipt");
-  }
-  // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
-  // findingsCount or escalate as process fate from untyped transports (#899).
-  if (result.outcomePath !== undefined) {
+    outcome = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
+  } else if (result.outcomePath !== undefined) {
+    // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
+    // findingsCount or escalate as process fate from untyped transports (#899).
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyCmrCargoOnly(sidecar);
+        outcome = classifyCmrCargoOnly(sidecar);
+      } else {
+        outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
       }
     } catch {
       // Unreadable sidecar → try stdout cargo below.
+      outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
     }
+  } else {
+    outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
   }
-  return classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
+  return overlaySuccessfulLegsFromTransports(outcome, result.legTransports);
+}
+
+/**
+ * #1005 / ADR 0141: when host-observed leg transports are present, they are
+ * the authority for panel presence — rebuild successfulLegs transport-only.
+ * Escalate outcomes are fate-only and carry no leg cargo.
+ */
+function overlaySuccessfulLegsFromTransports(
+  outcome: CmrWorkerOutcome,
+  transports: ReadonlyArray<LegTransport> | undefined,
+): CmrWorkerOutcome {
+  if (transports === undefined) return outcome;
+  if (outcome.kind !== "judge" && outcome.kind !== "verdict") return outcome;
+  return {
+    ...outcome,
+    successfulLegs: successfulLegsFromTransports(transports),
+  };
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
@@ -3439,6 +3479,54 @@ function softParseSuccessfulLegs(raw: unknown): string[] {
     }
   }
   return kept;
+}
+
+/**
+ * Soft-parse optional per-leg transports from cargo (#1005 / ADR 0141).
+ * Chatty / non-array values → undefined (fall back to successfulLegs list).
+ * Well-formed rows feed {@link successfulLegsFromTransports}.
+ */
+function softParseLegTransports(
+  raw: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (raw === undefined || !Array.isArray(raw)) return undefined;
+  const kept: LegTransport[] = [];
+  for (const item of raw) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.slug !== "string" || rec.slug.trim().length === 0) continue;
+    if (typeof rec.exitCode !== "number" || !Number.isFinite(rec.exitCode)) {
+      continue;
+    }
+    if (
+      rec.stdout !== null &&
+      rec.stdout !== undefined &&
+      typeof rec.stdout !== "string"
+    ) {
+      continue;
+    }
+    kept.push({
+      slug: rec.slug.trim(),
+      exitCode: rec.exitCode,
+      stdout: rec.stdout as string | null | undefined,
+    });
+  }
+  return kept;
+}
+
+/**
+ * Production panel path: pull host-observed leg transports off a sandbox
+ * result when present (ADR 0141). Absent → undefined; cargo soft path may
+ * still rebuild from payload `legTransports`.
+ */
+function legTransportsFromCmrSandboxResult(
+  result: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const rec = result as Record<string, unknown>;
+  return softParseLegTransports(rec.legTransports);
 }
 function softParseSkippedLegs(
   raw: unknown,
@@ -3741,9 +3829,19 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
+  // #1005 / ADR 0141: when cargo lands per-leg transports, host rebuilds
+  // successfulLegs transport-only (isLegalLegPaper). Content-shape-empty
+  // successfulLegs lists must not park a live panel.
+  const cargoTransports = softParseLegTransports(
+    normalizedParsed.legTransports,
+  );
+  const successfulLegs =
+    cargoTransports !== undefined
+      ? successfulLegsFromTransports(cargoTransports)
+      : softParseSuccessfulLegs(normalizedParsed.successfulLegs);
   return {
     ...(findings !== undefined ? { findings } : {}),
-    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
+    successfulLegs,
     ...(skippedLegs !== undefined ? { skippedLegs } : {}),
     ...(claimedFixedFindingIdentityKeys !== undefined
       ? { claimedFixedFindingIdentityKeys }
