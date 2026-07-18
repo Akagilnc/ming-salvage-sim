@@ -16,8 +16,8 @@ def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
     }
 
 
-def test_issues_schema_has_commitment_deadline_columns(game):
-    db, _, _ = game
+def test_issues_schema_has_commitment_deadline_columns(read_game):
+    db, _, _ = read_game
 
     cols = _table_columns(db, "issues")
 
