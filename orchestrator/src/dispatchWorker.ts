@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import {
   isJudgeSeat,
   materializeLandingFixPacketBody,
@@ -234,6 +235,9 @@ function writeFixFindingsLandingFile(
     blockingFindingCount: ctx.blockingFindingCount,
     requireBodyWhenOpen: isCoderFixLanding,
   });
+  // #1012: clear docker dir-placeholder residue before write/mount so host
+  // open never hits EISDIR (and docker never re-creates a directory mount).
+  ensureRegularFileForBindMount(landingPath);
   writeFileSync(
     landingPath,
     `${JSON.stringify(

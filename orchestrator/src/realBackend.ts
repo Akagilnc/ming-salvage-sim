@@ -57,6 +57,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import {
   extractLastTagBody,
 } from "./lastTaggedJson.js";
@@ -2899,6 +2900,9 @@ export class RealBackend implements Backend {
     // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
+      // #1012: host file must exist as a regular file before docker bind-mount
+      // (missing path → docker creates a directory placeholder → host EISDIR).
+      ensureRegularFileForBindMount(options.fixFindingsLanding.path);
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,

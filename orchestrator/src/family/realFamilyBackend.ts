@@ -41,7 +41,11 @@
  */
 
 import { shWithClock } from "../externalCall.js";
-import { gitExitStatus, isFileNotFound } from "../fsErrors.js";
+import {
+  ensureRegularFileForBindMount,
+  gitExitStatus,
+  isFileNotFound,
+} from "../fsErrors.js";
 import {
   appendFileSync,
   existsSync,
@@ -2002,6 +2006,8 @@ export class RealFamilyBackend implements FamilyBackend {
       blockingFindingIdentityKeys: identityKeys,
       blockingFindingCount: ctx.blockingFindingCount,
     });
+    // #1012: same host-file guarantee as single-slice landing writer.
+    ensureRegularFileForBindMount(path);
     writeFileSync(
       path,
       `${JSON.stringify(
