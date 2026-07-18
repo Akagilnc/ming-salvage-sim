@@ -507,14 +507,23 @@ Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 
 ## Checks
 
-`npm test` first runs the `tsconfig.test.json` compile gate (same check as
-`npm run typecheck:test`) before Vitest. That TypeScript lane checks all of
-`test/**`, so every test fixture and mock must satisfy the current production
-contracts before the behavioral suite runs.
+ADR 0140 splits the canonical test entry into two obligations:
 
-Repository CI now runs orchestrator `npm test` as its own job, in addition to
+| command | what runs | who uses it |
+| --- | --- | --- |
+| `npm run test:fast` | `tsconfig.test.json` typecheck + Vitest **fast** project (pure logic / unit) | coder / fixer 交卷自检 |
+| `npm test` | same typecheck + **all** Vitest projects (fast + heavy) | wave/final verify, CI, ship gate |
+
+Heavy (real process / real sandcastle SO / e2e-class tax) is classified by
+mechanical path/name conventions plus a harness-nature scan in
+`vitest.config.ts` — not a hand-curated smoke list. Both scripts run the
+TypeScript compile gate first (`npm run typecheck:test` equivalent) over all of
+`test/**`, so every fixture and mock must satisfy current production contracts
+before the behavioral suite runs.
+
+Repository CI runs orchestrator full `npm test` as its own job, in addition to
 the Python engine and web jobs. This README does not assert which jobs the
-GitHub ruleset marks as required, so still run `npm test` locally before
+GitHub ruleset marks as required; still run full `npm test` locally before
 merging orchestrator changes. Individually-green branches can still combine
 into a red main across cross-slice seams; the integrated gates exist precisely
 for that.

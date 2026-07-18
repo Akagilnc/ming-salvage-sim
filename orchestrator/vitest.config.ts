@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 
 /**
@@ -6,12 +8,12 @@ import { defineConfig } from "vitest/config";
  * - fast: pure logic / unit (majority). Used by fixer/coder self-check
  *   (`npm run test:fast` = typecheck + this project).
  * - heavy: real process / real sandcastle / real-git e2e-class tax
- *   (name/path convention only — no hand-curated smoke list).
+ *   (path/name convention + harness-nature scan — no hand-curated smoke list).
  * - full (`npm test`): typecheck + all projects (fast + heavy).
  *
  * Residual: many unit tests still spin tmp git fixtures for setup; those stay
- * in fast. True process/sandbox/e2e tax files match the heavy include patterns.
- * Further directory moves can tighten the split without rewriting souls.
+ * in fast. True process/sandbox/e2e tax is classified below. Further directory
+ * moves can tighten the split without rewriting souls.
  */
 const shared = {
   environment: "node" as const,
@@ -20,14 +22,52 @@ const shared = {
   // sc.run no longer races on host ~/.gitconfig. Default fileParallelism on.
 };
 
-/** Path patterns for process/sandbox/e2e tax (ADR 0140 mechanical criterion). */
-const heavyInclude = [
+/**
+ * Path/name conventions for process/e2e/live tax (ADR 0140).
+ * New tests of these classes should follow the same naming so they auto-join heavy.
+ */
+const heavyPathPatterns: string[] = [
   "test/**/*e2e*.test.ts",
   "test/**/sandcastle-*.test.ts",
-  "test/**/scripted-sandcastle-run.test.ts",
   "test/**/real-backend.test.ts",
   "test/**/live-*.test.ts",
-  "test/sandbox-stream-heartbeat.test.ts",
+  // Worker integration suites (cmr-worker, ship-worker, …) — real SO four-case homes.
+  // Pure unit files use other stems (worker-dispatch, worker-reporting, …).
+  "test/**/*-worker.test.ts",
+];
+
+/**
+ * Nature scan: any `*.test.ts` that imports the real sc.run harness pays sandbox
+ * tax. New harness users join heavy automatically — not a hand-picked file list.
+ * Covers e.g. route/*-scripted* persist SO suites that do not match path globs.
+ */
+function heavyByHarnessNature(root = "test"): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!name.endsWith(".test.ts")) continue;
+      const src = readFileSync(p, "utf8");
+      const importsHarness =
+        src.includes("runScriptedStructuredOutput") ||
+        (/\bfrom\s+["']@ai-hero\/sandcastle(?:\/[^"']*)?["']/.test(src) &&
+          (/\bnoSandbox\s*\(/.test(src) || /\bsc\.run\s*\(/.test(src)));
+      if (importsHarness) {
+        out.push(p.replaceAll("\\", "/"));
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** Union of path conventions + harness-nature hits (deduped). */
+const heavyInclude = [
+  ...new Set<string>([...heavyPathPatterns, ...heavyByHarnessNature()]),
 ];
 
 export default defineConfig({
