@@ -835,6 +835,33 @@ def test_public_knowledge_render_preserves_scaled_countable_facts(game):
     assert "忠诚可靠" in rendered
 
 
+def test_public_knowledge_render_keeps_countables_while_rejecting_whole_abstract_scores(game):
+    """Mixed public prose keeps physical facts and never emits score-unit debris."""
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    body = (
+        "温体仁忠诚七十，能力八十八，民心百分之八十。"
+        "此人忠诚从30升到70、麾下3万人、太仓实存70万两。"
+        "军力约3万；财力约70万。"
+    )
+    db.record_public_knowledge_event(
+        state, "人物与钱粮实况", body, source_id=f"test:p4-structural-boundary:{state.turn}",
+    )
+
+    rendered = build_character_knowledge_brief(minister, _ctx(game))
+
+    assert "忠诚七十" not in rendered
+    assert "能力八十八" not in rendered
+    assert "民心百分之八十" not in rendered
+    assert "忠诚从30升到70" not in rendered
+    assert "麾下3万人" in rendered
+    assert "太仓实存70万两" in rendered
+    assert "军力低万" not in rendered
+    assert "财力偏高万" not in rendered
+    assert "军力约3万" not in rendered
+    assert "财力约70万" not in rendered
+
+
 def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))

@@ -24,7 +24,7 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert 温["faction"] == "皇党"
     assert 温["identity"] == 18
     assert json.loads(温["seed_guilt"]) == {
-        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪;integ30仅线索)",
+        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪)",
         "severity": "无",
     }
 

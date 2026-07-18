@@ -18,16 +18,28 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     rendered = str(text or "").strip()
     if not rendered:
         return ""
+    redaction = f"（{kind}含抽象指标原值，已略去）"
+    # First remove complete unsafe spans.  A Chinese enumeration comma can
+    # separate independent facts, but it can also occur inside one causal
+    # clause; span-first redaction preserves lawful sibling facts in the former
+    # without letting the latter split its axis away from its score.
+    axis = re.search(rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?", rendered, re.IGNORECASE)
+    if axis:
+        tail = rendered[axis.end():]
+        enumeration = tail.find("、")
+        digit = re.search(r"\d", tail)
+        if enumeration >= 0 and digit is not None and enumeration < digit.start():
+            rendered = _ABSTRACT_NEARBY_NUMBER_RE.sub(redaction, rendered)
     # Chinese commas commonly join independent factual clauses.  Project at
     # that fragment boundary so one unsafe score cannot erase a lawful money,
     # head-count, or elapsed-time fact beside it.
-    parts = re.split(r"([，,；;。！？\n])", rendered)
+    parts = re.split(r"([，,、；;。！？\n])", rendered)
     out: list[str] = []
     for fragment in parts:
-        if not fragment or re.fullmatch(r"[，,；;。！？\n]", fragment):
+        if not fragment or re.fullmatch(r"[，,、；;。！？\n]", fragment):
             out.append(fragment)
         elif _has_unqualified_abstract_score(fragment):
-            out.append(f"（{kind}含抽象指标原值，已略去）")
+            out.append(redaction)
         else:
             out.append(fragment)
     return "".join(out)
@@ -139,13 +151,14 @@ _CHINESE_SCORE_BODY = (
     r"|十(?!分)"  # bare 十 = 10 after a connector; never ``十分`` idiom
     r"|[零〇一二两三四五六七八九])"
 )
+_CHINESE_SCORE_TOKEN = rf"(?:百分之)?{_CHINESE_SCORE_BODY}"
 _ABSTRACT_NUMBER_START = r"[-+]?\d"
 _ABSTRACT_SCORE_NUMBER = (
     rf"(?:"
     rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
-    rf"|{_CHINESE_SCORE_BODY}"
+    rf"|{_CHINESE_SCORE_TOKEN}"
     rf")"
-    rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_TAIL}))"
+    rf"(?!\d|[零〇一二两三四五六七八九十百千万亿]|\s*(?:{_COUNTABLE_FACT_TAIL}))"
     rf"(?:\s*(?:左右|上下))?"
 )
 
@@ -165,7 +178,10 @@ def _has_unqualified_abstract_score(fragment: str) -> bool:
     tail = fragment[axis.end():]
     # The invariant is about *bare numeric scores*.  Chinese ideoms such as
     # ``操守一尘不染`` are not scores merely because they neighbour an axis.
-    return bool(re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_TAIL}))", tail))
+    return bool(
+        re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_TAIL}))", tail)
+        or re.match(rf"\s*{_CHINESE_SCORE_TOKEN}(?=$|[，,、；;。！？\s])", tail)
+    )
 _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"

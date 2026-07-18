@@ -149,6 +149,18 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
     assert str(target.loyalty) not in f"{material['党账']}{material['君臣账']}"
 
 
+def test_default_seed_mindreading_materials_do_not_expose_integration_markers(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+
+    for name in ("温体仁", "周延儒"):
+        materials = build_mindreading_materials(
+            db, state, reader, content.characters[name], "臣有本奏。",
+        )
+        assert "仅线索" not in materials["truths"]["底案"]
+        assert "integ" not in materials["truths"]["底案"]
+
+
 def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     db, state, content = game
     reader = content.characters["王承恩"]
