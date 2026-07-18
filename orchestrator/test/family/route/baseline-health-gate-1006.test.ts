@@ -420,13 +420,17 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(argv).toContain("run");
     expect(argv).toContain("--rm");
     expect(argv).toContain("ming-orchestrator-coder:latest");
-    // Same worksite the family workers see: host clone bind-mounted at same path.
+    // Host worksite → agent-readable container path (not host path under /root).
     const vIdx = argv.indexOf("-v");
     expect(vIdx).toBeGreaterThan(-1);
-    expect(argv[vIdx + 1]).toBe("/clones/family-1006:/clones/family-1006");
+    expect(argv[vIdx + 1]).toBe(
+      "/clones/family-1006:/home/agent/baseline-worksite",
+    );
     const wIdx = argv.indexOf("-w");
     expect(wIdx).toBeGreaterThan(-1);
-    expect(argv[wIdx + 1]).toBe("/clones/family-1006/orchestrator");
+    expect(argv[wIdx + 1]).toBe(
+      "/home/agent/baseline-worksite/orchestrator",
+    );
     // Command runs inside the container image — never host `npm test` alone.
     // familyBase checkout is host-side only (ensureBaselineWorksiteReady); no
     // second container-side git checkout on the bind mount (#1006 CR N1).
@@ -435,6 +439,24 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(joined).not.toMatch(/git\b.*\bcheckout\b/);
     // Must not be a bare host-side npm invocation without docker.
     expect(argv[0]).not.toBe("npm");
+  });
+
+  it("maps host /root worksite to agent-readable container path (online Codex P1)", () => {
+    const argv = buildBaselineContainerFullTestArgv({
+      imageName: "ming-orchestrator-coder:latest",
+      workingRepo: "/root/.sc-orchestrator/repo-iso-1006",
+      familyBase: "family/1006",
+      verifyCwd: "/root/.sc-orchestrator/repo-iso-1006/orchestrator",
+    });
+    expect(argv).toContain(
+      "/root/.sc-orchestrator/repo-iso-1006:/home/agent/baseline-worksite",
+    );
+    const wIdx = argv.indexOf("-w");
+    expect(argv[wIdx + 1]).toBe(
+      "/home/agent/baseline-worksite/orchestrator",
+    );
+    expect(argv).toContain("--user");
+    expect(argv).toContain("agent");
   });
 
   it("aligns worker-class env: SPAWNED_WORKER_ENV + HOME=/home/agent + user agent", () => {
@@ -464,10 +486,12 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     });
     const vIdx = argv.indexOf("-v");
     expect(argv[vIdx + 1]).toBe(
-      "/clones/family 1006:/clones/family 1006",
+      "/clones/family 1006:/home/agent/baseline-worksite",
     );
     const wIdx = argv.indexOf("-w");
-    expect(argv[wIdx + 1]).toBe("/clones/family 1006/orchestrator");
+    expect(argv[wIdx + 1]).toBe(
+      "/home/agent/baseline-worksite/orchestrator",
+    );
     // Host already checked out familyBase — remote cmd is pure full suite.
     expect(argv[argv.length - 1]).toBe("npm test");
   });

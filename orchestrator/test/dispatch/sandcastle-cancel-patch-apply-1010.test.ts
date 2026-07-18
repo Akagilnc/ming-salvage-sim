@@ -288,32 +288,37 @@ describe("#1010 patch upgrade: $$ self-exclude in place + helper strip", () => {
 });
 
 describe("#1010 product dist load path (tsc emit)", () => {
-  it("npx tsc emits apply + ensure; dist ensure import is not MODULE_NOT_FOUND", () => {
-    const cwd = process.cwd();
-    const tsc = spawnSync("npx", ["tsc", "-p", "tsconfig.json"], {
-      encoding: "utf8",
-      cwd,
-    });
-    expect(tsc.status, tsc.stdout + tsc.stderr).toBe(0);
+  // CI cold `npx tsc` often exceeds vitest's 5s default (GitHub Actions PR #1017).
+  it(
+    "npx tsc emits apply + ensure; dist ensure import is not MODULE_NOT_FOUND",
+    () => {
+      const cwd = process.cwd();
+      const tsc = spawnSync("npx", ["tsc", "-p", "tsconfig.json"], {
+        encoding: "utf8",
+        cwd,
+      });
+      expect(tsc.status, tsc.stdout + tsc.stderr).toBe(0);
 
-    const applyJs = join(cwd, "dist", "applySandcastleCancelPatch.js");
-    const ensureJs = join(cwd, "dist", "ensureSandcastleCancelPatch.js");
-    expect(existsSync(applyJs)).toBe(true);
-    expect(existsSync(ensureJs)).toBe(true);
+      const applyJs = join(cwd, "dist", "applySandcastleCancelPatch.js");
+      const ensureJs = join(cwd, "dist", "ensureSandcastleCancelPatch.js");
+      expect(existsSync(applyJs)).toBe(true);
+      expect(existsSync(ensureJs)).toBe(true);
 
-    // Production path: load emitted ensure (which value-imports emitted apply).
-    const probe = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        `import { ensureSandcastleCancelPatch } from ${JSON.stringify(
-          ensureJs,
-        )}; ensureSandcastleCancelPatch(); process.stdout.write("dist-ensure-ok\\n");`,
-      ],
-      { encoding: "utf8", cwd },
-    );
-    expect(probe.status, probe.stdout + probe.stderr).toBe(0);
-    expect(probe.stderr).not.toMatch(/MODULE_NOT_FOUND|Cannot find module/);
-    expect(probe.stdout).toMatch(/dist-ensure-ok/);
-  });
+      // Production path: load emitted ensure (which value-imports emitted apply).
+      const probe = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `import { ensureSandcastleCancelPatch } from ${JSON.stringify(
+            ensureJs,
+          )}; ensureSandcastleCancelPatch(); process.stdout.write("dist-ensure-ok\\n");`,
+        ],
+        { encoding: "utf8", cwd },
+      );
+      expect(probe.status, probe.stdout + probe.stderr).toBe(0);
+      expect(probe.stderr).not.toMatch(/MODULE_NOT_FOUND|Cannot find module/);
+      expect(probe.stdout).toMatch(/dist-ensure-ok/);
+    },
+    60_000,
+  );
 });
