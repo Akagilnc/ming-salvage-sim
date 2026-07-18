@@ -121,9 +121,23 @@ type GrokProbeTarget =
   | { kind: "docker"; image: string; version: string };
 
 /**
+ * Live docker daemon reachable (not merely `docker` on PATH).
+ * Same gate as #1010 cancel tests — missing sock / stopped daemon must skip
+ * live probes, never fail red with "failed to connect to the docker API".
+ */
+function dockerDaemonAvailable(): boolean {
+  if (!whichBinary("docker")) return false;
+  const info = spawnSync("docker", ["info"], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  return info.status === 0;
+}
+
+/**
  * Resolve a real grok that matches the production fail-fast pin.
  * Prefer host (GROK_BIN / PATH); fall back to docker image with baked pin.
- * Skip only when neither yields a pin-matching binary (or docker is absent).
+ * Skip when neither yields a pin-matching binary, or docker daemon is down.
  */
 function resolveGrokProbeTarget(): GrokProbeTarget | null {
   const fromEnv = process.env.GROK_BIN?.trim();
@@ -139,7 +153,8 @@ function resolveGrokProbeTarget(): GrokProbeTarget | null {
     }
   }
 
-  if (!whichBinary("docker")) return null;
+  // CLI-on-PATH is not enough: no sock / stopped daemon → skip (not red).
+  if (!dockerDaemonAvailable()) return null;
   const image =
     process.env.GROK_PROBE_IMAGE?.trim() || DEFAULT_GROK_PROBE_IMAGE;
   // Cheap presence check — missing image → no docker target.
@@ -209,8 +224,12 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
       elapsedMs: Date.now() - t0,
     };
   }
-  // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
-  // treated as present credentials → 401, not the native "Not signed in" path).
+  // Docker: empty HOME for *container* grok only (mount + -e HOME=).
+  // Host docker CLI must keep real HOME — emptyAuthEnv(HOME=tmp) breaks client
+  // config / socket resolution ("failed to connect to the docker API ... sock").
+  // Do NOT pass empty XAI_API_KEY= into the container (empty string counts as
+  // present credentials → 401, not native "Not signed in"). Host env keys are
+  // not auto-forwarded by docker run unless -e is used.
   // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
   const r = spawnSync(
     "docker",
@@ -230,7 +249,8 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
     {
       encoding: "utf8",
       input: "ping\n",
-      env: emptyAuthEnv(emptyHome),
+      // Real process.env so docker CLI finds its socket/context; isolation is
+      // container-side via HOME mount only.
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       killSignal: "SIGKILL",
@@ -397,10 +417,11 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
       const target = resolveGrokProbeTarget();
       if (!target) {
-        // Loud skip reason — CI with rebaked image / host pin should not hit this.
+        // Loud skip reason — CI with rebaked image / host pin / live docker should not hit this.
         console.warn(
-          `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN ` +
-            `and no docker image with that pin (set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
+          `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN, ` +
+            `or docker daemon unavailable / no image with that pin ` +
+            `(set GROK_BIN, start docker, or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
             `override image via GROK_PROBE_IMAGE). Pin ${GROK_FAIL_FAST_PIN} remains the production mechanism.`,
         );
         return;

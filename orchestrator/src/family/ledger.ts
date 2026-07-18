@@ -701,6 +701,18 @@ export function unansweredChildEscalations(
   return out.reverse();
 }
 
+function answerPayloadFromChildAnswer(
+  entry: FamilyLedgerEntry,
+): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    source: (entry.source ?? "human") as "human" | "resume_input",
+    ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
+  };
+}
+
 /**
  * The human answer that reopens a specific child's parked decision gate
  * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
@@ -723,14 +735,28 @@ export function childEscalationAnswer(
   for (let i = entries.length - 1; i > escalatedIdx; i--) {
     const entry = entries[i]!;
     if (isValidChildAnswer(entry, childIssue)) {
-      return {
-        event: "escalation_answered",
-        answer: entry.answer!,
-        source: (entry.source ?? "human") as "human" | "resume_input",
-        ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
-        ...(entry.note != null ? { note: entry.note } : {}),
-      };
+      return answerPayloadFromChildAnswer(entry);
     }
+  }
+  return undefined;
+}
+
+/**
+ * #1019 — latest child-bound answer regardless of a preceding family park row.
+ *
+ * Mixed-wave failure+park historically dropped durable `child_decision_parked`
+ * rows (#604 P1-a), so humans still answered from progress text but
+ * {@link childEscalationAnswer} could not see the bind. Cross-launcher re-entry
+ * must still feed that answer into fresh redispatch.
+ */
+export function latestChildBoundAnswer(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  childIssue: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidChildAnswer(entry, childIssue)) continue;
+    return answerPayloadFromChildAnswer(entry);
   }
   return undefined;
 }
