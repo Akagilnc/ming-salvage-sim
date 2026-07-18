@@ -166,8 +166,11 @@ export function grokAgent(
       // owning Action typed failure (not an interactive wait).
       return {
         command:
-          `prompt_file=$(mktemp) && chmod 600 "$prompt_file" && ` +
-          `trap 'rm -f "$prompt_file"' EXIT && cat > "$prompt_file" && ` +
+          `prompt_file=$(mktemp) || exit $?; ` +
+          `cleanup_prompt() { rm -f -- "$prompt_file"; }; ` +
+          `trap cleanup_prompt EXIT; ` +
+          `trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ` +
+          `chmod 600 "$prompt_file" && cat > "$prompt_file" && ` +
           `grok --prompt-file "$prompt_file" --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
           `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}`,
