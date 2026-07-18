@@ -81,6 +81,13 @@ def test_multi_office_attendant_survives_persistence_without_weakening_unique_sl
     assert current_inner_court_attendant_name(db) == reader.name
     db.set_character_office("曹化淳", "御前近臣,司礼监秉笔太监", "司礼监")
     assert current_inner_court_attendant_name(db) == ""
+    with pytest.raises(ValueError, match="当前唯一"):
+        build_mindreading_materials(db, state, reader, target, "臣有本奏。")
+
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE name=?", (reader.name,))
+    db.conn.commit()
+    with pytest.raises(ValueError, match="当前唯一"):
+        build_mindreading_materials(db, state, reader, target, "臣有本奏。")
 
 
 def test_mindreading_agent_has_no_minister_session_history_or_tools():

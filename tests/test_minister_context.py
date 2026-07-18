@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ming_sim.models import CourtContext
-from ming_sim.context import character_context, character_context_with_db
+from ming_sim.context import character_context, character_context_with_db, minister_dossier
 from ming_sim.context import _faction_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
@@ -243,6 +243,21 @@ def test_estimate_resistance_returns_only_qualitative_level(game):
     assert not re.search(r"阻力(?:低|中|高)[^。]*\d+", rendered)
 
 
+@pytest.mark.parametrize("severity, expected", [(100, "高"), (80, "中"), (40, "低")])
+def test_estimate_resistance_levels_are_reachable(game, severity, expected):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.insert_issue(
+        state, kind="initiative", title="阻力档位", origin_kind="decree",
+        origin_ref="test:resistance-band", bar_value=0, inertia=0,
+        stage_text="推进中", severity=severity, faction_hint="边军",
+    )
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+
+    assert f"阻力{expected}" in tools["estimate_resistance"](1)
+
+
 def test_character_context_never_exposes_other_faction_dossiers(game):
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
@@ -268,7 +283,7 @@ def test_minister_context_is_characterized_without_abstract_numbers(game):
     assert "【人物档料】" in rendered
     assert "【派系档料】" in rendered
     assert "【党派认同】" in rendered
-    assert minister.summary or "通用特征" in rendered
+    assert minister_dossier(minister) in rendered
     assert str(minister.loyalty) not in rendered
     assert str(minister.ability) not in rendered
     assert str(minister.integrity) not in rendered

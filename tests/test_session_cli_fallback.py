@@ -2449,6 +2449,36 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
 
 
+@pytest.mark.parametrize("action, payload_key", [("提交核议", "claim"), ("记进展", "note")])
+def test_secret_conversation_actions_persist_complete_minister_reply(
+    game, monkeypatch, action, payload_key,
+):
+    db, state, _content = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    who = "长回话承办官"
+    oid = db.create_secret_order(state, who, "查核边饷", "逐项查核", [])
+    if action == "记进展":
+        db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
+        db.conn.commit()
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": action, "order_id": oid, "new_title": "",
+        "new_content": "", "deadline_months": 0,
+        "cultivate_skill": "", "cultivate_trait": "",
+    })
+    reply = "臣已逐册查核。" + "甲乙丙丁戊己庚辛壬癸" * 30 + "末尾凭据完整。"
+    session = _session(db, state, registry=SimpleNamespace(refresh=lambda _name: None))
+
+    result = session.apply_cli_conversation_actions(
+        SimpleNamespace(name=who, office_type="兵部"), action, reply,
+        has_directive=False, secret_order_id=None,
+    )
+
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (result["pending_action_id"],)
+    ).fetchone()
+    assert json.loads(row["payload_json"])[payload_key] == reply
+
+
 def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatch):
     """#354/#397 cmr r13: 并发分类器只读皇帝话，secret 更新字段须等大臣回话后重抽，不能丢补充。"""
     db, state, _ = game

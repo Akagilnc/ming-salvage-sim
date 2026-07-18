@@ -132,6 +132,8 @@ def build_mindreading_materials(
         ).fetchone()
         if row is not None:
             current_reader = row
+        if current_inner_court_attendant_name(db) != reader.name:
+            raise ValueError("读心 payload 只能由当前唯一御前近臣位生成")
     if not is_inner_court_attendant(current_reader):
         raise ValueError("读心 payload 只能由御前近臣位生成")
     if not str(minister_reply or "").strip():

@@ -282,8 +282,13 @@ def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     assert any(item["source_id"] == "opening:anti_eunuch" for item in household_view["public_events"])
 
 
-def test_restored_knowledge_uses_current_db_office_after_transfer(game):
-    db, state, content = game
+def test_restored_knowledge_uses_current_db_office_after_transfer(tmp_path, content):
+    from ming_sim.db import GameDB
+
+    path = tmp_path / "knowledge-transfer.db"
+    db = GameDB(str(path), content)
+    db.seed_static_data()
+    state = db.load_state()
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
 
     # Simulate a persisted transfer followed by restore while the original
@@ -293,14 +298,27 @@ def test_restored_knowledge_uses_current_db_office_after_transfer(game):
         "UPDATE characters SET office = ?, office_type = ? WHERE name = ?",
         ("户部尚书", "户部", minister.name),
     )
+    db.record_public_knowledge_event(
+        state, "转任后公开事项", "户部新任须核验太仓账目",
+        source_id="public:post-transfer",
+    )
     db.conn.commit()
-    restored = db.load_state()
+    db.close()
 
-    view = db.get_character_knowledge(restored, minister.name)
+    restored_db = GameDB(str(path), content)
+    try:
+        restored = restored_db.load_state()
+        view = restored_db.get_character_knowledge(restored, minister.name)
 
-    assert view["office_type"] == "户部"
-    assert "treasury" in view["world"]
-    assert "personnel" not in view["world"]
+        assert view["office_type"] == "户部"
+        assert "treasury" in view["world"]
+        assert "personnel" not in view["world"]
+        assert any(
+            item["source_id"] == "public:post-transfer"
+            for item in view["public_events"]
+        )
+    finally:
+        restored_db.close()
 
 
 def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wins(game):

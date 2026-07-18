@@ -17,6 +17,7 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert row["faction"] == "皇党"
     assert row["identity"] == 95
     assert json.loads(row["seed_guilt"]) == {"crime": "无", "severity": "无"}
+    assert json.loads(row["seed_guilt"]) == content.characters["王承恩"].seed_guilt
 
     温 = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?", ("温体仁",)

@@ -343,7 +343,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         # perspectival rails and would bypass the read boundary.
         resistance = int(row["severity"]) // 4
         tags = row["faction_hint"] or ""
-        if resistance >= 28:
+        if resistance >= 23:
             level = "高"
         elif resistance >= 18:
             level = "中"

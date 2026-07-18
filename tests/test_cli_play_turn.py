@@ -322,6 +322,42 @@ def test_terminal_minister_chat_reply_persist_failure_keeps_user_message(monkeyp
     ]
 
 
+def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game, monkeypatch):
+    db, state, content = game
+    character = next(c for c in content.characters.values() if c.status == "active")
+    marker = "真实 CLI lifecycle 写失败不得留下半轮"
+    real_append = db.append_chat_message
+
+    def fail_minister_write(name, turn, role, body, *args, **kwargs):
+        if role == "minister":
+            raise RuntimeError("finalization write failed")
+        return real_append(name, turn, role, body, *args, **kwargs)
+
+    monkeypatch.setattr(db, "append_chat_message", fail_minister_write)
+    answers = iter([marker])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        temporary_characters=set(),
+        chat=lambda _name, _question, chat_turn_id=0: SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", pending_action_failures=[],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="finalization write failed"):
+        term.minister_chat(session, character)
+
+    turn = db.conn.execute("SELECT status FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
+    assert turn["status"] == "failed"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM chat_messages WHERE content=?", (marker,)
+    ).fetchone()[0] == 0
+
+
 def test_terminal_minister_chat_can_retry_failed_secret_order(monkeypatch, capsys):
     """#415: CLI 看到失败密令后，也能用存量 pending payload 直接重试落库。"""
 

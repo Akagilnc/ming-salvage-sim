@@ -1383,13 +1383,13 @@ class GameSession:
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
                             minister_name=minister_name, target_id=oid,
-                            payload={"claim": reply[:200]},
+                            payload={"claim": reply.strip()},
                         )
                     elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="记进展",
                             minister_name=minister_name, target_id=oid,
-                            payload={"note": reply[:200]},
+                            payload={"note": reply.strip()},
                         )
                     # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
                     # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
