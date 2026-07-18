@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 
@@ -12,27 +11,15 @@ SOURCE_FILES = (
 )
 
 
-# The old-label tripwire guards live surfaces (prompts/engine/frontend) only.
-# docs/ and archive/ may legitimately quote the retired label verbatim
-# (e.g. archived playtest transcripts predate the rename) — see #531.
-EXCLUDED_PREFIXES = ("docs/", "archive/")
-
-
 def test_scout_report_label_replaces_old_bulletin_section_name():
     old_label = "陛下" + "未知者"
     new_label = "探子回报"
 
     contents = {path: path.read_text(encoding="utf-8") for path in SOURCE_FILES}
-    tracked_files = [
-        path.decode("utf-8")
-        for path in subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).split(b"\0")
-        if path
-    ]
     old_label_files = [
-        path
-        for path in tracked_files
-        if not path.startswith(EXCLUDED_PREFIXES)
-        and old_label in (ROOT / path).read_text(encoding="utf-8", errors="ignore")
+        path.relative_to(ROOT).as_posix()
+        for path, content in contents.items()
+        if old_label in content
     ]
 
     assert old_label_files == []
