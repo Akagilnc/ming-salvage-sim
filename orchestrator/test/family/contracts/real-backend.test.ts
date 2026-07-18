@@ -192,7 +192,8 @@ describe("RealFamilyBackend live officer effort", () => {
     const command = backend
       .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
       .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
-    expect(command).toContain("grok --prompt-file /dev/stdin");
+    expect(command).toContain("prompt_file=$(mktemp)");
+    expect(command).toContain('grok --prompt-file "$prompt_file"');
   });
 });
 
