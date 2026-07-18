@@ -895,14 +895,6 @@ function escalatedChildStep(
   return undefined;
 }
 
-/**
- * #970 historical fail-closed token (superseded for re-entry by #1019).
- * Kept exported so older diagnostics / grep still resolve; new path writes
- * {@link CHILD_ANSWER_FRESH_REDISPATCH} instead of failing closed.
- */
-export const CHILD_ANSWER_WITHOUT_PARKED_STATE =
-  "child_answer_without_parked_state" as const;
-
 /** #1019 audit: answered park degraded to fresh redispatch (dead/missing session). */
 export const CHILD_ANSWER_FRESH_REDISPATCH =
   "child_answer_fresh_redispatch" as const;
