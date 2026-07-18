@@ -1166,7 +1166,7 @@ def test_legacy_registered_secret_order_marker_parser_restages(game):
     assert db.list_pending_actions(state.turn)[0]["kind"] == "secret_order"
 
 
-def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
+def test_secret_order_extract_fallback_preserves_structured_metadata(monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
@@ -2210,9 +2210,9 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     assert seen == [cfg]
 
 
-def test_no_backend_is_noop(game, monkeypatch):
+def test_no_backend_is_noop(read_game, monkeypatch):
     """未启 CLI 后端（走原 api 路径）时，胶水不动任何东西。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     result = _result()
     result.answer = "臣领旨。敕谕户部发银三万两。钦此。"
