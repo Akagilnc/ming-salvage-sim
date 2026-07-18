@@ -285,6 +285,8 @@ function runHeadlessEmptyAuthProbe(
       "run",
       "--rm",
       "-i",
+      "--user",
+      "0:0",
       "--entrypoint",
       "/bin/sh",
       "-e",
@@ -295,12 +297,15 @@ function runHeadlessEmptyAuthProbe(
       `${emptyHome}:/tmp/964-empty-home`,
       target.image,
       "-c",
-      built.command,
+      `mkdir -p "$TMPDIR" && ${built.command}`,
     ],
     {
       encoding: "utf8",
       input: built.stdin,
-      env: emptyAuthEnv(emptyHome),
+      // Keep the host Docker client's HOME so its selected context/socket
+      // remains reachable. The container still receives only the empty HOME
+      // mounted above; Docker does not forward host auth variables implicitly.
+      env: process.env,
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       killSignal: "SIGKILL",
