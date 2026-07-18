@@ -437,7 +437,10 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(entrypointIdx).toBeGreaterThan(-1);
     expect(argv[entrypointIdx + 1]).toBe("bash");
     expect(entrypointIdx).toBeLessThan(imageIdx);
-    expect(argv.slice(imageIdx + 1)).toEqual(["-lc", "npm test"]);
+    expect(argv.slice(imageIdx + 1)).toEqual([
+      "-lc",
+      "npm ci --no-audit --no-fund && npm test",
+    ]);
     // Command runs inside the container image — never host `npm test` alone.
     // familyBase checkout is host-side only (ensureBaselineWorksiteReady); no
     // second container-side git checkout on the bind mount (#1006 CR N1).
@@ -500,7 +503,9 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
       "/home/agent/baseline-worksite/orchestrator",
     );
     // Host already checked out familyBase — remote cmd is pure full suite.
-    expect(argv[argv.length - 1]).toBe("npm test");
+    expect(argv[argv.length - 1]).toBe(
+      "npm ci --no-audit --no-fund && npm test",
+    );
   });
 
   it("maps workingRepo root and nested verifyCwd under worksite (no silent rewrite)", () => {

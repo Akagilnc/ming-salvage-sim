@@ -17,7 +17,8 @@
  *
  * Deps (sibling of family verify `installDeps` / worktree `provisionWorktreeNodeModules`):
  * host-side provision of `verifyCwd` node_modules (clonefile / npm ci) before
- * container `npm test`, so a clean family clone has a reachable green path.
+ * container dependency install + `npm test`, so a clean family clone has a
+ * reachable green path without reusing host-native modules.
  *
  * Sandcastle parity (best-effort this slice): same `imageName`, bind-mount the
  * family worksite at the host path (worker cwd pattern), `HOME=/home/agent`,
@@ -321,8 +322,9 @@ export function containerBaselineVerifyCwd(
 /**
  * Production argv for the worker-image full suite.
  * Same image class as coder workers; host worksite bind-mounted at an
- * agent-readable container path; `npm test` runs *inside* the container —
- * never as a bare host invocation (owner hard constraint: no lying host greens).
+ * agent-readable container path; dependency install + `npm test` run *inside*
+ * the container — never as a bare host invocation (owner hard constraint: no
+ * lying host greens).
  *
  * Host must already have provisioned `verifyCwd` node_modules (see
  * {@link runBaselineFullTestsInWorkerContainer}); the bind mount carries them in.
@@ -338,7 +340,7 @@ export function buildBaselineContainerFullTestArgv(
   // the bind-mounted worksite — do not re-checkout inside the container (DRY;
   // #1006 CR N1). Container only runs the project's canonical full entry.
   // `npm test` is the orchestrator full gate (typecheck + vitest run).
-  // Deps are host-provisioned before this container starts (installDeps class).
+  // Install again inside Linux so host-native modules are never reused.
   // SPAWNED_WORKER_ENV from realBackend — single source for OPENCLAW_SESSION etc.
   const spawnedEnvFlags = Object.entries(SPAWNED_WORKER_ENV).flatMap(
     ([key, value]) => ["-e", `${key}=${value}`],
@@ -367,7 +369,7 @@ export function buildBaselineContainerFullTestArgv(
     "bash",
     req.imageName,
     "-lc",
-    "npm test",
+    "npm ci --no-audit --no-fund && npm test",
   ];
 }
 
