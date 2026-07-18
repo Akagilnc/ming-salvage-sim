@@ -25,12 +25,12 @@ import {
   admitBaselineHealth,
   buildBaselineContainerFullTestArgv,
   classifyBaselineFailure,
-  formatBaselineExecFailureOutput,
   formatBaselineHealthFailurePackage,
   NOOP_BASELINE_FIX_ATTEMPT,
   runBaselineFullTestsInWorkerContainer,
   type BaselineFullTestResult,
 } from "../../../src/baselineHealthGate.js";
+import { formatExecFailureOutput } from "../../../src/execFailureOutput.js";
 import { FAMILY_LEDGER_FILENAME } from "../../../src/family/realFamilyBackend.js";
 import { isFamilyLedgerEntryShape } from "../../../src/family/ledger.js";
 import { PUBLIC_FAILED_CAUSES } from "../../../src/publicResult.js";
@@ -348,7 +348,7 @@ describe("#1006 pure baseline health gate", () => {
 });
 
 describe("#1006 exec failure capture (message+stdout+stderr)", () => {
-  it("formatBaselineExecFailureOutput keeps vitest FAIL body from stdout", () => {
+  it("formatExecFailureOutput keeps vitest FAIL body from stdout", () => {
     const vitestStdout =
       " FAIL  test/dispatch/grok-mid-run-auth-964.test.ts > stdin seam\n" +
       "Failed to read '/dev/stdin': os error 6\n";
@@ -357,7 +357,7 @@ describe("#1006 exec failure capture (message+stdout+stderr)", () => {
       stdout: vitestStdout,
       stderr: "npm warn deprecated foo\n",
     });
-    const output = formatBaselineExecFailureOutput(err);
+    const output = formatExecFailureOutput(err);
     expect(output).toContain("Command failed");
     expect(output).toContain("stderr:");
     expect(output).toContain("npm warn deprecated foo");
