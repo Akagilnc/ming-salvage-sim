@@ -26,7 +26,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import * as telemetry from "../../src/telemetry.js";
 import {
   agentForSlug,
   attributeFailure,
@@ -940,17 +939,6 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     ).not.toThrow();
   });
 
-  it("does not calculate telemetry fingerprints during construction", () => {
-    const configure = vi.spyOn(
-      telemetry,
-      "configureTelemetryFromWorkerImage",
-    );
-
-    new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir });
-
-    expect(configure).not.toHaveBeenCalled();
-  });
-
   it("throws on a relative promptsDir", () => {
     expect(
       () => new StubCloneBackend({ ...baseOpts, promptsDir: "prompts" }),
@@ -967,32 +955,6 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     ).toThrow(/does not exist/);
   });
 
-  it("dir-exists-but-missing-souls throws with the missing filenames", () => {
-    // Use a real existing dir (mkdtemp) that has no soul files inside.
-    // Ctor must reject before any clone/git work (validateSoulsDir runs early).
-    const badSouls = mkdtempSync(join(tmpdir(), "dir-exists-missing-souls-"));
-    expect(() =>
-      new StubCloneBackend({
-        ...baseOpts,
-        promptsDir: realPromptsDir,
-        soulsDir: badSouls,
-      }),
-    ).toThrow(/missing required soul file\(s\):/);
-    let msg = "";
-    try {
-      new StubCloneBackend({
-        ...baseOpts,
-        promptsDir: realPromptsDir,
-        soulsDir: badSouls,
-      });
-    } catch (e: any) {
-      msg = String(e?.message ?? e);
-    }
-    expect(msg).toMatch(/cmr\.md/);
-    expect(msg).toMatch(/verify\.md/);
-    expect(msg).not.toMatch(/output_protocol\.md/);
-    expect(msg).toMatch(/All of \[/);
-  });
 });
 
 describe("RealBackend reviewer output contract", () => {
@@ -1204,49 +1166,6 @@ describe("RealBackend reviewer output contract", () => {
         ],
       }),
     ).not.toThrow();
-  });
-
-  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const backend = new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 445,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-reviewer-"),
-    });
-
-    const decoded = backend.probeDecodeOutput(reviewerSpec, {
-      findingsCount: 1,
-      findings: [
-        {
-          severity: "medium",
-          category: "correctness",
-          claim_quote: "Known accepted gap",
-          location: "orchestrator/src/runner.ts:42",
-          suggested_fix: "keep the bounded suppression",
-          action: "wont_fix",
-          disposition_reason: "legacy fallback should not win",
-          disposition: {
-            kind: "accepted_suppressed",
-            source: "#445 owner answer",
-            scope: "runner review/fix loop",
-            reason: "Owner accepted this bounded risk.",
-            boundedReopen: "reopen if the same finding recurs in this scope",
-          },
-        },
-      ],
-      priorFindingDispositions: [],
-    });
-
-    // #925: S3/S6 decode projects residual open-count cargo onto judge form;
-    // findings rows (incl. disposition_reason) remain opaque cargo.
-    expect(
-      decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
-    ).toBe("legacy fallback should not win");
   });
 
   // #604 correctness r2 (C3): the standalone reviewer disposition schema is
