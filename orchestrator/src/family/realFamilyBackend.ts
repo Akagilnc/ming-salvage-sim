@@ -1071,7 +1071,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -1834,7 +1834,7 @@ export class RealFamilyBackend implements FamilyBackend {
         const typed = requireTypedTrafficSignal(
           (result as { readonly output?: unknown }).output,
           "family CMR",
-        )
+        );
         // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
         // host rebuilds successfulLegs transport-only (production panel path).
         const legTransports = legTransportsFromCmrSandboxResult(result);
@@ -1997,9 +1997,9 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
-    this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
-    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_STDOUT_SANDBOX_FILE);
-    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
     // Host monitor paths are not visible inside the family coder-fix container.
     // Materialise into the sandbox cwd (workingRepo) and rewrite pointers (#899).
@@ -2072,7 +2072,7 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const path = join(dir, "outcome.json");
       writeFileSync(path, "", "utf8");
-      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
       success = true;
       return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
     } finally {
@@ -2089,7 +2089,7 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const path = join(dir, "outcome.json");
       writeFileSync(path, "", "utf8");
-      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
       success = true;
       return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
     } finally {
@@ -2301,7 +2301,7 @@ export class RealFamilyBackend implements FamilyBackend {
         "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
       );
     }
-    this.excludeOptionalRuntimeFileFromGit(ONLINE_REVIEW_LANDING_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     writeFileSync(
       path,
