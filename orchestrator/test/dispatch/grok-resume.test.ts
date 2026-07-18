@@ -8,7 +8,7 @@
  * stores sessions as one DIRECTORY per session id under
  * `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/`.
  */
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -520,21 +520,13 @@ describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
           resumeSession?: string,
         ): Promise<{ stdout: string; exitCode: number }> =>
           new Promise((resolve, reject) => {
-            const args = [
-              "--prompt-file",
-              "/dev/stdin",
-              "--output-format",
-              "streaming-json",
-              "--always-approve",
-              "--permission-mode",
-              "bypassPermissions",
-            ];
-            if (resumeSession !== undefined) {
-              args.push("--resume", resumeSession);
-            }
-            const child = execFile(
-              "grok",
-              args,
+            const built = grokAgent("grok-4.5").buildPrintCommand({
+              prompt,
+              resumeSession,
+              dangerouslySkipPermissions: true,
+            });
+            const child = exec(
+              built.command,
               { cwd: work, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
               (err, stdout, stderr) => {
                 if (err && (err as { killed?: boolean }).killed) {
@@ -554,7 +546,7 @@ describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
                 });
               },
             );
-            child.stdin?.write(prompt);
+            child.stdin?.write(built.stdin);
             child.stdin?.end();
           });
 

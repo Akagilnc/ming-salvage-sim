@@ -28,7 +28,9 @@ describe("#807 grokAgent AgentProvider", () => {
       dangerouslySkipPermissions: true,
     });
     expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("--prompt-file /dev/stdin");
+    expect(cmd.command).toContain("cat > \"$prompt_file\"");
+    expect(cmd.command).toContain("--prompt-file \"$prompt_file\"");
+    expect(cmd.command).toContain("trap 'rm -f \"$prompt_file\"' EXIT");
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).toContain("-m grok-4.5");
@@ -140,11 +142,11 @@ describe("#807 grok bare-ping smoke wiring", () => {
   it("builds a one-shot grok CLI bare-ping argv (no docker/tool loop)", () => {
     const built = barePingArgv("grok", "grok-4.5", "Reply with exactly: nonce-807");
     expect(built.file).toBe("grok");
-    // Same headless shape as grokAgent: prompt on stdin, not -p argv.
-    expect(built.args).toContain("--prompt-file");
-    expect(built.args).toContain("/dev/stdin");
-    expect(built.input).toBe("Reply with exactly: nonce-807");
-    expect(built.args).not.toContain("-p");
+    // Smoke prompts are bounded and use Grok's native single-turn argument;
+    // worker prompts retain the temporary-file path for large payloads.
+    expect(built.args).toContain("--single");
+    expect(built.args).toContain("Reply with exactly: nonce-807");
+    expect(built.input).toBeUndefined();
     expect(built.args).toContain("-m");
     expect(built.args).toContain("grok-4.5");
   });
