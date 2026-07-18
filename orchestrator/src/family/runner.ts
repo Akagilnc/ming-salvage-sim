@@ -447,6 +447,9 @@ async function decideFamilyQuotaWall(opts: {
   // #934 R6 F4: family Recovery only reads family-ledger.jsonl. Do not also
   // write slice steps.jsonl via parkOrRelayQuotaWall (half dual court). The
   // sole durable boundary is appendFamilyLedger below (fail-closed).
+  // #1007 R5: helper would dual-write; family owns a single park+terminal emit
+  // in buildParkResult (epic-attributed). Suppress helper emit to avoid double
+  // park/terminal rows + double notify.
   const outcome = await parkOrRelayQuotaWall({
     step: parkStep,
     err: opts.err,
@@ -484,6 +487,7 @@ async function decideFamilyQuotaWall(opts: {
     pools,
     now: opts.now ?? new Date(),
     state_summary: `family ${opts.phase} quota wall on ${currentPool}; barrier continues on baton when live`,
+    emitProgress: false,
   });
 
   if (outcome.kind === "park") {

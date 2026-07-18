@@ -1310,13 +1310,17 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
       backend: {} as import("../../src/types.js").Backend,
       resolveBranchHEAD: async () => "abc",
       hashPrompt: async () => "hash",
+      // #1007 R5: single-slice park must attribute progress to the ticket.
+      issue: 1007,
     });
     expect(result.status).toBe("parked");
-    expectParkAndTerminal(ledgerDir, { epic: 1007 });
+    expectParkAndTerminal(ledgerDir, { epic: 1007, issue: 1007 });
     const parks = readProgressEvents(ledgerDir).filter((e) => e.kind === "park");
+    expect(parks).toHaveLength(1);
     expect(parks[0]).toMatchObject({
       kind: "park",
       step: "S2",
+      issue: 1007,
       reason: "provider_degraded",
     });
   });
@@ -1845,5 +1849,226 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
           e.issue === 1007,
       ),
     ).toBe(true);
+  });
+});
+
+describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
+  it("family quota park dual-writes park+terminal once (no double notify)", async () => {
+    const { runFamily } = await import("../../src/family/runner.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const { QuotaWaitForResetError } = await import("../../src/quotaProbe.js");
+    const ledgerDir = tempLedger("progress-1007-fam-quota-");
+    configureProgressBroadcast({ ledgerDir, epic: 909 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+
+    const ledger: FamilyLedgerEntry[] = [];
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase(child: { childIssue: number }) {
+        return { familyHead: `+${child.childIssue}` };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+    } as unknown as FamilyBackend;
+
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    const err = new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "quota limited (429); wait for reset",
+      },
+      applied: {
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "quota limited (429); wait for reset",
+          step: "S3",
+          workerPid: 0,
+          ts: "2026-07-14T12:00:00.000Z",
+        },
+      },
+      pool: "zai",
+    });
+    // Force park via parkOrRelayQuotaWall (true double-emit class) not slot refuse.
+    err.cmrPass = "completeness";
+
+    const result = await runFamily({
+      epic: { issue: 909, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: await makeConvergingChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      verifyCmr: async (input) => {
+        if (input.phase === "wave") throw err;
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("parked");
+    const events = readProgressEvents(ledgerDir);
+    const parks = events.filter((e) => e.kind === "park");
+    const terminals = events.filter(
+      (e) => e.kind === "terminal" && e.status === "parked",
+    );
+    // R5 must: helper + buildParkResult must not both dual-write
+    // (double park/terminal rows ⇒ double notify class).
+    expect(parks).toHaveLength(1);
+    expect(terminals).toHaveLength(1);
+    expect(parks[0]).toMatchObject({ epic: 909 });
+  });
+
+  it("family CMR typed judge land emits kind:judge via runVerifyCmr", async () => {
+    const { runVerifyCmr } = await import("../../src/family/verifyCmr.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../src/reviewLoopOutcome.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-fam-cmr-judge-");
+    configureProgressBroadcast({ ledgerDir, epic: 909 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+    type WorkerSpec = import("../../src/types.js").WorkerSpec;
+    type DispatchContext = import("../../src/types.js").DispatchContext;
+
+    const ledger: FamilyLedgerEntry[] = [];
+    let head = "head-1";
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: head };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      async readFamilyHead() {
+        return head;
+      },
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed" as const,
+            output: {
+              kind: "judge" as const,
+              status: "converged" as const,
+              findingDispositions: dispositions,
+              findings,
+            },
+            sessionId: `judge-${ctx.cmrPass ?? "x"}`,
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed" as const,
+            output: {
+              kind: "ship" as const,
+              branch: ctx.familyBase ?? "family/909-base",
+              status: "pr_opened" as const,
+              pr: "pr://family/909-base",
+              prHead: head,
+            },
+          };
+        }
+        // #600/#603 online-review tail after ship (verify / fixer / landing / cleanup).
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        throw new Error(`unexpected worker ${spec.kind}`);
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+    } as unknown as FamilyBackend;
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/909-base",
+      familyBackend,
+      familyIssue: 909,
+      familyHeadAfter: head,
+    });
+    expect(result.ok).toBe(true);
+
+    const judges = readProgressEvents(ledgerDir).filter((e) => e.kind === "judge");
+    // Completeness + correctness both land typed judge progress.
+    expect(judges.length).toBeGreaterThanOrEqual(2);
+    expect(
+      judges.some(
+        (e) =>
+          e.kind === "judge" &&
+          e.step === "cmr:completeness" &&
+          e.verdict === "converged" &&
+          e.epic === 909 &&
+          e.issue === 909,
+      ),
+    ).toBe(true);
+    expect(
+      judges.some(
+        (e) =>
+          e.kind === "judge" &&
+          e.step === "cmr:correctness" &&
+          e.verdict === "converged",
+      ),
+    ).toBe(true);
+    // Typed dispositions/severity only — no prose cargo in the feed row.
+    const completeness = judges.find(
+      (e) => e.kind === "judge" && e.step === "cmr:completeness",
+    );
+    expect(completeness).toMatchObject({
+      dispositions: {
+        fix_now: 2,
+        refuted: 1,
+        suppressed: 1,
+      },
+    });
   });
 });
