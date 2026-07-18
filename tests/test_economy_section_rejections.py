@@ -14,16 +14,15 @@ entity/inertia sink 达 rejection_reports，不蒸发。
 
 from __future__ import annotations
 
+from functools import partial
+
 from driver import run_settle
+from tests.section_rejection_helpers import game, rejection_rows
 
 ECO_REJ = "economy_moves_rejections"
 
 
-def _rejection_rows(db, turn, section):
-    return db.conn.execute(
-        "SELECT section, reason, category FROM rejection_reports"
-        " WHERE turn=? AND section=? ORDER BY id", (turn, section)
-    ).fetchall()
+_rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
 def _guoku(db):

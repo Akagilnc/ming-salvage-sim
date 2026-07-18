@@ -4,6 +4,20 @@
 
 ## [未发布]
 
+## [0.34.0.0] — 2026-07-18
+
+### Added
+- **#985 pytest 套件瘦身（family/985）**：session 级只读 `read_game` fixture（真实 seed + SQLite `query_only`），纯读用例不再逐测重建整库。
+- **#998 拒收矩阵共享 section helper**：`tests/section_rejection_helpers.py` 合并 ~10+ 文件重复 setup。
+- **#995/#996 轻量盘面迁移账**：`tests/game_fixture_retained_inventory.tsv` + 选用约定 `tests/README.md`。
+
+### Fixed
+- **#994 settle_channel 全量离群**：隔离 chapter LLM / settle channel 共享态，根因后修而非标 slow。
+- **#997 scout_report_label 固定税**：缩扫描范围至消费者，契约面保留。
+
+### Changed
+- 写库路径仍走 function-scope `game`（真实 `GameDB → seed_static_data → load_state`），不 mock 被测系统。
+
 ## [0.33.0.0] — 2026-07-17
 
 ### Added

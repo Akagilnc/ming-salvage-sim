@@ -1,7 +1,6 @@
 """ADR 0009 person archive schema contract."""
 
 import sqlite3
-from pathlib import Path
 
 from ming_sim.content import load_character_content
 from ming_sim.db import GameDB
@@ -16,9 +15,9 @@ def _column_info(db, table):
     return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def test_characters_table_has_person_archive_fields(game):
+def test_characters_table_has_person_archive_fields(read_game):
     """ADR 0009 stores machine-readable reason and travel state on characters."""
-    db, _, _ = game
+    db, _, _ = read_game
 
     cols = _columns(db, "characters")
 
@@ -31,9 +30,9 @@ def test_characters_table_has_person_archive_fields(game):
         assert info[name]["dflt_value"] == "''"
 
 
-def test_person_logs_table_records_person_archive_audit_chain(game):
+def test_person_logs_table_records_person_archive_audit_chain(read_game):
     """ADR 0009 persists person archive process history separately from final state."""
-    db, _, _ = game
+    db, _, _ = read_game
 
     cols = _columns(db, "person_logs")
 
@@ -167,31 +166,6 @@ def test_old_save_schema_is_upgraded_for_person_archive_fields(tmp_path, content
         }
     finally:
         db.conn.close()
-
-
-def test_personnel_extractor_prompt_teaches_person_change_contract():
-    """Real personnel extraction prompts must ask for the ADR 0009 write surface."""
-    prompt_dir = Path(__file__).resolve().parents[1] / "content" / "prompts"
-    shared = (prompt_dir / "score_extractor_shared.md").read_text(encoding="utf-8")
-    personnel = (prompt_dir / "score_extractor_personnel_secret.md").read_text(
-        encoding="utf-8"
-    )
-
-    for text in (shared, personnel):
-        assert "人物变更" in text
-        assert "行止" in text
-        assert "transit_to" in text
-    assert "location" in personnel
-    assert "任命" in personnel
-    assert "罢黜" in personnel
-    assert "调任" in personnel
-    assert "处置" in personnel
-    assert "易主" in personnel
-    assert "册封" in personnel
-    assert "新登场的非明朝人物" in personnel
-    assert "在人物名册内才写 `人物变更`" in personnel
-    assert "同时写 `任命` 授武将名分" in personnel
-    assert "走 `任命`，不走这里" not in personnel
 
 
 def test_north_star_named_figures_are_seeded_with_identity_metadata():

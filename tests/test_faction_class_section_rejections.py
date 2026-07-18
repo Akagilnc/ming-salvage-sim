@@ -14,16 +14,10 @@
 from __future__ import annotations
 
 from driver import run_settle
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta_rejections"
 CLASS_REJ_SECTION = "class_delta_rejections"
-
-
-def _rejection_rows(db, turn, section):
-    return db.conn.execute(
-        "SELECT section, reason, category, source FROM rejection_reports"
-        " WHERE turn=? AND section=? ORDER BY id", (turn, section)
-    ).fetchall()
 
 
 def _valid_faction(db):
