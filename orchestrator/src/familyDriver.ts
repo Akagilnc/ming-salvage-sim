@@ -33,7 +33,14 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -46,6 +53,13 @@ import {
   isGithubAuthFailure,
   readMetadataWithRetry,
 } from "./admissionPreflight.js";
+import {
+  admitBaselineHealth,
+  runBaselineFullTestsInWorkerContainer,
+  type BaselineFixAttempt,
+  type BaselineFullTestResult,
+  type BaselineFullTestRunner,
+} from "./baselineHealthGate.js";
 import { shWithClock } from "./externalCall.js";
 import { gitExitStatus, isFileNotFound } from "./fsErrors.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
@@ -68,6 +82,7 @@ import {
   isValidPostMergeCleanup,
   mergedSet,
   parseFamilyLedgerJsonl,
+  recordBaselineHealthFailed,
 } from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
 import {
@@ -856,6 +871,17 @@ export interface FamilyDriverOptions {
   readonly realFamilyBackendFactory?: (
     options: RealFamilyBackendOptions,
   ) => FamilyBackend & { reconcileGit(): ReconcileGit };
+  /**
+   * #1006 — injectable baseline full-suite runner (unit/e2e). Production leaves
+   * this unset → worker-image container full gate. Injected backends without a
+   * runner get a green no-op so zero-container fixtures do not wall-clock docker.
+   */
+  readonly baselineFullTestRunner?: BaselineFullTestRunner;
+  /**
+   * #1006 — optional one-round baseline fix (owner shape: red → fix once →
+   * recheck). Absence ⇒ fail-closed on first red (报错 path, also accepted).
+   */
+  readonly baselineFixAttempt?: BaselineFixAttempt;
 }
 
 /**
@@ -1516,6 +1542,50 @@ export async function runFamilyDriver(
     options.realFamilyBackendFactory?.(familyBackendOptions) ??
     new RealFamilyBackend(familyBackendOptions);
 
+  // 5b. #1006 baseline health gate — admission hot-check member (with smoke):
+  // family base must be full-green under the worker container class before any
+  // child fan-out. Red → ledger + fail-closed (optional one fix round first).
+  logDriverStage("admission", `baseline health gate epic #${options.epicIssue}`);
+  const baselineRunner = resolveBaselineFullTestRunner(options, {
+    workingRepo,
+    familyBase: options.familyBase,
+    imageName: options.imageName,
+    verifyCwd:
+      options.verifyCwd ?? resolveBaselineVerifyCwd(workingRepo),
+  });
+  const baseline = await admitBaselineHealth({
+    runFullTests: baselineRunner,
+    ...(options.baselineFixAttempt !== undefined
+      ? { tryFix: options.baselineFixAttempt }
+      : {}),
+  });
+  if (baseline.kind === "stop") {
+    await recordBaselineHealthFailed(familyBackend, {
+      reason: baseline.escalation.reason,
+      message: baseline.escalation.diagnosis,
+      familyHeadAfter: familyBaseStartHead,
+    });
+    const children = epic.children.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+    }));
+    return failedFamilyResult({
+      cause: "baseline_health_failed",
+      familyBase: options.familyBase,
+      familyHead: familyBaseStartHead,
+      escalation: baseline.escalation,
+      stopSummary: infraFailureStopSummary({
+        summary: baseline.escalation.diagnosis,
+        repairHint:
+          "file one pre-fix ticket for the family-base full failure, land the fix on main/family base, then re-admit — do not fan out N children to re-fix the same baseline disease",
+      }),
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    });
+  }
+
   // 6. Assemble the run input + the resume seams, and run the spine.
   // reconcile stage is logged inside runFamily immediately before the real
   // reconcile work (not here) so a hang after smoke-k is still attributable.
@@ -1536,6 +1606,48 @@ export async function runFamilyDriver(
     },
   };
   return runFamily(input);
+}
+
+/**
+ * #1006 — resolve the baseline full runner.
+ * Production (no backend factories) → worker-image container full.
+ * Injected/zero-container test paths without an explicit runner → green no-op
+ * so fixtures keep the pre-#1006 success shape without wall-clock docker.
+ */
+function resolveBaselineFullTestRunner(
+  options: FamilyDriverOptions,
+  req: {
+    readonly workingRepo: string;
+    readonly familyBase: string;
+    readonly imageName: string;
+    readonly verifyCwd: string;
+  },
+): BaselineFullTestRunner {
+  if (options.baselineFullTestRunner !== undefined) {
+    return options.baselineFullTestRunner;
+  }
+  const injectedBackend =
+    options.singleSliceBackendFactory !== undefined ||
+    options.familyBackendFactory !== undefined ||
+    options.realBackendFactory !== undefined ||
+    options.realFamilyBackendFactory !== undefined;
+  if (injectedBackend) {
+    return async (): Promise<BaselineFullTestResult> => ({ ok: true });
+  }
+  return () =>
+    runBaselineFullTestsInWorkerContainer({
+      imageName: req.imageName,
+      workingRepo: req.workingRepo,
+      familyBase: req.familyBase,
+      verifyCwd: req.verifyCwd,
+    });
+}
+
+/** Prefer orchestrator/ subproject when present; else clone root. */
+function resolveBaselineVerifyCwd(workingRepo: string): string {
+  const orchestrator = join(workingRepo, "orchestrator");
+  if (existsSync(join(orchestrator, "package.json"))) return orchestrator;
+  return workingRepo;
 }
 
 function routeSmokeFailureResult(
