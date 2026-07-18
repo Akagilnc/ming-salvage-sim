@@ -1055,10 +1055,9 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
       join(ledgerDir, FAMILY_LEDGER_FILENAME),
       `${JSON.stringify({
         status: "merged",
-        event: "merged",
         childIssue: 10061,
         familyHeadAfter: startSha,
-      })}\n`,
+      } satisfies FamilyLedgerEntry)}\n`,
       "utf8",
     );
     writeFileSync(join(ledgerDir, "family-base-start-head"), `${startSha}\n`, "utf8");
@@ -1099,6 +1098,9 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     // Gate must not run (or stop) as baseline disease on post-merge resume.
     expect(baselineCalls).toBe(0);
     if (result.status === "failed") {
+      // Illegal ledger shapes fail as resume_state_invalid and would also keep
+      // baselineCalls===0 / avoid baseline_health_failed — pin the real path.
+      expect(result.cause).not.toBe("resume_state_invalid");
       expect(result.cause).not.toBe("baseline_health_failed");
     }
     // Ledger must not grow a baseline_health_failed row from this resume.
