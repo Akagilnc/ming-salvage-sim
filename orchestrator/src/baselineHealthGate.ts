@@ -32,6 +32,7 @@ import {
   resolveTemplateProjectDir,
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
+import { SPAWNED_WORKER_ENV } from "./realBackend.js";
 
 /** Infra (tooling/deps) vs suite (product tests) — diagnosis/hint branch. */
 export type BaselineFailureClass = "infra" | "suite";
@@ -95,9 +96,25 @@ export const NOOP_BASELINE_FIX_ATTEMPT: BaselineFixAttempt = async () => ({
 /**
  * Shared docker/npm tooling heuristics for infra vs suite classification.
  * Used by {@link classifyBaselineFailure} and {@link isInfraExecFailure} so
- * ENOENT / daemon / missing-cli patterns live in one place (#1006 CR R4 S1).
+ * ENOENT / daemon / image-pull / socket-perm / missing-cli patterns live in
+ * one place (#1006 CR R4 S1 + base CR ST-S1/SP-S3).
+ *
+ * Keep narrow: only pure tooling reds. Suite FAIL bodies (vitest/npm exit 1)
+ * must stay "suite" so operators still get the pre-fix ticket pointer.
  */
 const INFRA_DOCKER_DAEMON_RE = /Cannot connect to the Docker daemon/i;
+/** Socket perm beyond "Cannot connect…" (common on rootless / group-less hosts). */
+const INFRA_DOCKER_SOCKET_PERM_RE =
+  /permission denied.*(?:docker\.sock|Docker daemon)|(?:docker\.sock|Docker daemon).*permission denied|permission denied while trying to connect to the Docker daemon/i;
+/** Image missing / registry pull denied — worker image not usable. */
+const INFRA_DOCKER_IMAGE_RE =
+  /Unable to find image|pull access denied|pull denied|repository does not exist|manifest for .+ not found|Error response from daemon:.*(?:not found|pull access denied)/i;
+/**
+ * Docker client usage/config (often exit 125) — clearly tooling, not suite.
+ * Avoid bare "error" / "failed" so real suite reds never match.
+ */
+const INFRA_DOCKER_USAGE_RE =
+  /docker:\s*(?:['`][^'`]+['`]\s+)?requires at least|unknown flag:|flag provided but not defined|invalid reference format|docker:\s*invalid|failed to create (?:task|shim)|OCI runtime (?:create )?failed/i;
 const INFRA_DOCKER_MISSING_RE =
   /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found|ENOENT.*\bdocker\b/i;
 const INFRA_NPM_MISSING_RE =
@@ -106,6 +123,9 @@ const INFRA_NPM_MISSING_RE =
 function matchesInfraToolingOutput(output: string): boolean {
   return (
     INFRA_DOCKER_DAEMON_RE.test(output) ||
+    INFRA_DOCKER_SOCKET_PERM_RE.test(output) ||
+    INFRA_DOCKER_IMAGE_RE.test(output) ||
+    INFRA_DOCKER_USAGE_RE.test(output) ||
     INFRA_DOCKER_MISSING_RE.test(output) ||
     INFRA_NPM_MISSING_RE.test(output)
   );
@@ -129,6 +149,15 @@ export function classifyBaselineFailure(
     ) ||
     matchesInfraToolingOutput(o) ||
     /deps provision|provision(?:ing)? failed|npm ci failed/i.test(o)
+  ) {
+    return "infra";
+  }
+  // Docker client usage/config exits (125/126) when text is tooling-shaped —
+  // never treat vitest FAIL bodies as infra even if exit were atypical.
+  if (
+    (failure.exitCode === 125 || failure.exitCode === 126) &&
+    /\bdocker\b/i.test(o) &&
+    !/\bFAIL\b|\.test\.\w+/i.test(o)
   ) {
     return "infra";
   }
@@ -268,13 +297,16 @@ export function buildBaselineContainerFullTestArgv(
   // #1006 CR N1). Container only runs the project's canonical full entry.
   // `npm test` is the orchestrator full gate (typecheck + vitest run).
   // Deps are host-provisioned before this container starts (installDeps class).
+  // SPAWNED_WORKER_ENV from realBackend — single source for OPENCLAW_SESSION etc.
+  const spawnedEnvFlags = Object.entries(SPAWNED_WORKER_ENV).flatMap(
+    ([key, value]) => ["-e", `${key}=${value}`],
+  );
   return [
     "docker",
     "run",
     "--rm",
     // Worker-class env parity (SPAWNED_WORKER_ENV + sandcastle HOME default).
-    "-e",
-    "OPENCLAW_SESSION=1",
+    ...spawnedEnvFlags,
     "-e",
     "HOME=/home/agent",
     // Image USER is `agent` (Containerfile); match worker perms/path layout.
@@ -409,7 +441,11 @@ export async function runBaselineFullTestsInWorkerContainer(
   }
 }
 
-/** Docker/npm spawn or daemon — not suite disease. */
+/**
+ * Docker/npm spawn, daemon, image pull, or docker client usage — not suite disease.
+ * Exit 125/126 are docker-client / cannot-invoke class; only tag infra when the
+ * failure text is docker-tooling-shaped so a suite exit never rides along.
+ */
 function isInfraExecFailure(err: unknown, output: string): boolean {
   if (
     err !== null &&
@@ -419,7 +455,26 @@ function isInfraExecFailure(err: unknown, output: string): boolean {
   ) {
     return true;
   }
-  return matchesInfraToolingOutput(output);
+  if (matchesInfraToolingOutput(output)) {
+    return true;
+  }
+  // Docker CLI: 125 = client/daemon/config; 126 = contained command cannot invoke.
+  // Production argv is always `docker run …`; suite reds exit 1 via npm/vitest.
+  const status =
+    err !== null &&
+    typeof err === "object" &&
+    "status" in err &&
+    typeof (err as { status?: unknown }).status === "number"
+      ? ((err as { status: number }).status as number)
+      : undefined;
+  if (
+    (status === 125 || status === 126) &&
+    /\bdocker\b/i.test(output) &&
+    !/\bFAIL\b|\.test\.\w+/i.test(output)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function defaultBaselineSh(

@@ -33,7 +33,9 @@ import {
 import { formatExecFailureOutput } from "../../../src/execFailureOutput.js";
 import { FAMILY_LEDGER_FILENAME } from "../../../src/family/realFamilyBackend.js";
 import { isFamilyLedgerEntryShape } from "../../../src/family/ledger.js";
+import type { ResolvedModelRoute } from "../../../src/modelRoutes.js";
 import { PUBLIC_FAILED_CAUSES } from "../../../src/publicResult.js";
+import { SPAWNED_WORKER_ENV } from "../../../src/realBackend.js";
 import { runFamilyDriver, type Sh } from "../../../src/familyDriver.js";
 import type {
   Backend,
@@ -113,7 +115,7 @@ function makeSh(): Sh {
 class TrackingChildBackend implements Backend {
   fanOutCalls = 0;
   constructor(private readonly clone: string) {}
-  async smokeModelRoute(route: any) {
+  async smokeModelRoute(route: ResolvedModelRoute) {
     const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
@@ -430,16 +432,19 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(argv[0]).not.toBe("npm");
   });
 
-  it("aligns worker-class env: OPENCLAW_SESSION + HOME=/home/agent + user agent", () => {
+  it("aligns worker-class env: SPAWNED_WORKER_ENV + HOME=/home/agent + user agent", () => {
     const argv = buildBaselineContainerFullTestArgv({
       imageName: "ming-orchestrator-coder:latest",
       workingRepo: "/clones/family-1006",
       familyBase: "family/1006",
       verifyCwd: "/clones/family-1006/orchestrator",
     });
-    // SPAWNED_WORKER_ENV parity + sandcastle HOME default (no full sc.run agent).
+    // SPAWNED_WORKER_ENV from realBackend (not hard-coded OPENCLAW_SESSION=1) +
+    // sandcastle HOME default — best-effort parity, not full sc.run lifecycle.
     expect(argv).toContain("-e");
-    expect(argv).toContain("OPENCLAW_SESSION=1");
+    for (const [key, value] of Object.entries(SPAWNED_WORKER_ENV)) {
+      expect(argv).toContain(`${key}=${value}`);
+    }
     expect(argv).toContain("HOME=/home/agent");
     expect(argv).toContain("--user");
     expect(argv).toContain("agent");
@@ -544,6 +549,114 @@ describe("#1006 infra vs suite failure diagnosis", () => {
     expect(pkg).toMatch(/repair|docker|re-admit|re-run|rerun/i);
   });
 
+  it("classifies unable-to-find-image as infra (no pre-fix ticket)", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 125,
+      output:
+        "Unable to find image 'ming-orchestrator-coder:test' locally\n" +
+        "docker: Error response from daemon: pull access denied for ming-orchestrator-coder, " +
+        "repository does not exist or may require 'docker login'",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
+    const pkg = formatBaselineHealthFailurePackage(failure);
+    expect(pkg).toMatch(/infra|infrastructure/i);
+    expect(pkg).not.toMatch(/file one (single )?pre-fix ticket|建议开前置|开前置修复票/i);
+  });
+
+  it("classifies docker socket permission denied as infra (beyond Cannot connect…)", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 1,
+      output:
+        "docker: permission denied while trying to connect to the Docker daemon socket " +
+        "at unix:///var/run/docker.sock: Get \"http://%2Fvar%2Frun%2Fdocker.sock/v1.24/containers/json\": " +
+        "dial unix /var/run/docker.sock: connect: permission denied",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
+    const pkg = formatBaselineHealthFailurePackage(failure);
+    expect(pkg).toMatch(/infra|infrastructure|docker/i);
+    expect(pkg).not.toMatch(/file one (single )?pre-fix ticket|建议开前置|开前置修复票/i);
+  });
+
+  it("classifies docker exit-125 usage/config as infra when tooling-shaped", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 125,
+      output:
+        "docker: 'run' requires at least 1 argument.\n" +
+        "See 'docker run --help'.\n",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
+    const pkg = formatBaselineHealthFailurePackage(failure);
+    expect(pkg).toMatch(/infra|infrastructure/i);
+    expect(pkg).not.toMatch(/file one (single )?pre-fix ticket|建议开前置|开前置修复票/i);
+  });
+
+  it("classifies docker exit-126 cannot-invoke as infra when docker-shaped (not suite FAIL)", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 126,
+      output:
+        "docker: Error response from daemon: failed to create task for container: " +
+        "failed to create shim task: OCI runtime create failed: runc create failed: " +
+        "unable to start container process: exec: \"bash\": permission denied",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
+    expect(formatBaselineHealthFailurePackage(failure)).not.toMatch(
+      /file one (single )?pre-fix ticket|建议开前置|开前置修复票/i,
+    );
+  });
+
+  it("does not swallow suite FAIL as infra even with docker-looking noise nearby", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 1,
+      output:
+        "docker run … npm test\n" +
+        "FAIL  test/dispatch/grok-mid-run-auth-964.test.ts > stdin seam\n" +
+        "Failed to read '/dev/stdin': os error 6",
+      failedTests: ["test/dispatch/grok-mid-run-auth-964.test.ts"],
+    };
+    expect(classifyBaselineFailure(failure)).toBe("suite");
+  });
+
+  it("runBaselineFullTestsInWorkerContainer tags image-pull red as failureClass:infra", async () => {
+    const err = Object.assign(
+      new Error(
+        "Unable to find image 'ming-orchestrator-coder:test' locally\n" +
+          "docker: Error response from daemon: pull access denied for ming-orchestrator-coder",
+      ),
+      {
+        status: 125,
+        stdout: "",
+        stderr:
+          "Unable to find image 'ming-orchestrator-coder:test' locally\n" +
+          "docker: Error response from daemon: pull access denied for ming-orchestrator-coder",
+      },
+    );
+    const result = await runBaselineFullTestsInWorkerContainer(
+      {
+        imageName: "ming-orchestrator-coder:test",
+        workingRepo: "/clones/family-1006",
+        familyBase: "family/1006",
+        verifyCwd: "/clones/family-1006/orchestrator",
+        provisionDeps: async () => undefined,
+      },
+      (file) => {
+        if (file === "git") return "";
+        throw err;
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failureClass).toBe("infra");
+    expect(classifyBaselineFailure(result)).toBe("infra");
+    expect(formatBaselineHealthFailurePackage(result)).not.toMatch(
+      /file one (single )?pre-fix ticket|建议开前置|开前置修复票/i,
+    );
+  });
+
   it("classifies suite FAIL with failedTests as suite (still suggests one pre-fix ticket)", () => {
     const failure: Extract<BaselineFullTestResult, { ok: false }> = {
       ok: false,
@@ -594,7 +707,6 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     const source = makeSourceRepo();
     const ledgerDir = track(mkdtempSync(join(tmpdir(), "baseline-ledger-red-")));
     let childBackend: TrackingChildBackend | undefined;
-    let fanOutBeforeGate = 0;
     let fixHookCalls = 0;
 
     const result = await runFamilyDriver({
@@ -645,7 +757,7 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     expect(result.escalation?.diagnosis).toMatch(/pre-fix|前置|ticket|issue/i);
     expect(result.stopSummary.repairHint ?? "").toMatch(/pre-fix|前置|ticket|baseline/i);
     // No fan-out: prepareWorktree / coder step never called.
-    expect(childBackend?.fanOutCalls ?? fanOutBeforeGate).toBe(0);
+    expect(childBackend?.fanOutCalls ?? 0).toBe(0);
     expect(result.children.every((c) => c.status === "skipped" || c.status === undefined)).toBe(
       true,
     );
