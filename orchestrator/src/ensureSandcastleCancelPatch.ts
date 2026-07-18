@@ -6,26 +6,30 @@
  * no upstream bump available). AbortSignal + idle-timeout must kill the
  * docker/podman/no-sandbox exec child, not abandon the host Promise alone.
  *
- * Apply runs **in-process** (import the pure patch module) — no child_process
- * spawn. That keeps #884's sole external-call chokepoint intact and avoids
- * preloading `externalCall`/`spawn` during vitest setup (which would break
- * tests that mock `node:child_process`).
+ * Apply runs **in-process** (import the pure patch module under src/) — no
+ * child_process spawn. That keeps #884's sole external-call chokepoint intact
+ * and avoids preloading `externalCall`/`spawn` during vitest setup (which
+ * would break tests that mock `node:child_process`).
  */
-import { applySandcastleCancelPatch } from "../scripts/apply-sandcastle-cancel-patch.mjs";
+import { applySandcastleCancelPatch } from "./applySandcastleCancelPatch.mjs";
 
 let applied = false;
 
 /**
  * Apply the #1010 cancel patch to node_modules/@ai-hero/sandcastle if needed.
  * Throws when the package is missing or a dist needle is missing (loud fail).
+ *
+ * @param root Optional sandcastle package root. When provided, always runs
+ *   apply (skips the process-level idempotency latch) so fail-loud paths stay
+ *   testable after a successful production ensure.
  */
-export function ensureSandcastleCancelPatch(): void {
-  if (applied) return;
+export function ensureSandcastleCancelPatch(root?: string): void {
+  if (applied && root === undefined) return;
   try {
-    applySandcastleCancelPatch();
+    applySandcastleCancelPatch(root);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`ensureSandcastleCancelPatch failed: ${detail}`);
   }
-  applied = true;
+  if (root === undefined) applied = true;
 }

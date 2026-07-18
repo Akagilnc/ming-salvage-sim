@@ -430,6 +430,82 @@ describe("#1010 Sandcastle cancel seam — abort kills exec child (no-sandbox)",
     // Prefer empty tmp leftovers after cancel.
     expect(leftovers).toEqual([]);
   }, 20_000);
+
+  it("idle timeout fires fireExecAbort path — kills shell + prompt temps (no AbortController)", async () => {
+    // P1: production cancel is not only explicit AbortController.abort — idle
+    // timeout must also reach the shared exec seam. Sleep agent emits no
+    // stream lines → idle timer fires → patched fireExecAbort → process group
+    // kill + EXIT trap cleans prompt.
+    //
+    // idleTimeoutSeconds must clear sc.run worktree/setup before the timer is
+    // meaningful for the agent; 2s is enough for no-sandbox start + short idle.
+    const root = mkdtempSync(join(tmpdir(), TMP_PREFIX + "idle-"));
+    roots.push(root);
+    initGitRepo(root);
+
+    const fake = makeFakeAgent(root);
+    const prompt = "idle-timeout-cancel\n";
+    const agent: sc.AgentProvider = {
+      name: "idle-timeout-probe",
+      env: {},
+      captureSessions: false,
+      buildPrintCommand() {
+        return { command: trapShellCommand(), stdin: prompt };
+      },
+      parseStreamLine() {
+        return [];
+      },
+    };
+
+    // Attach handlers immediately so a fast FiberFailure is not "unhandled".
+    const runOutcome = sc
+      .run({
+        cwd: root,
+        agent,
+        prompt: "unused",
+        maxIterations: 1,
+        completionSignal: [],
+        idleTimeoutSeconds: 2,
+        sandbox: noSandbox({
+          env: fixtureEnv(root, fake, "sleep"),
+        }),
+        branchStrategy: { type: "head" },
+      })
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (err: unknown) => ({ ok: false as const, err }),
+      );
+
+    const startDeadline = Date.now() + 15_000;
+    while (!existsSync(fake.started) && Date.now() < startDeadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(existsSync(fake.started)).toBe(true);
+    const agentPid = Number.parseInt(
+      readFileSync(fake.pidLog, "utf8").trim(),
+      10,
+    );
+    expect(processAlive(agentPid)).toBe(true);
+    const promptPath = readFileSync(fake.pathLog, "utf8").trim();
+    expect(existsSync(promptPath)).toBe(true);
+
+    const outcome = await runOutcome;
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected idle timeout rejection");
+    const msg =
+      outcome.err instanceof Error ? outcome.err.message : String(outcome.err);
+    // AgentIdleTimeoutError surface (message varies slightly by sandcastle).
+    expect(msg).toMatch(/idle|timeout/i);
+
+    const cleanDeadline = Date.now() + 5_000;
+    while (Date.now() < cleanDeadline && processAlive(agentPid)) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(processAlive(agentPid)).toBe(false);
+    expect(existsSync(promptPath)).toBe(false);
+  }, 45_000);
 });
 
 describe("#1010 docker cancel (production-shaped, env-gated)", () => {
@@ -595,8 +671,15 @@ describe("#1010 cancel patch is installed on the sandcastle package", () => {
     );
     expect(index).toContain("#1010-sandcastle-cancel");
     expect(index).toContain("execAbortController");
+    // Idle-timeout path must call fireExecAbort (P1 needle cannot rot).
+    expect(index).toContain(
+      'fireExecAbort(new AgentIdleTimeoutError({ message: "agent idle timeout"',
+    );
     expect(dockerChunk).toContain("__scCancelWireAbortKill");
     expect(dockerChunk).toContain("detached: true");
+    // Marker-bounded host-kill helper (S4) — not brace/indent strip alone.
+    expect(dockerChunk).toContain("#1010-sandcastle-cancel:host-kill");
+    expect(dockerChunk).toContain("#1010-sandcastle-cancel:host-kill-end");
     // nit: cancel token present on patched docker chunk
     expect(dockerChunk).toContain("SC_CANCEL_TOKEN");
     // should: in-container kill excludes self ($$) — dist holds escaped quotes
