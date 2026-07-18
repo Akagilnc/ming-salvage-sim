@@ -547,31 +547,52 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
-def test_background_audience_recommendation_stages_candidate_snapshot(game):
-    """Web 流式路径与 session 共用荐人 sentinel 的任命暂存语义。"""
+def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):
+    """真实 CLI Agent 流式荐人进入 web pending，envelope 不泄漏给玩家。"""
+    from agno.agent import Agent
+
+    from ming_sim.models import CourtContext
+    from ming_sim.tools import build_minister_tools
+
     db, state, content = game
     minister_name = "毕自严"
     candidate = db.list_recommendation_candidates(state, minister_name)[0]
-    payload = {
-        "name": candidate["name"], "office": "巡盐御史", "reason": "可堪任事",
-        "faction": candidate["faction"],
-        "recommendation": {"candidate": candidate, "recommender": minister_name},
-    }
-    agent = _FakeAgent([
-        ToolExec("recommend_person", "__pending_recommendation__" + json.dumps(payload, ensure_ascii=False))
-    ])
+    model = cb.CliChat(id="test-stream-recommendation", backend="codex")
+    calls = iter((
+        [
+            "臣荐",
+            candidate["name"],
+            "。[[recomm",
+            "end_person:"
+            + json.dumps({
+                "name": candidate["name"],
+                "target_office": "巡盐御史",
+                "reason": "可堪任事",
+            }, ensure_ascii=False)
+            + "]]",
+        ],
+        ["臣荐此人巡盐，请陛下裁夺。"],
+    ))
+    monkeypatch.setattr(cb, "_iter_codex_stream_chunks", lambda *_args, **_kwargs: iter(next(calls)))
+    agent = Agent(
+        name=minister_name,
+        model=model,
+        tools=build_minister_tools(
+            content.characters[minister_name], CourtContext(state=state, db=db),
+        ),
+        markdown=False,
+    )
     web_game = _web_game(db, state, content, agent)
 
-    stream = web_game.chat_stream(minister_name, "可荐何人巡盐？")
-    assert next(stream)["type"] == "delta"
-    stream.close()
+    events = list(web_game.chat_stream(minister_name, "可荐何人巡盐？"))
 
-    assert agent.completed.wait(1.0)
-    assert _wait_for(lambda: len(db.list_pending_actions(state.turn)) == 1)
+    player_text = "".join(event.get("content", "") for event in events if event["type"] == "delta")
+    assert "[[recommend_person:" not in player_text
+    assert len(db.list_pending_actions(state.turn)) == 1
     staged = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
     assert staged["recommendation"]["recommender"] == minister_name
     assert staged["recommendation"]["candidate"]["name"] == candidate["name"]
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    assert staged["office"] == "巡盐御史"
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game):

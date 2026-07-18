@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any, Dict
 
-from ming_sim.qualitative import qualitative_audience_text, qualitative_band
+from ming_sim.qualitative import qualitative_audience_text
 
 
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
@@ -118,37 +118,8 @@ def knowledge_row_visible_to(
 
 
 def _qualitative(text: object) -> str:
-    """Keep report prose while preserving player-facing countable facts.
-
-    The report builders already translate abstract game axes (for example morale
-    and satisfaction) into qualitative language.  Amounts, troop totals, dates,
-    artillery pieces, and arrears months are diegetic facts, not hidden axes;
-    replacing every number here made the audience unable to reason about the
-    state it is entitled to see.
-    """
-    rendered = str(text or "")
-    labels = {
-        "火器": ("匮乏", "短缺", "尚可", "精良", "充足"),
-        "民心": ("堪忧", "堪忧", "尚可", "稳固", "拥戴"),
-        "动乱": ("低", "渐起", "中等", "高", "已炽"),
-        "士绅阻力": ("低", "偏低", "中等", "偏高", "很高"),
-        "军事压力": ("低", "偏低", "中等", "偏高", "很高"),
-        "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
-        "风险": ("低", "中", "偏高", "极高", "极高"),
-        "完好": ("残损", "失修", "尚可", "完好", "坚固"),
-        "等级": ("初设", "成形", "完备", "宏整", "巨构"),
-        "满意": ("怨愤", "不满", "平常", "顺应", "拥戴"),
-        "势力": ("极弱", "偏弱", "中等", "偏强", "强盛"),
-        "威望": ("极弱", "偏弱", "中等", "偏强", "强盛"),
-        "实力": ("极弱", "偏弱", "中等", "偏强", "强盛"),
-        "经济": ("匮乏", "吃紧", "尚可", "充足", "丰裕"),
-    }
-    pattern = re.compile(r"(" + "|".join(labels) + r")\s*[:：]?\s*(-?\d+)(?:\s*/\s*100|%)?")
-    def replace(match: re.Match[str]) -> str:
-        label, raw = match.groups()
-        return label + "：" + qualitative_band(raw, labels[label])
-    rendered = pattern.sub(replace, rendered)
-    return qualitative_audience_text(rendered, "见闻记录")
+    """Project report prose through the shared player-facing P4 renderer."""
+    return qualitative_audience_text(text, "见闻记录")
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
@@ -330,7 +301,7 @@ def _world(
             # office label to manufacture a difference between otherwise
             # identical reports; the value must remain an actual current-state
             # fact selected by the content-owned domain mapping.
-            result[domain] = _qualitative(facts[domain])
+            result[domain] = facts[domain]
     return result
 
 

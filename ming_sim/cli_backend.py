@@ -38,6 +38,10 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     Function as ToolFunction,
 )
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import (
+    ChoiceDeltaToolCall,
+    ChoiceDeltaToolCallFunction,
+)
 from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
@@ -1938,6 +1942,37 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
 _CLI_RECOMMENDATION_CALL = re.compile(
     r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
 )
+_CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
+
+
+def _cli_prompt(
+    messages: List[Message], response_format: object, tools: object,
+) -> str:
+    """Build one CLI prompt, including instructions derived from offered tools."""
+    prompt = _messages_to_prompt(messages, response_format)
+    recommendation_schema = next(
+        (tool.get("function", tool) for tool in (tools or [])
+         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
+        None,
+    )
+    if recommendation_schema:
+        prompt += (
+            "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
+            f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
+        )
+    return prompt
+
+
+def _cli_stream_safe_prefix(text: str) -> tuple[str, str]:
+    """Release text that cannot belong to a trailing recommendation envelope."""
+    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)
+    if marker_at >= 0:
+        return text[:marker_at], text[marker_at:]
+    keep = 0
+    for length in range(1, min(len(text), len(_CLI_RECOMMENDATION_PREFIX) - 1) + 1):
+        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
+            keep = length
+    return (text[:-keep], text[-keep:]) if keep else (text, "")
 
 
 def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
@@ -1983,7 +2018,7 @@ def _fake_completion(
 
 @dataclass
 class CliChat(OpenAIChat):
-    """agy / codex 当后端。只覆盖 invoke/ainvoke，复用 agno 其余全部逻辑。"""
+    """agy / codex 当后端；provider 调用适配后复用 agno 的 tool loop。"""
 
     backend: str = "agy"
     reasoning_strength: str = ""
@@ -2015,17 +2050,7 @@ class CliChat(OpenAIChat):
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
         # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
-        prompt = _messages_to_prompt(messages, response_format)
-        recommendation_schema = next(
-            (tool.get("function", tool) for tool in (tools or [])
-             if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
-            None,
-        )
-        if recommendation_schema:
-            prompt += (
-                "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
-                f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
-            )
+        prompt = _cli_prompt(messages, response_format, tools)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -2077,12 +2102,57 @@ class CliChat(OpenAIChat):
             compress_tool_results=compress_tool_results,
         )
 
-    def invoke_stream(self, *args, **kwargs):  # type: ignore[override]
-        # 底层流式不实现；高层 response_stream 已改为委托非流式 response()。
-        raise NotImplementedError("CliChat 不支持底层流式")
+    def invoke_stream(  # type: ignore[override]
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Any = None,
+        compress_tool_results: bool = False,
+    ):
+        if self.backend != "codex" or response_format is not None:
+            yield self.invoke(
+                messages, assistant_message, response_format=response_format,
+                tools=tools, tool_choice=tool_choice, run_response=run_response,
+                compress_tool_results=compress_tool_results,
+            )
+            return
+        prompt = _cli_prompt(messages, response_format, tools)
+        held = ""
+        for delta in _iter_codex_stream_chunks(
+            prompt,
+            model=str(getattr(self, "id", "") or ""),
+            timeout=getattr(self, "timeout", None),
+            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+        ):
+            ready, held = _cli_stream_safe_prefix(held + str(delta))
+            if ready:
+                yield ModelResponse(role="assistant", content=ready)
+        text, tool_calls = _cli_recommendation_call(held, tools)
+        if text:
+            yield ModelResponse(role="assistant", content=text)
+        if tool_calls:
+            yield ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=index,
+                        id=call.id,
+                        type=call.type,
+                        function=ChoiceDeltaToolCallFunction(
+                            name=call.function.name,
+                            arguments=call.function.arguments,
+                        ),
+                    )
+                    for index, call in enumerate(tool_calls)
+                ],
+            )
 
-    def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
-        raise NotImplementedError("CliChat 不支持底层流式")
+    async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
+        for response in self.invoke_stream(*args, **kwargs):
+            yield response
 
     def response_stream(  # type: ignore[override]
         self,
@@ -2097,21 +2167,12 @@ class CliChat(OpenAIChat):
         compression_manager: Any = None,
         **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
-        if self.backend == "codex" and response_format is None:
-            prompt = _messages_to_prompt(messages, response_format)
-            for delta in _iter_codex_stream_chunks(
-                prompt,
-                model=str(getattr(self, "id", "") or ""),
-                timeout=getattr(self, "timeout", None),
-                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-            ):
-                yield ModelResponse(role="assistant", content=delta)
-            return
-
-        # agy/claude 一次性出全文；结构化输出也保持非流式，避免拼接 JSON。
-        yield self.response(
-            messages, response_format=response_format, tools=None,
-            run_response=run_response,
+        yield from super().response_stream(
+            messages, response_format=response_format, tools=tools,
+            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
+            stream_model_response=stream_model_response, run_response=run_response,
+            send_media_to_model=send_media_to_model,
+            compression_manager=compression_manager, **kwargs,
         )
 
     async def aresponse_stream(  # type: ignore[override]
@@ -2127,10 +2188,14 @@ class CliChat(OpenAIChat):
         compression_manager: Any = None,
         **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
-        yield self.response(
-            messages, response_format=response_format, tools=None,
-            run_response=run_response,
-        )
+        async for response in super().aresponse_stream(
+            messages, response_format=response_format, tools=tools,
+            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
+            stream_model_response=stream_model_response, run_response=run_response,
+            send_media_to_model=send_media_to_model,
+            compression_manager=compression_manager, **kwargs,
+        ):
+            yield response
 
 
 def cli_backend_from_env() -> Optional[str]:
