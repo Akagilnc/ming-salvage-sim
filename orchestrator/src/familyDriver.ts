@@ -55,6 +55,7 @@ import {
 } from "./admissionPreflight.js";
 import {
   admitBaselineHealth,
+  baselineHealthRepairHint,
   NOOP_BASELINE_FIX_ATTEMPT,
   runBaselineFullTestsInWorkerContainer,
   type BaselineFixAttempt,
@@ -1556,6 +1557,8 @@ export async function runFamilyDriver(
     imageName: options.imageName,
     verifyCwd:
       options.verifyCwd ?? resolveBaselineVerifyCwd(workingRepo),
+    // Same warm template as family verify installDeps (#746).
+    depsTemplateRoot: options.sourceRepo,
   });
   const baseline = await admitBaselineHealth({
     runFullTests: baselineRunner,
@@ -1580,8 +1583,8 @@ export async function runFamilyDriver(
       escalation: baseline.escalation,
       stopSummary: infraFailureStopSummary({
         summary: baseline.escalation.diagnosis,
-        repairHint:
-          "file one pre-fix ticket for the family-base full failure, land the fix on main/family base, then re-admit — do not fan out N children to re-fix the same baseline disease",
+        // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
+        repairHint: baselineHealthRepairHint(baseline.failure),
       }),
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
@@ -1625,6 +1628,7 @@ function resolveBaselineFullTestRunner(
     readonly familyBase: string;
     readonly imageName: string;
     readonly verifyCwd: string;
+    readonly depsTemplateRoot?: string;
   },
 ): BaselineFullTestRunner {
   if (options.baselineFullTestRunner !== undefined) {
@@ -1644,6 +1648,9 @@ function resolveBaselineFullTestRunner(
       workingRepo: req.workingRepo,
       familyBase: req.familyBase,
       verifyCwd: req.verifyCwd,
+      ...(req.depsTemplateRoot !== undefined
+        ? { depsTemplateRoot: req.depsTemplateRoot }
+        : {}),
     });
 }
 

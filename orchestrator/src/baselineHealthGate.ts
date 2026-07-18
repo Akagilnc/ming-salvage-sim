@@ -15,6 +15,10 @@
  * Hard constraint (owner): production full must run inside the same worker
  * image / container class as coder workers — never host `npm test` alone.
  *
+ * Deps (sibling of family verify `installDeps` / worktree `provisionWorktreeNodeModules`):
+ * host-side provision of `verifyCwd` node_modules (clonefile / npm ci) before
+ * container `npm test`, so a clean family clone has a reachable green path.
+ *
  * Sandcastle parity (best-effort this slice): same `imageName`, bind-mount the
  * family worksite at the host path (worker cwd pattern), `HOME=/home/agent`,
  * `OPENCLAW_SESSION=1` (SPAWNED_WORKER_ENV), and `--user agent`. Full agent
@@ -22,7 +26,15 @@
  */
 
 import { shWithClock } from "./externalCall.js";
+import {
+  provisionNodeModules,
+  resolveTemplateProjectDir,
+  type Sh as ProvisionSh,
+} from "./provisionNodeModules.js";
 import { shellEscape } from "./shellEscape.js";
+
+/** Infra (tooling/deps) vs suite (product tests) — diagnosis/hint branch. */
+export type BaselineFailureClass = "infra" | "suite";
 
 /** Outcome of one canonical full suite invocation. */
 export type BaselineFullTestResult =
@@ -32,6 +44,8 @@ export type BaselineFullTestResult =
       readonly exitCode: number;
       readonly output: string;
       readonly failedTests?: ReadonlyArray<string>;
+      /** Explicit class when known (provision/spawn). Else classified from output. */
+      readonly failureClass?: BaselineFailureClass;
     };
 
 export type BaselineHealthAdmission =
@@ -78,17 +92,56 @@ export const NOOP_BASELINE_FIX_ATTEMPT: BaselineFixAttempt = async () => ({
     "baseline auto-fixer not wired this slice — fail-closed after one red (owner-accepted 报错 path)",
 });
 
-/** Suggest filing a single pre-fix ticket rather than N parallel child fixes. */
+/**
+ * Classify baseline red as infrastructure vs suite disease.
+ * Explicit `failureClass` wins; otherwise heuristic on output (docker/npm spawn,
+ * provision, daemon) so pure infra never steers operators at a pre-fix ticket.
+ */
+export function classifyBaselineFailure(
+  failure: Extract<BaselineFullTestResult, { ok: false }>,
+): BaselineFailureClass {
+  if (failure.failureClass === "infra" || failure.failureClass === "suite") {
+    return failure.failureClass;
+  }
+  const o = failure.output;
+  if (
+    /baseline health gate:\s*(deps provision|worksite prepare|empty container argv)/i.test(
+      o,
+    ) ||
+    /Cannot connect to the Docker daemon/i.test(o) ||
+    /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found|ENOENT.*\bdocker\b/i.test(
+      o,
+    ) ||
+    /spawn\s+npm\s+ENOENT|npm:\s*(?:command\s+)?not found|ENOENT.*\bnpm\b/i.test(o) ||
+    /deps provision|provision(?:ing)? failed|npm ci failed/i.test(o)
+  ) {
+    return "infra";
+  }
+  return "suite";
+}
+
+/** Suite disease → one pre-fix ticket; infra → repair tooling/deps, no ticket. */
 export function formatBaselineHealthFailurePackage(
   failure: Extract<BaselineFullTestResult, { ok: false }>,
 ): string {
+  const kind = classifyBaselineFailure(failure);
+  const outputTail = failure.output.trim();
+  const clipped =
+    outputTail.length > 4000 ? `${outputTail.slice(-4000)}\n…(truncated)` : outputTail;
+  if (kind === "infra") {
+    return [
+      "family baseline health gate: infrastructure RED (not suite disease) on family base before fan-out",
+      `exit code: ${failure.exitCode}`,
+      "pure infrastructure — do NOT open a pre-fix ticket / 前置修复票 for docker-missing, npm-missing, or deps provision failures",
+      "repair: ensure docker is available + daemon up, host deps provisioned (installDeps / npm ci class), then re-admit",
+      "--- infra output ---",
+      clipped,
+    ].join("\n");
+  }
   const tests =
     failure.failedTests !== undefined && failure.failedTests.length > 0
       ? failure.failedTests.join(", ")
       : "(see full output — parser found no individual test paths)";
-  const outputTail = failure.output.trim();
-  const clipped =
-    outputTail.length > 4000 ? `${outputTail.slice(-4000)}\n…(truncated)` : outputTail;
   return [
     "family baseline health gate: canonical full suite RED on family base before fan-out",
     `failed tests: ${tests}`,
@@ -98,6 +151,22 @@ export function formatBaselineHealthFailurePackage(
     "--- full test output ---",
     clipped,
   ].join("\n");
+}
+
+/** Operator repair hint for stopSummary — branches on infra vs suite. */
+export function baselineHealthRepairHint(
+  failure: Extract<BaselineFullTestResult, { ok: false }>,
+): string {
+  if (classifyBaselineFailure(failure) === "infra") {
+    return (
+      "repair baseline-gate infrastructure (docker available, host deps provision / npm ci) " +
+      "then re-admit — do not open a suite pre-fix ticket for pure infra red"
+    );
+  }
+  return (
+    "file one pre-fix ticket for the family-base full failure, land the fix on main/family base, " +
+    "then re-admit — do not fan out N children to re-fix the same baseline disease"
+  );
 }
 
 /**
@@ -145,12 +214,22 @@ function stopFromFailure(
   };
 }
 
-/** Inputs for building the production container full-test argv. */
+/** Inputs for building the production container full-test argv + host provision. */
 export interface BaselineContainerFullTestRequest {
   readonly imageName: string;
   readonly workingRepo: string;
   readonly familyBase: string;
   readonly verifyCwd: string;
+  /**
+   * Warm monorepo template for clonefile (#746) — same as family verify
+   * `depsTemplateRoot` / driver `sourceRepo`. Optional; absent → npm ci/install.
+   */
+  readonly depsTemplateRoot?: string;
+  /**
+   * Injectable host deps provision (tests / alternate installers).
+   * Default = {@link provisionNodeModules} at verifyCwd (installDeps class).
+   */
+  readonly provisionDeps?: (verifyCwd: string) => Promise<void>;
 }
 
 /**
@@ -158,6 +237,9 @@ export interface BaselineContainerFullTestRequest {
  * Same image class as coder workers; repo bind-mounted at the host path so
  * paths match the worksite; `npm test` runs *inside* the container — never as
  * a bare host invocation (owner hard constraint: no lying host greens).
+ *
+ * Host must already have provisioned `verifyCwd` node_modules (see
+ * {@link runBaselineFullTestsInWorkerContainer}); the bind mount carries them in.
  *
  * Best-effort sandcastle parity (not full `sc.run`): imageName + worksite
  * bind-mount + `HOME=/home/agent` + `OPENCLAW_SESSION=1` + `--user agent`.
@@ -168,6 +250,7 @@ export function buildBaselineContainerFullTestArgv(
 ): string[] {
   // Checkout family base then run the project's canonical full entry.
   // `npm test` is the orchestrator full gate (typecheck + vitest run).
+  // Deps are host-provisioned before this container starts (installDeps class).
   const remoteCmd = [
     `git -C ${shellEscape(req.workingRepo)} checkout --quiet ${shellEscape(req.familyBase)}`,
     "npm test",
@@ -252,14 +335,60 @@ export type BaselineSh = (
 ) => string;
 
 /**
- * Production runner: docker worker image + mounted family clone + `npm test`.
- * Throws are mapped to ok:false so admission stays fail-closed.
+ * Host worksite prepare: checkout family base + provision node_modules at
+ * verifyCwd — same class as family verify `installDeps` / worktree provision.
+ * Must run before container `npm test` so a clean clone has a reachable green path.
+ */
+export async function ensureBaselineWorksiteReady(
+  req: BaselineContainerFullTestRequest,
+  sh: BaselineSh = defaultBaselineSh,
+): Promise<void> {
+  // Checkout first so package.json / lock match the suite under test.
+  sh("git", [
+    "-C",
+    req.workingRepo,
+    "checkout",
+    "--quiet",
+    req.familyBase,
+  ]);
+  if (req.provisionDeps !== undefined) {
+    await req.provisionDeps(req.verifyCwd);
+    return;
+  }
+  const templateProjectDir = resolveTemplateProjectDir(req.verifyCwd, {
+    templateRoot: req.depsTemplateRoot,
+    targetRoot: req.workingRepo,
+  });
+  const provisionSh: ProvisionSh = (file, args, cwd) =>
+    sh(file, args, cwd !== undefined ? { cwd } : undefined);
+  await provisionNodeModules(req.verifyCwd, {
+    templateProjectDir,
+    sh: provisionSh,
+  });
+}
+
+/**
+ * Production runner: host provision (installDeps class) → docker worker image
+ * + mounted family clone + `npm test`. Throws map to ok:false (fail-closed).
  * Failure output = message+stdout+stderr so extractFailedTestPaths sees vitest FAIL.
+ * Provision / docker-spawn failures are tagged `failureClass: "infra"`.
  */
 export async function runBaselineFullTestsInWorkerContainer(
   req: BaselineContainerFullTestRequest,
   sh: BaselineSh = defaultBaselineSh,
 ): Promise<BaselineFullTestResult> {
+  try {
+    await ensureBaselineWorksiteReady(req, sh);
+  } catch (err) {
+    const output = formatBaselineExecFailureOutput(err);
+    return {
+      ok: false,
+      exitCode: 1,
+      output: `baseline health gate: deps provision / worksite prepare failed\n${output}`,
+      failureClass: "infra",
+    };
+  }
+
   const argv = buildBaselineContainerFullTestArgv(req);
   const [file, ...args] = argv;
   if (file === undefined) {
@@ -267,6 +396,7 @@ export async function runBaselineFullTestsInWorkerContainer(
       ok: false,
       exitCode: 1,
       output: "baseline health gate: empty container argv",
+      failureClass: "infra",
     };
   }
   try {
@@ -285,13 +415,32 @@ export async function runBaselineFullTestsInWorkerContainer(
         ? ((err as { status: number }).status as number)
         : 1;
     const failedTests = extractFailedTestPaths(output);
+    const infra = isInfraExecFailure(err, output);
     return {
       ok: false,
       exitCode: exitCode === 0 ? 1 : exitCode,
       output,
       ...(failedTests.length > 0 ? { failedTests } : {}),
+      ...(infra ? { failureClass: "infra" as const } : {}),
     };
   }
+}
+
+/** Docker/npm spawn or daemon — not suite disease. */
+function isInfraExecFailure(err: unknown, output: string): boolean {
+  if (
+    err !== null &&
+    typeof err === "object" &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "ENOENT"
+  ) {
+    return true;
+  }
+  return (
+    /Cannot connect to the Docker daemon/i.test(output) ||
+    /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found/i.test(output) ||
+    /spawn\s+npm\s+ENOENT|npm:\s*(?:command\s+)?not found/i.test(output)
+  );
 }
 
 function defaultBaselineSh(
