@@ -194,6 +194,10 @@ describe("RealFamilyBackend live officer effort", () => {
       "grok-build",
     );
     expect(provider.name).toBe("grok");
+    const command = provider
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
+    expect(command).toContain("prompt_file=$(mktemp)");
+    expect(command).toContain('grok --prompt-file "$prompt_file"');
   });
 });
 

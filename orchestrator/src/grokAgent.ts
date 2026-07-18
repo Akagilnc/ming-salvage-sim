@@ -133,7 +133,8 @@ export function createGrokStreamParser(): (line: string) => Array<
 
 /**
  * Build a sandcastle AgentProvider that runs the real `grok` CLI in headless
- * mode (stdin staged to a temporary prompt file + streaming-json + always-approve).
+ * mode (stdin materialized to a temporary `--prompt-file` + streaming-json +
+ * always-approve).
  */
 export function grokAgent(
   model: string,
@@ -156,19 +157,21 @@ export function grokAgent(
         ? ` --resume ${shellEscape(resumeSession)}`
         : "";
       const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
-      // Stage stdin in a prompt file to avoid the Linux 128KB argv limit.
-      // Grok 0.2.102 cannot reopen Node/Sandcastle's pipe-backed stdin as a
-      // prompt file (ENXIO), so neither /dev/stdin nor /proc/self/fd/0 is safe.
-      // EXIT owns normal/auth-failure cleanup; explicit signal handlers clean
-      // before re-raising the original signal so worker interruption cannot
-      // strand a full-context prompt file or turn into a successful exit.
+      // Sandcastle supplies prompts through a Node child-process pipe. Grok
+      // reopens --prompt-file itself, and reopening /dev/stdin fails with ENXIO
+      // for that pipe shape. Materialize stdin into a private mode-600 temporary
+      // file so large prompts still avoid the Linux argv limit and Grok reads a
+      // regular file. EXIT owns normal/auth-failure cleanup; explicit signal
+      // handlers clean before re-raising the original signal so worker
+      // interruption cannot strand a full-context prompt file or turn into a
+      // successful exit.
       // Headless-only:
       // never `grok login` / device-auth (#964). Auth death is the CLI's native
       // non-interactive fail ("Not signed in" on pin ≥0.2.102) → AgentError →
       // owning Action typed failure (not an interactive wait).
       return {
         command:
-          `prompt_file=$(mktemp); ` +
+          `prompt_file=$(mktemp); chmod 600 "$prompt_file"; ` +
           `cleanup_prompt() { rm -f "$prompt_file"; }; ` +
           `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; ` +
           `if [ -n "$grok_pid" ]; then kill -s "$signal" "$grok_pid" 2>/dev/null; wait "$grok_pid" 2>/dev/null; fi; ` +

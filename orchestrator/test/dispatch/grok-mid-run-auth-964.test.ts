@@ -23,13 +23,14 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
-  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -57,7 +58,7 @@ import type {
   MergeRequest,
   MergeResult,
 } from "../../src/family/types.js";
-import { grokAgent } from "../../src/grokAgent.js";
+import { grokAgent, shellEscape } from "../../src/grokAgent.js";
 import {
   resolveRouteModels,
   routeSmokeEntries,
@@ -175,6 +176,23 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   return env;
 }
 
+function requirePinnedHostTarget(
+  skip: (note?: string) => never,
+): Extract<GrokProbeTarget, { kind: "host" }> {
+  const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
+  if (!bin) {
+    return skip(`[#964] unavailable: no host grok ${GROK_FAIL_FAST_PIN}`);
+  }
+  const version = hostGrokVersion(bin);
+  if (!version.includes(GROK_FAIL_FAST_PIN)) {
+    const versionLabel = version.split(/\r?\n/, 1)[0] || "no version";
+    return skip(
+      `[#964] unavailable: host grok is not ${GROK_FAIL_FAST_PIN} (${bin}: ${versionLabel})`,
+    );
+  }
+  return { kind: "host", bin, version };
+}
+
 type HeadlessProbeResult = {
   status: number | null;
   signal: NodeJS.Signals | null;
@@ -216,7 +234,10 @@ function runHostPipeProbe(
   };
 }
 
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+function runHeadlessEmptyAuthProbe(
+  target: GrokProbeTarget,
+  pathOverride?: string,
+): {
   status: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
@@ -226,23 +247,26 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
+  if (pathOverride !== undefined) env.PATH = pathOverride;
   const staging = join(emptyHome, "staging");
   mkdirSync(staging);
-  const built = grokAgent("grok-4.5").buildPrintCommand({
+  const built = grokAgent("grok-4.5", { captureSessions: false }).buildPrintCommand({
     prompt: "ping\n",
     dangerouslySkipPermissions: true,
   });
   const t0 = Date.now();
   if (target.kind === "host") {
-    const binDir = join(emptyHome, "bin");
-    mkdirSync(binDir);
-    symlinkSync(target.bin, join(binDir, "grok"));
-    const r = spawnSync("bash", ["-c", built.command], {
+    // Bind the selected binary into the production command so PATH cannot redirect it
+    // (#993). Keep TMPDIR staging so prompt-file cleanup remains observable (#989).
+    const selectedCommand = built.command.replace(
+      "grok --prompt-file",
+      `${shellEscape(target.bin)} --prompt-file`,
+    );
+    const r = spawnSync("bash", ["-c", selectedCommand], {
       encoding: "utf8",
       input: built.stdin,
       env: {
         ...env,
-        PATH: `${binDir}:${env.PATH ?? ""}`,
         TMPDIR: staging,
       },
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
@@ -416,6 +440,22 @@ class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
 }
 
 describe("#964 grok headless auth — native fail-fast surface", () => {
+  it("grokAgent print command stays headless (prompt-file + streaming-json; no login subcommand)", () => {
+    const cmd = grokAgent("grok-4.5").buildPrintCommand({
+      prompt: "resolve the conflict",
+      dangerouslySkipPermissions: true,
+    });
+    expect(cmd.command).toContain("grok ");
+    expect(cmd.command).toContain("prompt_file=$(mktemp)");
+    expect(cmd.command).toContain('cat > "$prompt_file"');
+    expect(cmd.command).toContain('--prompt-file "$prompt_file"');
+    expect(cmd.command).toContain("--output-format streaming-json");
+    expect(cmd.command).toContain("--always-approve");
+    expect(cmd.command).not.toMatch(/\blogin\b/);
+    expect(cmd.command).not.toMatch(/--device-auth|--device-code/);
+    expect(cmd.stdin).toBe("resolve the conflict");
+  });
+
   it("pins container grok to a fail-fast non-interactive release (0.2.102+)", () => {
     // Production mechanism (#964): pin ≥0.2.102 so headless auth death fail-fasts
     // ("Not signed in") instead of interactive device-code wait (0.2.93 flight3).
@@ -488,6 +528,28 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
 
+  it("live GROK_BIN target remains authoritative when PATH has no grok", ({ skip }) => {
+    const result = runHeadlessEmptyAuthProbe(
+      requirePinnedHostTarget(skip),
+      "/usr/bin:/bin",
+    );
+    expect(result.status, result.combined).not.toBe(0);
+    expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
+  });
+
+  it("live GROK_BIN target wins over a different grok on PATH", ({ skip }) => {
+    const decoyDir = mkDir("964-decoy-grok-");
+    const decoy = join(decoyDir, "grok");
+    writeFileSync(decoy, "#!/bin/sh\necho WRONG_GROK >&2\nexit 77\n");
+    chmodSync(decoy, 0o755);
+    const result = runHeadlessEmptyAuthProbe(
+      requirePinnedHostTarget(skip),
+      `${decoyDir}:/usr/bin:/bin`,
+    );
+    expect(result.combined).not.toContain("WRONG_GROK");
+    expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
+  });
+
   it("route-smoke bare-ping keeps the same headless shape (startup auth not rewritten)", () => {
     const built = barePingArgv(
       "grok",
@@ -495,11 +557,10 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       "Reply with exactly: nonce-964",
     );
     expect(built.file).toBe("grok");
-    expect(built.args).toContain("--prompt-file");
-    expect(built.args).toContain("/dev/stdin");
+    expect(built.args).toContain("-p");
+    expect(built.args).toContain("Reply with exactly: nonce-964");
     expect(built.args).toContain("--always-approve");
-    expect(built.args).not.toContain("-p");
-    expect(built.input).toBe("Reply with exactly: nonce-964");
+    expect(built.input).toBeUndefined();
   });
 
   it("does not introduce an auth_expired (or other new) public failed cause", () => {
