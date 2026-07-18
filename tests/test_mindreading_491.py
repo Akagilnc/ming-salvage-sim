@@ -9,6 +9,7 @@ import pytest
 
 import ming_sim.mindreading as mindreading
 from ming_sim.agents import create_mindreading_agent
+from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.mindreading import (
     build_mindreading_materials,
@@ -147,6 +148,33 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     assert "92" not in json.dumps(material, ensure_ascii=False)
     assert "15" not in json.dumps(material, ensure_ascii=False)
     assert payload["narration"] == model.text
+
+
+def test_mindreading_record_survives_restore_without_entering_shared_history(tmp_path, content):
+    path = tmp_path / "mindreading.db"
+    db = GameDB(str(path), content)
+    try:
+        db.seed_static_data()
+        state = db.load_state()
+        reader = content.characters["王承恩"]
+        target = content.characters["温体仁"]
+        _materials, payload = _generate(
+            db, state, reader, target, "臣有本奏。", _SpyMindreadingAgent("近臣低声陈明未尽之意。"),
+        )
+        chat_turn_id = db.create_chat_turn(state, target.name, "record-test", 0)
+        db.record_mindreading(chat_turn_id, payload)
+    finally:
+        db.close()
+
+    restored = GameDB(str(path), content)
+    try:
+        assert restored.list_mindreading_records(chat_turn_id) == [payload]
+        assert restored.load_all_chat_history() == {}
+        restored_state = restored.load_state()
+        knowledge = restored.get_character_knowledge(restored_state, reader.name)
+        assert payload["narration"] not in json.dumps(knowledge, ensure_ascii=False)
+    finally:
+        restored.close()
 
 
 def test_runtime_uses_existing_model_config_factory(game, monkeypatch):

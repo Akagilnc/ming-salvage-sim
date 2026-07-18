@@ -1141,6 +1141,19 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
 
+            CREATE TABLE IF NOT EXISTS mindreading_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_turn_id INTEGER NOT NULL,
+                reader TEXT NOT NULL,
+                target TEXT NOT NULL,
+                source TEXT NOT NULL,
+                precision TEXT NOT NULL,
+                narration TEXT NOT NULL,
+                FOREIGN KEY(chat_turn_id) REFERENCES chat_turns(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mindreading_records_chat_turn
+                ON mindreading_records(chat_turn_id, id);
+
             CREATE TABLE IF NOT EXISTS chat_turn_rollback_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_turn_id INTEGER NOT NULL,
@@ -6858,6 +6871,27 @@ class GameDB:
                 {"role": row["role"], "content": row["content"]}
             )
         return history
+
+    def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
+        """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
+        cur = self.conn.execute(
+            "INSERT INTO mindreading_records "
+            "(chat_turn_id,reader,target,source,precision,narration) VALUES (?,?,?,?,?,?)",
+            (
+                int(chat_turn_id), payload.get("reader"), payload.get("target"),
+                payload.get("source"), payload.get("precision"), payload.get("narration"),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def list_mindreading_records(self, chat_turn_id: int) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT reader,target,source,precision,narration FROM mindreading_records "
+            "WHERE chat_turn_id=? ORDER BY id",
+            (int(chat_turn_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ----- chat_turns（本回合召对撤回）-----
 
