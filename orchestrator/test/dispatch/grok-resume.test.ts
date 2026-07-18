@@ -520,21 +520,16 @@ describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
           resumeSession?: string,
         ): Promise<{ stdout: string; exitCode: number }> =>
           new Promise((resolve, reject) => {
-            const args = [
-              "--prompt-file",
-              "/dev/stdin",
-              "--output-format",
-              "streaming-json",
-              "--always-approve",
-              "--permission-mode",
-              "bypassPermissions",
-            ];
-            if (resumeSession !== undefined) {
-              args.push("--resume", resumeSession);
-            }
+            const built = grokAgent("grok-4.5", {
+              captureSessions: false,
+            }).buildPrintCommand({
+              prompt,
+              dangerouslySkipPermissions: true,
+              resumeSession,
+            });
             const child = execFile(
-              "grok",
-              args,
+              "bash",
+              ["-c", built.command],
               { cwd: work, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
               (err, stdout, stderr) => {
                 if (err && (err as { killed?: boolean }).killed) {
@@ -554,7 +549,7 @@ describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
                 });
               },
             );
-            child.stdin?.write(prompt);
+            child.stdin?.write(built.stdin);
             child.stdin?.end();
           });
 

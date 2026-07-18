@@ -20,7 +20,7 @@ import { barePingArgv, barePingNonceSatisfied } from "../../src/realBackend.js";
 import { routeSmokeEntries, resolveRouteModels } from "../../src/modelRoutes.js";
 
 describe("#807 grokAgent AgentProvider", () => {
-  it("builds a headless grok command with stdin prompt (not sc.pi)", () => {
+  it("builds a headless grok command with a materialized stdin prompt (not sc.pi)", () => {
     const agent = grokAgent("grok-4.5");
     expect(agent.name).toBe("grok");
     const cmd = agent.buildPrintCommand({
@@ -28,7 +28,8 @@ describe("#807 grokAgent AgentProvider", () => {
       dangerouslySkipPermissions: true,
     });
     expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("--prompt-file /dev/stdin");
+    expect(cmd.command).toContain("prompt_file=$(mktemp)");
+    expect(cmd.command).toContain('--prompt-file "$prompt_file"');
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).toContain("-m grok-4.5");
@@ -140,11 +141,9 @@ describe("#807 grok bare-ping smoke wiring", () => {
   it("builds a one-shot grok CLI bare-ping argv (no docker/tool loop)", () => {
     const built = barePingArgv("grok", "grok-4.5", "Reply with exactly: nonce-807");
     expect(built.file).toBe("grok");
-    // Same headless shape as grokAgent: prompt on stdin, not -p argv.
-    expect(built.args).toContain("--prompt-file");
-    expect(built.args).toContain("/dev/stdin");
-    expect(built.input).toBe("Reply with exactly: nonce-807");
-    expect(built.args).not.toContain("-p");
+    expect(built.args).toContain("-p");
+    expect(built.args).toContain("Reply with exactly: nonce-807");
+    expect(built.input).toBeUndefined();
     expect(built.args).toContain("-m");
     expect(built.args).toContain("grok-4.5");
   });
