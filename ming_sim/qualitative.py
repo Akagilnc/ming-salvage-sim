@@ -26,7 +26,7 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     for fragment in parts:
         if not fragment or re.fullmatch(r"[，,；;。！？\n]", fragment):
             out.append(fragment)
-        elif _ABSTRACT_VALUE_RE.search(fragment) or _ABSTRACT_NEARBY_NUMBER_RE.search(fragment):
+        elif _has_unqualified_abstract_score(fragment):
             out.append(f"（{kind}含抽象指标原值，已略去）")
         else:
             out.append(fragment)
@@ -145,6 +145,24 @@ _ABSTRACT_SCORE_NUMBER = (
     rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
     rf"(?:\s*(?:左右|上下))?"
 )
+
+
+def _has_unqualified_abstract_score(fragment: str) -> bool:
+    """Reject a bare score in the same factual fragment as an abstract axis.
+
+    P4 is an axis/unit invariant, not a catalogue of verbs between the two.
+    Concrete quantities keep their unit (银两、人、月等); a number without one
+    near an abstract axis cannot cross the player boundary.
+    """
+    if _ABSTRACT_VALUE_RE.search(fragment) or _ABSTRACT_NEARBY_NUMBER_RE.search(fragment):
+        return True
+    axis = re.search(rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?", fragment, re.IGNORECASE)
+    if not axis:
+        return False
+    tail = fragment[axis.end():]
+    # The invariant is about *bare numeric scores*.  Chinese ideoms such as
+    # ``操守一尘不染`` are not scores merely because they neighbour an axis.
+    return bool(re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))", tail))
 _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"

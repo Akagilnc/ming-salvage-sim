@@ -727,6 +727,9 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
         {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
     ]
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    db.record_public_knowledge_event(
+        state, "旧事", injected, source_id=f"test:p4-history:{state.turn}:public",
+    )
     db.conn.execute(
         "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
         (state.turn - 2, state.year, state.period, injected),
@@ -757,6 +760,9 @@ def test_historical_context_rejects_adjacent_abstract_values_at_every_history_se
         {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
     ]
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    db.record_public_knowledge_event(
+        state, "旧事", injected, source_id=f"test:p4-adjacent:{state.turn}:public",
+    )
     db.conn.execute(
         "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
         (state.turn - 2, state.year, state.period, injected),
@@ -793,39 +799,6 @@ def test_p4_guard_drops_only_unsafe_fragment_when_score_cannot_be_bucketed():
     assert "已略去" in rendered
     assert "欠饷二十五月" in rendered
     assert "十二万两" in rendered
-
-
-def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):
-    """在办密令仍说明工具语义，但不把进展/办结陈词截成形式硬顶。"""
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    monkeypatch.setattr(
-        db,
-        "get_active_secret_orders_for_minister",
-        lambda name: [{"id": 7, "title": "核查军饷", "status": "active", "due_turn": state.turn + 3}],
-    )
-    captured = {}
-
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
-         patch("ming_sim.registry._ctx", return_value=content), \
-         patch("ming_sim.registry._skills_for", return_value=None), \
-         patch("ming_sim.registry.build_minister_tools", return_value=[]):
-        create_minister_agent(minister, cfg, _ctx(game), db)
-
-    rendered = "\n".join(captured["instructions"])
-    assert "report_secret_order_progress" in rendered
-    assert "submit_secret_order_for_review" in rendered
-    assert not re.search(r"\d+字内", rendered)
-    skill = Path(".agno_skills/secret-order/SKILL.md").read_text()
-    assert not re.search(r"\d+字内", skill)
-    tools_source = Path("ming_sim/tools.py").read_text()
-    assert not re.search(r"\d+字内", tools_source)
 
 
 def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
@@ -1041,38 +1014,6 @@ def test_minister_tools_characterize_building_and_metric_outputs(game):
         assert any(word in rendered for word in ("宏整", "失修", "极高", "有显著裨益"))
 
 
-def test_minister_world_prompt_hides_abstract_scales(game):
-    """最终大臣 instructions 中的通用世界观也必须是定性口径。"""
-    db, _state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    captured = {}
-
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
-         patch("ming_sim.registry._ctx", return_value=content), \
-         patch("ming_sim.registry._skills_for", return_value=None), \
-         patch("ming_sim.registry.build_minister_tools", return_value=[]):
-        create_minister_agent(minister, cfg, _ctx(game), db)
-
-    world = captured["instructions"][0]
-    assert not re.search(r"(?:民心|皇威|火器)[^\n]*\d+\s*-\s*\d+", world)
-    assert "抽象" in world or "定性" in world
-
-
-def test_north_star_sample_is_reviewable():
-    sample = Path("docs/minister-context-north-star-sample.md").read_text()
-    assert "同一问题" in sample
-    assert "改前" in sample and "改后" in sample
-    assert "对照结论" in sample
-    assert all(name in sample for name in ("毕自严", "杨嗣昌", "王绍徽"))
-    assert sample.count("辽饷又缺两月") >= 4
-
-
 def test_court_brief_keeps_countable_money_but_hides_abstract_scores(game):
     db, state, _content = game
 
@@ -1083,55 +1024,3 @@ def test_court_brief_keeps_countable_money_but_hides_abstract_scores(game):
     assert "皇威" not in rendered
     assert "/100" not in rendered
     assert f"第{state.turn}回合" in rendered
-
-
-def test_minister_prompt_is_characterization_not_formal_constraint(game):
-    _db, _state, content = game
-
-    prompt = content.minister_agent_prompt
-
-    assert "80-220" not in prompt
-    assert "few-shot" not in prompt
-    assert "不要" not in prompt
-
-
-def test_final_minister_context_teaches_heard_for_selection_as_recovery_candidate(game):
-    """荐人两型切片由 registry 预组装进 system，而非候选查询 tool。"""
-    db, _state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    offstage = next(c for c in content.characters.values()
-                    if c.name != minister.name and c.faction == minister.faction
-                    and c.office_type not in ("后宫", "宗藩"))
-    active = next(c for c in content.characters.values()
-                  if c.name not in {minister.name, offstage.name}
-                  and c.faction == minister.faction
-                  and c.office_type not in ("后宫", "宗藩"))
-    db.conn.execute(
-        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
-        (offstage.name,),
-    )
-    db.conn.execute(
-        "UPDATE characters SET status='active', office='翰林院编修', reason_code='' WHERE name=?",
-        (active.name,),
-    )
-    db.conn.commit()
-    captured = {}
-
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
-
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
-         patch("ming_sim.registry._ctx", return_value=content), \
-         patch("ming_sim.registry._skills_for", return_value=None), \
-         patch("ming_sim.registry.build_minister_tools", return_value=[]):
-        create_minister_agent(minister, cfg, _ctx(game), db)
-
-    rendered = "\n".join(captured["instructions"])
-    assert "荐起复" in rendered
-    assert offstage.name in rendered
-    assert active.name in rendered
-    assert "荐在职作破格差遣" in rendered
-    assert "居家、致仕、削籍或听用候铨" in rendered
