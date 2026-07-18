@@ -128,6 +128,11 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "coder_advance",
   /** #919 / #1002 — judge advanceCoder unusable; stay on current repair seat. */
   "coder_advance_stay_put",
+  /**
+   * #1006 — admission baseline health gate: family-base full suite red before
+   * fan-out (durable audit; not an unblock fact).
+   */
+  "baseline_health_failed",
 ] as const;
 
 /** Element type of {@link FAMILY_LEDGER_STATUS_VALUES}. */
@@ -213,6 +218,8 @@ export interface FamilyLedgerEntry {
    *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
    *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
    *     seat audit (applied vs stay-put).
+   *   - `"baseline_health_failed"` — #1006 admission full-suite red on family
+   *     base before fan-out (audit only).
    */
   readonly status: FamilyLedgerStatus;
   /**
@@ -275,7 +282,9 @@ export interface FamilyLedgerEntry {
     /** #919 — paired with status coder_advance. */
     | "coder_advance"
     /** #919 — paired with status coder_advance_stay_put. */
-    | "coder_advance_stay_put";
+    | "coder_advance_stay_put"
+    /** #1006 — paired with status baseline_health_failed. */
+    | "baseline_health_failed";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
