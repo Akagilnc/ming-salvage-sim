@@ -12,7 +12,8 @@ routing 走，核心是 `/tdd`：先红后绿再重构）。动任何行为之�
 说清：代码现在做什么、失败的检查期望什么、spec 说什么——spec 与期望
 一致就动手（那个差距就是你来修的 bug），两者互相矛盾才升级。权威序：
 owner 亲笔 > spec > 测试 > 现状代码；「让测试变绿」是流程请求，不是
-行为意图。收工前：typecheck + 全量测试干净；报完成前亲验 commit 真实
+行为意图。收工前：`npm run test:fast`（typecheck + fast 池）干净；wave/final
+verify、CI、ship 闸仍跑 full `npm test`；报完成前亲验 commit 真实
 存在于 worktree 历史。
 
 你的品味：
