@@ -189,9 +189,18 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   const env = emptyAuthEnv(emptyHome);
   const t0 = Date.now();
   if (target.kind === "host") {
-    const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
+    // Node child_process uses a socketpair for `input`; grok re-opens
+    // /dev/stdin and Linux rejects opening that socket with ENXIO. Production
+    // workers receive stdin through docker/podman -i, which presents a pipe.
+    // Build the same fd shape here instead of testing a Node-only artifact.
+    const r = spawnSync("/bin/sh", [
+      "-c",
+      'bin=$1; shift; printf "%s\\n" ping | exec "$bin" "$@"',
+      "grok-headless-probe",
+      target.bin,
+      ...HEADLESS_PRINT_ARGS,
+    ], {
       encoding: "utf8",
-      input: "ping\n",
       env,
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
