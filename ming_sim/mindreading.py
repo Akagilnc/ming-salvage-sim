@@ -202,16 +202,8 @@ def build_mindreading_payload(
         if row is not None:
             current_target = row
 
-    raw_identity = _character_field(current_target, "identity")
-    try:
-        identity = int(raw_identity)
-    except (TypeError, ValueError):
-        identity = 50
-    raw_loyalty = _character_field(current_target, "loyalty")
-    try:
-        loyalty = int(raw_loyalty)
-    except (TypeError, ValueError):
-        loyalty = 50
+    identity = int(_character_field(current_target, "identity") or 0)
+    loyalty = int(_character_field(current_target, "loyalty") or 0)
     faction = str(_character_field(current_target, "faction") or "未明党籍")
     if identity < 40 and loyalty >= 60:
         relation = "忠而不党"
@@ -230,10 +222,10 @@ def build_mindreading_payload(
         "truths": {
             "党账": (
                 f"名义党派：{faction}；"
-                f"对本党的认同：{identity_band(raw_identity)}；"
+                f"对本党的认同：{identity_band(identity)}；"
                 f"{_seed_guilt_text(current_target)}"
             ),
-            "君臣账": f"对君的真心：{qualitative_band(raw_loyalty, _LOYALTY_BANDS, default=60)}。",
+            "君臣账": f"对君的真心：{qualitative_band(loyalty, _LOYALTY_BANDS)}。",
             "关系判断": relation,
             "潜台词": _infer_subtext(
                 safe_reply,
