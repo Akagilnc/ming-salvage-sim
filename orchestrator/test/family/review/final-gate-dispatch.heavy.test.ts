@@ -1,4 +1,3 @@
-// @vitest-pool heavy
 import { describe, expect, it } from "vitest";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import {
