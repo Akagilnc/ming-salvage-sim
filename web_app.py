@@ -1749,6 +1749,10 @@ class WebGame:
                                 order_id = 0
                             payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
                             if action and order_id:
+                                if action == "更新":
+                                    payload = self.db.attach_secret_oral_pin(
+                                        character.name, int(self.state.turn), payload,
+                                    )
                                 pending_action_id = self.db.stage_pending_action(
                                     self.state.turn, kind="secret_order", action=action,
                                     minister_name=character.name, target_id=order_id,
