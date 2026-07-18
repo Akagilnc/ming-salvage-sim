@@ -12,6 +12,7 @@ import pytest
 
 import ming_sim.issues as I
 from ming_sim.models import Event
+from tests.section_rejection_helpers import game
 
 
 class _TempEvents:

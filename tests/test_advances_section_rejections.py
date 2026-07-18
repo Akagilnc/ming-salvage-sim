@@ -9,6 +9,7 @@ new_issues 段，进 advances 列表、桥接收进 rejection_reports），advan
 import pytest
 
 import ming_sim.issues as I
+from tests.section_rejection_helpers import game
 
 
 def _adv(result):
