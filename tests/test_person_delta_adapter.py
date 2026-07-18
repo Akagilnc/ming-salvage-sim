@@ -3134,10 +3134,10 @@ def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
     assert ch.reason_code == "" and ch.status_reason == "", f"content 未清，实得 {ch.reason_code!r}/{ch.status_reason!r}"
 
 
-def test_migration_does_not_write_nonregion_location(game):
+def test_migration_does_not_write_nonregion_location(read_game):
     """5b R1：老档迁移罢居地名（府名，非 region_id）不得写进 location（region_id 列）。
     7 个 seed 旧臣迁移后 location 应为空（罢居地信息留 status_reason），不破 region_id 不变式。"""
-    db, _, _ = game
+    db, _, _ = read_game
     region_ids = {r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()}
     rows = db.conn.execute(
         "SELECT name, location FROM characters WHERE status IN ('offstage','dismissed') "

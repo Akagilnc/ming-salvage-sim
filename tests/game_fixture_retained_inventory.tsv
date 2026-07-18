@@ -3,11 +3,11 @@ tests/test_adr0015_per_item_rejection.py	test_persist_resolve_context_rejects_ba
 tests/test_adr0015_per_item_rejection.py	test_driver_validate_rejection_mirrors_jsonl_after_outer_atomic	51	writable isolation required: line 61 invokes run_settle
 tests/test_adr0015_per_item_rejection.py	test_validate_and_module_rejections_do_not_leak_into_player_visible_extraction	85	writable isolation required: line 93 invokes run_settle
 tests/test_adr0015_per_item_rejection.py	test_player_visible_rejection_aggregates_durable_rows_across_attempts_and_resimulation	117	writable isolation required: line 127 invokes save_state
-tests/test_adr0015_per_item_rejection.py	test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate	166	writable isolation required: line 177 invokes execute(SELECT item_json FROM rejection_reports)
+tests/test_adr0015_per_item_rejection.py	test_utf8_safe_serialization_preserves_chinese_and_escapes_lone_surrogate	166	writable isolation required at line 171: production mutation/isolation call: record
 tests/test_adr0015_per_item_rejection.py	test_sqlite_text_sanitization_covers_resolve_report_and_extraction_rows	192	writable isolation required: line 199 invokes persist_resolve_context
 tests/test_adr0015_per_item_rejection.py	test_sqlite_text_sanitization_covers_issue_rows_and_advances	229	writable isolation required: line 233 invokes insert_issue
 tests/test_advance_paths_atomic.py	test_advance_without_edict_atomic	43	writable isolation required: line 58 invokes advance_without_edict
-tests/test_advance_paths_atomic.py	test_fallback_branch_atomic	101	writable isolation required: line 113 invokes execute(SELECT COUNT(*) FROM turn_reports WHERE turn=?)
+tests/test_advance_paths_atomic.py	test_fallback_branch_atomic	101	writable isolation required at line 111: production mutation/isolation call: setattr
 tests/test_advance_paths_atomic.py	test_settle_crash_after_savestate_before_clear_rolls_back	139	writable isolation required: line 150 invokes persist_resolve_context
 tests/test_advance_paths_atomic.py	test_settle_code_exception_writes_pack_and_aborts	189	writable isolation required: line 199 invokes persist_resolve_context
 tests/test_advance_paths_atomic.py	test_recovery_path_commits_pending_actions	359	writable isolation required: line 371 invokes pre_settle
@@ -30,7 +30,7 @@ tests/test_advance_paths_atomic.py	test_recovery_replay_blocked_by_pending_direc
 tests/test_advance_paths_atomic.py	test_hitl_replay_blocked_by_pending_directives	1059	writable isolation required: line 1065 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_skip_refused_at_front_half_done	1086	writable isolation required: line 1094 invokes pre_settle
 tests/test_advance_paths_atomic.py	test_draft_mutators_frozen_at_front_half_done	1108	writable isolation required: line 1120 invokes add_directive
-tests/test_advance_paths_atomic.py	test_noready_recovery_uses_persisted_decree	1132	writable isolation required: line 1141 assigns (db, state, content)
+tests/test_advance_paths_atomic.py	test_noready_recovery_uses_persisted_decree	1132	writable isolation required at line 1147: production mutation/isolation call: setattr
 tests/test_advance_paths_atomic.py	test_settle_reload_failure_propagates_raw_not_abort	1181	writable isolation required: line 1190 invokes persist_resolve_context
 tests/test_advances_section_rejections.py	test_advance_non_dict_item_rejected_not_crash	31	writable isolation required: line 34 invokes apply_issue_tracker_output
 tests/test_advances_section_rejections.py	test_advance_bad_issue_id_rejected	42	writable isolation required: line 45 invokes apply_issue_tracker_output
@@ -47,35 +47,35 @@ tests/test_appease_mao_contract.py	test_appease_mao_simulator_payload_marks_char
 tests/test_appease_mao_contract.py	test_appease_mao_commitment_bar_100_stays_active_until_explicit_close	55	writable isolation required: line 57 invokes insert_issue
 tests/test_appease_mao_contract.py	test_appease_mao_commitment_rejects_direct_resolved_close_until_completion_flow	82	writable isolation required: line 87 invokes insert_issue
 tests/test_applier_contract.py	clean_rejections	96	writable isolation required: line 102 invokes execute(DROP TABLE IF EXISTS rejection_reports)
-tests/test_applier_contract.py	test_mirror_to_jsonl_writes_lines	194	writable isolation required: line 196 assigns (db, state, content)
-tests/test_applier_contract.py	test_mirror_to_jsonl_appends_on_multiple_calls	216	writable isolation required: line 218 assigns (db, state, content)
+tests/test_applier_contract.py	test_mirror_to_jsonl_writes_lines	194	writable isolation required at line 201: production mutation/isolation call: record
+tests/test_applier_contract.py	test_mirror_to_jsonl_appends_on_multiple_calls	216	writable isolation required at line 223: production mutation/isolation call: record
 tests/test_applier_contract.py	test_collector_counts_deterministic_on_polluted_save	346	writable isolation required: line 356 invokes commit
 tests/test_applier_contract.py	test_ddl_in_open_transaction_rolls_back	367	writable isolation required: line 374 invokes execute(DROP TABLE IF EXISTS rejection_reports)
-tests/test_army_display_173.py	test_army_report_shows_actual_charge	34	writable isolation required: line 38 invokes execute(SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 ORDER B)
-tests/test_army_display_173.py	test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats	51	writable isolation required: line 54 invokes execute(SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1)
-tests/test_army_display_173.py	test_army_arrears_presentation_rounds_half_steps_up	80	writable isolation required: line 83 invokes execute(SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1)
-tests/test_army_display_173.py	test_army_payload_preserves_fractional_arrears_for_web_rendering	101	writable isolation required: line 104 invokes execute(SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1)
-tests/test_army_display_173.py	test_simulator_payload_exposes_army_needed	122	writable isolation required: line 129 invokes execute(SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 1)
-tests/test_army_display_173.py	test_danger_order_uses_army_needed_for_arrears_months	152	writable isolation required: line 157 invokes execute(SELECT id,name FROM armies WHERE owner_power='ming' AND salary_rate>0 LI)
-tests/test_army_display_173.py	test_danger_order_preserves_fractional_arrears	177	writable isolation required: line 180 invokes execute(SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2)
+tests/test_army_display_173.py	test_army_report_shows_actual_charge	34	writable isolation required at line 41: direct SQL mutation: UPDATE armies SET manpower = manpower + 100000 WHERE id=?
+tests/test_army_display_173.py	test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats	51	writable isolation required at line 57: direct SQL mutation: UPDATE armies SET arrears=63, province_pay_arrears=17, central_pay_arrears=46, loyalty=73 WHERE id=?
+tests/test_army_display_173.py	test_army_arrears_presentation_rounds_half_steps_up	80	writable isolation required at line 88: direct SQL mutation: UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?
+tests/test_army_display_173.py	test_army_payload_preserves_fractional_arrears_for_web_rendering	101	writable isolation required at line 107: direct SQL mutation: UPDATE armies SET arrears=12.5, province_pay_arrears=12.5, central_pay_arrears=0 WHERE id=?
+tests/test_army_display_173.py	test_simulator_payload_exposes_army_needed	122	writable isolation required at line 132: direct SQL mutation: UPDATE armies SET manpower=manpower+100000 WHERE id=?
+tests/test_army_display_173.py	test_danger_order_uses_army_needed_for_arrears_months	152	writable isolation required at line 164: direct SQL mutation: UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,arrears=50,manpower=20000 WHERE id=?
+tests/test_army_display_173.py	test_danger_order_preserves_fractional_arrears	177	writable isolation required at line 187: direct SQL mutation: UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,manpower=20000,salary_rate=1.0 WHERE id
 tests/test_army_firearms.py	test_new_army_defaults_zero_firearm	37	writable isolation required: line 42 invokes create_armies_from_extraction
-tests/test_army_firearms.py	test_firearm_clamped_0_100	65	writable isolation required: line 67 invokes execute(SELECT id FROM armies LIMIT 1)
-tests/test_army_firearms.py	test_cannon_clamped_to_12	74	writable isolation required: line 77 invokes execute(SELECT id FROM armies LIMIT 1)
+tests/test_army_firearms.py	test_firearm_clamped_0_100	65	writable isolation required at line 69: production mutation/isolation call: apply_army_deltas
+tests/test_army_firearms.py	test_cannon_clamped_to_12	74	writable isolation required at line 79: production mutation/isolation call: apply_army_deltas
 tests/test_army_firearms.py	test_create_army_with_firearm	84	writable isolation required: line 86 invokes create_armies_from_extraction
 tests/test_army_firearms.py	test_create_army_cannon_count_clamped	98	writable isolation required: line 101 invokes create_armies_from_extraction
-tests/test_army_firearms.py	test_army_detail_shows_firearm_cannon	110	writable isolation required: line 114 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
+tests/test_army_firearms.py	test_army_detail_shows_firearm_cannon	110	writable isolation required at line 115: direct SQL mutation: UPDATE armies SET firearm_equipment=45, cannon_equipment=3 WHERE id=?
 tests/test_army_firearms.py	test_army_detail_dynamic_new_army_shows_firearm	131	writable isolation required: line 135 invokes create_armies_from_extraction
 tests/test_army_firearms.py	test_create_army_cannon_nonint_rejected_not_crash	167	writable isolation required: line 171 invokes create_armies_from_extraction
 tests/test_army_firearms.py	test_apply_army_delta_chinese_keys	182	writable isolation required: line 185 invokes create_armies_from_extraction
-tests/test_army_firearms.py	test_army_roster_shows_firearm_cannon	210	writable isolation required: line 213 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
+tests/test_army_firearms.py	test_army_roster_shows_firearm_cannon	210	writable isolation required at line 214: direct SQL mutation: UPDATE armies SET firearm_equipment=30, cannon_equipment=4 WHERE id=?
 tests/test_army_maintenance_retire_173.py	test_drop_maintenance_column_removes_and_idempotent	48	writable isolation required: line 51 invokes execute(ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFA)
 tests/test_army_maintenance_retire_173.py	test_legacy_new_army_needs_only_manpower	91	writable isolation required: line 94 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_new_army_maintenance_key_ignored	101	writable isolation required: line 104 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_new_army_still_requires_manpower	112	writable isolation required: line 114 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_new_army_inf_manpower_rejected_not_crash	121	writable isolation required: line 125 invokes create_armies_from_extraction
 tests/test_army_maintenance_retire_173.py	test_pay_derives_from_manpower	134	writable isolation required: line 137 invokes create_armies_from_extraction
-tests/test_army_maintenance_retire_173.py	test_army_delta_maintenance_rejected_as_invalid_field	149	writable isolation required: line 152 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
-tests/test_army_maintenance_retire_173.py	test_army_delta_other_fields_still_apply	161	writable isolation required: line 164 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
+tests/test_army_maintenance_retire_173.py	test_army_delta_maintenance_rejected_as_invalid_field	149	writable isolation required at line 154: production mutation/isolation call: apply_army_deltas
+tests/test_army_maintenance_retire_173.py	test_army_delta_other_fields_still_apply	161	writable isolation required at line 168: production mutation/isolation call: apply_army_deltas
 tests/test_army_pay_source_prompt_contract.py	test_prompt_compatible_ming_new_army_pay_source_aliases_land	4	writable isolation required: line 8 invokes run_settle
 tests/test_army_salary_44.py	test_army_needed_zero_manpower_zero_pay	47	writable isolation required: line 50 invokes execute(UPDATE armies SET manpower=0 WHERE id='guanning')
 tests/test_army_salary_44.py	test_army_needed_scales_with_manpower	55	writable isolation required: line 59 invokes execute(UPDATE armies SET manpower=manpower*2 WHERE id='guanning')
@@ -83,38 +83,38 @@ tests/test_army_salary_44.py	test_army_needed_shrink_lowers_pay	66	writable isol
 tests/test_army_salary_44.py	test_backfill_dynamic_army_falls_to_anchor	120	writable isolation required: line 127 invokes commit
 tests/test_army_salary_44.py	test_backfill_reverse_fills_from_maintenance_on_direct_upgrade	136	writable isolation required: line 143 invokes execute(ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFA)
 tests/test_army_salary_44.py	test_backfill_anchor_when_column_present_but_data_unusable	159	writable isolation required: line 165 invokes execute(ALTER TABLE armies ADD COLUMN maintenance_per_turn INTEGER NOT NULL DEFA)
-tests/test_army_salary_44.py	test_manpower_clamp_to_zero_leaves_army_log	187	writable isolation required: line 191 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
-tests/test_army_salary_44.py	test_manpower_true_noop_no_log	208	writable isolation required: line 211 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
-tests/test_army_salary_44.py	test_auto_pay_reaches_salary_army_via_arrears_filter	222	writable isolation required: line 227 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
-tests/test_army_salary_44.py	test_auto_pay_empty_allowed_ids_pays_no_armies	240	writable isolation required: line 244 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
-tests/test_army_salary_44.py	test_auto_pay_strips_allowed_army_ids_before_filtering	257	writable isolation required: line 260 invokes execute(SELECT id FROM armies WHERE owner_power='ming' LIMIT 1)
+tests/test_army_salary_44.py	test_manpower_clamp_to_zero_leaves_army_log	187	writable isolation required at line 193: direct SQL mutation: UPDATE armies SET manpower=0 WHERE id=?
+tests/test_army_salary_44.py	test_manpower_true_noop_no_log	208	writable isolation required at line 216: production mutation/isolation call: apply_army_deltas
+tests/test_army_salary_44.py	test_auto_pay_reaches_salary_army_via_arrears_filter	222	writable isolation required at line 230: direct SQL mutation: UPDATE armies SET arrears=0 WHERE owner_power='ming'
+tests/test_army_salary_44.py	test_auto_pay_empty_allowed_ids_pays_no_armies	240	writable isolation required at line 246: direct SQL mutation: UPDATE armies SET arrears=0 WHERE owner_power='ming'
+tests/test_army_salary_44.py	test_auto_pay_strips_allowed_army_ids_before_filtering	257	writable isolation required at line 262: direct SQL mutation: UPDATE armies SET arrears=0 WHERE owner_power='ming'
 tests/test_army_salary_44.py	test_legacy_salary_tick_preserves_fractional_opening_arrears	274	writable isolation required: line 279 invokes execute(UPDATE armies SET manpower=0, arrears=0 WHERE owner_power='ming')
 tests/test_army_salary_44.py	test_twelve_turns_no_arrears_explosion	339	writable isolation required: line 346 invokes run_settle
-tests/test_audience_background.py	test_chat_stream_observer_departure_after_acceptance_still_completes_turn	128	writable isolation required: line 129 assigns (db, state, content)
+tests/test_audience_background.py	test_chat_stream_observer_departure_after_acceptance_still_completes_turn	128	writable isolation required at line 137: production mutation/isolation call: close
 tests/test_audience_background.py	test_chat_reload_exposes_retryable_failed_secret_order	148	writable isolation required: line 152 invokes stage_pending_action
 tests/test_audience_background.py	test_undo_chat_response_preserves_retryable_failed_secret_order	171	writable isolation required: line 175 invokes stage_pending_action
-tests/test_audience_background.py	test_background_audience_reply_keeps_staged_edict_after_observer_departure	196	writable isolation required: line 197 assigns (db, state, content)
-tests/test_audience_background.py	test_stream_tool_staged_secret_order_merges_minister_reply	220	writable isolation required: line 222 assigns (db, state, content)
+tests/test_audience_background.py	test_background_audience_reply_keeps_staged_edict_after_observer_departure	196	writable isolation required at line 205: production mutation/isolation call: close
+tests/test_audience_background.py	test_stream_tool_staged_secret_order_merges_minister_reply	220	writable isolation required: chat lifecycle: _chat_stream_payload stages and persists a secret-order pending action
 tests/test_audience_background.py	test_stream_confirmation_ignores_same_turn_secret_order_tool_output	256	writable isolation required: line 260 invokes stage_pending_action
-tests/test_audience_background.py	test_stream_secret_order_tool_blocked_in_recovery_window	306	writable isolation required: line 310 assigns (db, state, content)
-tests/test_audience_background.py	test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate	340	writable isolation required: line 342 assigns (db, state, content)
-tests/test_audience_background.py	test_chat_stream_uses_session_augmented_audience_prompt	360	writable isolation required: line 362 assigns (db, state, content)
-tests/test_audience_background.py	test_background_audience_secret_order_persists_after_observer_departure	406	writable isolation required: line 409 assigns (db, state, content)
-tests/test_audience_background.py	test_background_audience_pending_action_persists_after_observer_departure	425	writable isolation required: line 427 assigns (db, state, content)
-tests/test_audience_background.py	test_background_audience_appointment_stages_after_observer_departure	442	writable isolation required: line 471 invokes execute(SELECT name FROM characters WHERE name=?)
-tests/test_audience_background.py	test_llm_failure_does_not_leave_half_chat_in_history	478	writable isolation required: line 488 invokes execute(SELECT COUNT(*) FROM chat_messages)
-tests/test_audience_background.py	test_background_audience_failure_after_action_rolls_back_cleanly	500	writable isolation required: line 529 invokes execute(SELECT COUNT(*) FROM chat_messages)
+tests/test_audience_background.py	test_stream_secret_order_tool_blocked_in_recovery_window	306	writable isolation required at line 311: in-memory state/content mutation: state.turn_phase
+tests/test_audience_background.py	test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate	340	writable isolation required: chat lifecycle: _chat_stream_payload owns chat-turn transaction and pending-action persistence
+tests/test_audience_background.py	test_chat_stream_uses_session_augmented_audience_prompt	360	writable isolation required: chat lifecycle: _chat_stream_payload creates and completes a persisted chat turn
+tests/test_audience_background.py	test_background_audience_secret_order_persists_after_observer_departure	406	writable isolation required at line 416: production mutation/isolation call: close
+tests/test_audience_background.py	test_background_audience_pending_action_persists_after_observer_departure	425	writable isolation required at line 434: production mutation/isolation call: close
+tests/test_audience_background.py	test_background_audience_appointment_stages_after_observer_departure	442	writable isolation required at line 460: production mutation/isolation call: close
+tests/test_audience_background.py	test_llm_failure_does_not_leave_half_chat_in_history	478	writable isolation required: rollback isolation: chat_stream opens then rolls back a failed persisted chat turn
+tests/test_audience_background.py	test_background_audience_failure_after_action_rolls_back_cleanly	500	writable isolation required at line 510: in-memory state/content mutation: web_game.session
 tests/test_audience_background.py	test_chat_stream_rejects_second_concurrent_turn_same_minister	533	writable isolation required: line 544 invokes create_chat_turn
-tests/test_audience_background.py	test_chat_stream_closed_before_turn_creation_is_noop	559	writable isolation required: line 568 invokes execute(SELECT COUNT(*) FROM chat_turns)
+tests/test_audience_background.py	test_chat_stream_closed_before_turn_creation_is_noop	559	writable isolation required at line 572: production mutation/isolation call: close
 tests/test_bandit_power_model_190.py	test_old_save_schema_init_backfills_bandit_power_split	35	writable isolation required: line 38 invokes execute(UPDATE characters SET power_id='bandits' WHERE name IN ('李自成', '张献忠'))
 tests/test_bandit_power_model_190.py	test_bandit_power_backfill_serializes_list_aliases	70	writable isolation required: line 74 invokes execute(DELETE FROM powers WHERE id='bandit_li_zicheng')
 tests/test_bandit_power_model_190.py	test_bandit_power_split_backfill_preserves_changed_owner	85	writable isolation required: line 88 invokes execute(UPDATE characters SET power_id='ming' WHERE name='张献忠')
-tests/test_chat_mutations_freeze.py	test_appointment_blocked_in_recovery_window	33	writable isolation required: line 35 assigns (db, state, content)
-tests/test_chat_mutations_freeze.py	test_unlisted_person_blocked_in_recovery_window	50	writable isolation required: line 59 invokes execute(SELECT COUNT(*) FROM characters WHERE name=?)
-tests/test_chat_mutations_freeze.py	test_secret_order_tool_blocked_in_recovery_window	64	writable isolation required: line 76 invokes execute(SELECT COUNT(*) FROM secret_orders)
+tests/test_chat_mutations_freeze.py	test_appointment_blocked_in_recovery_window	33	writable isolation required at line 38: production mutation/isolation call: setattr
+tests/test_chat_mutations_freeze.py	test_unlisted_person_blocked_in_recovery_window	50	writable isolation required: write-guard path: _apply_unlisted_person_registration attempts character registration
+tests/test_chat_mutations_freeze.py	test_secret_order_tool_blocked_in_recovery_window	64	writable isolation required at line 69: in-memory state/content mutation: state.turn_phase
 tests/test_chat_mutations_freeze.py	test_secret_order_tool_progress_allows_same_month_correction	84	writable isolation required: line 91 invokes create_secret_order
-tests/test_chat_mutations_freeze.py	test_cli_prefix_secret_order_blocked_in_recovery_window	114	writable isolation required: line 135 invokes execute(SELECT COUNT(*) FROM secret_orders)
-tests/test_chat_mutations_freeze.py	test_nl_staged_actions_blocked_in_recovery_window	143	writable isolation required: line 170 invokes execute(SELECT COUNT(*) FROM pending_actions WHERE turn=?)
+tests/test_chat_mutations_freeze.py	test_cli_prefix_secret_order_blocked_in_recovery_window	114	writable isolation required at line 120: in-memory state/content mutation: sess.llm_config
+tests/test_chat_mutations_freeze.py	test_nl_staged_actions_blocked_in_recovery_window	143	writable isolation required at line 153: in-memory state/content mutation: sess.llm_config
 tests/test_close_issues_section_rejections.py	test_close_bad_issue_id_rejected	29	writable isolation required: line 32 invokes apply_issue_tracker_output
 tests/test_close_issues_section_rejections.py	test_close_non_dict_item_rejected_not_crash	42	writable isolation required: line 46 invokes apply_issue_tracker_output
 tests/test_close_issues_section_rejections.py	test_close_bad_reason_rejected	53	writable isolation required: line 56 invokes apply_issue_tracker_output
@@ -122,20 +122,20 @@ tests/test_close_issues_section_rejections.py	test_close_unknown_issue_rejected_
 tests/test_close_issues_section_rejections.py	test_close_overflow_issue_id_rejected	76	writable isolation required: line 80 invokes apply_issue_tracker_output
 tests/test_close_issues_section_rejections.py	test_close_already_inactive_rejected_missing_ref	88	writable isolation required: line 90 invokes insert_issue
 tests/test_close_issues_section_rejections.py	test_close_failed_on_uncollapsible_rejected_invalid_enum	102	writable isolation required: line 106 invokes insert_issue
-tests/test_close_issues_section_rejections.py	test_close_rejection_reaches_rejection_reports	117	writable isolation required: line 132 invokes execute(SELECT section, category, reason FROM rejection_reports WHERE turn=7 AND)
-tests/test_close_issues_section_rejections.py	test_scalar_item_rejection_preserves_original_in_reports	156	writable isolation required: line 171 invokes execute(SELECT item_json FROM rejection_reports WHERE turn=8 AND section LIKE '%)
+tests/test_close_issues_section_rejections.py	test_close_rejection_reaches_rejection_reports	117	writable isolation required at line 130: production mutation/isolation call: flush_to_db
+tests/test_close_issues_section_rejections.py	test_scalar_item_rejection_preserves_original_in_reports	156	writable isolation required at line 169: production mutation/isolation call: flush_to_db
 tests/test_close_issues_section_rejections.py	test_close_issue_code_exception_propagates	178	writable isolation required: line 185 invokes apply_issue_tracker_output
 tests/test_close_issues_section_rejections.py	test_close_valid_issue_still_succeeds	190	writable isolation required: line 196 invokes apply_issue_tracker_output
 tests/test_commitment_display_348.py	test_bar_advances_by_wall_clock_when_ongoing_advance_is_rejected	217	writable isolation required: line 219 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
 tests/test_commitment_display_348.py	test_bar_advances_with_time	244	writable isolation required: line 246 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
 tests/test_commitment_display_348.py	test_bar_at_initial_turn_is_zero	275	writable isolation required: line 277 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
-tests/test_commitment_display_348.py	test_origin_turn_null_falls_back_to_state_turn	299	writable isolation required: line 302 assigns (db, state, _content)
-tests/test_commitment_display_348.py	test_origin_turn_missing_key_falls_back_to_state_turn	324	writable isolation required: line 326 assigns (db, state, _content)
-tests/test_conversational_draft.py	test_conversational_draft_intent_stages_pending	79	writable isolation required: line 101 invokes execute(SELECT COUNT(*) FROM turn_directives WHERE turn=?)
-tests/test_conversational_draft.py	test_no_draft_pending_when_no_intent	106	writable isolation required: line 108 assigns (db, state, content)
+tests/test_commitment_display_348.py	test_origin_turn_null_falls_back_to_state_turn	299	writable isolation required at line 303: in-memory state/content mutation: state.turn
+tests/test_commitment_display_348.py	test_origin_turn_missing_key_falls_back_to_state_turn	324	writable isolation required at line 327: in-memory state/content mutation: state.turn
+tests/test_conversational_draft.py	test_conversational_draft_intent_stages_pending	79	writable isolation required: pending-action path: _run_conversational_draft stages a directive in the database
+tests/test_conversational_draft.py	test_no_draft_pending_when_no_intent	106	writable isolation required: negative write-path isolation: _run_conversational_draft exercises pending-action staging guard
 tests/test_conversational_draft.py	test_explicit_prefix_stages_same_pending_directive_as_natural_language	118	writable isolation required: line 128 invokes apply_cli_conversation_actions
 tests/test_conversational_draft.py	test_pending_directive_last_write_wins	147	writable isolation required: line 163 invokes apply_cli_conversation_actions
-tests/test_conversational_draft.py	test_pending_directive_commit_creates_turn_directive	202	writable isolation required: line 217 invokes execute(SELECT COUNT(*) FROM turn_directives WHERE turn=?)
+tests/test_conversational_draft.py	test_pending_directive_commit_creates_turn_directive	202	writable isolation required at line 211: production mutation/isolation call: upsert_pending_directive
 tests/test_conversational_draft.py	test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic	245	writable isolation required: line 265 invokes atomic
 tests/test_conversational_draft.py	test_dialogue_affirm_commits_pending_directive_to_later_ui	278	writable isolation required: line 294 invokes apply_cli_conversation_actions
 tests/test_conversational_draft.py	test_dialogue_reject_drops_pending_directive	308	writable isolation required: line 322 invokes apply_cli_conversation_actions
@@ -155,7 +155,7 @@ tests/test_conversational_draft.py	test_dialogue_reject_drops_pending_new_secret
 tests/test_conversational_draft.py	test_dialogue_affirm_commits_pending_new_secret_order	768	writable isolation required: line 773 invokes stage_pending_action
 tests/test_conversational_draft.py	test_no_reply_path_directive_reachable_by_list_directives	804	writable isolation required: line 822 invokes commit_pending_actions
 tests/test_conversational_draft.py	test_write_decree_commits_pending_directive	836	writable isolation required: line 882 invokes write_decree
-tests/test_conversational_draft.py	test_pending_directive_count_nonzero_after_conversational_draft	905	writable isolation required: line 908 assigns (db, state, content)
+tests/test_conversational_draft.py	test_pending_directive_count_nonzero_after_conversational_draft	905	writable isolation required at line 911: production mutation/isolation call: upsert_pending_directive
 tests/test_conversational_draft.py	test_pending_directive_count_zero_after_commit	923	writable isolation required: line 933 invokes commit_pending_actions
 tests/test_conversational_draft.py	test_last_write_wins_uses_has_pending_draft_flag	1046	writable isolation required: line 1069 invokes apply_cli_conversation_actions
 tests/test_conversational_draft.py	test_draft_request_with_appointment_content_stages_directive_not_office	1084	writable isolation required: line 1103 invokes apply_cli_conversation_actions
@@ -184,9 +184,9 @@ tests/test_conversational_draft.py	test_stale_decree_not_issued_when_existing_dr
 tests/test_conversational_draft.py	test_manual_saved_decree_survives_after_draft_text_change	2032	writable isolation required: line 2050 invokes write_decree
 tests/test_conversational_draft.py	test_supplement_after_write_decree_updates_committed_draft_not_new_pending	2078	writable isolation required: line 2098 invokes write_decree
 tests/test_conversational_draft.py	test_undo_supplement_after_write_decree_restores_committed_draft_text	2141	writable isolation required: line 2163 invokes write_decree
-tests/test_conversational_draft.py	test_supplied_decree_not_used_after_pending_directive_auto_commit	2203	writable isolation required: line 2208 assigns (db, state, content)
+tests/test_conversational_draft.py	test_supplied_decree_not_used_after_pending_directive_auto_commit	2203	writable isolation required at line 2211: in-memory state/content mutation: state.turn_phase
 tests/test_conversational_draft.py	test_undo_clears_generated_decree_when_committed_draft_deleted	2239	writable isolation required: line 2253 invokes create_chat_turn
-tests/test_conversational_draft.py	test_normal_undo_keeps_valid_decree	2279	writable isolation required: line 2281 assigns (db, state, content)
+tests/test_conversational_draft.py	test_normal_undo_keeps_valid_decree	2279	writable isolation required at line 2284: in-memory state/content mutation: sess.last_decree
 tests/test_db_broad_except_surface.py	test_pending_decisions_corrupt_options_json_falls_back_and_surfaces	24	writable isolation required: line 27 invokes execute(INSERT INTO pending_decisions (turn, idx, title, context, options_json, )
 tests/test_db_broad_except_surface.py	test_pending_decisions_corrupt_choice_json_returns_none_and_surfaces	45	writable isolation required: line 48 invokes execute(INSERT INTO pending_decisions (turn, idx, title, context, options_json, )
 tests/test_db_broad_except_surface.py	test_resolve_context_corrupt_payload_falls_back_and_surfaces	64	writable isolation required: line 66 invokes save_resolve_context
@@ -226,7 +226,7 @@ tests/test_decree_commitment_creation_136.py	test_until_stop_commitment_advance_
 tests/test_decree_commitment_creation_136.py	test_stop_condition_without_commitment_kind_advance_to_full_stays_active	1077	writable isolation required: line 1081 invokes insert_issue
 tests/test_decree_commitment_creation_136.py	test_empty_json_stop_condition_allows_advance_to_resolved	1114	writable isolation required: line 1117 invokes insert_issue
 tests/test_decree_commitment_creation_136.py	test_commitment_skips_cli_resolve_effect_enrich	1140	writable isolation required: line 1153 invokes apply_score_extraction
-tests/test_decree_commitment_creation_136.py	test_one_shot_appeasement_economy_move_does_not_create_commitment_issue	1181	writable isolation required: line 1184 invokes execute(SELECT COUNT(*) FROM issues)
+tests/test_decree_commitment_creation_136.py	test_one_shot_appeasement_economy_move_does_not_create_commitment_issue	1181	writable isolation required at line 1186: production mutation/isolation call: apply_score_extraction
 tests/test_decree_commitment_schema_136.py	test_insert_issue_persists_commitment_deadline_columns	81	writable isolation required: line 84 invokes insert_issue
 tests/test_decree_commitment_schema_136.py	test_insert_issue_serializes_structured_stop_condition_as_json	104	writable isolation required: line 107 invokes insert_issue
 tests/test_decree_commitment_schema_136.py	test_new_issue_persists_commitment_columns_from_tracker_output	122	writable isolation required: line 126 invokes apply_issue_tracker_output
@@ -276,16 +276,16 @@ tests/test_driver.py	test_run_settle_no_chapter_skip_audit_when_settle_aborts	65
 tests/test_driver.py	test_run_settle_records_non_dict_nested_value	78	writable isolation required: line 82 invokes run_settle
 tests/test_driver.py	test_run_settle_rejects_unknown_toplevel_key	89	writable isolation required: line 94 invokes run_settle
 tests/test_driver.py	test_run_settle_records_non_dict_module_value	98	writable isolation required: line 102 invokes run_settle
-tests/test_driver.py	test_run_settle_normalizes_chinese_delta_and_advances	125	writable isolation required: line 129 invokes execute(SELECT unrest FROM regions WHERE id='shanxi')
+tests/test_driver.py	test_run_settle_normalizes_chinese_delta_and_advances	125	writable isolation required at line 134: production mutation/isolation call: run_settle
 tests/test_driver.py	test_run_settle_persists_applied_person_results_for_player_visible_extraction	173	writable isolation required: line 178 invokes run_settle
 tests/test_driver.py	test_run_settle_preserves_legacy_person_key_order_after_issue_close	213	writable isolation required: line 221 invokes insert_issue
 tests/test_driver.py	test_run_settle_preserves_unified_person_key_order_after_issue_close	267	writable isolation required: line 275 invokes insert_issue
-tests/test_driver.py	test_cli_settle_applies_delta_file	329	writable isolation required: line 333 invokes execute(SELECT unrest FROM regions WHERE id='shanxi')
+tests/test_driver.py	test_cli_settle_applies_delta_file	329	writable isolation required at line 337: production mutation/isolation call: write_text
 tests/test_driver.py	test_cli_settle_envelope_persists_narrative	351	writable isolation required: line 357 invokes write_text
 tests/test_driver.py	test_run_settle_persists_resolve_context_before_settle	384	writable isolation required: line 404 invokes run_settle
 tests/test_driver.py	test_run_settle_clears_resolve_context_on_completion	415	writable isolation required: line 419 invokes run_settle
 tests/test_driver.py	test_crash_inside_pre_settle_leaves_no_ready_context	423	writable isolation required: line 438 invokes run_settle
-tests/test_driver.py	test_persist_crash_rolls_back_pre_settle	443	writable isolation required: line 448 invokes execute(SELECT COUNT(*) FROM economy_ledger WHERE turn=?)
+tests/test_driver.py	test_persist_crash_rolls_back_pre_settle	443	writable isolation required at line 454: production mutation/isolation call: setattr
 tests/test_driver.py	test_run_settle_player_sourced_rejection_surfaces_diegetic_hint	561	writable isolation required: line 566 invokes run_settle
 tests/test_driver.py	test_run_settle_no_rejection_no_hint	575	writable isolation required: line 579 invokes run_settle
 tests/test_driver.py	test_run_settle_system_source_rejection_stays_silent	585	writable isolation required: line 589 invokes run_settle
@@ -300,24 +300,24 @@ tests/test_economy_section_rejections.py	test_economy_rejections_not_in_player_v
 tests/test_empire_modifier_income_only_341.py	test_expenditure_not_amplified_by_legacy	14	writable isolation required: line 21 invokes record_issue_economy_move
 tests/test_empire_modifier_income_only_341.py	test_income_still_modified_by_legacy	29	writable isolation required: line 36 invokes record_issue_economy_move
 tests/test_empire_modifier_income_only_341.py	test_expenditure_zero_net_pct_unchanged	44	writable isolation required: line 48 invokes execute(UPDATE legacies SET status='expired' WHERE status='active')
-tests/test_enrich_list_guards.py	test_apply_economy_list_non_list_no_crash	29	writable isolation required: line 31 assigns (db, state, _content)
-tests/test_enrich_list_guards.py	test_apply_economy_list_valid_still_works	36	writable isolation required: line 38 assigns (db, state, _content)
+tests/test_enrich_list_guards.py	test_apply_economy_list_non_list_no_crash	29	writable isolation required: mutation path: _apply_economy_list is the production economy writer
+tests/test_enrich_list_guards.py	test_apply_economy_list_valid_still_works	36	writable isolation required: mutation path: _apply_economy_list writes economy moves
 tests/test_enrich_list_guards.py	test_inertia_ongoing_non_dict_no_crash	54	writable isolation required: line 59 invokes insert_issue
-tests/test_enrich_list_guards.py	test_apply_economy_list_skips_non_dict_items	66	writable isolation required: line 68 assigns (db, state, _content)
-tests/test_enrich_list_guards.py	test_apply_metric_faction_class_dict_non_dict_no_crash	74	writable isolation required: line 80 assigns (db, state, _content)
-tests/test_error_pack.py	test_extractor_failure_raises_settlement_abort	38	writable isolation required: line 40 assigns (db, state, content)
-tests/test_error_pack.py	test_error_pack_written_with_five_files	56	writable isolation required: line 86 invokes execute(SELECT COUNT(*) FROM game_state)
-tests/test_error_pack.py	test_abort_leaves_no_db_settlement_writes	92	writable isolation required: line 94 assigns (db, state, content)
+tests/test_enrich_list_guards.py	test_apply_economy_list_skips_non_dict_items	66	writable isolation required: mutation path: _apply_economy_list writes valid sibling economy moves
+tests/test_enrich_list_guards.py	test_apply_metric_faction_class_dict_non_dict_no_crash	74	writable isolation required: mutation path: _apply_metric_dict/_apply_faction_dict/_apply_class_dict are production state writers
+tests/test_error_pack.py	test_extractor_failure_raises_settlement_abort	38	writable isolation required at line 41: production mutation/isolation call: setenv
+tests/test_error_pack.py	test_error_pack_written_with_five_files	56	writable isolation required at line 59: production mutation/isolation call: setenv
+tests/test_error_pack.py	test_abort_leaves_no_db_settlement_writes	92	writable isolation required at line 95: production mutation/isolation call: setenv
 tests/test_error_pack.py	test_attempt_derived_from_existing_dirs	112	writable isolation required: line 119 invokes write_error_pack
 tests/test_error_pack.py	test_write_error_pack_inside_atomic_is_rejected	129	writable isolation required: line 137 invokes atomic
-tests/test_error_pack.py	test_pack_write_failure_does_not_mask_original	142	writable isolation required: line 144 assigns (db, state, content)
+tests/test_error_pack.py	test_pack_write_failure_does_not_mask_original	142	writable isolation required at line 145: production mutation/isolation call: setenv
 tests/test_error_pack.py	test_clear_for_resimulation_downgrades_context_keeps_settling	171	writable isolation required: line 183 invokes save_resolve_context
 tests/test_error_pack.py	test_clear_for_resimulation_preserves_source	205	writable isolation required: line 217 invokes save_resolve_context
 tests/test_error_pack.py	test_clear_for_resimulation_noop_when_no_context	232	writable isolation required: line 236 invokes clear_resolve_context
 tests/test_error_pack.py	test_attempt_never_overwrites_existing_pack	255	writable isolation required: line 267 invokes write_text
 tests/test_error_pack.py	test_mirror_writes_to_rejections_jsonl_path	275	writable isolation required: line 281 invokes execute(DROP TABLE IF EXISTS rejection_reports)
-tests/test_error_pack.py	test_pack_write_interrupt_propagates_as_interrupt	295	writable isolation required: line 305 assigns (db, state, content)
-tests/test_error_pack.py	test_shape_garbage_extractor_product_is_sanitized_and_recorded	367	writable isolation required: line 391 invokes execute(SELECT section, item_json FROM rejection_reports WHERE turn=?)
+tests/test_error_pack.py	test_pack_write_interrupt_propagates_as_interrupt	295	writable isolation required at line 297: production mutation/isolation call: setenv
+tests/test_error_pack.py	test_shape_garbage_extractor_product_is_sanitized_and_recorded	367	writable isolation required at line 373: production mutation/isolation call: setenv
 tests/test_error_pack.py	test_next_attempt_skips_malformed_and_foreign_entries	396	writable isolation required: line 408 invokes write_text
 tests/test_error_pack.py	test_version_read_failure_falls_back_to_unknown	417	writable isolation required: line 426 invokes write_error_pack
 tests/test_event_chain_cascade.py	test_positive_dependency_invalidates_when_upstream_expires	61	writable isolation required: line 77 invokes apply_event_terminal_states
@@ -336,28 +336,28 @@ tests/test_event_chain_cascade.py	test_negative_dependency_is_satisfied_by_upstr
 tests/test_event_chain_cascade.py	test_soft_gate_failure_does_not_invalidate_chain_candidate	314	writable isolation required: line 324 invokes mark_event_triggered
 tests/test_event_chain_cascade.py	test_transitive_cascade_invalidates_downstream_closure	337	writable isolation required: line 344 invokes mark_event_expired
 tests/test_event_chain_cascade.py	test_event_dependency_cycle_fails_loud	353	writable isolation required: line 360 invokes apply_event_cascading_invalidations
-tests/test_event_outcome_retry.py	test_event_outcome_label_retry_reruns_only_issues_extractor	38	writable isolation required: line 40 assigns (db, state, _content)
-tests/test_event_outcome_retry.py	test_event_outcome_label_alias_normalizes_without_retry	67	writable isolation required: line 69 assigns (db, state, _content)
-tests/test_event_outcome_retry.py	test_event_outcome_label_retry_cap_fails_loud	91	writable isolation required: line 93 assigns (db, state, _content)
-tests/test_event_trigger_gate.py	test_gated_historical_event_excluded_when_unsatisfied	27	writable isolation required: line 28 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_gated_historical_event_included_when_satisfied	41	writable isolation required: line 42 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_ungated_historical_event_unchanged	55	writable isolation required: line 56 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_historical_event_expires_after_latest_window_when_gate_unsatisfied	69	writable isolation required: line 86 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
+tests/test_event_outcome_retry.py	test_event_outcome_label_retry_reruns_only_issues_extractor	38	writable isolation required at line 41: in-memory state/content mutation: state.year
+tests/test_event_outcome_retry.py	test_event_outcome_label_alias_normalizes_without_retry	67	writable isolation required at line 70: in-memory state/content mutation: state.year
+tests/test_event_outcome_retry.py	test_event_outcome_label_retry_cap_fails_loud	91	writable isolation required at line 94: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_gated_historical_event_excluded_when_unsatisfied	27	writable isolation required at line 33: in-memory state/content mutation: state.metrics['民心']
+tests/test_event_trigger_gate.py	test_gated_historical_event_included_when_satisfied	41	writable isolation required at line 47: in-memory state/content mutation: state.metrics['民心']
+tests/test_event_trigger_gate.py	test_ungated_historical_event_unchanged	55	writable isolation required at line 61: in-memory state/content mutation: state.metrics['民心']
+tests/test_event_trigger_gate.py	test_historical_event_expires_after_latest_window_when_gate_unsatisfied	69	writable isolation required at line 73: in-memory state/content mutation: ev.trigger_year
 tests/test_event_trigger_gate.py	test_historical_event_gate_can_read_event_triggered_record	112	writable isolation required: line 121 invokes mark_event_triggered
-tests/test_event_trigger_gate.py	test_historical_event_latest_month_is_still_inside_window	128	writable isolation required: line 145 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
+tests/test_event_trigger_gate.py	test_historical_event_latest_month_is_still_inside_window	128	writable isolation required at line 132: in-memory state/content mutation: ev.trigger_year
 tests/test_event_trigger_gate.py	test_historical_event_triggered_gate_ignores_obsolete_terminal	154	writable isolation required: line 161 invokes mark_event_obsolete
-tests/test_event_trigger_gate.py	test_open_window_historical_event_never_expires	168	writable isolation required: line 186 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
-tests/test_event_trigger_gate.py	test_open_window_historical_event_still_waits_for_earliest_time	195	writable isolation required: line 196 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_seed_event_expires_after_latest_window_when_gate_unsatisfied	214	writable isolation required: line 231 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
-tests/test_event_trigger_gate.py	test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied	248	writable isolation required: line 266 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
-tests/test_event_trigger_gate.py	test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing	281	writable isolation required: line 299 invokes execute(SELECT terminal_state FROM event_triggers WHERE event_id=?)
+tests/test_event_trigger_gate.py	test_open_window_historical_event_never_expires	168	writable isolation required at line 172: in-memory state/content mutation: ev.trigger_year
+tests/test_event_trigger_gate.py	test_open_window_historical_event_still_waits_for_earliest_time	195	writable isolation required at line 199: in-memory state/content mutation: ev.trigger_year
+tests/test_event_trigger_gate.py	test_seed_event_expires_after_latest_window_when_gate_unsatisfied	214	writable isolation required at line 218: in-memory state/content mutation: ev.trigger_year
+tests/test_event_trigger_gate.py	test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied	248	writable isolation required at line 252: in-memory state/content mutation: ev.trigger_year
+tests/test_event_trigger_gate.py	test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing	281	writable isolation required at line 285: in-memory state/content mutation: ev.trigger_year
 tests/test_event_trigger_gate.py	test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute	316	writable isolation required: line 329 invokes apply_issue_tracker_output
 tests/test_event_trigger_gate.py	test_apply_event_terminal_states_does_not_commit_existing_transaction	349	writable isolation required: line 362 invokes execute(BEGIN)
-tests/test_event_trigger_gate.py	test_historical_event_none_gate_no_crash	396	writable isolation required: line 397 assigns (db, state, content)
+tests/test_event_trigger_gate.py	test_historical_event_none_gate_no_crash	396	writable isolation required at line 400: in-memory state/content mutation: ev.trigger_gate
 tests/test_event_trigger_gate.py	test_character_numeric_gate_supports_aggregation	662	writable isolation required: line 667 invokes execute(UPDATE characters SET loyalty=? WHERE name=?)
-tests/test_event_trigger_gate.py	test_army_numeric_gate_preserves_fractional_arrears_tail	675	writable isolation required: line 680 invokes execute(SELECT id FROM armies ORDER BY id LIMIT 1)
+tests/test_event_trigger_gate.py	test_army_numeric_gate_preserves_fractional_arrears_tail	675	writable isolation required at line 681: direct SQL mutation: UPDATE armies SET arrears=? WHERE id=?
 tests/test_event_trigger_gate.py	test_character_text_gate_supports_equality	708	writable isolation required: line 713 invokes execute(UPDATE characters SET location = ? WHERE name = ?)
-tests/test_event_trigger_gate.py	test_auto_trigger_historical_event_to_issue_uses_outer_transaction	776	writable isolation required: line 778 assigns (db, state, content)
+tests/test_event_trigger_gate.py	test_auto_trigger_historical_event_to_issue_uses_outer_transaction	776	writable isolation required at line 782: in-memory state/content mutation: ev.auto_trigger
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_excluded_after_appeasement	827	writable isolation required: line 833 invokes execute(UPDATE characters SET loyalty = ? WHERE name = ?)
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_excluded_after_player_relocates_mao	840	writable isolation required: line 846 invokes execute(UPDATE characters SET loyalty=?, status=?, location=?, transit_to='' WHE)
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_excluded_after_player_reassigns_yuan	883	writable isolation required: line 889 invokes execute(UPDATE characters SET loyalty=?, status=?, location=? WHERE name=?)
@@ -365,22 +365,22 @@ tests/test_event_trigger_gate.py	test_mao_wenlong_event_trigger_lands_character_
 tests/test_event_trigger_gate.py	test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta	929	writable isolation required: line 935 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item	970	writable isolation required: line 976 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_strategic_foreign_event_lands_new_army_soft_result_delta	1003	writable isolation required: line 1013 invokes apply_score_extraction
-tests/test_event_trigger_gate.py	test_strategic_new_army_result_rejects_existing_army_collision	1048	writable isolation required: line 1056 invokes execute(SELECT manpower, owner_power FROM armies WHERE id = ?)
+tests/test_event_trigger_gate.py	test_strategic_new_army_result_rejects_existing_army_collision	1048	writable isolation required at line 1054: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_strategic_new_army_result_rejects_nonpositive_manpower	1091	writable isolation required: line 1099 invokes apply_score_extraction
 tests/test_event_trigger_gate.py	test_strategic_event_records_outcome_label_with_world_state_delta	1125	writable isolation required: line 1132 invokes apply_score_extraction
 tests/test_event_trigger_gate.py	test_strategic_event_outcome_label_normalizes_known_synonym	1151	writable isolation required: line 1158 invokes apply_score_extraction
-tests/test_event_trigger_gate.py	test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta	1177	writable isolation required: line 1179 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_strategic_event_delta_requires_outcome_label_without_mutation	1200	writable isolation required: line 1206 invokes execute(SELECT military_pressure FROM regions WHERE id = ?)
+tests/test_event_trigger_gate.py	test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta	1177	writable isolation required at line 1181: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_strategic_event_delta_requires_outcome_label_without_mutation	1200	writable isolation required at line 1204: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_strategic_event_outcome_label_unknown_fails_loud_without_mutation	1237	writable isolation required: line 1243 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_anchored_strategic_new_army_without_event_trigger_is_rejected	1263	writable isolation required: line 1271 invokes apply_score_extraction
 tests/test_event_trigger_gate.py	test_anchored_strategic_region_outcome_without_reason_is_rejected	1296	writable isolation required: line 1302 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
-tests/test_event_trigger_gate.py	test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome	1324	writable isolation required: line 1328 invokes execute(SELECT training FROM armies WHERE id = ?)
+tests/test_event_trigger_gate.py	test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome	1324	writable isolation required at line 1332: production mutation/isolation call: apply_score_extraction
 tests/test_event_trigger_gate.py	test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta	1345	writable isolation required: line 1351 invokes execute(UPDATE characters SET status = ? WHERE name = ?)
 tests/test_event_trigger_gate.py	test_strategic_foreign_event_rejects_trigger_without_world_state_delta	1385	writable isolation required: line 1394 invokes apply_score_extraction
 tests/test_event_trigger_gate.py	test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta	1406	writable isolation required: line 1415 invokes apply_issue_tracker_output
 tests/test_event_trigger_gate.py	test_anchored_strategic_result_delta_without_event_trigger_is_rejected	1427	writable isolation required: line 1433 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected	1451	writable isolation required: line 1456 invokes apply_score_extraction
-tests/test_event_trigger_gate.py	test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta	1473	writable isolation required: line 1481 invokes execute(SELECT military_strength FROM powers WHERE id = ?)
+tests/test_event_trigger_gate.py	test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta	1473	writable isolation required at line 1477: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta	1522	writable isolation required: line 1528 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan	1551	writable isolation required: line 1557 invokes execute(UPDATE regions SET controlled_by = ?, military_pressure = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_henan_place_policy_delta_does_not_capture_untriggered_fall_events	1602	writable isolation required: line 1608 invokes execute(UPDATE regions SET military_pressure = ? WHERE id = ?)
@@ -397,9 +397,9 @@ tests/test_event_trigger_gate.py	test_rejected_strategic_event_preserves_unancho
 tests/test_event_trigger_gate.py	test_rejected_strategic_event_preserves_unrelated_person_delta	1909	writable isolation required: line 1915 invokes mark_event_triggered
 tests/test_event_trigger_gate.py	test_previously_triggered_strategic_event_rejects_duplicate_without_landing_delta	1934	writable isolation required: line 1940 invokes mark_event_triggered
 tests/test_event_trigger_gate.py	test_rejected_strategic_event_does_not_land_substitute_commander_person_delta	1960	writable isolation required: line 1966 invokes mark_event_triggered
-tests/test_event_trigger_gate.py	test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas	1986	writable isolation required: line 1992 invokes execute(SELECT controlled_by, military_pressure FROM regions WHERE id = ?)
+tests/test_event_trigger_gate.py	test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas	1986	writable isolation required at line 1990: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_invalid_strategic_event_result_delta_does_not_mark_event_triggered	2025	writable isolation required: line 2032 invokes apply_score_extraction
-tests/test_event_trigger_gate.py	test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered	2049	writable isolation required: line 2055 invokes execute(SELECT city_level FROM regions WHERE id = ?)
+tests/test_event_trigger_gate.py	test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered	2049	writable isolation required at line 2053: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_strategic_event_army_clamp_noop_does_not_mark_event_triggered	2085	writable isolation required: line 2091 invokes execute(UPDATE armies SET manpower = ? WHERE id = ?)
 tests/test_event_trigger_gate.py	test_strategic_event_person_travel_noop_does_not_mark_event_triggered	2112	writable isolation required: line 2118 invokes execute(UPDATE characters SET status = ?, location = ?, transit_to = ? WHERE nam)
 tests/test_event_trigger_gate.py	test_strategic_event_person_same_status_noop_does_not_mark_event_triggered	2154	writable isolation required: line 2160 invokes execute(UPDATE characters SET status = ?, status_reason = ?, reason_code = '' WH)
@@ -427,7 +427,7 @@ tests/test_event_trigger_gate.py	test_yuan_xialing_event_excluded_after_jisi_bor
 tests/test_event_trigger_gate.py	test_yuan_xialing_event_included_after_jisi_event_issue_triggers	2854	writable isolation required: line 2862 invokes apply_score_extraction
 tests/test_event_trigger_gate.py	test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome	2895	writable isolation required: line 2901 invokes save_state
 tests/test_event_trigger_gate.py	test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome	2938	writable isolation required: line 2944 invokes save_state
-tests/test_event_trigger_gate.py	test_person_write_state_restore_removes_dynamic_character_attrs	2969	writable isolation required: line 2971 assigns (db, _state, content)
+tests/test_event_trigger_gate.py	test_person_write_state_restore_removes_dynamic_character_attrs	2969	writable isolation required at line 2973: in-memory state/content mutation: content.characters['毛文龙'].ghost_preflight_attr
 tests/test_event_trigger_gate.py	test_legacy_person_core_static_fields_backfill_reachability	2980	writable isolation required: line 2984 invokes execute(UPDATE characters SET location='', transit_to='' WHERE name=?)
 tests/test_event_trigger_gate.py	test_person_core_static_backfill_preserves_relocated_mao	3040	writable isolation required: line 3044 invokes execute(UPDATE characters SET location=?, transit_to='' WHERE name=?)
 tests/test_event_trigger_gate.py	test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead	3059	writable isolation required: line 3065 invokes execute(UPDATE regions SET controlled_by=?, unrest=? WHERE id=?)
@@ -435,17 +435,17 @@ tests/test_event_trigger_gate.py	test_li_chenghai_event_opens_after_li_zicheng_h
 tests/test_event_trigger_gate.py	test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path	3095	writable isolation required: line 3102 invokes apply_historical_debuts
 tests/test_event_trigger_gate.py	test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event	3239	writable isolation required: line 3245 invokes set_character_status
 tests/test_event_trigger_gate.py	test_issue_194_dalingghe_requires_world_state_main_ledger_result	3259	writable isolation required: line 3267 invokes apply_score_extraction
-tests/test_event_trigger_gate.py	test_huabei_plague_auto_triggers_with_deterministic_core_effect	3301	writable isolation required: line 3307 invokes execute(SELECT population, unrest FROM regions WHERE id=?)
-tests/test_event_trigger_gate.py	test_historical_auto_trigger_core_effect_is_applied_once	3325	writable isolation required: line 3333 invokes execute(SELECT population, unrest FROM regions WHERE id=?)
-tests/test_event_trigger_gate.py	test_auto_trigger_historical_events_use_preloaded_terminal_refs	3352	writable isolation required: line 3354 assigns (db, state, content)
-tests/test_event_trigger_gate.py	test_historical_auto_trigger_event_expires_after_latest_window	3369	writable isolation required: line 3371 assigns (db, state, content)
+tests/test_event_trigger_gate.py	test_huabei_plague_auto_triggers_with_deterministic_core_effect	3301	writable isolation required at line 3305: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_historical_auto_trigger_core_effect_is_applied_once	3325	writable isolation required at line 3329: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_auto_trigger_historical_events_use_preloaded_terminal_refs	3352	writable isolation required at line 3356: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_historical_auto_trigger_event_expires_after_latest_window	3369	writable isolation required at line 3374: in-memory state/content mutation: ev.trigger_year
 tests/test_event_trigger_gate.py	test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved	3394	writable isolation required: line 3406 invokes execute(UPDATE issues SET status='resolved' WHERE id=?)
-tests/test_event_trigger_gate.py	test_huabei_plague_keeps_soft_degree_axis_as_situation_issue	3420	writable isolation required: line 3431 invokes execute(SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?)
-tests/test_event_trigger_gate.py	test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails	3443	writable isolation required: line 3460 invokes execute(SELECT 1 FROM issues WHERE origin_kind=? AND origin_ref=?)
+tests/test_event_trigger_gate.py	test_huabei_plague_keeps_soft_degree_axis_as_situation_issue	3420	writable isolation required at line 3424: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails	3443	writable isolation required at line 3449: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue	3467	writable isolation required: line 3473 invokes insert_issue
-tests/test_event_trigger_gate.py	test_jingshi_plague_auto_triggers_and_weakens_capital_garrison	3510	writable isolation required: line 3516 invokes execute(SELECT manpower, morale FROM armies WHERE id=?)
-tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_auto_triggers_and_renames_houjin	3534	writable isolation required: line 3546 invokes execute(SELECT name, aliases, status, last_action FROM powers WHERE id=?)
-tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue	3557	writable isolation required: line 3568 invokes execute(SELECT status, kind, origin_kind, origin_ref FROM issues WHERE id=?)
+tests/test_event_trigger_gate.py	test_jingshi_plague_auto_triggers_and_weakens_capital_garrison	3510	writable isolation required at line 3514: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_auto_triggers_and_renames_houjin	3534	writable isolation required at line 3538: in-memory state/content mutation: state.year
+tests/test_event_trigger_gate.py	test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue	3557	writable isolation required at line 3561: in-memory state/content mutation: state.year
 tests/test_event_trigger_gate.py	test_historical_power_rename_tick_reads_huangtaiji_event_effect	3580	writable isolation required: line 3599 invokes apply_historical_power_renames
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances	3617	writable isolation required: line 3622 invokes insert_issue
 tests/test_event_trigger_gate.py	test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta	3668	writable isolation required: line 3691 invokes apply_score_extraction
@@ -461,8 +461,8 @@ tests/test_event_trigger_gate.py	test_issue_tracker_close_legacy_expiry_respects
 tests/test_event_trigger_gate.py	test_apply_issue_entities_person_changes_respect_commit_false	4117	writable isolation required: line 4121 invokes execute(UPDATE characters SET status = ? WHERE name = ?)
 tests/test_event_trigger_gate.py	test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback	4149	writable isolation required: line 4153 invokes commit
 tests/test_event_trigger_gate.py	test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback	4171	writable isolation required: line 4175 invokes commit
-tests/test_event_trigger_gate.py	test_apply_score_extraction_class_delta_respects_outer_transaction_rollback	4190	writable isolation required: line 4193 invokes execute(SELECT name, region_id, satisfaction FROM classes ORDER BY region_id, na)
-tests/test_event_trigger_gate.py	test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback	4228	writable isolation required: line 4231 invokes execute(SELECT id, unrest FROM regions WHERE unrest < 100 ORDER BY id LIMIT 1)
+tests/test_event_trigger_gate.py	test_apply_score_extraction_class_delta_respects_outer_transaction_rollback	4190	writable isolation required at line 4201: production mutation/isolation call: commit
+tests/test_event_trigger_gate.py	test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback	4228	writable isolation required at line 4245: production mutation/isolation call: commit
 tests/test_event_trigger_gate.py	test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback	4294	writable isolation required: line 4300 invokes commit
 tests/test_event_trigger_gate.py	test_event_pool_pending_person_location_change_blocks_gate	4332	writable isolation required: line 4336 invokes execute(UPDATE characters SET status=?, location=?, transit_to='' WHERE name=?)
 tests/test_event_trigger_gate.py	test_event_pool_pending_invalid_appointment_does_not_block_gate	4388	writable isolation required: line 4392 invokes execute(UPDATE characters SET status=? WHERE name=?)
@@ -493,46 +493,46 @@ tests/test_event_trigger_gate.py	test_mao_wenlong_event_obsolete_when_core_subje
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_excluded_when_yuan_unavailable	5612	writable isolation required: line 5620 invokes execute(UPDATE characters SET loyalty = ?, status = ? WHERE name = ?)
 tests/test_event_trigger_gate.py	test_event_pool_current_candidate_recheck_cached_until_state_changes	5652	writable isolation required: line 5692 invokes apply_issue_tracker_output
 tests/test_event_trigger_gate.py	test_mao_wenlong_event_pool_duplicate_emit_is_idempotent	5714	writable isolation required: line 5720 invokes execute(UPDATE characters SET loyalty = ? WHERE name = ?)
-tests/test_faction_class_section_rejections.py	test_unknown_faction_rejected_good_item_lands	44	writable isolation required: line 50 invokes execute(SELECT satisfaction FROM factions WHERE name=?)
+tests/test_faction_class_section_rejections.py	test_unknown_faction_rejected_good_item_lands	44	writable isolation required at line 53: production mutation/isolation call: run_settle
 tests/test_faction_class_section_rejections.py	test_unknown_class_rejected_good_item_lands	73	writable isolation required: line 80 invokes run_settle
 tests/test_faction_class_section_rejections.py	test_illegal_faction_value_rejected	95	writable isolation required: line 101 invokes run_settle
 tests/test_faction_class_section_rejections.py	test_illegal_class_value_rejected	111	writable isolation required: line 118 invokes run_settle
 tests/test_faction_class_section_rejections.py	test_float_and_bool_class_values_rejected	129	writable isolation required: line 137 invokes run_settle
-tests/test_faction_class_section_rejections.py	test_float_and_bool_faction_values_rejected	147	writable isolation required: line 153 invokes execute(SELECT satisfaction, leverage FROM factions WHERE name=?)
+tests/test_faction_class_section_rejections.py	test_float_and_bool_faction_values_rejected	147	writable isolation required at line 156: production mutation/isolation call: run_settle
 tests/test_faction_class_section_rejections.py	test_web_panel_faction_delta_stays_applied_dict	169	writable isolation required: line 177 invokes run_settle
-tests/test_faction_class_section_rejections.py	test_valid_flat_int_faction_not_rejected	193	writable isolation required: line 198 invokes execute(SELECT satisfaction FROM factions WHERE name=?)
+tests/test_faction_class_section_rejections.py	test_valid_flat_int_faction_not_rejected	193	writable isolation required at line 201: production mutation/isolation call: run_settle
 tests/test_faction_class_section_rejections.py	test_zero_delta_faction_not_rejected	211	writable isolation required: line 217 invokes run_settle
 tests/test_faction_class_section_rejections.py	test_issue_effect_faction_rejection_reaches_reports	224	writable isolation required: line 230 invokes insert_issue
 tests/test_faction_leverage_9.py	test_faction_leverage_drops_when_core_minister_ousted	30	writable isolation required: line 36 invokes set_character_status
 tests/test_faction_leverage_9.py	test_faction_leverage_rises_back_when_minister_restored	41	writable isolation required: line 47 invokes set_character_status
-tests/test_faction_leverage_9.py	test_non_whitelist_faction_row_leverage_not_recomputed	58	writable isolation required: line 67 invokes execute(SELECT 1 FROM factions WHERE name='宗室')
-tests/test_faction_leverage_9.py	test_xixue_faction_in_whitelist_drops_when_member_ousted	82	writable isolation required: line 85 invokes execute(SELECT name, office_type FROM characters WHERE faction='西学' AND status=')
-tests/test_faction_leverage_9.py	test_rank_tier_modulates_impact	96	writable isolation required: line 101 invokes execute(SELECT name, office FROM characters WHERE name='崔呈秀' AND status='active')
-tests/test_faction_leverage_9.py	test_restore_uses_new_office_weight_not_old	127	writable isolation required: line 134 invokes execute(SELECT name FROM characters WHERE faction='阉党' AND status='active' AND o)
-tests/test_faction_leverage_9.py	test_promotion_via_set_character_office_raises_leverage	182	writable isolation required: line 187 invokes execute(SELECT name, office_type FROM characters WHERE faction='阉党' AND status=')
-tests/test_faction_leverage_9.py	test_failed_appointment_rolls_back_faction_leverage	205	writable isolation required: line 211 invokes execute(SELECT name FROM characters WHERE faction='阉党' AND status='active' AND o)
-tests/test_faction_leverage_9.py	test_displaced_minister_faction_leverage_recomputed	243	writable isolation required: line 251 invokes execute(SELECT name, office, office_type, faction FROM characters WHERE name='崔呈)
-tests/test_faction_leverage_9.py	test_offset_not_re_anchored_on_reload_after_clamp	276	writable isolation required: line 286 invokes execute(SELECT leverage_offset FROM factions WHERE name=?)
-tests/test_faction_leverage_9.py	test_leverage_clamps_at_zero_no_negative	308	writable isolation required: line 316 invokes execute(SELECT name FROM characters WHERE faction=? AND status='active' AND powe)
-tests/test_faction_leverage_9.py	test_add_character_appointment_lifts_faction_leverage	339	writable isolation required: line 348 invokes execute(SELECT name FROM characters WHERE name=?)
-tests/test_faction_leverage_9.py	test_active_member_empty_office_contributes_zero_weight	367	writable isolation required: line 374 invokes execute(SELECT name, office_type FROM characters WHERE faction=? AND status='act)
+tests/test_faction_leverage_9.py	test_non_whitelist_faction_row_leverage_not_recomputed	58	writable isolation required at line 77: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_xixue_faction_in_whitelist_drops_when_member_ousted	82	writable isolation required at line 91: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_rank_tier_modulates_impact	96	writable isolation required at line 113: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_restore_uses_new_office_weight_not_old	127	writable isolation required at line 143: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_promotion_via_set_character_office_raises_leverage	182	writable isolation required at line 200: production mutation/isolation call: set_character_office
+tests/test_faction_leverage_9.py	test_failed_appointment_rolls_back_faction_leverage	205	writable isolation required at line 218: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_displaced_minister_faction_leverage_recomputed	243	writable isolation required at line 265: production mutation/isolation call: apply_office_appointment
+tests/test_faction_leverage_9.py	test_offset_not_re_anchored_on_reload_after_clamp	276	writable isolation required at line 291: direct SQL mutation: UPDATE factions SET leverage=0 WHERE name=?
+tests/test_faction_leverage_9.py	test_leverage_clamps_at_zero_no_negative	308	writable isolation required at line 323: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_add_character_appointment_lifts_faction_leverage	339	writable isolation required at line 353: production mutation/isolation call: apply_office_appointment
+tests/test_faction_leverage_9.py	test_active_member_empty_office_contributes_zero_weight	367	writable isolation required at line 383: direct SQL mutation: UPDATE characters SET office='', office_type='兵部' WHERE name=?
 tests/test_faction_leverage_9.py	test_recompute_all_reconciles_drift_from_unhooked_path	404	writable isolation required: line 412 invokes execute(UPDATE characters SET office='' WHERE faction=? AND status='active' AND )
 tests/test_faction_leverage_9.py	test_settle_path_triggers_reconcile_before_next_period	461	writable isolation required: line 482 invokes run_settle
-tests/test_faction_leverage_9.py	test_reconcile_runs_before_clear_gated_legacies_same_turn	491	writable isolation required: line 503 invokes execute(SELECT id, status FROM legacies WHERE legacy_key='yandang_zhuanquan' AND)
-tests/test_faction_leverage_9.py	test_weizhongxian_ouster_drops_yandang_by_sili_weight	681	writable isolation required: line 685 invokes execute(SELECT name, office, office_type, status FROM characters WHERE name='魏忠贤)
+tests/test_faction_leverage_9.py	test_reconcile_runs_before_clear_gated_legacies_same_turn	491	writable isolation required at line 511: direct SQL mutation: UPDATE characters SET office='' WHERE faction=? AND status='active' AND power_id='ming'
+tests/test_faction_leverage_9.py	test_weizhongxian_ouster_drops_yandang_by_sili_weight	681	writable isolation required at line 692: production mutation/isolation call: set_character_status
 tests/test_faction_leverage_9.py	test_whitelist_faction_delta_routes_to_offset_survives_reconcile	698	writable isolation required: line 715 invokes commit
 tests/test_faction_leverage_9.py	test_whitelist_faction_delta_survives_full_settlement	723	writable isolation required: line 740 invokes run_settle
-tests/test_faction_leverage_9.py	test_defection_through_settlement_reconciles_old_faction	756	writable isolation required: line 780 invokes execute(SELECT power_id, office, office_type, status FROM characters WHERE name=)
+tests/test_faction_leverage_9.py	test_defection_through_settlement_reconciles_old_faction	756	writable isolation required at line 796: production mutation/isolation call: run_settle
 tests/test_faction_leverage_9.py	test_non_whitelist_faction_delta_direct_leverage_survives_reconcile	826	writable isolation required: line 839 invokes commit
-tests/test_faction_leverage_9.py	test_legacy_save_calibrates_offset_via_driver_path	878	writable isolation required: line 894 invokes execute(SELECT leverage_offset FROM factions WHERE name=?)
-tests/test_faction_leverage_9.py	test_col_added_uncalibrated_save_recalibrates_on_open	946	writable isolation required: line 973 invokes execute(SELECT leverage_offset FROM factions WHERE name=?)
-tests/test_faction_leverage_9.py	test_calibrated_save_without_marker_not_re_anchored	1030	writable isolation required: line 1050 invokes execute(SELECT leverage_offset FROM factions WHERE name=?)
-tests/test_faction_leverage_9.py	test_rollback_snapshot_restores_leverage_offset	1069	writable isolation required: line 1076 invokes execute(SELECT leverage_offset FROM factions WHERE name=?)
+tests/test_faction_leverage_9.py	test_legacy_save_calibrates_offset_via_driver_path	878	writable isolation required at line 907: production mutation/isolation call: close
+tests/test_faction_leverage_9.py	test_col_added_uncalibrated_save_recalibrates_on_open	946	writable isolation required at line 989: production mutation/isolation call: close
+tests/test_faction_leverage_9.py	test_calibrated_save_without_marker_not_re_anchored	1030	writable isolation required at line 1062: production mutation/isolation call: close
+tests/test_faction_leverage_9.py	test_rollback_snapshot_restores_leverage_offset	1069	writable isolation required at line 1082: direct SQL mutation: UPDATE factions SET leverage_offset = leverage_offset + 13 WHERE name=?
 tests/test_faction_leverage_9.py	test_calibrate_offset_flag_consumed_once	1096	writable isolation required: line 1106 invokes execute(UPDATE factions SET leverage=0 WHERE name=?)
-tests/test_faction_leverage_9.py	test_chat_rollback_restores_faction_leverage	1118	writable isolation required: line 1123 invokes execute(SELECT name FROM characters WHERE faction='阉党' AND status='active' AND o)
-tests/test_faction_leverage_9.py	test_power_id_defection_drops_faction_leverage_immediately	1153	writable isolation required: line 1160 invokes execute(SELECT name FROM characters WHERE faction='阉党' AND status='active' AND p)
-tests/test_faction_leverage_9.py	test_half_weight_odd_baseline_no_round_drift	1178	writable isolation required: line 1185 invokes execute(SELECT name FROM characters WHERE faction=? AND status='active' AND powe)
-tests/test_faction_leverage_9.py	test_old_integer_offset_migrated_to_float	1211	writable isolation required: line 1219 invokes execute(SELECT name FROM characters WHERE faction=? AND status='active' AND powe)
+tests/test_faction_leverage_9.py	test_chat_rollback_restores_faction_leverage	1118	writable isolation required at line 1132: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_power_id_defection_drops_faction_leverage_immediately	1153	writable isolation required at line 1169: production mutation/isolation call: apply_character_power_changes
+tests/test_faction_leverage_9.py	test_half_weight_odd_baseline_no_round_drift	1178	writable isolation required at line 1193: production mutation/isolation call: set_character_status
+tests/test_faction_leverage_9.py	test_old_integer_offset_migrated_to_float	1211	writable isolation required at line 1226: production mutation/isolation call: set_character_status
 tests/test_fiscal_levy_effect.py	test_shaanxi_primary_source_liao_seed_keeps_opening_transport_cap	60	writable isolation required: line 65 invokes save_state
 tests/test_fiscal_levy_effect.py	test_liao_levy_rise_triggers_and_updates_shadow_settle_before_fiscal_tick	84	writable isolation required: line 89 invokes save_state
 tests/test_fiscal_levy_effect.py	test_liao_levy_rise_triggers_on_no_edict_advance_before_fiscal_tick	127	writable isolation required: line 132 invokes save_state
@@ -573,33 +573,33 @@ tests/test_fiscal_levy_effect.py	test_fiscal_levy_components_are_land_share_cali
 tests/test_fiscal_levy_effect.py	test_lost_seeded_province_keeps_current_levy_rate_and_uses_it_on_restore	1272	writable isolation required: line 1276 invokes execute(UPDATE regions SET controlled_by = ? WHERE id = ?)
 tests/test_fiscal_levy_effect.py	test_lian_levy_gate_waits_until_1639_and_needs_no_stop_event	1333	writable isolation required: line 1338 invokes save_state
 tests/test_fiscal_levy_effect.py	test_fiscal_levy_gate_waits_until_1631_and_generic_terminal_pass_skips_it	1368	writable isolation required: line 1373 invokes save_state
-tests/test_fiscal_substrate_bridge.py	test_substrate_absent_does_not_break_flows	4436	writable isolation required: line 4442 invokes execute(SELECT fiscal FROM regions WHERE id='shaanxi')
+tests/test_fiscal_substrate_bridge.py	test_substrate_absent_does_not_break_flows	4436	writable isolation required at line 4445: direct SQL mutation: UPDATE regions SET fiscal = ? WHERE id='shaanxi'
 tests/test_initiative_resolve_pairing.py	test_resolve_surfaces_pairing_warning_in_result	116	writable isolation required: line 120 invokes insert_issue
 tests/test_initiative_resolve_pairing.py	test_resolve_with_new_armies_no_warning_in_result	135	writable isolation required: line 138 invokes insert_issue
-tests/test_issue_entities.py	test_resolve_creates_army	29	writable isolation required: line 39 invokes execute(SELECT manpower, commander FROM armies WHERE id='tianxiongjun_test')
-tests/test_issue_entities.py	test_resolve_changes_character_status	44	writable isolation required: line 47 invokes execute(SELECT COUNT(*) FROM person_logs)
+tests/test_issue_entities.py	test_resolve_creates_army	29	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_resolve_changes_character_status	44	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
 tests/test_issue_entities.py	test_legacy_issue_status_change_uses_person_transition_matrix	66	writable isolation required: line 69 invokes set_character_status
 tests/test_issue_entities.py	test_legacy_issue_status_change_does_not_use_month_end_active_gate	89	writable isolation required: line 98 invokes set_character_status
 tests/test_issue_entities.py	test_resolve_character_status_syncs_content_travel_state	123	writable isolation required: line 131 invokes apply_score_extraction
-tests/test_issue_entities.py	test_resolve_applies_unified_person_change_effect	165	writable isolation required: line 180 invokes execute(SELECT location, transit_to FROM characters WHERE name=?)
-tests/test_issue_entities.py	test_issue_unified_person_change_shadows_legacy_person_effects	192	writable isolation required: line 227 invokes execute(SELECT status, office, reason_code FROM characters WHERE name=?)
-tests/test_issue_entities.py	test_resolve_rejects_bad_unified_person_change_effect	241	writable isolation required: line 242 assigns (db, state, content)
-tests/test_issue_entities.py	test_issue_person_change_effect_rejects_malformed_shape	255	writable isolation required: line 256 assigns (db, state, content)
-tests/test_issue_entities.py	test_malformed_army_raises_not_silent	262	writable isolation required: line 264 assigns (db, state, _)
-tests/test_issue_entities.py	test_army_bad_owner_power_raises	271	writable isolation required: line 272 assigns (db, state, _)
-tests/test_issue_entities.py	test_unknown_character_raises	280	writable isolation required: line 281 assigns (db, state, _)
-tests/test_issue_entities.py	test_bad_status_raises	288	writable isolation required: line 289 assigns (db, state, content)
-tests/test_issue_entities.py	test_empty_effect_noop	297	writable isolation required: line 299 assigns (db, state, _)
+tests/test_issue_entities.py	test_resolve_applies_unified_person_change_effect	165	writable isolation required at line 188: in-memory state/content mutation: content.characters[name].location
+tests/test_issue_entities.py	test_issue_unified_person_change_shadows_legacy_person_effects	192	writable isolation required at line 236: in-memory state/content mutation: content.characters[name].status
+tests/test_issue_entities.py	test_resolve_rejects_bad_unified_person_change_effect	241	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_issue_person_change_effect_rejects_malformed_shape	255	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_malformed_army_raises_not_silent	262	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_army_bad_owner_power_raises	271	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_unknown_character_raises	280	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_bad_status_raises	288	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_empty_effect_noop	297	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
 tests/test_issue_entities.py	test_apply_score_extraction_splits_bad_nested_entity	305	writable isolation required: line 311 invokes apply_score_extraction
 tests/test_issue_entities.py	test_apply_score_extraction_accepts_flat_faction_scalar	315	writable isolation required: line 321 invokes apply_score_extraction
 tests/test_issue_entities.py	test_apply_score_extraction_rejects_nondict_power_second_level_per_entity	327	writable isolation required: line 330 invokes apply_score_extraction
 tests/test_issue_entities.py	test_apply_score_extraction_rejects_nondict_list_item_per_item	334	writable isolation required: line 337 invokes apply_score_extraction
 tests/test_issue_entities.py	test_apply_score_extraction_tolerates_null_field	341	writable isolation required: line 346 invokes apply_score_extraction
 tests/test_issue_entities.py	test_apply_score_extraction_rejects_unknown_top_level_key	349	writable isolation required: line 354 invokes apply_score_extraction
-tests/test_issue_entities.py	test_resolve_army_delta_reinforces_existing	357	writable isolation required: line 361 invokes execute(SELECT manpower FROM armies WHERE id='jingying')
-tests/test_issue_entities.py	test_army_delta_unknown_army_raises	370	writable isolation required: line 372 assigns (db, state, _)
-tests/test_issue_entities.py	test_non_dict_character_status_item_raises	379	writable isolation required: line 381 assigns (db, state, _)
-tests/test_issue_entities.py	test_new_issue_nondict_effect_fields_do_not_crash	388	writable isolation required: line 393 invokes execute(SELECT COUNT(*) FROM issues)
+tests/test_issue_entities.py	test_resolve_army_delta_reinforces_existing	357	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_army_delta_unknown_army_raises	370	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_non_dict_character_status_item_raises	379	writable isolation required: entity mutation path: _apply_issue_entities dispatches real army/person database writers
+tests/test_issue_entities.py	test_new_issue_nondict_effect_fields_do_not_crash	388	writable isolation required at line 394: production mutation/isolation call: apply_issue_tracker_output
 tests/test_issue_entities.py	test_initiative_floor_applies_when_enrich_empty	408	writable isolation required: line 415 invokes apply_issue_tracker_output
 tests/test_issue_entities.py	test_runtime_cli_initiative_floor_applies_without_backend_env	425	writable isolation required: line 445 invokes apply_score_extraction
 tests/test_issue_entities.py	test_api_channel_initiative_does_not_use_backend_env_floor	455	writable isolation required: line 477 invokes apply_score_extraction
@@ -607,10 +607,10 @@ tests/test_issue_entities.py	test_inertia_natural_resolve_applies_entities	488	w
 tests/test_issue_entities.py	test_inertia_natural_resolve_applies_unified_person_change_with_bound_content	506	writable isolation required: line 514 invokes insert_issue
 tests/test_issue_entities.py	test_issue_resolve_person_effect_is_visible_to_effect_brief	539	writable isolation required: line 544 invokes insert_issue
 tests/test_issue_entities.py	test_inertia_natural_fail_applies_entities	577	writable isolation required: line 583 invokes insert_issue
-tests/test_junxin_alias_loyalty_313.py	test_junxin_alias_maps_to_loyalty_not_morale	31	writable isolation required: line 35 invokes execute(SELECT morale, loyalty FROM armies WHERE id=?)
-tests/test_junxin_alias_loyalty_313.py	test_shiqi_alias_still_maps_to_morale	54	writable isolation required: line 58 invokes execute(SELECT morale, loyalty FROM armies WHERE id=?)
+tests/test_junxin_alias_loyalty_313.py	test_junxin_alias_maps_to_loyalty_not_morale	31	writable isolation required at line 42: production mutation/isolation call: apply_army_deltas
+tests/test_junxin_alias_loyalty_313.py	test_shiqi_alias_still_maps_to_morale	54	writable isolation required at line 65: production mutation/isolation call: apply_army_deltas
 tests/test_junxin_alias_loyalty_313.py	test_junxin_and_shiqi_aliases_independent	77	writable isolation required: line 83 invokes apply_army_deltas
-tests/test_minister_context.py	_ctx	15	writable isolation required: line 16 assigns (db, state, _)
+tests/test_minister_context.py	_ctx	15	writable isolation required: shared helper carries function-scoped DB/state into the memorial write-path test in this module
 tests/test_minister_context.py	test_minister_memorial_tools_show_commitment_fields_and_progress	42	writable isolation required: line 44 invokes execute(UPDATE issues SET status='dropped' WHERE status='active')
 tests/test_named_characters_seed_484.py	test_r4_named_characters_debut_in_historical_order	46	writable isolation required: line 64 invokes apply_historical_debuts
 tests/test_new_issues_section_rejections.py	test_new_issue_non_dict_item_rejected_not_crash	130	writable isolation required: line 132 invokes apply_issue_tracker_output
@@ -627,9 +627,9 @@ tests/test_new_issues_section_rejections.py	test_new_issue_bool_float_int_field_
 tests/test_new_issues_section_rejections.py	test_new_issue_falsy_nonstring_kind_rejected	291	writable isolation required: line 296 invokes apply_issue_tracker_output
 tests/test_new_issues_section_rejections.py	test_new_issue_insert_code_exception_propagates	303	writable isolation required: line 310 invokes apply_issue_tracker_output
 tests/test_new_issues_section_rejections.py	test_new_issue_valid_decree_still_creates	315	writable isolation required: line 317 invokes apply_issue_tracker_output
-tests/test_new_issues_section_rejections.py	test_event_to_issue_insert_exception_propagates	340	writable isolation required: line 341 assigns (db, state, _)
+tests/test_new_issues_section_rejections.py	test_event_to_issue_insert_exception_propagates	340	writable isolation required at line 349: production mutation/isolation call: setattr
 tests/test_new_issues_section_rejections.py	test_new_issue_event_pool_insert_exception_propagates	354	writable isolation required: line 368 invokes apply_issue_tracker_output
-tests/test_new_issues_section_rejections.py	test_event_to_issue_duplicate_returns_none_not_raise	373	writable isolation required: line 374 assigns (db, state, _)
+tests/test_new_issues_section_rejections.py	test_event_to_issue_duplicate_returns_none_not_raise	373	writable isolation required: issue writer path: event_to_issue performs insert/dedup against the database
 tests/test_new_issues_section_rejections.py	test_new_issue_event_pool_rejects_expired_event	385	writable isolation required: line 388 invokes mark_event_expired
 tests/test_new_issues_section_rejections.py	test_authoritative_event_pool_rejects_same_batch_obsolete_event	401	writable isolation required: line 415 invokes apply_issue_tracker_output
 tests/test_new_issues_section_rejections.py	test_new_issue_scalar_string_tags_rejected	444	writable isolation required: line 447 invokes apply_issue_tracker_output
@@ -637,11 +637,11 @@ tests/test_new_issues_section_rejections.py	test_new_issue_non_string_tag_elemen
 tests/test_new_issues_section_rejections.py	test_new_issue_valid_list_tags_preserved	464	writable isolation required: line 468 invokes apply_issue_tracker_output
 tests/test_new_issues_section_rejections.py	test_new_issue_non_dict_cancel_cost_tolerated	483	writable isolation required: line 486 invokes apply_issue_tracker_output
 tests/test_new_issues_section_rejections.py	test_new_issue_valid_cancel_cost_preserved	494	writable isolation required: line 499 invokes apply_issue_tracker_output
-tests/test_parallel_extractors.py	_settle_capturing_parallel	199	writable isolation required: line 203 assigns (db, state, content)
-tests/test_parallel_extractors.py	test_settle_passes_parallel_for_cli_backend	225	writable isolation required: line 228 assigns cli_cfg
-tests/test_parallel_extractors.py	test_settle_serial_for_non_cli_backend	233	writable isolation required: line 236 assigns api_cfg
-tests/test_parallel_extractors.py	test_settle_serial_for_non_codex_cli_runner	240	writable isolation required: line 244 assigns agy_cfg
-tests/test_pending_actions.py	test_secret_order_update_intent_stages_not_mutates	85	writable isolation required: line 95 invokes execute(SELECT title, content FROM secret_orders WHERE id=?)
+tests/test_parallel_extractors.py	_settle_capturing_parallel	199	writable isolation required at line 205: production mutation/isolation call: setattr
+tests/test_parallel_extractors.py	test_settle_passes_parallel_for_cli_backend	225	writable isolation required: settlement lifecycle: _settle_capturing_parallel runs the real writable settle path
+tests/test_parallel_extractors.py	test_settle_serial_for_non_cli_backend	233	writable isolation required: settlement lifecycle: _settle_capturing_parallel runs the real writable settle path
+tests/test_parallel_extractors.py	test_settle_serial_for_non_codex_cli_runner	240	writable isolation required: settlement lifecycle: _settle_capturing_parallel runs the real writable settle path
+tests/test_pending_actions.py	test_secret_order_update_intent_stages_not_mutates	85	writable isolation required: negative pending-action write path: _drive_intent exercises staging without committing the order
 tests/test_pending_actions.py	test_secret_order_rush_intent_stages_and_commits	112	writable isolation required: line 117 invokes create_secret_order
 tests/test_pending_actions.py	test_secret_order_rush_intent_preserves_zero_deadline	143	writable isolation required: line 148 invokes create_secret_order
 tests/test_pending_actions.py	test_secret_order_rush_deadline_zero_commits_immediate_review	172	writable isolation required: line 176 invokes create_secret_order
@@ -649,10 +649,10 @@ tests/test_pending_actions.py	test_secret_order_submit_intent_stages_and_commits
 tests/test_pending_actions.py	test_secret_order_progress_intent_stages_and_commits	213	writable isolation required: line 218 invokes create_secret_order
 tests/test_pending_actions.py	test_pre_settle_commits_pending_at_decree_front	238	writable isolation required: line 242 invokes create_secret_order
 tests/test_pending_actions.py	test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility	255	writable isolation required: line 259 invokes stage_pending_action
-tests/test_pending_actions.py	test_secret_order_endpoint_delegates_to_chat_confirmation_flow	284	writable isolation required: line 288 assigns (db, state, content)
-tests/test_pending_actions.py	test_api_create_secret_order_preserves_explicit_zero_deadline	335	writable isolation required: line 339 assigns (db, state, content)
-tests/test_pending_actions.py	test_api_create_secret_order_supports_pydantic_v1_fields_set	371	writable isolation required: line 375 assigns (db, state, content)
-tests/test_pending_actions.py	test_api_create_secret_order_ignores_malformed_tags	407	writable isolation required: line 411 assigns (db, state, content)
+tests/test_pending_actions.py	test_secret_order_endpoint_delegates_to_chat_confirmation_flow	284	writable isolation required at line 310: production mutation/isolation call: set
+tests/test_pending_actions.py	test_api_create_secret_order_preserves_explicit_zero_deadline	335	writable isolation required at line 352: production mutation/isolation call: set
+tests/test_pending_actions.py	test_api_create_secret_order_supports_pydantic_v1_fields_set	371	writable isolation required at line 388: production mutation/isolation call: set
+tests/test_pending_actions.py	test_api_create_secret_order_ignores_malformed_tags	407	writable isolation required at line 424: production mutation/isolation call: set
 tests/test_pending_actions.py	test_commit_marks_unapplicable_failed_not_orphan	438	writable isolation required: line 443 invokes create_secret_order
 tests/test_pending_actions.py	test_commit_rejects_blank_new_secret_order_payload	463	writable isolation required: line 466 invokes stage_pending_action
 tests/test_pending_actions.py	test_commit_rejects_malformed_secret_order_deadline_payload	479	writable isolation required: line 483 invokes stage_pending_action
@@ -665,15 +665,15 @@ tests/test_pending_actions.py	test_pending_actions_endpoints	621	writable isolat
 tests/test_pending_actions.py	test_pending_actions_endpoint_hides_new_secret_order_candidates	655	writable isolation required: line 662 invokes create_secret_order
 tests/test_pending_actions.py	test_web_advance_without_edict_lands_hidden_pending_secret_order	679	writable isolation required: line 686 invokes stage_pending_action
 tests/test_pending_actions.py	test_web_advance_without_edict_returns_failed_secret_order_payload	717	writable isolation required: line 724 invokes stage_pending_action
-tests/test_pending_actions.py	test_web_advance_without_edict_settlement_abort_returns_409	758	writable isolation required: line 765 assigns (db, state, content)
+tests/test_pending_actions.py	test_web_advance_without_edict_settlement_abort_returns_409	758	writable isolation required at line 779: production mutation/isolation call: setattr
 tests/test_pending_actions.py	test_web_advance_without_edict_refuses_unhandled_directive_action	789	writable isolation required: line 797 invokes stage_pending_action
 tests/test_pending_actions.py	test_web_advance_without_edict_refuses_existing_draft	820	writable isolation required: line 827 invokes add_directive
 tests/test_pending_actions.py	test_consort_cultivate_stages_and_commits	847	writable isolation required: line 858 invokes apply_cli_conversation_actions
-tests/test_pending_actions.py	content_consort_candidates	868	writable isolation required: line 869 assigns (db, state, content)
+tests/test_pending_actions.py	content_consort_candidates	868	writable isolation required: shared helper queries the function-scoped fixture for a caller that stages and commits a consort action
 tests/test_pending_actions.py	test_commit_does_not_crash_when_action_raises	875	writable isolation required: line 880 invokes create_secret_order
 tests/test_pending_actions.py	test_no_stage_for_non_active_target	896	writable isolation required: line 901 invokes create_secret_order
-tests/test_pending_actions.py	test_commit_pending_actions_applies_staged_update_at_decree	912	writable isolation required: line 922 invokes execute(SELECT title FROM secret_orders WHERE id=?)
-tests/test_pending_actions.py	test_appointment_intent_stages_office_action	939	writable isolation required: line 946 invokes execute(SELECT name FROM characters WHERE name=?)
+tests/test_pending_actions.py	test_commit_pending_actions_applies_staged_update_at_decree	912	writable isolation required at line 925: production mutation/isolation call: commit_pending_actions
+tests/test_pending_actions.py	test_appointment_intent_stages_office_action	939	writable isolation required at line 949: production mutation/isolation call: setattr
 tests/test_pending_actions.py	test_decree_prefix_appointment_not_double_staged	971	writable isolation required: line 981 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_commit_appointment_applies_at_decree	990	writable isolation required: line 1003 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_dialogue_affirm_commits_staged_now	1041	writable isolation required: line 1046 invokes create_secret_order
@@ -694,7 +694,7 @@ tests/test_pending_actions.py	test_retry_failed_secret_order_retires_confirmatio
 tests/test_pending_actions.py	test_retry_failed_secret_order_retires_creation_and_confirmation_chat_undo	1474	writable isolation required: line 1479 invokes create_chat_turn
 tests/test_pending_actions.py	test_retry_pending_action_endpoint_returns_fresh_undo_state	1519	writable isolation required: line 1526 invokes stage_pending_action
 tests/test_pending_actions.py	test_pending_action_failures_endpoint_lists_all_failed_secret_orders	1563	writable isolation required: line 1569 invokes stage_pending_action
-tests/test_pending_actions.py	test_settling_secret_failure_payload_is_not_retryable	1596	writable isolation required: line 1598 assigns (_db, state, _content)
+tests/test_pending_actions.py	test_settling_secret_failure_payload_is_not_retryable	1596	writable isolation required at line 1599: in-memory state/content mutation: state.turn_phase
 tests/test_pending_actions.py	test_failed_secret_order_does_not_block_later_audience	1610	writable isolation required: line 1615 invokes stage_pending_action
 tests/test_pending_actions.py	test_unresolved_failed_secret_order_is_ignored_after_turn_boundary	1635	writable isolation required: line 1640 invokes stage_pending_action
 tests/test_pending_actions.py	test_default_approval_secret_order_failure_surfaces_after_turn_boundary	1656	writable isolation required: line 1661 invokes stage_pending_action
@@ -702,7 +702,7 @@ tests/test_pending_actions.py	test_retry_failed_secret_order_preserves_original_
 tests/test_pending_actions.py	test_successful_secret_order_confirmation_stays_quiet	1714	writable isolation required: line 1719 invokes stage_pending_action
 tests/test_pending_actions.py	test_dialogue_affirm_commits_office_now	1737	writable isolation required: line 1753 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_commit_new_office_action_restores_when_post_create_helper_raises	1774	writable isolation required: line 1784 invokes execute(INSERT INTO pending_actions (turn, kind, action, minister_name, payload_)
-tests/test_pending_actions.py	test_commit_appointment_promotes_existing_minister	1809	writable isolation required: line 1817 invokes execute(SELECT office FROM characters WHERE name=?)
+tests/test_pending_actions.py	test_commit_appointment_promotes_existing_minister	1809	writable isolation required at line 1822: production mutation/isolation call: setattr
 tests/test_pending_actions.py	test_commit_dismiss_clears_db_and_memory_office	1842	writable isolation required: line 1855 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_dialogue_affirm_filters_by_summoned_minister	1868	writable isolation required: line 1877 invokes create_secret_order
 tests/test_pending_actions.py	test_dialogue_no_response_keeps_staged	1911	writable isolation required: line 1917 invokes create_secret_order
@@ -710,8 +710,8 @@ tests/test_pending_actions.py	test_commit_appointment_consort_gets_office_type	1
 tests/test_pending_actions.py	test_commit_appointment_existing_minister_by_alias	1983	writable isolation required: line 2004 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_commit_reappoint_reactivates_dismissed_minister	2017	writable isolation required: line 2024 invokes set_character_status
 tests/test_pending_actions.py	test_commit_appointment_rejects_dead_person	2048	writable isolation required: line 2054 invokes set_character_status
-tests/test_pending_actions.py	test_commit_appointment_empty_office_rejected	2075	writable isolation required: line 2080 invokes execute(SELECT office FROM characters WHERE name=?)
-tests/test_pending_actions.py	test_commit_dismiss_foreign_actor_noop	2098	writable isolation required: line 2105 invokes execute(SELECT status FROM characters WHERE name=?)
+tests/test_pending_actions.py	test_commit_appointment_empty_office_rejected	2075	writable isolation required at line 2082: production mutation/isolation call: setattr
+tests/test_pending_actions.py	test_commit_dismiss_foreign_actor_noop	2098	writable isolation required at line 2107: production mutation/isolation call: setattr
 tests/test_pending_actions.py	test_commit_dismiss_nonactive_minister_rejected	2123	writable isolation required: line 2129 invokes set_character_status
 tests/test_pending_actions.py	test_displace_duplicate_offices_recomputes_office_type	2149	writable isolation required: line 2156 invokes execute(UPDATE characters SET office=?, office_type=? WHERE name=?)
 tests/test_pending_actions.py	test_commit_dismiss_refreshes_registry	2172	writable isolation required: line 2183 invokes apply_cli_conversation_actions
@@ -720,27 +720,27 @@ tests/test_pending_actions.py	test_dialogue_reject_filters_by_summoned_minister	
 tests/test_pending_actions.py	test_chat_proposal_not_staged_at_front_half_done	2245	writable isolation required: line 2255 invokes apply_cli_conversation_actions
 tests/test_pending_actions.py	test_chat_confirm_defers_commit_at_front_half_done	2266	writable isolation required: line 2274 invokes create_secret_order
 tests/test_pending_actions.py	test_front_half_done_directive_confirmation_preserves_pending_status	2296	writable isolation required: line 2301 invokes stage_pending_action
-tests/test_person_archive_schema.py	test_person_logs_accepts_audit_rows_for_existing_characters	73	writable isolation required: line 76 invokes execute(SELECT name FROM characters ORDER BY name LIMIT 1)
+tests/test_person_archive_schema.py	test_person_logs_accepts_audit_rows_for_existing_characters	73	writable isolation required at line 78: direct SQL mutation: INSERT INTO person_logs (turn, year, period, person_name, action, payload_summary, derived_from, nor
 tests/test_person_archive_schema.py	test_add_character_persists_transit_to	100	writable isolation required: line 120 invokes add_character
 tests/test_person_delta_adapter.py	test_apply_score_extraction_exposes_normalized_person_changes	115	writable isolation required: line 118 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_applies_person_change_power_move	142	writable isolation required: line 162 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_person_change_power_move_without_way	189	writable isolation required: line 194 invokes apply_score_extraction
-tests/test_person_delta_adapter.py	test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta	216	writable isolation required: line 218 invokes execute(SELECT loyalty FROM characters WHERE name='毛文龙')
-tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_invalid_loyalty_assessment	321	writable isolation required: line 323 invokes execute(SELECT loyalty FROM characters WHERE name='毛文龙')
+tests/test_person_delta_adapter.py	test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_delta	216	writable isolation required at line 222: production mutation/isolation call: apply_score_extraction
+tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_invalid_loyalty_assessment	321	writable isolation required at line 327: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_clamps_loyalty_assessment_delta	357	writable isolation required: line 359 invokes execute(UPDATE characters SET loyalty=? WHERE name='毛文龙')
-tests/test_person_delta_adapter.py	test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch	396	writable isolation required: line 398 invokes execute(SELECT loyalty FROM characters WHERE name='毛文龙')
-tests/test_person_delta_adapter.py	test_apply_person_changes_disposition_does_not_commit_inside_batch	424	writable isolation required: line 428 invokes execute(SELECT status, office, office_type, status_reason, reason_code, transit_)
-tests/test_person_delta_adapter.py	test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue	501	writable isolation required: line 503 invokes execute(SELECT COUNT(*) AS n FROM issues)
-tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing	541	writable isolation required: line 545 invokes execute(SELECT power_id, office, office_type FROM characters WHERE name=?)
+tests/test_person_delta_adapter.py	test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch	396	writable isolation required at line 402: direct SQL mutation: BEGIN
+tests/test_person_delta_adapter.py	test_apply_person_changes_disposition_does_not_commit_inside_batch	424	writable isolation required at line 440: direct SQL mutation: BEGIN
+tests/test_person_delta_adapter.py	test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_commitment_issue	501	writable isolation required at line 508: production mutation/isolation call: apply_score_extraction
+tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_malformed_power_move_backlash_before_writing	541	writable isolation required at line 561: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_legacy_status_change_rejects_non_active_target_before_transition_matrix	587	writable isolation required: line 594 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_forged_legacy_partial_power_way	638	writable isolation required: line 644 invokes apply_score_extraction
-tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_power_move_without_backlash_side_effect	671	writable isolation required: line 674 invokes execute(SELECT leverage FROM powers WHERE id='houjin')
+tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_power_move_without_backlash_side_effect	671	writable isolation required at line 678: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_applies_person_change_office_action	702	writable isolation required: line 710 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_unknown_person_change_new_appointment	743	writable isolation required: line 747 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_trapped_prisoner_appointment	771	writable isolation required: line 779 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_legacy_trapped_prisoner_office_change	809	writable isolation required: line 817 invokes set_character_status
-tests/test_person_delta_adapter.py	test_apply_score_extraction_materializes_derived_release_before_appointment	842	writable isolation required: line 847 invokes execute(SELECT COUNT(*) FROM person_logs)
-tests/test_person_delta_adapter.py	test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change	897	writable isolation required: line 918 invokes execute(SELECT COUNT(*) FROM person_logs)
+tests/test_person_delta_adapter.py	test_apply_score_extraction_materializes_derived_release_before_appointment	842	writable isolation required at line 850: production mutation/isolation call: set_character_status
+tests/test_person_delta_adapter.py	test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_change	897	writable isolation required at line 921: direct SQL mutation: UPDATE characters SET office=?, office_type=? WHERE name=?
 tests/test_person_delta_adapter.py	test_apply_score_extraction_clears_displaced_reason_when_reappointed	993	writable isolation required: line 1017 invokes execute(UPDATE characters SET office=?, office_type=? WHERE name=?)
 tests/test_person_delta_adapter.py	test_apply_score_extraction_does_not_release_when_derived_appointment_is_invalid	1082	writable isolation required: line 1089 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_accepts_status_reason_as_person_reason	1135	writable isolation required: line 1142 invokes apply_score_extraction
@@ -755,7 +755,7 @@ tests/test_person_delta_adapter.py	test_apply_score_extraction_applies_person_ch
 tests/test_person_delta_adapter.py	test_apply_score_extraction_applies_person_change_banish	1631	writable isolation required: line 1638 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_banish_from_imprisoned	1656	writable isolation required: line 1663 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_offstage_disposition_clears_db_and_content_office	1681	writable isolation required: line 1688 invokes apply_score_extraction
-tests/test_person_delta_adapter.py	test_apply_score_extraction_persists_reason_code_and_person_log	1708	writable isolation required: line 1711 invokes execute(SELECT COUNT(*) FROM person_logs)
+tests/test_person_delta_adapter.py	test_apply_score_extraction_persists_reason_code_and_person_log	1708	writable isolation required at line 1713: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_allegiance_change_rebinds_identity_title	1748	writable isolation required: line 1756 invokes set_character_office
 tests/test_person_delta_adapter.py	test_apply_score_extraction_treats_active_identity_title_as_unappointed	1793	writable isolation required: line 1800 invokes set_character_office
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_invalid_person_dispositions	1884	writable isolation required: line 1887 invokes apply_score_extraction
@@ -763,19 +763,19 @@ tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_unknown_p
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_dead_status_outbound	1922	writable isolation required: line 1925 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_applies_person_travel_and_exposes_transit_to	1947	writable isolation required: line 1954 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_simulator_court_roster_is_active_only_dismissed_in_talent_pool	1996	writable isolation required: line 2004 invokes set_character_status
-tests/test_person_delta_adapter.py	test_talent_pool_excludes_amnestied_rebel_by_faction	2031	writable isolation required: line 2039 invokes execute(SELECT name FROM characters WHERE faction='流寇')
-tests/test_person_delta_adapter.py	test_simulator_court_roster_excludes_active_prince	2072	writable isolation required: line 2075 assigns (db, state, content)
-tests/test_person_delta_adapter.py	test_extractor_active_ministers_excludes_active_prince	2083	writable isolation required: line 2085 assigns (db, state, content)
-tests/test_person_delta_adapter.py	test_registry_and_tools_court_roster_exclude_active_prince	2122	writable isolation required: line 2128 assigns (db, state, content)
+tests/test_person_delta_adapter.py	test_talent_pool_excludes_amnestied_rebel_by_faction	2031	writable isolation required at line 2048: production mutation/isolation call: set_character_status
+tests/test_person_delta_adapter.py	test_simulator_court_roster_excludes_active_prince	2072	writable isolation required: fixture setup mutation: _materialize_active_prince inserts/activates a character before the read assertion
+tests/test_person_delta_adapter.py	test_extractor_active_ministers_excludes_active_prince	2083	writable isolation required: fixture setup mutation: _materialize_active_prince inserts/activates a character before the read assertion
+tests/test_person_delta_adapter.py	test_registry_and_tools_court_roster_exclude_active_prince	2122	writable isolation required: fixture setup mutation: _materialize_active_prince inserts/activates a character before the read assertion
 tests/test_person_delta_adapter.py	test_apply_office_appointment_rejects_vassal_prince	2148	writable isolation required: line 2154 invokes set_character_status
-tests/test_person_delta_adapter.py	test_list_ministers_excludes_active_prince	2162	writable isolation required: line 2165 assigns (db, state, content)
+tests/test_person_delta_adapter.py	test_list_ministers_excludes_active_prince	2162	writable isolation required at line 2168: in-memory state/content mutation: sess.db
 tests/test_person_delta_adapter.py	test_create_secret_order_rejects_vassal_prince	2173	writable isolation required: line 2180 invokes create_secret_order
 tests/test_person_delta_adapter.py	test_create_secret_order_rejects_vassal_prince_by_alias	2183	writable isolation required: line 2195 invokes add_character
 tests/test_person_delta_adapter.py	test_create_secret_order_persists_canonical_name	2201	writable isolation required: line 2216 invokes create_secret_order
-tests/test_person_delta_adapter.py	test_create_secret_order_rejects_foreign_power	2221	writable isolation required: line 2228 invokes execute(SELECT power_id FROM characters WHERE name=?)
-tests/test_person_delta_adapter.py	test_create_secret_order_rejects_foreign_power_by_alias	2236	writable isolation required: line 2243 invokes execute(SELECT power_id FROM characters WHERE name=?)
+tests/test_person_delta_adapter.py	test_create_secret_order_rejects_foreign_power	2221	writable isolation required at line 2233: production mutation/isolation call: create_secret_order
+tests/test_person_delta_adapter.py	test_create_secret_order_rejects_foreign_power_by_alias	2236	writable isolation required at line 2251: production mutation/isolation call: create_secret_order
 tests/test_person_delta_adapter.py	test_create_secret_order_allows_returned_defector	2254	writable isolation required: line 2264 invokes execute(UPDATE characters SET power_id='ming' WHERE name=?)
-tests/test_person_delta_adapter.py	test_pending_dismiss_rejects_vassal_prince	2270	writable isolation required: line 2272 assigns (db, state, content)
+tests/test_person_delta_adapter.py	test_pending_dismiss_rejects_vassal_prince	2270	writable isolation required: office-action write path: _materialize_active_prince writes setup and _commit_office_action exercises rejection isolation
 tests/test_person_delta_adapter.py	test_person_log_normalized_not_truncated	2290	writable isolation required: line 2297 invokes record_person_log
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_invalid_person_travel	2305	writable isolation required: line 2308 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_rejects_unknown_person_travel_region	2342	writable isolation required: line 2346 invokes apply_score_extraction
@@ -785,46 +785,45 @@ tests/test_person_delta_adapter.py	test_set_character_status_clears_office_for_o
 tests/test_person_delta_adapter.py	test_set_character_status_clears_stale_reason_code_when_missing	2443	writable isolation required: line 2450 invokes set_character_status
 tests/test_person_delta_adapter.py	test_legacy_status_change_clears_transit_to_after_person_travel	2465	writable isolation required: line 2473 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys	2507	writable isolation required: line 2526 invokes apply_score_extraction
-tests/test_person_delta_adapter.py	test_simulator_payload_talent_pool_includes_retired_dismissed_with_reason_code	2572	writable isolation required: line 2578 invokes execute(SELECT name FROM characters WHERE status='active' AND office_type!='后宫' )
+tests/test_person_delta_adapter.py	test_simulator_payload_talent_pool_includes_retired_dismissed_with_reason_code	2572	writable isolation required at line 2583: direct SQL mutation: UPDATE characters SET status='retired', reason_code='致仕', status_reason='年老乞休' WHERE name=?
 tests/test_person_delta_adapter.py	test_political_marker_is_audit_only_no_status_premigration	2609	writable isolation required: line 2627 invokes set_character_status
 tests/test_person_delta_adapter.py	test_reappoint_nonactive_syncs_character_reason_to_db	2660	writable isolation required: line 2666 invokes set_character_status
 tests/test_person_delta_adapter.py	test_reappoint_rollback_restores_character_reason	2689	writable isolation required: line 2695 invokes set_character_status
 tests/test_person_delta_adapter.py	test_disposition_manual_rollback_restores_memory_reason_fields	2717	writable isolation required: line 2725 invokes set_character_status
 tests/test_person_delta_adapter.py	test_unified_appointment_resolves_alias_before_hallucinated_guard	2753	writable isolation required: line 2759 invokes set_character_status
-tests/test_person_delta_adapter.py	test_new_appointment_falsy_return_restores_snapshot	2778	writable isolation required: line 2785 invokes execute(SELECT office FROM characters WHERE name=?)
-tests/test_person_delta_adapter.py	test_simulator_payload_talent_pool_includes_displaced_oncall_holder	2806	writable isolation required: line 2813 invokes execute(SELECT name FROM characters WHERE status='active' AND office_type!='后宫' )
+tests/test_person_delta_adapter.py	test_new_appointment_falsy_return_restores_snapshot	2778	writable isolation required at line 2790: direct SQL mutation: UPDATE characters SET office='脏半落库' WHERE name=?
+tests/test_person_delta_adapter.py	test_simulator_payload_talent_pool_includes_displaced_oncall_holder	2806	writable isolation required at line 2817: direct SQL mutation: UPDATE characters SET office='听用候铨', status_reason='被顶替', reason_code='被顶替' WHERE name=?
 tests/test_person_delta_adapter.py	test_legacy_office_pollution_resolves_transit_to_region_id	2886	writable isolation required: line 2892 invokes execute(UPDATE characters SET office=?, transit_to='', status='active' WHERE nam)
-tests/test_person_delta_adapter.py	test_displaced_holder_transit_to_cleared	2906	writable isolation required: line 2912 invokes execute(SELECT name FROM characters WHERE status='active' AND power_id='ming' AN)
-tests/test_person_delta_adapter.py	test_historical_death_tick_sets_reason_code	2939	writable isolation required: line 2943 invokes execute(SELECT name FROM characters WHERE status='active' AND office_type!='后宫' )
-tests/test_person_delta_adapter.py	test_historical_death_tick_writes_person_log	2962	writable isolation required: line 2965 invokes execute(SELECT name FROM characters WHERE status='active' AND office_type!='后宫' )
-tests/test_person_delta_adapter.py	test_historical_debut_tick_sets_reason_code_and_log	2984	writable isolation required: line 2988 invokes execute(SELECT name FROM characters WHERE office_type!='后宫' AND power_id='ming' )
+tests/test_person_delta_adapter.py	test_displaced_holder_transit_to_cleared	2906	writable isolation required at line 2918: direct SQL mutation: UPDATE characters SET office='蓟辽总督', office_type='督抚', transit_to='liaodong' WHERE name=?
+tests/test_person_delta_adapter.py	test_historical_death_tick_sets_reason_code	2939	writable isolation required at line 2947: direct SQL mutation: UPDATE characters SET historical_death_year=?, historical_death_month=1 WHERE name=?
+tests/test_person_delta_adapter.py	test_historical_death_tick_writes_person_log	2962	writable isolation required at line 2969: direct SQL mutation: UPDATE characters SET historical_death_year=?, historical_death_month=1 WHERE name=?
+tests/test_person_delta_adapter.py	test_historical_debut_tick_sets_reason_code_and_log	2984	writable isolation required at line 2992: direct SQL mutation: UPDATE characters SET status='offstage', debut_year=?, debut_month=1 WHERE name=?
 tests/test_person_delta_adapter.py	test_yizhu_sets_active_in_new_master_service	3012	writable isolation required: line 3017 invokes set_character_status
 tests/test_person_delta_adapter.py	test_apply_score_extraction_consort_candidate_falls_out_to_offstage	3037	writable isolation required: line 3049 invokes add_character
 tests/test_person_delta_adapter.py	test_reload_syncs_reason_code_status_reason_to_content	3072	writable isolation required: line 3078 invokes set_character_status
 tests/test_person_delta_adapter.py	test_disposition_syncs_reason_code_to_content_in_txn	3087	writable isolation required: line 3094 invokes apply_score_extraction
 tests/test_person_delta_adapter.py	test_reappointment_clears_displaced_mark_in_both_db_and_content	3109	writable isolation required: line 3115 invokes execute(UPDATE characters SET office='听用候铨', status_reason='被顶替', reason_code='被)
-tests/test_person_delta_adapter.py	test_migration_does_not_write_nonregion_location	3137	writable isolation required: line 3141 invokes execute(SELECT id FROM regions)
 tests/test_person_delta_adapter.py	test_yizhu_clears_status_reason_in_db	3152	writable isolation required: line 3157 invokes set_character_status
 tests/test_person_delta_adapter.py	test_s2_reappointment_derives_qifu_from_retired	3192	writable isolation required: line 3201 invokes set_character_status
-tests/test_person_delta_adapter.py	test_s3_reappointment_derives_zhaoxue_from_dismissed	3216	writable isolation required: line 3224 invokes execute(SELECT COUNT(*) FROM person_logs)
+tests/test_person_delta_adapter.py	test_s3_reappointment_derives_zhaoxue_from_dismissed	3216	writable isolation required at line 3226: production mutation/isolation call: set_character_status
 tests/test_person_delta_adapter.py	test_s4_reappointment_derives_duoqing_when_mourning	3240	writable isolation required: line 3250 invokes set_character_status
-tests/test_person_delta_adapter.py	test_person_change_rejects_unknown_action_not_silent	3265	writable isolation required: line 3270 invokes execute(SELECT office FROM characters WHERE name=?)
+tests/test_person_delta_adapter.py	test_person_change_rejects_unknown_action_not_silent	3265	writable isolation required at line 3272: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_s9_consort_leaves_palace_clears_office	3290	writable isolation required: line 3302 invokes add_character
-tests/test_person_delta_adapter.py	test_s15_amnesty_to_ming_then_appoint	3320	writable isolation required: line 3327 invokes execute(SELECT power_id FROM characters WHERE name=?)
+tests/test_person_delta_adapter.py	test_s15_amnesty_to_ming_then_appoint	3320	writable isolation required at line 3335: production mutation/isolation call: apply_score_extraction
 tests/test_person_delta_adapter.py	test_bandit_amnesty_rejects_same_power_top_level_suppression	3355	writable isolation required: line 3370 invokes execute(INSERT INTO powers (id, name, kind, leader, stance, leverage, satisfacti)
 tests/test_person_delta_adapter.py	test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_empty	3463	writable isolation required: line 3471 invokes execute(INSERT INTO powers (id, name, kind, leader, stance, leverage, satisfacti)
 tests/test_person_delta_adapter.py	test_rejected_bandit_amnesty_does_not_block_same_power_suppression	3557	writable isolation required: line 3562 invokes execute(INSERT INTO powers (id, name, kind, leader, stance, leverage, satisfacti)
 tests/test_person_delta_adapter.py	test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejected	3643	writable isolation required: line 3651 invokes execute(INSERT INTO powers (id, name, kind, leader, stance, leverage, satisfacti)
 tests/test_person_delta_adapter.py	test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power	3730	writable isolation required: line 3741 invokes execute(INSERT INTO powers (id, name, kind, leader, stance, leverage, satisfacti)
 tests/test_person_delta_adapter.py	test_s8_demotion_release_then_lower_appointment_derives_qifu	3822	writable isolation required: line 3830 invokes set_character_status
-tests/test_power_section_rejections.py	test_unknown_power_id_rejected_good_item_lands	33	writable isolation required: line 39 invokes execute(SELECT leverage FROM powers WHERE id=?)
+tests/test_power_section_rejections.py	test_unknown_power_id_rejected_good_item_lands	33	writable isolation required at line 42: production mutation/isolation call: run_settle
 tests/test_power_section_rejections.py	test_illegal_power_field_rejected	60	writable isolation required: line 67 invokes run_settle
 tests/test_power_section_rejections.py	test_power_deltas_code_exception_aborts_settlement	77	writable isolation required: line 90 invokes run_settle
-tests/test_power_section_rejections.py	test_character_power_changes_code_exception_aborts_settlement	125	writable isolation required: line 132 invokes execute(SELECT name FROM characters WHERE power_id='ming' LIMIT 1)
-tests/test_power_section_rejections.py	test_dirty_power_value_rejected_sibling_field_lands	162	writable isolation required: line 169 invokes execute(SELECT military_strength FROM powers WHERE id=?)
+tests/test_power_section_rejections.py	test_character_power_changes_code_exception_aborts_settlement	125	writable isolation required at line 137: production mutation/isolation call: setattr
+tests/test_power_section_rejections.py	test_dirty_power_value_rejected_sibling_field_lands	162	writable isolation required at line 172: production mutation/isolation call: run_settle
 tests/test_power_section_rejections.py	test_dirty_power_value_string_rejected	188	writable isolation required: line 194 invokes run_settle
 tests/test_power_section_rejections.py	test_ming_power_update_rejected_with_trace	203	writable isolation required: line 209 invokes run_settle
-tests/test_power_section_rejections.py	test_float_and_bool_power_values_rejected	219	writable isolation required: line 225 invokes execute(SELECT leverage FROM powers WHERE id=?)
+tests/test_power_section_rejections.py	test_float_and_bool_power_values_rejected	219	writable isolation required at line 228: production mutation/isolation call: run_settle
 tests/test_power_section_rejections.py	test_reason_carrier_aliases_not_recorded_as_rejection	240	writable isolation required: line 247 invokes run_settle
 tests/test_power_section_rejections.py	test_all_reason_aliases_consumed_as_reason	255	writable isolation required: line 261 invokes run_settle
 tests/test_pre_settle_transaction.py	test_crash_reload_at_settling_no_double_fiscal_tick	30	writable isolation required: line 38 invokes pre_settle
@@ -834,16 +833,16 @@ tests/test_pre_settle_transaction.py	test_crash_inside_pre_settle_no_missing_fis
 tests/test_pre_settle_transaction.py	test_two_consecutive_driver_settles_both_get_fiscal_tick	182	writable isolation required: line 191 invokes run_settle
 tests/test_pre_settle_transaction.py	test_enter_review_does_not_clobber_settling	203	writable isolation required: line 211 invokes save_state
 tests/test_pre_settle_transaction.py	test_advance_without_edict_refused_after_settling	224	writable isolation required: line 229 invokes pre_settle
-tests/test_pre_settle_transaction.py	test_simulator_fallback_tail_resets_settling	274	writable isolation required: line 287 invokes execute(SELECT turn_phase FROM game_state)
-tests/test_pre_settle_transaction.py	test_hitl_pause_persists_awaiting_phase_durably	291	writable isolation required: line 303 invokes execute(SELECT turn_phase FROM game_state)
-tests/test_pre_settle_transaction.py	test_pre_settle_guard_covers_awaiting_decision	308	writable isolation required: line 317 invokes execute(SELECT COUNT(*) FROM economy_ledger WHERE turn=?)
+tests/test_pre_settle_transaction.py	test_simulator_fallback_tail_resets_settling	274	writable isolation required: settlement lifecycle: _drive_resolve_directives mutates and then verifies settling-state cleanup
+tests/test_pre_settle_transaction.py	test_hitl_pause_persists_awaiting_phase_durably	291	writable isolation required at line 305: production mutation/isolation call: clear_resolve_context
+tests/test_pre_settle_transaction.py	test_pre_settle_guard_covers_awaiting_decision	308	writable isolation required at line 316: in-memory state/content mutation: state.turn_phase
 tests/test_pre_settle_transaction.py	test_sticky_phases_cover_awaiting_decision	332	writable isolation required: line 340 invokes save_state
 tests/test_pre_settle_transaction.py	test_advance_without_edict_refused_at_awaiting	352	writable isolation required: line 357 invokes pre_settle
 tests/test_pre_settle_transaction.py	test_resolve_turn_idempotent_at_awaiting	372	writable isolation required: line 381 invokes save_state
 tests/test_pre_settle_transaction.py	test_guarded_early_return_does_not_consume_pending	401	writable isolation required: line 412 invokes pre_settle
 tests/test_pre_settle_transaction.py	test_write_decree_raises_at_awaiting_not_resolveresult	427	writable isolation required: line 442 invokes write_decree
-tests/test_pre_settle_transaction.py	test_hitl_pause_crash_reloads_memory	445	writable isolation required: line 451 assigns (db, state, content)
-tests/test_pre_settle_transaction.py	test_placeholder_save_crash_rolls_back_settling	474	writable isolation required: line 482 assigns (db, state, content)
+tests/test_pre_settle_transaction.py	test_hitl_pause_crash_reloads_memory	445	writable isolation required at line 461: production mutation/isolation call: setattr
+tests/test_pre_settle_transaction.py	test_placeholder_save_crash_rolls_back_settling	474	writable isolation required at line 488: production mutation/isolation call: setattr
 tests/test_region_cannon_delta.py	test_city_cannon_delta_lands_clamped	22	writable isolation required: line 27 invokes run_settle
 tests/test_region_cannon_delta.py	test_city_cannon_capped_at_zero_for_low_city_level	35	writable isolation required: line 42 invokes run_settle
 tests/test_region_cannon_delta.py	test_city_cannon_lower_bound_clamp_audited_not_as_cap	60	writable isolation required: line 65 invokes run_settle
@@ -856,14 +855,14 @@ tests/test_region_citydefense_display.py	test_region_detail_shows_city_level_and
 tests/test_rejection_wiring.py	test_rejected_item_lands_in_reports_and_jsonl	29	writable isolation required: line 36 invokes run_settle
 tests/test_rejection_wiring.py	test_rollback_leaves_no_rows_and_no_jsonl	54	writable isolation required: line 70 invokes run_settle
 tests/test_rejection_wiring.py	test_attempt_derived_from_error_pack_dirs	79	writable isolation required: line 87 invokes run_settle
-tests/test_rejection_wiring.py	test_engine_extractor_path_stamps_player_decree	96	writable isolation required: line 102 assigns (db, state, content)
+tests/test_rejection_wiring.py	test_engine_extractor_path_stamps_player_decree	96	writable isolation required at line 103: production mutation/isolation call: setenv
 tests/test_rejection_wiring.py	test_issue_summary_nested_rejections_are_collected	125	writable isolation required: line 133 invokes run_settle
 tests/test_rejection_wiring.py	test_nested_atomic_success_path_does_not_orphan_jsonl	143	writable isolation required: line 154 invokes atomic
 tests/test_rejection_wiring.py	test_attempt_derivation_failure_does_not_abort_settlement	164	writable isolation required: line 178 invokes run_settle
-tests/test_rejection_wiring.py	test_noncancellable_cancel_rejection_carries_reason	187	writable isolation required: line 194 invokes execute(SELECT id FROM issues WHERE status='active' LIMIT 1)
+tests/test_rejection_wiring.py	test_noncancellable_cancel_rejection_carries_reason	187	writable isolation required at line 191: production mutation/isolation call: setenv
 tests/test_rejection_wiring.py	test_rejected_appointment_carries_rejection_cause	210	writable isolation required: line 218 invokes run_settle
 tests/test_rejection_wiring.py	test_bridge_synthesizes_reason_when_producer_omits	229	writable isolation required: line 242 invokes commit
-tests/test_rejection_wiring.py	test_inertia_tolerated_rejections_reach_reports	249	writable isolation required: line 256 invokes execute(SELECT id FROM armies LIMIT 1)
+tests/test_rejection_wiring.py	test_inertia_tolerated_rejections_reach_reports	249	writable isolation required at line 254: production mutation/isolation call: setenv
 tests/test_rejection_wiring.py	test_item_json_is_original_delta_item_when_producer_carries_it	275	writable isolation required: line 285 invokes run_settle
 tests/test_rejection_wiring.py	test_person_change_rejection_item_json_keeps_original_delta_item	298	writable isolation required: line 307 invokes run_settle
 tests/test_rejection_wiring.py	test_power_move_rejection_item_json_keeps_original_person_delta_item	326	writable isolation required: line 343 invokes run_settle
@@ -873,7 +872,7 @@ tests/test_rejection_wiring.py	test_power_move_backlash_rejection_lands_in_repor
 tests/test_rejection_wiring.py	test_issue_close_power_move_backlash_rejection_is_not_duplicated	495	writable isolation required: line 506 invokes insert_issue
 tests/test_rejection_wiring.py	test_inertia_power_move_backlash_rejection_lands_in_reports	559	writable isolation required: line 570 invokes insert_issue
 tests/test_rejection_wiring.py	test_resimulation_inherits_player_source_from_ctx	612	writable isolation required: line 624 invokes save_resolve_context
-tests/test_rejection_wiring.py	test_player_decree_rejection_surfaces_prompt_in_turn_report	646	writable isolation required: line 668 invokes execute(SELECT report FROM turn_reports WHERE turn=?)
+tests/test_rejection_wiring.py	test_player_decree_rejection_surfaces_prompt_in_turn_report	646	writable isolation required at line 652: production mutation/isolation call: setenv
 tests/test_rejection_wiring.py	test_system_rejection_stays_silent_and_keeps_system_provenance	674	writable isolation required: line 688 invokes save_resolve_context
 tests/test_relation_store_632.py	test_directed_edge_events_are_stored_and_queryable	11	writable isolation required: line 14 invokes record_relation_edge_event
 tests/test_relation_store_632.py	test_edge_event_kind_and_evidence_are_fail_closed	38	writable isolation required: line 42 invokes record_relation_edge_event
@@ -912,41 +911,41 @@ tests/test_secret_order_section_rejections.py	test_apply_score_extraction_secret
 tests/test_secret_order_section_rejections.py	test_oversized_order_id_rejected_not_crash	184	writable isolation required: line 191 invokes run_settle
 tests/test_secret_order_status_cn.py	test_simulator_payload_secret_orders_has_no_english_enum	148	writable isolation required: line 156 invokes create_secret_order
 tests/test_secret_order_status_cn.py	test_resolve_context_roundtrips_grouped_secret_orders_as_dict	234	writable isolation required: line 242 invokes save_resolve_context
-tests/test_secret_order_update.py	test_upsert_creates_then_updates	10	writable isolation required: line 20 invokes execute(SELECT title, content FROM secret_orders WHERE id=?)
-tests/test_secret_order_update.py	test_upsert_different_minister_creates_new	25	writable isolation required: line 26 assigns (db, state, _)
+tests/test_secret_order_update.py	test_upsert_creates_then_updates	10	writable isolation required at line 13: production mutation/isolation call: upsert_secret_order
+tests/test_secret_order_update.py	test_upsert_different_minister_creates_new	25	writable isolation required at line 27: production mutation/isolation call: upsert_secret_order
 tests/test_secret_order_update.py	test_update_by_id_targets_exact_order_not_newest	35	writable isolation required: line 38 invokes create_secret_order
 tests/test_secret_order_update.py	test_update_by_id_preserves_tags_when_none	50	writable isolation required: line 53 invokes create_secret_order
 tests/test_secret_order_update.py	test_update_by_id_noop_on_non_active	60	writable isolation required: line 63 invokes create_secret_order
-tests/test_section4_rejections.py	test_unknown_region_rejected_good_item_lands	53	writable isolation required: line 59 invokes execute(SELECT public_support FROM regions WHERE id=?)
-tests/test_section4_rejections.py	test_illegal_region_field_rejected_sibling_lands	79	writable isolation required: line 85 invokes execute(SELECT public_support FROM regions WHERE id=?)
-tests/test_section4_rejections.py	test_dirty_region_value_rejected_sibling_lands	102	writable isolation required: line 110 invokes execute(SELECT unrest FROM regions WHERE id=?)
-tests/test_section4_rejections.py	test_region_controlled_by_rejects_non_power_id_and_preserves_region	127	writable isolation required: line 133 invokes execute(SELECT controlled_by FROM regions WHERE id=?)
-tests/test_section4_rejections.py	test_region_controlled_by_accepts_existing_power_ids_and_restore_hook	152	writable isolation required: line 156 invokes execute(SELECT id, public_support FROM regions WHERE id=?)
-tests/test_section4_rejections.py	test_region_controlled_by_mixed_invalid_and_valid_siblings_apply	182	writable isolation required: line 187 invokes execute(SELECT id FROM regions WHERE id <> ? LIMIT 1)
-tests/test_section4_rejections.py	test_unknown_army_rejected_good_item_lands	216	writable isolation required: line 222 invokes execute(SELECT morale FROM armies WHERE id=?)
-tests/test_section4_rejections.py	test_illegal_army_field_rejected_sibling_lands	242	writable isolation required: line 248 invokes execute(SELECT morale FROM armies WHERE id=?)
-tests/test_section4_rejections.py	test_dirty_army_value_rejected_sibling_lands	265	writable isolation required: line 271 invokes execute(SELECT training FROM armies WHERE id=?)
+tests/test_section4_rejections.py	test_unknown_region_rejected_good_item_lands	53	writable isolation required at line 62: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_illegal_region_field_rejected_sibling_lands	79	writable isolation required at line 88: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_dirty_region_value_rejected_sibling_lands	102	writable isolation required at line 113: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_region_controlled_by_rejects_non_power_id_and_preserves_region	127	writable isolation required at line 137: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_region_controlled_by_accepts_existing_power_ids_and_restore_hook	152	writable isolation required at line 163: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_region_controlled_by_mixed_invalid_and_valid_siblings_apply	182	writable isolation required at line 194: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_unknown_army_rejected_good_item_lands	216	writable isolation required at line 225: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_illegal_army_field_rejected_sibling_lands	242	writable isolation required at line 251: production mutation/isolation call: run_settle
+tests/test_section4_rejections.py	test_dirty_army_value_rejected_sibling_lands	265	writable isolation required at line 274: production mutation/isolation call: run_settle
 tests/test_section4_rejections.py	test_unknown_owner_power_army_rejected_good_builds	296	writable isolation required: line 303 invokes run_settle
 tests/test_section4_rejections.py	test_army_missing_manpower_rejected_good_builds	326	writable isolation required: line 333 invokes run_settle
-tests/test_section4_rejections.py	test_duplicate_army_without_manpower_rejected	352	writable isolation required: line 357 invokes execute(SELECT id, name FROM armies LIMIT 1)
+tests/test_section4_rejections.py	test_duplicate_army_without_manpower_rejected	352	writable isolation required at line 360: production mutation/isolation call: run_settle
 tests/test_section4_rejections.py	test_region_deltas_code_exception_aborts_settlement	372	writable isolation required: line 384 invokes run_settle
 tests/test_section4_rejections.py	test_army_deltas_code_exception_aborts_settlement	389	writable isolation required: line 400 invokes run_settle
 tests/test_section4_rejections.py	test_create_armies_code_exception_aborts_settlement	405	writable isolation required: line 416 invokes run_settle
 tests/test_section4_rejections.py	test_army_cannon_over_cap_clamps_not_rejected	424	writable isolation required: line 429 invokes execute(UPDATE armies SET cannon_equipment=0 WHERE id=?)
-tests/test_section4_rejections.py	test_region_cannon_over_cap_clamps_not_rejected	444	writable isolation required: line 448 invokes execute(SELECT id, city_level FROM regions WHERE city_level >= 1 LIMIT 1)
+tests/test_section4_rejections.py	test_region_cannon_over_cap_clamps_not_rejected	444	writable isolation required at line 452: direct SQL mutation: UPDATE regions SET cannon=0 WHERE id=?
 tests/test_section4_rejections.py	test_army_firearm_over_100_clamps_not_rejected	466	writable isolation required: line 471 invokes execute(UPDATE armies SET firearm_equipment=50 WHERE id=?)
-tests/test_section4_rejections.py	test_duplicate_army_noninteger_manpower_rejected	515	writable isolation required: line 520 invokes execute(SELECT id, name FROM armies LIMIT 1)
+tests/test_section4_rejections.py	test_duplicate_army_noninteger_manpower_rejected	515	writable isolation required at line 523: production mutation/isolation call: run_settle
 tests/test_section4_rejections.py	test_dirty_region_cannon_value_rejected_not_abort	537	writable isolation required: line 544 invokes run_settle
 tests/test_section4_rejections.py	test_dirty_optional_army_field_rejects_item	558	writable isolation required: line 564 invokes run_settle
 tests/test_section4_rejections.py	test_absent_optional_army_fields_use_defaults	576	writable isolation required: line 580 invokes run_settle
-tests/test_section4_rejections.py	test_issue_path_tolerates_previously_skipped_cases	591	writable isolation required: line 598 invokes execute(SELECT id FROM armies LIMIT 1)
-tests/test_section4_rejections.py	test_issue_path_still_strict_for_historically_fatal	611	writable isolation required: line 615 assigns (db, state, content)
+tests/test_section4_rejections.py	test_issue_path_tolerates_previously_skipped_cases	591	writable isolation required: entity mutation path: _apply_issue_entities dispatches real issue/army database writers
+tests/test_section4_rejections.py	test_issue_path_still_strict_for_historically_fatal	611	writable isolation required: entity mutation path: _apply_issue_entities dispatches real issue/army database writers
 tests/test_section4_rejections.py	test_nondict_new_army_item_recorded_not_silent	622	writable isolation required: line 626 invokes create_armies_from_extraction
 tests/test_section4_rejections.py	test_all_score_fields_guarded_on_creation	633	writable isolation required: line 639 invokes run_settle
-tests/test_section4_rejections.py	test_issue_path_tolerated_rejections_reach_reports	652	writable isolation required: line 660 invokes execute(SELECT id FROM armies LIMIT 1)
-tests/test_section4_rejections.py	test_inertia_natural_resolution_tolerated_rejection_no_crash	680	writable isolation required: line 687 invokes execute(SELECT id FROM armies LIMIT 1)
-tests/test_section4_rejections.py	test_float_bool_army_delta_tolerated_on_issue_path	707	writable isolation required: line 714 invokes execute(SELECT id FROM armies LIMIT 1)
-tests/test_section4_rejections.py	test_required_field_historical_strictness_on_issue_path	728	writable isolation required: line 734 assigns (db, state, content)
+tests/test_section4_rejections.py	test_issue_path_tolerated_rejections_reach_reports	652	writable isolation required at line 661: production mutation/isolation call: insert_issue
+tests/test_section4_rejections.py	test_inertia_natural_resolution_tolerated_rejection_no_crash	680	writable isolation required at line 689: production mutation/isolation call: insert_issue
+tests/test_section4_rejections.py	test_float_bool_army_delta_tolerated_on_issue_path	707	writable isolation required: entity mutation path: _apply_issue_entities dispatches real issue/army database writers
+tests/test_section4_rejections.py	test_required_field_historical_strictness_on_issue_path	728	writable isolation required: entity mutation path: _apply_issue_entities dispatches real issue/army database writers
 tests/test_section_fiscal_rejections.py	test_remove_unknown_fiscal_key_rejected_good_removal_lands	42	writable isolation required: line 49 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_remove_dynamic_tax_still_zeroes_region_field	66	writable isolation required: line 71 invokes execute(UPDATE regions SET fiscal=json_set(COALESCE(NULLIF(fiscal,''),'{}'),'$.l)
 tests/test_section_fiscal_rejections.py	test_remove_structural_sink_loss_rate_rejected	89	writable isolation required: line 96 invokes run_settle
@@ -972,7 +971,7 @@ tests/test_section_fiscal_rejections.py	test_remove_missing_key_rejected	522	wri
 tests/test_section_fiscal_rejections.py	test_create_with_rate_suffix_key_rejected	536	writable isolation required: line 543 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_negative_init_value_rejected_not_clamped	555	writable isolation required: line 561 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_double_suffix_key_rejected_no_phantom	573	writable isolation required: line 580 invokes run_settle
-tests/test_section_fiscal_rejections.py	test_double_suffix_remove_rejected_not_destructive	592	writable isolation required: line 598 invokes execute(SELECT COUNT(*) FROM fiscal_config WHERE key LIKE '辽饷%')
+tests/test_section_fiscal_rejections.py	test_double_suffix_remove_rejected_not_destructive	592	writable isolation required at line 602: production mutation/isolation call: run_settle
 tests/test_section_fiscal_rejections.py	test_chinese_direction_alias_accepted_on_driver_path	628	writable isolation required: line 635 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_whitespace_only_key_rejected_on_driver_path	646	writable isolation required: line 652 invokes run_settle
 tests/test_section_fiscal_rejections.py	test_lossless_int_string_same_verdict_both_paths	663	writable isolation required: line 671 invokes run_settle
@@ -980,16 +979,16 @@ tests/test_section_fiscal_rejections.py	test_driver_path_display_defaults_from_k
 tests/test_section_fiscal_rejections.py	test_garbage_key_category_consistent_across_sections	698	writable isolation required: line 704 invokes run_settle
 tests/test_session_cli_fallback.py	test_non_streaming_path_surfaces_pending_action_id	29	writable isolation required: line 36 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_draft_prefix_with_active_secret_order_runs_zero_llm	90	writable isolation required: line 98 invokes create_secret_order
-tests/test_session_cli_fallback.py	test_staged_action_reply_gets_confirmation_cue	123	writable isolation required: line 125 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_tool_call_pending_directive_reply_gets_confirmation_cue	147	writable isolation required: line 149 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_tool_call_pending_secret_order_reply_gets_confirmation_cue	162	writable isolation required: line 164 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_staged_action_reply_gets_confirmation_cue	123	writable isolation required at line 126: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_tool_call_pending_directive_reply_gets_confirmation_cue	147	writable isolation required at line 151: in-memory state/content mutation: result.pending_action_id
+tests/test_session_cli_fallback.py	test_tool_call_pending_secret_order_reply_gets_confirmation_cue	162	writable isolation required at line 166: in-memory state/content mutation: result.pending_action_id
 tests/test_session_cli_fallback.py	test_tool_call_staged_new_secret_order_merges_minister_reply	183	writable isolation required: line 188 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_tool_call_staged_secret_order_merge_updates_reply_assignee	218	writable isolation required: line 223 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_staged_secret_order_assignee_merge_uses_llm_field_contract	247	writable isolation required: line 252 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_tool_call_staged_new_secret_order_merges_missing_metadata	293	writable isolation required: line 298 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_tool_call_staged_new_secret_order_keeps_explicit_zero_deadline	323	writable isolation required: line 328 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_secret_order_tool_progress_stages_pending_action_not_direct_write	353	writable isolation required: line 357 invokes create_secret_order
-tests/test_session_cli_fallback.py	test_propose_directive_tool_arguments_stages_draft	403	writable isolation required: line 405 assigns (db, state, content)
+tests/test_session_cli_fallback.py	test_propose_directive_tool_arguments_stages_draft	403	writable isolation required at line 427: in-memory state/content mutation: sess.db
 tests/test_session_cli_fallback.py	test_api_channel_rejects_existing_pending_action	445	writable isolation required: line 449 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_api_channel_uses_api_extractor_for_nonliteral_confirmation	472	writable isolation required: line 476 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_mixed_directive_and_secret_confirmation_commits_both	601	writable isolation required: line 605 invokes stage_pending_action
@@ -998,72 +997,72 @@ tests/test_session_cli_fallback.py	test_duchayuan_does_not_confirm_directive_as_
 tests/test_session_cli_fallback.py	test_secret_confirmation_does_not_drop_office_pending	727	writable isolation required: line 731 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_mixed_directive_and_secret_rejection_drops_both	761	writable isolation required: line 765 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_mixed_directive_and_secret_bare_doubuzhun_drops_both	795	writable isolation required: line 799 invokes stage_pending_action
-tests/test_session_cli_fallback.py	test_tool_staged_action_is_not_confirmed_in_same_chat_turn	829	writable isolation required: line 831 assigns (db, state, content)
-tests/test_session_cli_fallback.py	test_non_streaming_appointment_tool_stages_pending_action	873	writable isolation required: line 933 invokes execute(SELECT name FROM characters WHERE name=?)
+tests/test_session_cli_fallback.py	test_tool_staged_action_is_not_confirmed_in_same_chat_turn	829	writable isolation required at line 856: in-memory state/content mutation: sess.db
+tests/test_session_cli_fallback.py	test_non_streaming_appointment_tool_stages_pending_action	873	writable isolation required at line 907: in-memory state/content mutation: sess.db
 tests/test_session_cli_fallback.py	test_confirmation_turn_ignores_same_turn_secret_order_tool_output	942	writable isolation required: line 946 invokes stage_pending_action
-tests/test_session_cli_fallback.py	test_secret_prefix_ignores_mismatched_directive_tool_output	1010	writable isolation required: line 1012 assigns (db, state, content)
+tests/test_session_cli_fallback.py	test_secret_prefix_ignores_mismatched_directive_tool_output	1010	writable isolation required at line 1014: production mutation/isolation call: setattr
 tests/test_session_cli_fallback.py	test_confirmation_commit_only_visible_pending_ids	1057	writable isolation required: line 1061 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_confirmation_reject_only_visible_pending_ids	1093	writable isolation required: line 1097 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_legacy_registered_secret_order_marker_parser_restages	1128	writable isolation required: line 1132 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_draft_prefix_with_pending_confirmation_runs_zero_llm	1216	writable isolation required: line 1225 invokes stage_pending_action
-tests/test_session_cli_fallback.py	test_secret_prefix_confirmation_uses_recent_context_for_order_body	1252	writable isolation required: line 1255 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_secret_prefix_confirmation_uses_recent_context_for_order_body	1252	writable isolation required at line 1256: production mutation/isolation call: setattr
 tests/test_session_cli_fallback.py	test_api_tool_created_secret_order_skips_prefix_fallback_extraction	1290	writable isolation required: line 1300 invokes apply_cli_conversation_actions
 tests/test_session_cli_fallback.py	test_api_tool_staged_secret_order_skips_prefix_fallback_extraction	1311	writable isolation required: line 1316 invokes stage_pending_action
 tests/test_session_cli_fallback.py	test_legacy_registered_secret_order_marker_is_restaged	1339	writable isolation required: line 1343 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails	1361	writable isolation required: line 1365 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_noop_appointment_intent_is_not_staged	1388	writable isolation required: line 1407 invokes apply_cli_conversation_actions
-tests/test_session_cli_fallback.py	test_secret_prefix_keyao_confirmation_uses_recent_context	1425	writable isolation required: line 1428 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_prefix_confirmation_with_supplement_keeps_recent_context	1461	writable isolation required: line 1463 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_secret_prefix_keyao_confirmation_uses_recent_context	1425	writable isolation required at line 1429: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_prefix_confirmation_with_supplement_keeps_recent_context	1461	writable isolation required at line 1464: production mutation/isolation call: setattr
 tests/test_session_cli_fallback.py	test_api_channel_secret_prefix_confirmation_uses_recent_context	1496	writable isolation required: line 1514 invokes apply_cli_conversation_actions
 tests/test_session_cli_fallback.py	test_api_channel_secret_prefix_extracts_deadline_without_cli_helper	1527	writable isolation required: line 1551 invokes apply_cli_conversation_actions
 tests/test_session_cli_fallback.py	test_api_channel_mixed_confirmation_keeps_supplement_when_extract_fails	1564	writable isolation required: line 1576 invokes apply_cli_conversation_actions
-tests/test_session_cli_fallback.py	test_secret_context_path_preserves_multiple_related_emperor_task_lines	1589	writable isolation required: line 1591 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_preserves_related_bingming_continuation	1625	writable isolation required: line 1627 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_order_body_excludes_audience_role_labels	1660	writable isolation required: line 1663 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_preserves_prior_minister_supplement	1698	writable isolation required: line 1702 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_conversation	1735	writable isolation required: line 1738 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_task_like_command	1771	writable isolation required: line 1773 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_ignores_prior_task_with_same_assignee	1806	writable isolation required: line 1808 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_task_before_lingqian	1841	writable isolation required: line 1843 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_preserves_confidentiality_constraint_line	1876	writable isolation required: line 1878 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_context_path_keeps_offtopic_llm_guard	1911	writable isolation required: line 1914 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_secret_context_path_preserves_multiple_related_emperor_task_lines	1589	writable isolation required at line 1592: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_preserves_related_bingming_continuation	1625	writable isolation required at line 1628: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_order_body_excludes_audience_role_labels	1660	writable isolation required at line 1664: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_preserves_prior_minister_supplement	1698	writable isolation required at line 1703: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_conversation	1735	writable isolation required at line 1739: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_task_like_command	1771	writable isolation required at line 1774: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_ignores_prior_task_with_same_assignee	1806	writable isolation required at line 1809: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_ignores_unrelated_prior_task_before_lingqian	1841	writable isolation required at line 1844: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_preserves_confidentiality_constraint_line	1876	writable isolation required at line 1879: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_context_path_keeps_offtopic_llm_guard	1911	writable isolation required at line 1915: production mutation/isolation call: setattr
 tests/test_session_cli_fallback.py	test_noop_appointment_alias_target_is_not_staged	1947	writable isolation required: line 1969 invokes apply_cli_conversation_actions
 tests/test_session_cli_fallback.py	test_committed_draft_followup_merges_even_when_classifier_says_none	1989	writable isolation required: line 1996 invokes add_directive
 tests/test_session_cli_fallback.py	test_committed_draft_followup_merges_even_when_classifier_says_draft	2028	writable isolation required: line 2035 invokes add_directive
-tests/test_session_cli_fallback.py	test_chat_starts_cli_action_classification_before_reply_finishes	2067	writable isolation required: line 2069 assigns (db, state, content)
-tests/test_session_cli_fallback.py	test_non_parallel_safe_runner_skips_concurrent_classifier	2122	writable isolation required: line 2125 assigns (db, state, content)
-tests/test_session_cli_fallback.py	test_draft_prefix_stages_directive	2225	writable isolation required: line 2240 invokes execute(SELECT COUNT(*) FROM turn_directives WHERE turn=?)
-tests/test_session_cli_fallback.py	test_runtime_cli_channel_without_env_stages_directive	2245	writable isolation required: line 2261 invokes execute(SELECT COUNT(*) FROM turn_directives WHERE turn=?)
-tests/test_session_cli_fallback.py	test_runtime_cli_secret_prefix_merges_via_configured_runner	2266	writable isolation required: line 2269 assigns (db, state, _)
-tests/test_session_cli_fallback.py	test_secret_prefix_creates_order	2308	writable isolation required: line 2310 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_chat_starts_cli_action_classification_before_reply_finishes	2067	writable isolation required at line 2082: production mutation/isolation call: set
+tests/test_session_cli_fallback.py	test_non_parallel_safe_runner_skips_concurrent_classifier	2122	writable isolation required at line 2133: in-memory state/content mutation: sess.db
+tests/test_session_cli_fallback.py	test_draft_prefix_stages_directive	2225	writable isolation required at line 2228: production mutation/isolation call: setenv
+tests/test_session_cli_fallback.py	test_runtime_cli_channel_without_env_stages_directive	2245	writable isolation required at line 2251: in-memory state/content mutation: result.answer
+tests/test_session_cli_fallback.py	test_runtime_cli_secret_prefix_merges_via_configured_runner	2266	writable isolation required at line 2271: production mutation/isolation call: setattr
+tests/test_session_cli_fallback.py	test_secret_prefix_creates_order	2308	writable isolation required at line 2311: production mutation/isolation call: setenv
 tests/test_session_cli_fallback.py	test_secret_prefix_upserts_not_duplicates_and_refreshes	2334	writable isolation required: line 2363 invokes commit_pending_actions
-tests/test_session_cli_fallback.py	test_existing_directive_not_overwritten	2377	writable isolation required: line 2379 assigns (db, state, _)
+tests/test_session_cli_fallback.py	test_existing_directive_not_overwritten	2377	writable isolation required at line 2380: production mutation/isolation call: setenv
 tests/test_session_cli_fallback.py	test_conversation_update_lands_via_session_path	2393	writable isolation required: line 2400 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_preclassified_secret_update_uses_reply_aware_extractor	2423	writable isolation required: line 2429 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_runtime_cli_conversation_update_uses_configured_runner_without_env	2472	writable isolation required: line 2478 invokes create_secret_order
 tests/test_session_cli_fallback.py	test_conversation_rush_skips_pending_review	2526	writable isolation required: line 2532 invokes create_secret_order
-tests/test_settle_channel_injection.py	test_real_flow_injects_channel_enrichment_into_settle	41	writable isolation required: line 77 invokes execute(SELECT effect_on_resolve FROM issues WHERE title='注入通道国策')
+tests/test_settle_channel_injection.py	test_real_flow_injects_channel_enrichment_into_settle	41	writable isolation required at line 47: production mutation/isolation call: setattr
 tests/test_settle_channel_injection.py	test_driver_path_no_env_is_deterministic	85	writable isolation required: line 97 invokes settle_with_delta
 tests/test_settle_channel_injection.py	test_settle_none_branch_legacy_env_enriches	106	writable isolation required: line 118 invokes settle_with_delta
 tests/test_settle_channel_injection.py	test_driver_run_settle_records_malformed_delta	126	writable isolation required: line 131 invokes run_settle
 tests/test_settle_channel_injection.py	test_driver_run_settle_deterministic_under_legacy_env	139	writable isolation required: line 151 invokes run_settle
-tests/test_settle_core.py	test_settle_with_delta_applies_region_and_advances_turn	23	writable isolation required: line 27 invokes execute(SELECT unrest FROM regions WHERE id='shanxi')
+tests/test_settle_core.py	test_settle_with_delta_applies_region_and_advances_turn	23	writable isolation required at line 32: production mutation/isolation call: settle_with_delta
 tests/test_settle_core.py	test_settle_with_delta_invokes_injected_callbacks	41	writable isolation required: line 46 invokes settle_with_delta
 tests/test_settle_core.py	test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief	60	writable isolation required: line 69 invokes insert_issue
-tests/test_settle_core.py	test_pre_settle_runs_fixed_fiscal_tick	107	writable isolation required: line 111 invokes execute(SELECT COUNT(*) FROM economy_ledger WHERE turn=?)
-tests/test_settle_core.py	test_pre_settle_persists_event_terminal_states_in_write_path	124	writable isolation required: line 151 invokes execute(SELECT 1 FROM event_triggers WHERE event_id=?)
+tests/test_settle_core.py	test_pre_settle_runs_fixed_fiscal_tick	107	writable isolation required at line 115: production mutation/isolation call: pre_settle
+tests/test_settle_core.py	test_pre_settle_persists_event_terminal_states_in_write_path	124	writable isolation required at line 146: in-memory state/content mutation: state.year
 tests/test_settle_core.py	test_settle_with_delta_enter_failure_preserves_original	171	writable isolation required: line 185 invokes settle_with_delta
-tests/test_six_sciences_seed_608.py	test_fresh_seed_contains_sourced_six_sciences_censors	20	writable isolation required: line 26 invokes execute(SELECT name, office, office_type, status, debut_year, summary FROM chara)
-tests/test_six_sciences_seed_608.py	test_six_sciences_censor_exit_recomputes_its_faction_leverage	57	writable isolation required: line 60 invokes execute(SELECT name, faction FROM characters WHERE name='许誉卿')
+tests/test_six_sciences_seed_608.py	test_fresh_seed_contains_sourced_six_sciences_censors	20	writable isolation required at line 25: production mutation/isolation call: set
+tests/test_six_sciences_seed_608.py	test_six_sciences_censor_exit_recomputes_its_faction_leverage	57	writable isolation required at line 66: production mutation/isolation call: setattr
 tests/test_state_reload.py	test_reload_refreshes_state_in_place	38	writable isolation required: line 44 invokes execute(UPDATE game_state SET turn_phase='reviewing' WHERE id=1)
 tests/test_state_reload.py	test_reload_scrubs_next_period_advance	60	writable isolation required: line 66 invokes next_period
 tests/test_state_reload.py	test_reload_passthrough_content_registry_no_crash	75	writable isolation required: line 79 invokes execute(UPDATE game_state SET turn_phase='reviewing' WHERE id=1)
-tests/test_state_reload.py	test_reload_scrubs_dirty_settling_phase	94	writable isolation required: line 100 invokes execute(SELECT turn_phase FROM game_state WHERE id=1)
+tests/test_state_reload.py	test_reload_scrubs_dirty_settling_phase	94	writable isolation required at line 104: in-memory state/content mutation: state.turn_phase
 tests/test_state_reload.py	test_pre_settle_self_reloads_memory_on_rollback	111	writable isolation required: line 127 invokes pre_settle
 tests/test_state_reload.py	test_rollback_purges_content_character_ghost	149	writable isolation required: line 159 invokes stage_pending_action
 tests/test_state_reload.py	test_reload_skipped_inside_nested_atomic	187	writable isolation required: line 206 invokes atomic
 tests/test_state_reload.py	test_metrics_refresh_never_empty_window	215	writable isolation required: line 223 invokes reload_state_from_db
-tests/test_state_reload.py	test_rollback_restores_existing_character_attributes	231	writable isolation required: line 243 invokes execute(SELECT office, status FROM characters WHERE name=?)
+tests/test_state_reload.py	test_rollback_restores_existing_character_attributes	231	writable isolation required at line 247: production mutation/isolation call: stage_pending_action
 tests/test_state_reload.py	test_reload_passes_llm_config_to_content_rebuild	264	writable isolation required: line 276 invokes reload_state_from_db
 tests/test_state_reload.py	test_atomic_and_reload_commits_on_success	283	writable isolation required: line 287 invokes atomic_and_reload
 tests/test_state_reload.py	test_atomic_and_reload_reloads_and_reraises_at_depth0	293	writable isolation required: line 299 invokes atomic_and_reload
@@ -1096,11 +1095,11 @@ tests/test_transaction_boundary.py	test_commit_failure_at_atomic_exit_rolls_back
 tests/test_transaction_boundary.py	test_ddl_after_swallowed_conn_context_does_not_escape	509	writable isolation required: line 516 invokes execute(DROP TABLE IF EXISTS rejection_reports)
 tests/test_transaction_boundary.py	test_ddl_after_explicit_midatomic_rollback_does_not_escape	536	writable isolation required: line 539 invokes execute(DROP TABLE IF EXISTS rejection_reports)
 tests/test_transaction_boundary.py	test_begin_failure_at_entry_restores_flags	558	writable isolation required: line 571 invokes atomic
-tests/test_transit_aging_346.py	test_force_transit_arrivals_forces_overdue	35	writable isolation required: line 47 invokes execute(SELECT location, transit_to, transit_start_turn FROM characters WHERE na)
-tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_fresh_transit	59	writable isolation required: line 71 invokes execute(SELECT transit_to FROM characters WHERE name=?)
-tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_one_month	80	writable isolation required: line 92 invokes execute(SELECT transit_to FROM characters WHERE name=?)
-tests/test_transit_aging_346.py	test_force_transit_arrivals_legacy_zero_start	101	writable isolation required: line 112 invokes execute(SELECT location, transit_to FROM characters WHERE name=?)
-tests/test_transit_aging_346.py	test_force_transit_arrivals_syncs_content_mirror	122	writable isolation required: line 124 assigns (db, state, content)
+tests/test_transit_aging_346.py	test_force_transit_arrivals_forces_overdue	35	writable isolation required at line 39: in-memory state/content mutation: state.turn
+tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_fresh_transit	59	writable isolation required at line 63: in-memory state/content mutation: state.turn
+tests/test_transit_aging_346.py	test_force_transit_arrivals_skips_one_month	80	writable isolation required at line 84: in-memory state/content mutation: state.turn
+tests/test_transit_aging_346.py	test_force_transit_arrivals_legacy_zero_start	101	writable isolation required at line 107: production mutation/isolation call: force_transit_arrivals
+tests/test_transit_aging_346.py	test_force_transit_arrivals_syncs_content_mirror	122	writable isolation required at line 126: in-memory state/content mutation: state.turn
 tests/test_transit_aging_346.py	test_行止_sets_transit_start_turn	143	writable isolation required: line 148 invokes apply_score_extraction
 tests/test_transit_aging_346.py	test_行止_arrival_clears_transit_start_turn	164	writable isolation required: line 173 invokes apply_score_extraction
 tests/test_transit_aging_346.py	test_行止_reemit_same_dest_preserves_start_turn	190	writable isolation required: line 201 invokes apply_score_extraction
@@ -1125,6 +1124,6 @@ tests/test_web_court_visibility.py	test_summon_power_check_uses_db_not_content	3
 tests/test_web_court_visibility.py	test_list_ministers_uses_db_power_id	335	writable isolation required: line 350 invokes execute(UPDATE characters SET power_id='ming' WHERE name=?)
 tests/test_web_court_visibility.py	test_find_existing_minister_uses_db_power_id	360	writable isolation required: line 373 invokes execute(UPDATE characters SET power_id='ming' WHERE name=?)
 tests/test_web_court_visibility.py	test_db_resolve_power_id_authoritative	382	writable isolation required: line 387 invokes execute(UPDATE characters SET power_id='houjin' WHERE name=?)
-tests/test_web_court_visibility.py	test_vassal_prince_secret_order_rejected	398	writable isolation required: line 405 assigns (db, state, content)
+tests/test_web_court_visibility.py	test_vassal_prince_secret_order_rejected	398	writable isolation required at line 411: production mutation/isolation call: set
 tests/test_yuan_arrival_185.py	test_yuan_arrears_paid_then_arrives_e2e	47	writable isolation required: line 57 invokes apply_score_extraction
 tests/test_yuan_arrival_185.py	test_arrival_clearing_is_not_noop_negative_control	157	writable isolation required: line 170 invokes apply_score_extraction
