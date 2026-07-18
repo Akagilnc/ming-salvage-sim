@@ -2,9 +2,13 @@
  * #686 / ADR 0124 — route pool table: pool = quota/billing boundary,
  * orthogonal to the #767 Coder-Rec model roster.
  *
- * Pools (grok-build / cursor / zai / codex-5h) track额度 + resetAt +
+ * Pools (grok-build / cursor / zai / codex-5h / claude) track额度 + resetAt +
  * configurable park threshold T. Models are products that may live in
  * multiple pools (实证: grok-4.5 on grok-build then Cursor).
+ *
+ * #789 — `claude` is the Anthropic / Claude Code billing boundary that serves
+ * roster backups sonnet-5 / haiku-4.5. #920 removed pool-separation filtering
+ * so same-model cross-role (or same family as a cmrReview leg) is legal.
  *
  * ADR 0125 three-tier park-vs-relay also lives here as a pure decision
  * over pool state + "has live baton" (baton selection is {@link
@@ -13,12 +17,17 @@
 
 import {
   lookupCoderRosterEntry,
-  poolSeparationViolation,
   type CoderRosterEntry,
 } from "./coderRoster.js";
+import { providerForModelSlug } from "./modelRegistry.js";
 
 /** Quota / billing boundary ids (ADR 0124). */
-export type BillingPoolId = "grok-build" | "cursor" | "zai" | "codex-5h";
+export type BillingPoolId =
+  | "grok-build"
+  | "cursor"
+  | "zai"
+  | "codex-5h"
+  | "claude";
 
 /** Default park-vs-relay threshold T = 30 minutes (ADR 0125). */
 export const DEFAULT_PARK_THRESHOLD_MS = 30 * 60 * 1000;
@@ -92,6 +101,10 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
     case "codex":
     case "codex-5h":
       return "codex-5h";
+    case "claude":
+    case "anthropic":
+      // Claude Code OAuth / Anthropic subscription — same boundary as cmr Claude leg.
+      return "claude";
     case "opencode-go":
       // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
       // relay lookup until a dedicated billing row exists.
@@ -105,18 +118,97 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
 export const DEFAULT_POOL_MODELS: Readonly<
   Record<BillingPoolId, ReadonlyArray<string>>
 > = {
+  // #905: grok-4.5 only on SuperGrok / grok-build — no cursor/zai transit.
   "grok-build": ["grok-4.5"],
-  cursor: ["grok-4.5"],
-  zai: ["grok-4.5"],
-  "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],
+  cursor: [],
+  zai: [],
+  "codex-5h": [
+    "terra@med",
+    "luna@med",
+    "sol@med",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    // #916: registry sol effort variants used by routes/factory utility seats.
+    "gpt-5.6-sol-low",
+    "gpt-5.6-sol-high",
+  ],
+  // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
+  claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
 };
+
+/**
+ * Map a modelRegistry provider factory onto the ADR 0124 billing boundary it
+ * draws from. Orthogonal to roster: effort-variant registry slugs (e.g.
+ * gpt-5.6-sol-low) are not CODER_ROSTER ids but still bill on codex-5h.
+ */
+function billingPoolFromProvider(
+  provider: string,
+): BillingPoolId | undefined {
+  switch (provider) {
+    case "codex":
+      return "codex-5h";
+    case "claudeCode":
+      return "claude";
+    case "grok":
+      return "grok-build";
+    case "cursor":
+      return "cursor";
+    default:
+      // agy / copilot / pi — no dedicated billing-pool id here.
+      return undefined;
+  }
+}
+
+/**
+ * Resolve a known roster **or registry** model to its default billing boundary.
+ * Distinct from quota probing: codex and Claude have no #683 probe-pool id,
+ * but their dispatched slugs still identify a billing pool for capacity relay.
+ *
+ * Order: CODER_ROSTER first (designer ids / aliases), then modelRegistry
+ * provider (effort-variant / non-roster runnable slugs), then reverse
+ * {@link DEFAULT_POOL_MODELS} membership (dual keys already listed on a pool).
+ */
+export function billingPoolForModelRef(
+  modelRef: string,
+): BillingPoolId | undefined {
+  // Defensive for untyped callers (runner/relay paths): guard before any
+  // string-typed registry/roster peek (Gemini R1 / family/914 online).
+  if (typeof modelRef !== "string") return undefined;
+  // Single normalized token for roster + registry + pool membership.
+  // MODEL_SLUG_REGISTRY keys are lowercase; trim+lower matches that surface
+  // (Gemini R2 G2 / family/914 online).
+  const needle = modelRef.trim().toLowerCase();
+  if (needle.length === 0) return undefined;
+
+  switch (lookupCoderRosterEntry(needle)?.pool) {
+    case "supergrok":
+      return "grok-build";
+    case "codex":
+      return "codex-5h";
+    case "claude":
+      return "claude";
+  }
+
+  const fromProvider = billingPoolFromProvider(
+    providerForModelSlug(needle) ?? "",
+  );
+  if (fromProvider !== undefined) return fromProvider;
+
+  for (const id of Object.keys(DEFAULT_POOL_MODELS) as BillingPoolId[]) {
+    for (const m of DEFAULT_POOL_MODELS[id]) {
+      if (m.trim().toLowerCase() === needle) return id;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
  * `limited` (with resetAt). Every other billing pool defaults to **not-live**
  * (`dead`) unless the caller supplies a probed/override table via
- * `RunInput.relayPools` — unknown pool state must not fabricate live batons
- * (#686 R2 / iron rule: park when unprobed).
+ * `RunInput.relayPools` / `FamilyRunInput.relayPools` — unknown pool state must
+ * not fabricate live batons (#686 R2 / iron rule: park when unprobed).
  */
 export function buildDefaultBillingPools(input: {
   readonly limitedPool: BillingPoolId;
@@ -124,7 +216,13 @@ export function buildDefaultBillingPools(input: {
   readonly parkThresholdMs?: number;
 }): BillingPoolEntry[] {
   const t = input.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS;
-  const ids: BillingPoolId[] = ["grok-build", "cursor", "zai", "codex-5h"];
+  const ids: BillingPoolId[] = [
+    "grok-build",
+    "cursor",
+    "zai",
+    "codex-5h",
+    "claude",
+  ];
   return ids.map((id) => {
     if (id === input.limitedPool) {
       return {
@@ -144,6 +242,66 @@ export function buildDefaultBillingPools(input: {
   });
 }
 
+/**
+ * Loose pool-table row accepted on {@link RunInput.relayPools} /
+ * {@link FamilyRunInput.relayPools} (tests + probed production tables).
+ */
+export type RelayPoolOverride = {
+  readonly id: string;
+  readonly status: BillingPoolStatus;
+  readonly resetAt?: Date;
+  readonly parkThresholdMs: number;
+  readonly models: ReadonlyArray<string>;
+};
+
+/**
+ * Shared single-slice + family seam: use an explicit probed/override table when
+ * present; otherwise {@link buildDefaultBillingPools} (wall-hit limited, rest
+ * dead) then promote any {@link knownLivePools} (route-smoke / probe evidence)
+ * to `live`. Explicit override is authoritative — tests and production probes
+ * that pass a full table are not rewritten. Never invents live batons from
+ * empty/unprobed state when no known-live evidence is supplied.
+ *
+ * Correctness B3: {@link wallHitPools} is a run-scoped set of pools that already
+ * hit a quota wall this run. They stay excluded from knownLive promotion so a
+ * smoke-passed pool that already walled cannot re-appear as a live baton and
+ * ping-pong until the handoff cap.
+ */
+export function resolveRelayPools(
+  limitedPool: BillingPoolId,
+  resetAt: Date | undefined,
+  override?: ReadonlyArray<RelayPoolOverride>,
+  knownLivePools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
+  wallHitPools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
+): ReadonlyArray<BillingPoolEntry> {
+  if (override !== undefined) {
+    return override.map((p) => ({
+      id: p.id as BillingPoolId,
+      status: p.status,
+      ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
+      parkThresholdMs: p.parkThresholdMs,
+      models: p.models,
+    }));
+  }
+  const base = buildDefaultBillingPools({ limitedPool, resetAt });
+  if (knownLivePools === undefined) return base;
+  const live = new Set<BillingPoolId>(knownLivePools);
+  // Copy so callers' run-scoped sets are not mutated by this resolution.
+  const wallHit = new Set<BillingPoolId>(wallHitPools ?? []);
+  // Current wall always counts as hit for this resolution.
+  wallHit.add(limitedPool);
+  // Never re-promote a wall-hit pool from smoke knownLive.
+  for (const id of wallHit) live.delete(id);
+  if (live.size === 0) return base;
+  return base.map((pool) => {
+    // Wall-hit pool stays limited (reset clock); do not promote it to live.
+    if (pool.id === limitedPool) return pool;
+    if (wallHit.has(pool.id)) return pool;
+    if (!live.has(pool.id)) return pool;
+    return { ...pool, status: "live" as const };
+  });
+}
+
 export interface NextRelayBaton {
   readonly modelId: string;
   readonly slug: string;
@@ -155,7 +313,6 @@ export interface SelectNextRelayBatonInput {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
 }
 
 function poolServesModel(
@@ -193,16 +350,30 @@ function livePoolsForModel(
 }
 
 /**
+ * Return a pool whose liveness is confirmed by the relay table and which can
+ * serve the dispatched model. A model slug alone is not evidence that its
+ * quota/billing pool is live.
+ */
+export function findLiveBillingPoolForModel(
+  pools: ReadonlyArray<BillingPoolEntry>,
+  modelRef: string,
+): BillingPoolId | undefined {
+  const rosterEntry = lookupCoderRosterEntry(modelRef);
+  const modelId = rosterEntry?.id ?? modelRef;
+  const slug = rosterEntry?.slug ?? modelRef;
+  return livePoolsForModel(pools, modelId, slug)[0]?.id;
+}
+
+/**
  * ADR 0126: next baton from the SAME #767 Coder-Rec roster, with one extra
  * pool-orthogonal step for resource triggers:
  *   1. same model on a different live pool (换马甲)
  *   2. else next roster model that has any live pool
- * Pool-separation filter (#767) is preserved.
+ * #920: no review-slot conflict filter — live pool alone decides eligibility.
  */
 export function selectNextRelayBaton(
   input: SelectNextRelayBatonInput,
 ): NextRelayBaton | undefined {
-  const reviewerSlugs = input.reviewerSlugs ?? [];
   const current =
     lookupCoderRosterEntry(input.currentModelId) ??
     input.rosterOrder.find((e) => e.id === input.currentModelId);
@@ -224,8 +395,7 @@ export function selectNextRelayBaton(
     }
   }
 
-  // 2. Walk roster from the entry AFTER current; pick first with a live pool
-  //    that also passes pool-separation.
+  // 2. Walk roster from the entry AFTER current; pick first with a live pool.
   const startIdx = input.rosterOrder.findIndex(
     (e) =>
       e.id === input.currentModelId ||
@@ -235,9 +405,6 @@ export function selectNextRelayBaton(
   const from = startIdx >= 0 ? startIdx + 1 : 0;
   for (let i = from; i < input.rosterOrder.length; i++) {
     const candidate = input.rosterOrder[i]!;
-    if (poolSeparationViolation(candidate, reviewerSlugs) !== undefined) {
-      continue;
-    }
     const lives = livePoolsForModel(
       input.pools,
       candidate.id,
@@ -252,6 +419,43 @@ export function selectNextRelayBaton(
     }
   }
   return undefined;
+}
+
+/**
+ * #787: capacity is checkpoint-local, not a billing-pool quota wall. Prefer
+ * the next Coder-Rec checkpoint that the current live pool can serve; only
+ * then fall back to the ordinary pool-orthogonal relay order.
+ * #920: no review-slot conflict filter.
+ */
+export function selectCapacityRelayBaton(
+  input: SelectNextRelayBatonInput,
+): NextRelayBaton | undefined {
+  const current =
+    lookupCoderRosterEntry(input.currentModelId) ??
+    input.rosterOrder.find((entry) => entry.id === input.currentModelId);
+  const startIdx = input.rosterOrder.findIndex(
+    (entry) =>
+      entry.id === input.currentModelId ||
+      entry.slug === input.currentModelId ||
+      (current !== undefined && entry.id === current.id),
+  );
+  const currentPool = input.pools.find(
+    (pool) => pool.id === input.currentPool && pool.status === "live",
+  );
+  if (currentPool !== undefined) {
+    const from = startIdx >= 0 ? startIdx + 1 : 0;
+    for (let i = from; i < input.rosterOrder.length; i++) {
+      const candidate = input.rosterOrder[i]!;
+      if (poolServesModel(currentPool, candidate.id, candidate.slug)) {
+        return {
+          modelId: candidate.id,
+          slug: candidate.slug,
+          pool: currentPool.id,
+        };
+      }
+    }
+  }
+  return selectNextRelayBaton(input);
 }
 
 /** True when {@link selectNextRelayBaton} would return a baton. */

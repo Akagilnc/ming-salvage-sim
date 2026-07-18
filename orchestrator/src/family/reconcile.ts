@@ -62,9 +62,9 @@ import type {
 /**
  * Find the most recent `familyHeadAfter` recorded in the ledger — the baseline
  * the live HEAD is compared against — AND its index. The LAST entry that carries
-   * one (a `merged`, `aborted`, `cmr_reviewed`, `cmr_fix_committed`, `cmr_passed`,
-   * `shipped`, or `review_loop_converged` event with a head); the baseline-advancing
-   * reconcile 補账条
+   * one (a `merged`, `aborted`, `child_decision_parked`, `cmr_reviewed`,
+   * `cmr_fix_committed`, `cmr_passed`, `shipped`, or `review_loop_converged` event
+   * with a head); the baseline-advancing reconcile 補账条
    * carries one too. Returns `{head: undefined, index: -1}` when no entry records a
    * head (an empty ledger, or only #293-thin entries).
  *
@@ -126,6 +126,15 @@ function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
       entry.event === "escalated" &&
       entry.phase === "final" &&
       (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+    );
+  }
+  if (entry.status === "child_decision_parked") {
+    return (
+      entry.event === "child_decision_parked" &&
+      entry.phase === "wave" &&
+      entry.escalationKind === "decision" &&
+      Number.isSafeInteger(entry.childIssue) &&
+      (entry.childIssue ?? 0) > 0
     );
   }
   if (entry.status === "shipped") {

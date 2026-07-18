@@ -1,7 +1,7 @@
-Use the bash tool exactly once with this command:
+#884 bare-ping smoke (credential oracle only).
 
-```bash
-echo OK
-```
+Reply with exactly: {{NONCE}}
 
-After the tool returns successfully, emit `ROUTE_SMOKE_COMPLETE`.
+No tools, no files, no repo work. Emitting the nonce proves the selected
+model×pipe credential is alive. Tool capability is verified at image bake time,
+not at every ignition.

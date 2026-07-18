@@ -39,6 +39,12 @@ from ming_sim.qualitative import (
     city_defense_description,
     qualitative_band,
 )
+from ming_sim.relations import (
+    bind_origin_round,
+    credit_events_as_edges,
+    normalize_evidence,
+    validate_edge_kind,
+)
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -52,6 +58,17 @@ _ARMY_PAY_SOURCE_DELTA_FIELDS = frozenset((
     "is_tusi", "self_funded_pay",
 ))
 _COMMITMENT_STOP_CONDITION_RE = re.compile(r"character\.[^.]+\.loyalty\s*(?:>=|>)\s*\d+")
+
+
+def _seed_guilt_storage_value(value: object) -> str:
+    """Serialize the content-layer guilt mapping into the existing DB TEXT column."""
+    if isinstance(value, Mapping):
+        if not value:
+            return ""
+        crime = str(value.get("crime") or "").strip()
+        severity = str(value.get("severity") or "无").strip()
+        return safe_json_dumps({"crime": crime, "severity": severity}, ensure_ascii=False)
+    return str(value or "")
 
 
 def _public_support_description(value: object) -> str:
@@ -438,7 +455,7 @@ _LEVERAGE_FACTIONS = {"阉党", "东林", "皇党", "中立", "军队", "西学"
 _OFFICE_LEVERAGE_WEIGHT = {
     "司礼监": 20, "内阁": 18,                                  # 批红 / 票拟 中枢
     "兵部": 12, "吏部": 12, "户部": 10, "边镇": 10,            # 部院 / 督师边镇
-    "锦衣卫": 8, "东厂": 8, "都察院": 8,                       # 厂卫 / 监察
+    "锦衣卫": 8, "东厂": 8, "都察院": 8, "六科": 8,             # 厂卫 / 言官监察
     "礼部": 5, "刑部": 5, "工部": 5,                           # 中层部务（六部齐全：刑部勿漏）
     "内臣": 4, "内廷": 4,                                       # 宫廷宦官（御马监/内官监等，与内臣同档）
     "翰林院": 2, "地方": 2, "外臣": 1,                         # 长尾
@@ -1453,6 +1470,30 @@ class GameDB:
                 value TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #632 关系账 S1：append-only 有向边事件流水。0079 信用事件只在读侧适配，
+            -- 不迁移、不双写；evidence 仅允许结构化产出方置真。
+            CREATE TABLE IF NOT EXISTS relation_edge_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                event_kind TEXT NOT NULL,
+                context TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                origin_round INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                evidence INTEGER NOT NULL DEFAULT 0 CHECK (evidence IN (0, 1)),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source, target, event_kind, context, origin)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_relation_edges_pair
+            ON relation_edge_events(source, target, turn, id);
+
+            CREATE INDEX IF NOT EXISTS idx_relation_edges_person
+            ON relation_edge_events(source, target, event_kind, id);
             """
         )
         for column, definition in {
@@ -2355,7 +2396,7 @@ class GameDB:
                         character.courage,
                         character.style,
                         character.identity,
-                        character.seed_guilt,
+                        _seed_guilt_storage_value(character.seed_guilt),
                         character.birth_year,
                         character.historical_death_year,
                         character.historical_death_month,
@@ -3651,7 +3692,7 @@ class GameDB:
                 (character.name, office, office_type, character.faction,
                  json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
                  character.loyalty, character.ability, character.integrity, character.courage, character.style,
-                 character.identity, character.seed_guilt, character.birth_year, character.historical_death_year,
+                 character.identity, _seed_guilt_storage_value(character.seed_guilt), character.birth_year, character.historical_death_year,
                  character.historical_death_month, character.debut_year, character.debut_month, character.status,
                  character.status_reason, character.reason_code,
                  character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
@@ -3660,7 +3701,7 @@ class GameDB:
             for character in self.content.characters.values():
                 self.conn.execute(
                     "UPDATE characters SET identity=?, seed_guilt=? WHERE name=? AND identity=50 AND COALESCE(seed_guilt, '')=''",
-                    (character.identity, character.seed_guilt, character.name),
+                    (character.identity, _seed_guilt_storage_value(character.seed_guilt), character.name),
                 )
             self._set_meta_flag("__identity_seed_v1")
         # Retire only the shipped ambiguous alias collision from old saves and
@@ -4601,7 +4642,7 @@ class GameDB:
                 character.courage,
                 character.style,
                 character.identity,
-                character.seed_guilt,
+                _seed_guilt_storage_value(character.seed_guilt),
                 character.birth_year,
                 character.historical_death_year,
                 character.historical_death_month,
@@ -11402,6 +11443,118 @@ class GameDB:
         cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
         self.conn.commit()
         return cur.rowcount
+
+    def record_relation_edge_event(
+        self,
+        *,
+        source: str,
+        target: str,
+        event_kind: str,
+        context: str,
+        origin: str,
+        turn: Optional[int] = None,
+        year: Optional[int] = None,
+        period: Optional[int] = None,
+        evidence: Any = False,
+    ) -> int:
+        """唯一的边事件写入口；重复同一事件返回原 id，不生成第二笔。
+
+        事务归属与 set_fiscal_config / withdraw_pending_action 一致：调用方已开
+        事务（atomic 内或裸 BEGIN/DML 使 conn.in_transaction 为真）时不提前
+        commit。不调 load_state()——其末尾 self.conn.commit() 会把调用方半成品
+        落盘、破坏原子性（PR #804 P2）。仅需 turn/year/period 三个默认值，直读
+        game_state 行即可。"""
+        source = str(source or "").strip()
+        target = str(target or "").strip()
+        context = str(context or "").strip()
+        if not source or not target:
+            raise ValueError("边事件 source/target 不能为空")
+        if not context:
+            raise ValueError("边事件语境不能为空")
+        kind = validate_edge_kind(event_kind)
+        evidence_flag = normalize_evidence(evidence)
+        owns_transaction = self.owns_transaction()
+        state_row = self.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1"
+        ).fetchone()
+        if state_row is not None:
+            default_turn, default_year, default_period = (
+                int(state_row["turn"]), int(state_row["year"]), int(state_row["period"]),
+            )
+        else:
+            default_turn, default_year, default_period = 1, 1627, 10
+        effective_turn = int(turn if turn is not None else default_turn)
+        effective_year = int(year if year is not None else default_year)
+        effective_period = int(period if period is not None else default_period)
+        bound_origin, origin_round = bind_origin_round(origin, effective_turn)
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO relation_edge_events
+                (source, target, event_kind, context, origin, origin_round,
+                 turn, year, period, evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source, target, kind, context, bound_origin, origin_round,
+                effective_turn, effective_year, effective_period, int(evidence_flag),
+            ),
+        )
+        if owns_transaction:
+            self.conn.commit()
+        row = self.conn.execute(
+            """
+            SELECT id FROM relation_edge_events
+            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?
+            """,
+            (source, target, kind, context, bound_origin),
+        ).fetchone()
+        return int(row["id"])
+
+    # Names kept as narrow aliases for callers that describe the same seam differently.
+    write_relation_edge_event = record_relation_edge_event
+    insert_relation_edge_event = record_relation_edge_event
+
+    def get_relation_edge_events(
+        self,
+        *,
+        person: Optional[str] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        event_kind: Optional[str] = None,
+        evidence: Optional[bool] = None,
+    ) -> List[Dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if person is not None:
+            clauses.append("(source = ? OR target = ?)")
+            params.extend([str(person), str(person)])
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(str(source))
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(str(target))
+        if event_kind is not None:
+            clauses.append("event_kind = ?")
+            params.append(validate_edge_kind(event_kind))
+        if evidence is not None:
+            clauses.append("evidence = ?")
+            params.append(int(normalize_evidence(evidence)))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM relation_edge_events {where} ORDER BY turn, id", params
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "evidence": bool(row["evidence"]),
+            }
+            for row in rows
+        ]
+
+    def read_credit_events_as_edges(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """0079 读侧契约适配；只返回边，不把 fixture 写入 0079 或本表。"""
+        return credit_events_as_edges(records)
 
     def close(self) -> None:
         self.conn.close()

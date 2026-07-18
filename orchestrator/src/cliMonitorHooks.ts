@@ -1,13 +1,16 @@
 /**
- * #684 — shared helpers so RealBackend / RealFamilyBackend can participate in
- * the production monitored CLI dispatch path (resolveCliMonitorDispatch +
+ * #684 / #937 — shared helpers so RealBackend / RealFamilyBackend can participate
+ * in the production monitored CLI dispatch path (resolveCliMonitorDispatch +
  * awaitMonitoredCliWorker).
  *
  * Production shape: parent spawns a host-side bridge child via
  * {@link dispatchMonitoredCliWorker}; the child re-enters `dispatchWorker` /
  * `dispatchFamilyWorker` with `ORCHESTRATOR_CLI_MONITOR_CHILD=1` so the hooks
  * short-circuit and the existing container seam does the work. The parent holds
- * the monitor handle (pid/log/pool/signal/instance) for hang judgment and kill.
+ * the exact ChildProcess / monitor handle (pid/log/pool/instance) for
+ * observational log last-activity and adoption-failure terminateSpawnedChild
+ * only — no host idle kill / silence sentencing (#937 / #934 ID-006/007).
+ * #928: completion is exit code + legal result sidecar — no completionSignal.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -41,8 +44,15 @@ const MONITORED_KINDS: ReadonlySet<WorkerKind> = new Set([
   "verify",
   "fixer",
   "cleanup",
-  "docRelease",
+  "landing",
 ]);
+
+/** Internal provenance marker for a result synthesized because no sidecar existed. */
+const MISSING_MONITOR_SIDECAR_RESULT = Symbol("missingMonitorSidecarResult");
+
+function markMissingMonitorSidecarResult(result: WorkerResult): WorkerResult {
+  return Object.assign(result, { [MISSING_MONITOR_SIDECAR_RESULT]: true });
+}
 
 export type CliMonitorBackendKind = "real" | "realFamily";
 
@@ -63,8 +73,11 @@ export function isMonitoredWorkerKind(kind: WorkerKind): boolean {
   return MONITORED_KINDS.has(kind);
 }
 
-/** Log directory for monitor handles: stateDir preferred, else worktree-local. */
+/** Log directory for monitor handles: durable telemetry dir preferred. */
 export function resolveMonitorLogDir(ctx: DispatchContext): string | undefined {
+  if (ctx.telemetryDir !== undefined && ctx.telemetryDir.length > 0) {
+    return join(ctx.telemetryDir, "worker-logs");
+  }
   if (ctx.stateDir !== undefined && ctx.stateDir.length > 0) {
     return join(ctx.stateDir, "worker-logs");
   }
@@ -143,7 +156,6 @@ export function buildCliMonitorSpawnSpec(input: {
     // pool. Monitoring must attribute the child to that active pool, not infer
     // it again from the model name.
     poolId: input.ctx.billingPool ?? poolIdForWorker(input.spec),
-    completionSignal: input.spec.completionSignal,
     stepId: input.spec.id,
     ...(input.ctx.worktree?.path !== undefined
       ? { cwd: input.ctx.worktree.path }
@@ -156,7 +168,11 @@ export function buildCliMonitorSpawnSpec(input: {
 
 /**
  * Map a finished monitored CLI child into a WorkerResult by reading the result
- * sidecar the bridge wrote (fail-closed when missing / unreadable).
+ * sidecar the bridge wrote.
+ *
+ * #928 / ADR 0131: completion requires clean exit **and** a legal sidecar.
+ * Exit 0 without a usable sidecar must not masquerade as `completed`.
+ * Non-zero/null exit must not honor a `completed` sidecar either.
  */
 export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
@@ -164,7 +180,6 @@ export function workerResultFromMonitorSidecar(
 ): WorkerResult {
   const resultPath = handle.resultPath;
   const legacyPath = monitorResultPath(dirname(handle.logPath), handle.stepId);
-  const expectedPath = resultPath ?? legacyPath;
   const path = resultPath !== undefined
     ? (existsSync(resultPath) ? resultPath : undefined)
     : (existsSync(legacyPath) ? legacyPath : undefined);
@@ -187,6 +202,16 @@ export function workerResultFromMonitorSidecar(
           const quotaErr = tryParseQuotaWaitForResetBridge(parsed.reason);
           if (quotaErr !== undefined) throw quotaErr;
         }
+        // ADR 0131 completion = exit 0 ∧ legal sidecar. A completed claim on
+        // non-zero/null exit is incomplete regardless of sidecar shape.
+        if (parsed.kind === "completed" && exitCode !== 0) {
+          return {
+            kind: "failed",
+            reason:
+              `monitored CLI worker ${handle.stepId} exited ${exitCode ?? "null"} ` +
+              `with a completed sidecar (clean exit required; pool=${handle.poolId})`,
+          };
+        }
         return parsed;
       }
     } catch (err) {
@@ -194,22 +219,30 @@ export function workerResultFromMonitorSidecar(
       if (isQuotaWaitForResetError(err)) {
         throw err;
       }
-      // fall through to exit-code mapping
+      // fall through to missing-sidecar mapping
     }
   }
 
-  if (exitCode === 0) {
-    return {
-      kind: "malformed",
-      reason:
-        `monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
-        `WorkerResult sidecar at ${expectedPath}`,
-    };
-  }
-  return {
+  // #928: no legal sidecar ⇒ not completed, even on exit 0.
+  return markMissingMonitorSidecarResult({
     kind: "failed",
     reason:
       `monitored CLI worker ${handle.stepId} exited ${exitCode ?? "null"} ` +
       `without a WorkerResult sidecar (pool=${handle.poolId})`,
-  };
+  });
+}
+
+/**
+ * True only for the structured fallback produced by
+ * {@link workerResultFromMonitorSidecar} when no usable result sidecar exists.
+ * Used by the signal-kill path: honor a real sidecar outcome even after
+ * SIGTERM; only synthesize `killed by signal` when the mapper found nothing
+ * durable.
+ */
+export function isMissingMonitorSidecarResult(result: WorkerResult): boolean {
+  return (
+    result as WorkerResult & {
+      readonly [MISSING_MONITOR_SIDECAR_RESULT]?: boolean;
+    }
+  )[MISSING_MONITOR_SIDECAR_RESULT] === true;
 }

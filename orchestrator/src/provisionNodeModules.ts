@@ -49,7 +49,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import {
   existsSync,
   readdirSync,
@@ -58,7 +57,8 @@ import {
   statSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
+
+import { execFileAsyncWithTimeout } from "./externalCall.js";
 
 /** Same host-command seam shape as RealBackend / RealFamilyBackend `sh`. */
 export type Sh = (
@@ -74,19 +74,28 @@ export interface ProvisionResult {
   readonly elapsedMs: number;
 }
 
+/**
+ * Host provision can run `npm ci` / `npm install` (~90s typical; long tails
+ * on cold caches). Wider than the default gh/git 120s host budget.
+ */
+export const PROVISION_SUBPROCESS_TIMEOUT_MS = 15 * 60 * 1000;
+
 export interface ProvisionNodeModulesOptions {
   /** Project dir whose node_modules is the clone source (same package as target). */
   readonly templateProjectDir?: string;
-  /** Host command runner; defaults to async execFile. */
+  /** Host command runner; defaults to clocked execFileAsyncWithTimeout. */
   readonly sh?: Sh;
 }
 
 async function defaultSh(file: string, args: string[], cwd?: string): Promise<string> {
-  const { stdout } = await promisify(execFile)(file, args, {
-    cwd,
-    encoding: "utf8",
-  });
-  return stdout.trim();
+  // #884: sole subprocess chokepoint — bare execFile is a red S8-T guard.
+  return (
+    await execFileAsyncWithTimeout(file, args, {
+      stage: `provision:${file}`,
+      cwd,
+      timeoutMs: PROVISION_SUBPROCESS_TIMEOUT_MS,
+    })
+  ).trim();
 }
 
 /** Async host command runner used by production backends for provisioning. */

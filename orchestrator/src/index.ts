@@ -1,22 +1,15 @@
-// @ming/orchestrator — public surface (#244).
-// The runner-driven step machine (ADR 0018), its Backend seam, route()
-// decision function, and domain types. Slice #247 wires the happy path;
-// later slices (#248–#256) layer on these seams.
-export { runOrchestrator } from "./runner.js";
+// @ming/orchestrator — public surface. Production execution enters through
+// runFamilyDriver; runOrchestrator remains an internal child-slice machine.
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 export {
   contractDriftStopSummary,
-  findingDescriptor,
   infraFailureStopSummary,
   providerDegradedStopSummary,
-  stopReasonForFindingDisposition,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "./stopSummary.js";
 export type {
   AcceptedSuppressionSummary,
-  FindingDescriptor,
   HeadFreshnessSummary,
   ProviderDegradationSummary,
   ShipFailureSummary,
@@ -32,29 +25,114 @@ export {
   legacyDispatchWorker,
   workerResultToStep,
   stepSpecToWorkerSpec,
-  shipWorkerSpec,
 } from "./dispatchWorker.js";
 export type {
   DispatchWorkerWithMonitorOptions,
   DispatchWorkerWithMonitorOutcome,
+  LegacyDispatchBackend,
 } from "./dispatchWorker.js";
+// ── #1007 active progress broadcast (typed signals; fail-open) ──────────────
 export {
-  collectPidTree,
+  PROGRESS_FILENAME,
+  PROGRESS_NOTIFY_ENV,
+  PROGRESS_SCHEMA_VERSION,
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  countJudgeDispositions,
+  countSeverityFromFindings,
+  emitExitProgress,
+  emitJudgeProgress,
+  emitLandingProgress,
+  emitMergeProgress,
+  emitParkProgress,
+  emitProgressEvent,
+  emitShipProgress,
+  emitStageProgress,
+  emitTerminalProgress,
+  emitWaveCloseProgress,
+  formatDriverStageLine,
+  formatProgressLogLine,
+  getProgressBroadcastConfig,
+  progressPath,
+  readProgressEvents,
+  renderFamilyStatus,
+  renderFamilyStatusFromDir,
+  tryAppendProgressEvent,
+} from "./progressBroadcast.js";
+export type {
+  FamilyStatusSnapshot,
+  IssueProgressSnapshot,
+  ProgressDispositionCounts,
+  ProgressEvent,
+  ProgressEventKind,
+  ProgressSeverityCounts,
+  NotifySpawn,
+} from "./progressBroadcast.js";
+
+// ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
+export {
+  TELEMETRY_FILENAME,
+  TELEMETRY_SCHEMA_VERSION,
+  appendTelemetryRecord,
+  buildCollectStamp,
+  buildCommitStamp,
+  buildDispatchStamp,
+  buildEnvironmentStamp,
+  buildReviewRoundStamp,
+  categoryFromReason,
+  classifyWorkerTerminal,
+  clearTelemetryRunEnvironment,
+  collectCommitDiffAuditAsync,
+  collectCommitMetricsAsync,
+  commitsBetweenAsync,
+  configureTelemetryFromWorkerImage,
+  configureTelemetryRunEnvironment,
+  durableTelemetryDirForSingleSlice,
+  ensureEnvironmentStamp,
+  mentionsHttp429,
+  extractClaudeTokens,
+  extractCodexTokens,
+  extractTokensFromLog,
+  hashDirectoryContents,
+  newLegId,
+  readDispatchLogSlice,
+  readTelemetryRecords,
+  telemetryPath,
+  tryAppendTelemetryRecord,
+} from "./telemetry.js";
+export type {
+  TelemetryCollectRecord,
+  TelemetryCommitRecord,
+  TelemetryCommitFileDistribution,
+  TelemetryCommitMetrics,
+  TelemetryEscapeHatchCounts,
+  TelemetryCoderRecProvenance,
+  TelemetryDispatchRecord,
+  TelemetryEnvironmentRecord,
+  TelemetryErrorCategory,
+  TelemetryModelStamp,
+  TelemetryRecord,
+  TelemetryReviewRoundRecord,
+  TelemetryRunEnvironment,
+  TelemetryTerminal,
+  TelemetryTokenUsage,
+} from "./telemetry.js";
+export {
   dispatchMonitoredCliWorker,
-  hasCompletionSignalInLog,
-  instanceMatchesHandle,
-  isWorkerAlive,
-  isWorkerIdle,
-  killWorkerTree,
+  logSilenceWholeMinutes,
   monitorHandleFromLedger,
-  pidSafeToSignal,
   poolIdForWorker,
   readLogActivity,
   readProcessInstanceId,
+  silenceWholeMinutes,
+  terminateSpawnedChild,
   validateMonitorHandle,
+  waitForChildExit,
+  WorkerTerminationFailedError,
+  isWorkerTerminationFailedError,
 } from "./workerMonitor.js";
 export type {
-  KillWorkerTreeResult,
+  ChildExit,
   LogActivitySnapshot,
   MonitoredCliDispatchInput,
   MonitoredCliDispatchResult,
@@ -76,6 +154,7 @@ export {
   isCliMonitorChildProcess,
   isMonitoredWorkerKind,
   resolveMonitorLogDir,
+  isMissingMonitorSidecarResult,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 
@@ -88,7 +167,6 @@ export {
   readFamilyEpic,
   buildFamilyEpic,
   parseSubIssueAdmission,
-  parseSubIssueNumbers,
   cutFamilyBase,
   resolveCodexFast,
 } from "./familyDriver.js";
@@ -98,10 +176,15 @@ export { mergeChild } from "./family/merger.js";
 export { recordMerged, recordAborted, mergedSet, recordPrMerged, familyPrMergedForHead } from "./family/ledger.js";
 export type { MergedRecord, AbortedRecord, PrMergedRecord } from "./family/ledger.js";
 export {
-  runAutoMergeStage,
   assessMergeReadiness,
+  confirmPrMergedLive,
+  executePrMergeCommit,
+  fetchPrMergeLiveState,
   isPrMergedMarker,
+  mergeRecordIfHeadAligned,
 } from "./autoMerge.js";
+export type { MergeRecordAlignment } from "./autoMerge.js";
+export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {
@@ -109,6 +192,30 @@ export type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./family/verifyCmr.js";
+export {
+  FAMILY_STAGE_FAILURE_STATUSES,
+  isFamilyStageFailureStatus,
+  resolveFamilyStageTerminal,
+  stageFailureStopSummary,
+  syncStopSummaryToStageFailure,
+} from "./family/familyTerminal.js";
+export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+// #942 public result + OS exit ABI (supersedes #929) — single export path.
+export {
+  PUBLIC_EXIT_CODES,
+  PUBLIC_FAILED_CAUSES,
+  PUBLIC_RUN_RESULTS,
+  LEGACY_929_PUBLIC_STATUS_TOKENS,
+  causeFromStageFailure,
+  exitCodeForPublicResult,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isLegacy929PublicStatusToken,
+  isPublicRunResult,
+  publicResultExitCode,
+  runResultExitCode,
+} from "./publicResult.js";
+export type { PublicFailedCause, PublicRunResult } from "./publicResult.js";
 export type {
   ChildSlice,
   ConflictResolveRequest,
@@ -130,39 +237,23 @@ export type {
   FamilyVerifyErrorPackage,
   IntegratedCmrRequest,
   IntegratedCmrResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   FamilyAbortedEvent,
   FamilyEscalation,
 } from "./family/types.js";
-// ── #683 quota probe (idle → probe 429 → wait-for-reset | hang) ─────────────
+// ── #683 / #937 explicit quota wait-for-reset (no idle→probe machinery) ─────
 export {
-  applyIdleDisposition,
   buildQuotaWaitForResetLedgerEntry,
-  decideIdleAfterProbe,
-  handleIdleThreshold,
   isAgentIdleTimeoutError,
-  parseZaiResetAt,
   poolForModelRef,
-  probeConfigForPool,
   QuotaWaitForResetError,
-  runPoolProbe,
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
   isQuotaWaitForResetError,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
-  HandleIdleThresholdInput,
-  HandleIdleThresholdResult,
   IdleDisposition,
-  IdleHangActions,
-  IdleWorkerHandle,
-  PoolProbeConfig,
-  PoolProbeDeps,
-  PoolProbeKind,
   QuotaPoolId,
-  QuotaProbeResult,
   QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 
@@ -176,8 +267,6 @@ export type {
   Finding,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   LedgerEntry,
   LedgerBookkeepingEvent,
   QuotaWaitForResetEvent,
@@ -213,19 +302,40 @@ export type {
 
 // ── design-time Coder-Rec roster (#767) ─────────────────────────────────────
 export {
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
+  CoderRecError,
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
-  poolSeparationViolation,
+  resolveAdvanceCoderSuggestion,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
 } from "./coderRoster.js";
-export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
-export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
+export type {
+  AdvanceCoderDecision,
+  CoderPoolId,
+  CoderRosterEntry,
+} from "./coderRoster.js";
+// ── #919 / #926 one advanceCoder execution path (slice + family) ────────────
+export {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+} from "./advanceCoderEffect.js";
+export type {
+  AdvanceCoderEffectResult,
+  AdvanceCoderProbe,
+  AdvanceRepairSeat,
+} from "./advanceCoderEffect.js";
+export {
+  applyCoderRecToRoute,
+  applyRelayBatonToRoute,
+  familyRelaySlotsForWall,
+  knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
+  withCoderSlot,
+} from "./modelRoutes.js";
 
 // ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
 export {
@@ -235,6 +345,8 @@ export {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  resolveRelayPools,
+  selectCapacityRelayBaton,
   selectNextRelayBaton,
 } from "./quotaPoolTable.js";
 export type {
@@ -244,39 +356,29 @@ export type {
   NextRelayBaton,
   ParkOrRelayDecision,
   PoolTable,
+  RelayPoolOverride,
   SelectNextRelayBatonInput,
 } from "./quotaPoolTable.js";
 export {
-  RELAY_FOCUS_FILENAME,
   MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
-  buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
-  classifyFailureForRetryOrRelay,
+  capacityRelayErrorFrom,
   countRelayHandoffsInLedger,
-  decideRelayAfterIdle,
   forkQuotaWallAt683Point,
-  isHangWithLivePoolError,
-  isRelayCandidateExhaustion,
+  isCapacityRelayError,
   isRelayChainReadyForReviewGate,
-  isSelfReportedRelayError,
-  parseRelayTag,
+  renderEphemeralRelayBrief,
   resumeRelayFromLedger,
-  tryBuildRelayFocusFile,
-  tryParseActionableRelayTag,
-  HangWithLivePoolError,
-  SelfReportedRelayError,
+  CapacityRelayError,
 } from "./relayDispatch.js";
 export type {
   ApplyResourceFailureHandoffInput,
-  DecideRelayAfterIdleInput,
-  FailureClassKind,
+  LegacyRelayHandoffTrigger,
   RelayDispositionResult,
   RelayHandoffLedgerEvent,
   RelayHandoffTrigger,
-  RelayTagOutcome,
-  RetryOrRelayClass,
 } from "./relayDispatch.js";
 export {
   POOL_DISPATCH_BINDINGS,

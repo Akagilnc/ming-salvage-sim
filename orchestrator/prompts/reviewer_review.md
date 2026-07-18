@@ -7,36 +7,40 @@ Read the role soul first (live-mounted):
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you; review method and input handling belong to the role soul (live-mounted) plus runner
-parameters.
+you; review character belongs to the role soul (live-mounted). Method is Matt
+`/code-review` over the **current full slice diff** (not a leftover checklist).
+Fixed point: `origin/main` if available, otherwise `main`. This worker is
+read-only on the reviewed tree — do not commit review drafts. Snapshot files
+such as `.orchestrator-snapshot.json` are not execution input.
 
 ## Required output
 
-When you are done (or are escalating), write the single JSON object to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
-with older runners, emit EXACTLY ONE `<review>` tag on its own containing the same
-single JSON object, and print the completion signal on its own line.
+When you are done (or are escalating), completion is a clean process exit plus
+the legal typed receipt / sidecar. Write the single JSON object to
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, and emit EXACTLY ONE
+`<review>` tag on its own containing the same JSON object.
 
 Success:
 
 ```text
-<review>{"findings":[]}</review>
-REVIEWER_STEP_COMPLETE
+<review>{"findingsCount":0,"findings":[]}</review>
 ```
 
 With findings:
 
 ```text
-<review>{"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</review>
-REVIEWER_STEP_COMPLETE
+<review>{"findingsCount":1,"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</review>
 ```
+
+`findingsCount` is the self-reported open-count the runner routes on (ADR 0131 /
+#899). It is required on every verdict. `findings` rows are cargo for the next
+fixer and must not be used by the runner as a substitute for a missing count.
 
 Report each active finding with only its body (`severity`, `category`,
 `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
 disposition kinds — there are none. P0/P1 findings (`critical`/`high`) must always
-use `action:"fix_now"`. Every finding you report is blocking: the runner counts it
-and sends it back through coder-fix. There is no pass to another module — if a
-gap is real, report it as a concrete fix.
+use `action:"fix_now"`. Every finding you report is blocking: the runner reads
+your `findingsCount` and sends cargo back through coder-fix. There is no pass to another module — if a gap is real, report it as a concrete fix.
 
 Do not emit `accepted_suppressed`, `wont_fix`, or `rejected` from this standalone
 reviewer worker. This runner path has no trusted suppression-source input, so an
@@ -61,13 +65,13 @@ decision escalation. Apply that human answer before reviewing, and do not repeat
 the same escalation unless the answer leaves a concrete blocker unresolved.
 
 ```text
-<review>{"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
-REVIEWER_STEP_COMPLETE
+<review>{"findingsCount":0,"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
 ```
 
 Escalation:
 
 ```text
-<review>{"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
-REVIEWER_STEP_COMPLETE
+<review>{"findingsCount":0,"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
 ```
+
+

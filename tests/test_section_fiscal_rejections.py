@@ -16,16 +16,7 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
-
-
-def _rejection_rows(db, turn, section=None):
-    rows = db.conn.execute(
-        "SELECT section, reason, category, source FROM rejection_reports"
-        " WHERE turn=? ORDER BY id", (turn,)
-    ).fetchall()
-    if section is not None:
-        rows = [r for r in rows if r[0] == section]
-    return rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 
 def _a_fiscal_key(db):
@@ -140,9 +131,9 @@ def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
     assert db.get_fiscal_config()[key] == before
 
 
-def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(game):
+def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(read_game):
     """db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"""
-    db, _, _ = game
+    db, _, _ = read_game
     key = "central_taicang_human_loss_rate"
     before = db.get_fiscal_config()[key]
 

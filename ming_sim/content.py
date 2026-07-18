@@ -7,7 +7,6 @@ GameContent.load() 显式调用——模块导入本身不读盘、无副作用�
 from __future__ import annotations
 
 import copy
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
@@ -75,25 +74,40 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         item = require_dict(raw, f"characters.json.characters[{idx}]")
         path = f"characters.json.characters[{idx}]"
         name = str_field(item, "name", f"characters.json.characters[{idx}]")
-        identity = int_field(item, "identity", path) if "identity" in item else 50
+        character_fields = dict(item)
+        character_fields.setdefault("identity", 50)
+        identity = int_field(character_fields, "identity", path)
         if not 0 <= identity <= 100:
             raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
-        seed_guilt = item.get("seed_guilt", {})
-        if not isinstance(seed_guilt, dict):
-            raise SystemExit(f"设定字段应为对象：{path}.seed_guilt")
-        if seed_guilt:
-            if set(seed_guilt) != {"crime", "severity"}:
-                raise SystemExit(
-                    f"设定字段结构非法：{path}.seed_guilt（仅允许 crime、severity）"
-                )
-            crime = seed_guilt.get("crime")
-            severity = seed_guilt.get("severity")
-            if not isinstance(crime, str) or not crime.strip():
-                raise SystemExit(f"设定字段应为非空字符串：{path}.seed_guilt.crime")
-            if severity not in {"无", "轻", "中", "重"}:
-                raise SystemExit(
-                    f"设定字段枚举非法：{path}.seed_guilt.severity（仅允许 无/轻/中/重）"
-                )
+        seed_guilt_raw = item.get("seed_guilt")
+        if seed_guilt_raw is None:
+            seed_guilt_raw = {}
+        if not isinstance(seed_guilt_raw, dict):
+            raise SystemExit(f"{path}.seed_guilt 必须是 JSON 对象。")
+        if seed_guilt_raw and set(seed_guilt_raw) != {"crime", "severity"}:
+            raise SystemExit(
+                f"设定字段结构非法：{path}.seed_guilt（仅允许 crime、severity）"
+            )
+        seed_guilt_fields = dict(seed_guilt_raw)
+        seed_guilt_fields.setdefault("crime", "")
+        seed_guilt_fields.setdefault("severity", "无")
+        seed_guilt_context = f"characters.json.characters[{idx}].seed_guilt"
+        crime_raw = seed_guilt_fields["crime"]
+        if not isinstance(crime_raw, str):
+            raise SystemExit(f"设定字段应为字符串：{seed_guilt_context}.crime")
+        if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
+            raise SystemExit(f"设定字段应为非空字符串：{seed_guilt_context}.crime")
+        seed_guilt = {
+            "crime": crime_raw.strip(),
+            "severity": str_field(seed_guilt_fields, "severity", seed_guilt_context),
+        }
+        if seed_guilt["severity"] not in {"无", "轻", "中", "重"}:
+            raise SystemExit(
+                f"characters.json.characters[{idx}].seed_guilt.severity 非法："
+                f"{seed_guilt['severity']!r}（仅无/轻/中/重）。"
+            )
+        if not seed_guilt_raw:
+            seed_guilt = {}
         if name in characters:
             raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
@@ -122,7 +136,7 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
             identity=identity,
-            seed_guilt=json.dumps(seed_guilt, ensure_ascii=False) if seed_guilt else "",
+            seed_guilt=seed_guilt,
         )
 
     names_and_aliases_by_faction: Dict[str, Set[str]] = {}

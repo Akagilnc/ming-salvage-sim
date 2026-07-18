@@ -7,17 +7,19 @@
 # from the IMAGE (the bake gap ADR 0026 / #330 calls out).
 # Souls live via mount (unconditional-rebuild #372); only skills + CLIs + hooks baked.
 #
-# NOTE: the runner must NOT bind-mount host skills over
-# /home/agent/.claude/skills. The baked image is the skill truth source; a
-# runtime skill mount would shadow it and reintroduce host-state drift. Souls
-# (and similar data) are mounted live from host (see #372 unconditional rebuild)
+# NOTE: the runner must NOT bind-mount host skills over the baked skill pool
+# (`/home/agent/.agents/skills`, with compat symlink at
+# `/home/agent/.claude/skills` — #911). The baked image is the skill truth
+# source; a runtime skill mount would shadow it and reintroduce host-state
+# drift. Souls + container home env are mounted live from host (#372 / #911)
 # so edits take effect immediately without requiring image rebuild for them.
-# Runtime mounts limited to worktree + live auth + souls.
+# Runtime mounts limited to worktree + live auth + souls + home env.
 #
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
 #   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
-#   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
+#   - agy (Gemini CLI, Linux build) + grok (SuperGrok CLI, Linux; #807)
+#     + gh + bun (gstack-ship + cmr deps)
 # Souls (coder/reviewer/... .md) are mounted live at runtime (#372), not baked.
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
@@ -37,8 +39,9 @@
 #                                    + codex CLI + agy CLI + Claude `Agent`/`Task`
 #   ak-cmr-completeness            → ak-cross-m-review        (ship-pre Step 5 lens entry)
 #   ak-cmr-correctness             → ak-cross-m-review        (ship-pre Step 6 lens entry)
-#   gstack-ship                    → ~/.claude/skills/gstack/{bin,scripts,ship,
-#                                       review,...} helper closure (baked subtree)
+#   gstack-ship                    → ~/.agents/skills/gstack/{bin,scripts,ship,
+#                                       review,...} helper closure (baked subtree;
+#                                       compat also via ~/.claude/skills → .agents)
 #   gstack-document-release        → top-level invoke for S12 (#735); nested
 #                                    gstack/document-release remains for ship Step 18
 #   `review`                       = BUILTIN Claude Code command, NOT a disk skill
@@ -66,6 +69,11 @@ USER root
 #            is NOT portable (it is a macOS ELF), so we install the Linux ELF via
 #            the official installer (issue #333 spike: aarch64 Linux agy installs
 #            + runs in-container).
+#   - grok : SuperGrok / grok-build pool CLI (#807). Same portability rule as agy —
+#            host `~/.grok/bin/grok` is a macOS Mach-O and must NOT be copied in;
+#            bake the Linux ELF via the official installer (https://x.ai/cli/install.sh).
+#            Installer drops under `$HOME/.grok/bin/` (default) and may symlink into
+#            `~/.local/bin`; we always expose `/usr/local/bin/grok` for PATH.
 # agy AUTH is NOT baked: it is live OAuth material. The cmr sandbox copies the
 # host token into a per-run writable dir and mounts it at
 #   /home/agent/.gemini/antigravity-cli/
@@ -73,6 +81,12 @@ USER root
 # `antigravity-oauth-token` and refresh/write runtime state without touching the
 # host file directly. When the token is absent, that leg degrades; the rest of the
 # cmr still runs.
+# grok AUTH is NOT baked either: live OAuth in host `~/.grok/auth.json`. The
+# orchestrator copies it into a per-issue writable dir and bind-mounts at
+#   /home/agent/.grok/
+# (realBackend.ts `mountAuth`, #807). Missing host auth → that leg degrades.
+# #905: opencode transport fully evicted from the orchestrator — no bake, no
+# auth mount. OpenCode is not a registry provider or worker host.
 # codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
 # per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
 # mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;
@@ -100,22 +114,47 @@ RUN set -eux; \
     ln -sf /home/agent/.local/bin/agy /usr/local/bin/agy; \
     agy --version 2>/dev/null || true   # version probe may need auth; presence is the gate
 
-# ── codex sandbox / userns note (spike constraint #3) ────────────────────────
-# codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
-# create a user namespace ("No permissions to create a new namespace ... the
-# kernel does not allow non-privileged user namespaces") → codex falls back to
-# hunk-local grounding (can't grep the whole repo). To give codex FULL repo
-# grounding the RUNTIME must either run the container with userns enabled
-# (`--security-opt seccomp=unconfined` + host `kernel.unprivileged_userns_clone=1`,
-# or `--privileged`) OR disable codex's own sandbox. This is a RUNTIME launch
-# concern (orchestrator `docker(...)` opts, #335/#336), not a build-time bake —
-# documented here so the runner slice wires it. cmr still catches in-hunk bugs
-# without it (spike: codex rc=0 + caught the injected bug on hunk grounding).
-
-# ── Bake the full dev-skill closure into the agent's skills dir ──────────────
+# grok (SuperGrok CLI, Linux; #807). Installer writes under the invoking user's
+# ~/.grok/{bin,downloads}/ — run as `agent`, then symlink onto PATH for all users.
+# Official npm package is pinned exactly; npm verifies its registry integrity
+# metadata and the version check below fails the build on drift.
+USER agent
+RUN set -eux; \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global; \
+    export NPM_CONFIG_PREFIX PATH="$NPM_CONFIG_PREFIX/bin:$PATH"; \
+    # #964: pin ≥0.2.102 so headless auth death fail-fasts ("Not signed in")
+    # instead of entering interactive device-code wait (0.2.93 flight3 hang).
+    npm install -g @xai-official/grok@0.2.102; \
+    test -x "$NPM_CONFIG_PREFIX/bin/grok" || command -v grok
+USER root
+RUN set -eux; \
+    # Keep the resolved ELF rather than npm's JavaScript shim: the runtime auth
+    # mount replaces ~/.grok, while /usr/local/bin must remain independently usable.
+    cp -L /home/agent/.grok/bin/grok /usr/local/bin/grok; \
+    chmod 755 /usr/local/bin/grok; \
+    # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
+    # (agent's primary group is not named "agent" on this base image — chown
+    # by user only.)
+    mkdir -p /home/agent/.grok; \
+    touch /home/agent/.grok/auth.json; \
+    chown agent /home/agent/.grok /home/agent/.grok/auth.json; \
+    chmod 600 /home/agent/.grok/auth.json; \
+    /usr/local/bin/grok --version | grep -F "0.2.102"
+# The base image exposes its npm-global bin first. Keep the copied executable
+# first at runtime so an auth bind mount can never replace the resolved grok.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# ── Bake the full dev-skill closure into the shared agents skills pool (#911) ─
 # build.sh staged staging/skills/ with the closure graph above (incl. the
-# gstack/ closure subtree at the path gstack-ship hardcodes).
-COPY skills/ /home/agent/.claude/skills/
+# gstack/ closure subtree). Primary path: ~/.agents/skills (claude + codex share
+# one pool). Compat symlink keeps ~/.claude/skills/... and any gstack hardcodes
+# that still reference that path working with zero breakage.
+# Sandcastle starts codex with --dangerously-bypass-approvals-and-sandbox by
+# default — nested bwrap/userns is not a container concern (old codex-bwrap note
+# removed in #911).
+COPY skills/ /home/agent/.agents/skills/
+# Base image may lack ~/.claude — mkdir parent before compat symlink or bake fails.
+RUN mkdir -p /home/agent/.claude \
+ && ln -sfn /home/agent/.agents/skills /home/agent/.claude/skills
 # Bake the content manifest of exactly what was baked, so a built image is
 # auditable (skill source is mutable host state — build.sh writes the sha256).
 COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/
@@ -140,14 +179,12 @@ COPY hooks/ /home/agent/.orchestrator/githooks/
 # the sidecar and compatibility tag/signal only after schema + evidence checks.
 COPY bin/ /home/agent/.orchestrator/bin/
 
-RUN chmod -R a+rX /home/agent/.claude/skills /home/agent/.orchestrator \
+RUN chmod -R a+rX /home/agent/.agents/skills /home/agent/.orchestrator \
  && chmod +x /home/agent/.orchestrator/githooks/commit-msg \
- && chmod +x /home/agent/.orchestrator/bin/orchestrator-outcome-guard \
- && ln -sf /home/agent/.orchestrator/bin/orchestrator-outcome-guard /usr/local/bin/orchestrator-outcome-guard \
- && find /home/agent/.claude/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
- ; find /home/agent/.claude/skills/gstack/bin -type f -exec chmod +x {} + 2>/dev/null \
+ && find /home/agent/.agents/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
+ ; find /home/agent/.agents/skills/gstack/bin -type f -exec chmod +x {} + 2>/dev/null \
  ; (id agent >/dev/null 2>&1 \
-      && chown -R agent /home/agent/.claude /home/agent/.orchestrator /home/agent/.local || true)
+      && chown -R agent /home/agent/.agents /home/agent/.claude /home/agent/.orchestrator /home/agent/.local || true)
 
 USER agent
 

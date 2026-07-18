@@ -1,204 +1,159 @@
 /**
  * runOrchestrator — the runner loop (ADR 0018, corrected by ADR 0030).
  *
- * The runner drives the fixed single-slice sequence itself: it performs each
+ * The runner drives one family's fixed child-slice sequence: it performs each
  * runner-action step or dispatches each worker step, writes a step-ledger
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030: the single-slice runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(review) → S4(classify)
- *     clean/deferred only → S7(ship) → S8(handoff)
- *     blocking → S5(fix) → S6(fresh full-diff review) → S4(classify)
+ *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
+ *     converged → S7(local handoff) → S8(handoff)
+ *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are fresh read-only reviewer workers. S4 is a
- * runner-action classification boundary so findings and per-round outcomes are
- * visible in ledger state instead of hidden inside a coder session.
+ * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
+ * open-count classification is dissolved into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
- *   - S2 committed:false → S8(error)  [route() detects]
- *   - S7 ship throws/escalates → S8(error)/S8(escalate)  [runner catch]
- *   - any backend call throws → S8(error) + error package  [runner catch]
- *   - the S2 worker carries escalate → S8(escalate) [route() detects]
- * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
+ *   - any backend call throws → S8(failed) + error package  [runner catch]
+ *   - the S2 worker carries escalate → S8(parked) [route() detects]
+ * Slice #253: StepSpec contract — model/maxIter/soul/toolchain (#928: no signal).
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
  *   removed as a gate — design correction; the coder reads the whole issue.)
  * #331 (ADR 0026 / PRD #330), extended by ADR 0030: the runner dispatches every
- *   WORKER step (S2/S3/S5/S6 agent workers + S7 ship) through the single unified
+ *   WORKER step (S2/S3/S5/S6 agent workers) through the single unified
  *   seam `dispatchWorker(backend, spec, ctx)` (dispatchWorker.ts) instead of
- *   reaching for `runStep` / `resumeSession` / `push` directly.
+ *   reaching for `runStep` / `resumeSession` directly.
  */
 
-import { execFileSync } from "node:child_process";
-
+import { mintRunId } from "./runId.js";
+import { shWithClock } from "./externalCall.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   reviewFixAssertionSignal,
-  reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
+import { coderRefuseReverifyLanding } from "./coderRefuseExit.js";
 import { route } from "./route.js";
-import {
-  adjudicatePriorClaimedFixedFindings,
-  classifyFindings,
-  findingIdentityKey,
-} from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
-// dispatches EVERY worker step (S2/S3/S5/S6 agent workers + S7 ship) through ONE free function
-// instead of reaching for runStep/resumeSession/push directly.
+// dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
+// instead of reaching for runStep/resumeSession directly.
 import {
-  cleanupWorkerSpec,
   dispatchWorkerWithMonitor,
-  docReleaseWorkerSpec,
-  fixerWorkerSpec,
-  SHIP_PROMPT_FILE,
-  shipWorkerSpec,
   stepSpecToWorkerSpec,
-  verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
 import { monitorHandleFromLedger } from "./workerMonitor.js";
+import {
+  scheduleCommitTelemetry,
+} from "./telemetry.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
+import { logDriverStage } from "./stageLog.js";
 import {
-  fixerEnvelopeFixCommitSha,
-  fixerProceedsToVerify,
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  emitExitProgress,
+  emitJudgeProgress,
+  getProgressBroadcastConfig,
+} from "./progressBroadcast.js";
 import {
-  BOT_OVERDUE_POLL_COUNT,
-  classifyCheckRuns,
-  isLiveGithubReviewPollEnabled,
-  parsePrRef,
-  pollPrReviewState,
-  type PrReviewSnapshot,
-} from "./botPolling.js";
-import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
+  withMechanicalRetry,
+  type MechanicalRetryOptions,
+} from "./dispatchRetry.js";
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
   poolForModelRef,
-  type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 import {
-  docReleasePathsFromCommit,
-  isPrMergedMarker,
-  offlineAutoMergeAllowUnverifiedDocPaths,
-  runAutoMergeStage,
-  slicePrMergedRecordFromLedger,
-  type PrMergedTerminalRecord,
-} from "./autoMerge.js";
-import { priorOnlineReviewFindingsFromLedger } from "./findingFamilies.js";
-import { shouldReclaimSliceHost } from "./hostReclaim.js";
-import { buildCleanupLanding } from "./postMergeCleanup.js";
+  parkOrRelayQuotaWall,
+  parkQuotaWaitForReset,
+  persistRelayBatonHandoff,
+} from "./quotaParkRelay.js";
 import {
-  buildOnlineReviewLanding,
-  clampVerifyConvergenceForCheckRuns,
-  enforceRunnerOwnedRecheck,
-  verifyBlockedOnlyOnPendingCheckRuns,
-  immediateBotPollClock,
-  sleepPendingCiPollInterval,
-  lastOnlineReviewFixCommitShaFromLedger,
-  offlinePrReviewSnapshot,
-  onlineReviewConvergedForHead,
-  onlineReviewResumeHeadKeyFromLedger,
-  onlineReviewRoundFromLedger,
-  onlineReviewRoundTriggerFromLedger,
-  recheckConvergenceConfirmsFixMarkedKeys,
-  resolveOnlineReviewRoundTrigger,
-  realBotPollClock,
-  reconstructOnlineReviewLandingForResume,
-  fixMarkedFindingAuthorizationForResume,
-  ensureOnlineReviewRetriggerAfterFixGap,
-  retriggerBotsAndPoll,
-  shipLedgerTriggeredAtFromSliceLedger,
-  sliceOnlineReviewCiFailedPending,
-  slicePendingRoundTriggerFromFixGap,
-  slicePostFixVerifyPendingFromMarkerGap,
-  onlineReviewFixerNothingToFixStopSummary,
-  VerifyWorkerHeadMovedError,
-  VerifyWorkerWorktreeDirtyError,
-  verifyReadOnlyWorktreeDrift,
-  verifyReviewerHeadMovedStopSummary,
-  verifyReviewerWorktreeDirtyStopSummary,
-  worktreePorcelainFingerprint,
-  verifySideEffectFailureStopSummary,
-  waitForBotQuiescence,
-  writeOnlineReviewSnapshotFile,
-} from "./onlineReviewLoop.js";
-import {
-  assertOfflineSyntheticPollAdmissible,
-  buildRoundTrigger,
-  convergenceHeadToRecord,
-  type RoundTrigger,
-} from "./evidenceAdmissibility.js";
-import {
-  applyVerifySideEffects,
-  fixMarkedFindingThreadsFromVerify,
-  fixMarkedKeysFromVerify,
-} from "./onlineReviewSideEffects.js";
-import {
-  applyCoderRecToRoute,
-  applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
+  degradeOptionalRouteSmokeFailures,
   resolveActiveModelRoute,
+  knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
+  applyRelayBatonToRoute,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
 import {
+  admitCoderRec,
+  admitRelayBaton,
+  admitRouteFromEnv,
+  admitTightRoute,
+  admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
+} from "./admissionPreflight.js";
+import { discoverResidentScene } from "./sceneAction.js";
+import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
+import {
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   lookupCoderRosterEntry,
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
+  type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
+  billingPoolForModelRef,
   billingPoolFromQuotaPool,
-  buildDefaultBillingPools,
+  findLiveBillingPoolForModel,
+  resolveRelayPools as resolveRelayPoolsFromTable,
   type BillingPoolEntry,
   type BillingPoolId,
   type NextRelayBaton,
 } from "./quotaPoolTable.js";
 import {
   canRelayHandoff,
-  forkQuotaWallAt683Point,
-  isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
-  tryStageRelayFocusFile,
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-  RELAY_FOCUS_FILENAME,
+  renderEphemeralRelayBrief,
+  isCapacityRelayError,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { isFilledString } from "./shipOutcome.js";
 
 // Shared seam guards — single source of truth, also used by route(), so the
 // coder-output / commitsAdded rules can never drift.
 import {
   escalateOf,
   isValidEscalation,
-  isValidStepOutput,
 } from "./validate.js";
+import {
+  isJudgeSeat,
+
+  priorJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
+  projectJudgeSeatOutput,
+  requireFixPacketBody,
+  storeStatusByIdentityFromDispositions,
+} from "./judgeStation.js";
+import {
+  rebuildBlockingFromLedger,
+  reviewerRawArtifactPointers,
+} from "./residualLedger.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
   infraFailureStopSummary,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { resumeCapableForSlug } from "./modelRegistry.js";
+import {
+  isStepId,
+} from "./types.js";
 import type {
   Backend,
   ContinueFixingEvent,
@@ -208,22 +163,47 @@ import type {
   EscalationKind,
   Finding,
   FindingDisposition,
+  FindingRepairScope,
   HandoffStatus,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
-  RepairEvidence,
   ResumeState,
+  ReviewFixRefuseRecord,
   RunInput,
   RunResult,
+  SliceStepId,
   StepId,
-  ShipResult,
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+import {
+  isLegacy929PublicStatusToken,
+  type PublicFailedCause,
+} from "./publicResult.js";
+
+/**
+ * Public single-slice failed RunResult with mandatory ID-001 cause.
+ * Every public failed path must go through this so no path forgets `cause`.
+ */
+function failedRunResult(input: {
+  readonly cause: PublicFailedCause;
+  readonly errorPackage: ErrorPackage;
+  readonly stepLedger: ReadonlyArray<LedgerEntry>;
+  readonly stopSummary: StopSummary;
+  readonly branch?: string;
+}): RunResult {
+  return {
+    status: "failed",
+    cause: input.cause,
+    errorPackage: input.errorPackage,
+    stepLedger: input.stepLedger,
+    stopSummary: input.stopSummary,
+    ...(input.branch !== undefined ? { branch: input.branch } : {}),
+  };
+}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -299,9 +279,15 @@ async function hashPrompt(
     let content: string | undefined;
     try {
       content = await backend.readPromptContent(promptFile);
-    } catch {
+    } catch (err) {
       // A prompt-resolution fault must NOT abort ledgering — fall back to the
       // name hash so the step is still recorded (the resume truth survives).
+      // #934 ID-015: name-prefix fallback AND warn (not silent).
+      console.warn(
+        `[orchestrator] optional prompt content read failed (name-hash fallback): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       content = undefined;
     }
     if (content !== undefined) {
@@ -319,16 +305,17 @@ async function hashPrompt(
  * #256 (DONE): the caller (`emitLedger`) now supplies the TRUE values it
  * receives from the seam extension / optional Backend helpers — `sessionId` is
  * the real per-step sandbox session id for agent steps (run-level UUID fallback
- * otherwise), `branchHEAD` the real `git rev-parse HEAD` SHA (branch-name
- * fallback otherwise), `prompt_hash` the content hash (name-hash fallback). This
+ * otherwise), `branchHEAD` is the optional real `git rev-parse HEAD` SHA, and
+ * `prompt_hash` uses the documented content/name fallback. This
  * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
-  step: StepId;
+  step: SliceStepId;
   output: StepOutput | undefined;
+  runId: string;
   sessionId: string;
   prompt_hash: string;
-  branchHEAD: string;
+  branchHEAD?: string;
   ts: string;
   /** Terminal status — set only for the S8 handoff entry (#255). */
   handoffStatus?: HandoffStatus;
@@ -336,28 +323,30 @@ function buildPersistentEntry(opts: {
   escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /** Runner-observed files changed by a coder step, for resume replay. */
-  repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
   /** External CLI worker monitor handle (#684). */
   monitorHandle?: import("./types.js").WorkerMonitorHandle;
-  /** S9 verify rows are keyed by their logical online-review round. */
-  onlineReviewRound?: number;
+  /**
+   * #955 — model slug that owned this agent step's session (resume identity).
+   * Written on agent steps so planResume / resumeFor never guesses from memory.
+   */
+  modelSlug?: string;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
+    runId: opts.runId,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
-    branchHEAD: opts.branchHEAD,
     ts: opts.ts,
+    ...(opts.branchHEAD !== undefined ? { branchHEAD: opts.branchHEAD } : {}),
   };
   // Only add output if defined — keeps the runner-action shape clean.
   if (opts.output !== undefined) {
     entry = { ...entry, output: opts.output };
   }
   // Tag the terminal S8 entry with its handoff status so a resuming run can
-  // tell success / escalate / error apart (#255).
+  // tell completed / parked / failed apart (#255 / #942).
   if (opts.handoffStatus !== undefined) {
     entry = { ...entry, handoffStatus: opts.handoffStatus };
   }
@@ -367,22 +356,19 @@ function buildPersistentEntry(opts: {
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
   }
-  if (opts.repairMovementPaths !== undefined) {
-    entry = { ...entry, repairMovementPaths: opts.repairMovementPaths };
-  }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
   }
   if (opts.monitorHandle !== undefined) {
     entry = { ...entry, monitorHandle: opts.monitorHandle };
   }
-  if (opts.onlineReviewRound !== undefined) {
-    entry = { ...entry, onlineReviewRound: opts.onlineReviewRound };
+  if (opts.modelSlug !== undefined) {
+    entry = { ...entry, modelSlug: opts.modelSlug };
   }
   return entry;
 }
 
-/** v0.1 base for a single slice: always main (ADR 0017 §2). */
+/** Default child base for internal/test harnesses; family runs override it. */
 const SLICE_BASE = "main";
 
 // ─── #255 resume planning ──────────────────────────────────────────────────
@@ -395,18 +381,25 @@ const SLICE_BASE = "main";
  *
  *   - `terminalStatus` — set when the prior run already reached a terminal
  *                      handoff that is NOT being re-opened. Re-feeding is a
- *                      no-op; the runner returns this exact status (success /
- *                      error / escalate), NOT a hardcoded success. A prior
- *                      ERROR or ESCALATE that the human has not re-opened must
- *                      not masquerade as success.
+ *                      no-op; the runner returns this exact public status
+ *                      (completed | parked | failed), NOT a hardcoded completed.
+ *                      A prior failed/parked that the human has not re-opened
+ *                      must not masquerade as completed. #929 tokens fail closed
+ *                      as failed (ID-005).
+ *   - `terminalCause` — ID-001 cause when terminalStatus is failed (mandatory
+ *                      for public failed returns).
  *   - `resumeStep`   — the step to continue from (only when terminalStatus is
  *                      undefined).
  *   - `resumeSessionId` — set when the step must be resumed in its ORIGINAL
  *                      agent session (Sandcastle `resumeSession`): the prior run
- *                      ESCALATED at this step and a human has since answered, so
+ *                      parked at this step and a human has since answered, so
  *                      the coder finishes in the same session rather than a
  *                      fresh `run()`. Undefined ⇒ continue with a fresh dispatch
  *                      (crash-resume: the next step is brand new work).
+ *   - `resumeSessionModel` — model slug that created `resumeSessionId` (#955),
+ *                      taken from the escalated ledger row's `modelSlug`. The
+ *                      dispatch gate requires seat model identity match before
+ *                      threading the id; never guessed from the live route.
  *   - `lastOutput`   — the most recent agent-step output (drives `route()` for
  *                      the non-escalate resume case).
  *   - `priorLedger`  — the prior in-memory ledger entries to seed the run with,
@@ -414,22 +407,18 @@ const SLICE_BASE = "main";
  */
 interface ResumePlan {
   readonly terminalStatus?: HandoffStatus;
-  readonly resumeStep: StepId;
+  /** ID-001 cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
+  readonly resumeStep: SliceStepId;
   readonly resumeSessionId?: string;
+  readonly resumeSessionModel?: string;
   readonly escalationAnswer?: EscalationAnswerEvent;
   readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
 }
 
-interface LandedCoderProtocolFailure {
-  readonly index: number;
-  readonly step: "S2" | "S5";
-  readonly previousHead: string;
-  readonly branchHead: string;
-}
-
-function isValidStepId(value: unknown): value is StepId {
+function isValidStepId(value: unknown): value is SliceStepId {
   return (
     value === "S0" ||
     value === "S1" ||
@@ -439,11 +428,7 @@ function isValidStepId(value: unknown): value is StepId {
     value === "S5" ||
     value === "S6" ||
     value === "S7" ||
-    value === "S8" ||
-    value === "S9" ||
-    value === "S10" ||
-    value === "S11" ||
-    value === "S12"
+    value === "S8"
   );
 }
 
@@ -491,7 +476,7 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
 
 /**
  * #683 — latest durable marker is a quota wait park. Resume re-enters the
- * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ * parked step (not S8(failed)). Same family as `online_review_ci_pending` parks.
  * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
  * next baton can continue from the preserved worktree.
  */
@@ -500,7 +485,7 @@ function sliceQuotaWaitPending(
     readonly step?: string;
     readonly event?: string;
   }>,
-): StepId | undefined {
+): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     if (
@@ -508,297 +493,24 @@ function sliceQuotaWaitPending(
       entry.event === "relay_baton_handoff"
     ) {
       const step = entry.step;
-      if (
-        step === "S2" ||
-        step === "S3" ||
-        step === "S5" ||
-        step === "S6" ||
-        step === "S7" ||
-        step === "S9" ||
-        step === "S10" ||
-        step === "S11" ||
-        step === "S12"
-      ) {
+      if (isWorkerStep(step)) {
         return step;
       }
       return "S2";
     }
-    // Any newer executable agent/ship progress clears the park.
+    // Any newer executable agent/handoff progress clears the park.
     if (
       entry.event === undefined &&
       (entry.step === "S2" ||
         entry.step === "S3" ||
         entry.step === "S5" ||
         entry.step === "S6" ||
-        entry.step === "S7" ||
-        entry.step === "S9" ||
-        entry.step === "S10" ||
-        entry.step === "S11" ||
-        entry.step === "S12")
+        entry.step === "S7")
     ) {
       return undefined;
     }
   }
   return undefined;
-}
-
-/**
- * #683 park / #686 relay fork at the quota-wall disposition point.
- * Within T or no live baton → existing park family (escalate + quota_wait marker).
- * Beyond T + live baton → write relay_baton_handoff + .relay-focus.md and return
- * the next baton for the caller to apply + re-dispatch.
- */
-async function parkOrRelayQuotaWall(opts: {
-  readonly step: StepId;
-  readonly err: QuotaWaitForResetError;
-  readonly ledger: LedgerEntry[];
-  readonly stateDir: string | undefined;
-  readonly sessionId: string;
-  readonly backend: Backend;
-  readonly deferredFindings: ReadonlyArray<Finding>;
-  readonly resolveBranchHEAD: () => Promise<string>;
-  readonly hashPrompt: (
-    promptFile: string | undefined,
-    step: StepId,
-  ) => Promise<string>;
-  readonly worktreePath: string | undefined;
-  readonly currentModelId: string;
-  readonly currentPool: BillingPoolId;
-  readonly rosterOrder: ReadonlyArray<
-    import("./coderRoster.js").CoderRosterEntry
-  >;
-  readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly parkThresholdMs?: number;
-  readonly now: Date;
-  readonly state_summary?: string;
-}): Promise<
-  | { readonly kind: "park"; readonly result: RunResult }
-  | {
-      readonly kind: "relay";
-      readonly nextBaton: NextRelayBaton;
-      readonly ledgerEntry: RelayHandoffLedgerEvent;
-      readonly focusPath: string | undefined;
-    }
-> {
-  const {
-    err,
-    step,
-    ledger,
-    stateDir,
-    sessionId,
-    backend,
-    deferredFindings,
-  } = opts;
-  const disposition = err.disposition;
-  if (disposition.kind !== "wait_for_reset") {
-    // Defensive: QuotaWaitForResetError constructor already requires this.
-    return {
-      kind: "park",
-      result: await parkQuotaWaitForResetLegacy({
-        step,
-        err,
-        ledger,
-        stateDir,
-        sessionId,
-        backend,
-        deferredFindings,
-        resolveBranchHEAD: opts.resolveBranchHEAD,
-        hashPrompt: opts.hashPrompt,
-      }),
-    };
-  }
-
-  const forked = forkQuotaWallAt683Point({
-    disposition,
-    now: opts.now,
-    parkThresholdMs: opts.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS,
-    currentModelId: opts.currentModelId,
-    currentPool: opts.currentPool,
-    rosterOrder: opts.rosterOrder,
-    pools: opts.pools,
-    reviewerSlugs: opts.reviewerSlugs,
-    state_summary:
-      opts.state_summary ??
-      `quota wall on ${opts.currentPool}; uncommitted drift preserved`,
-    step,
-  });
-
-  if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
-    const entry = forked.ledgerEntry;
-    // Stage the new brief while the previous durable baton remains consumable.
-    // Promote only after the matching ledger row commits.
-    const staged = tryStageRelayFocusFile(opts.worktreePath, entry);
-    if (!staged.ok) {
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForResetLegacy({
-          step,
-          err,
-          ledger,
-          stateDir,
-          sessionId,
-          backend,
-          deferredFindings,
-          resolveBranchHEAD: opts.resolveBranchHEAD,
-          hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
-    const marker: LedgerEntry = {
-      step: entry.step ?? step,
-      event: "relay_baton_handoff",
-      trigger: entry.trigger,
-      state_summary: entry.state_summary,
-      ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
-      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-      fromModelId: entry.fromModelId,
-      fromPool: entry.fromPool,
-      toModelId: entry.toModelId,
-      toPool: entry.toPool,
-      ts: entry.ts,
-    };
-    if (stateDir !== undefined) {
-      try {
-        await backend.writeLedger(
-          {
-            ...marker,
-            sessionId,
-            prompt_hash: await opts.hashPrompt(undefined, step),
-            branchHEAD: await opts.resolveBranchHEAD(),
-            ts: entry.ts,
-          },
-          stateDir,
-        );
-      } catch {
-        staged.focus.discard();
-        return {
-          kind: "park",
-          result: await parkQuotaWaitForResetLegacy({
-            step,
-            err,
-            ledger,
-            stateDir,
-            sessionId,
-            backend,
-            deferredFindings,
-            resolveBranchHEAD: opts.resolveBranchHEAD,
-            hashPrompt: opts.hashPrompt,
-          }),
-        };
-      }
-    }
-    try {
-      staged.focus.commit();
-    } catch {
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForResetLegacy({
-          step, err, ledger, stateDir, sessionId, backend, deferredFindings,
-          resolveBranchHEAD: opts.resolveBranchHEAD, hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
-    ledger.push(marker);
-    return {
-      kind: "relay",
-      nextBaton: forked.nextBaton,
-      ledgerEntry: entry,
-      focusPath: staged.focus.path,
-    };
-  }
-
-  // park / park_fallback — identical to #683 park family.
-  return {
-    kind: "park",
-    result: await parkQuotaWaitForResetLegacy({
-      step,
-      err,
-      ledger,
-      stateDir,
-      sessionId,
-      backend,
-      deferredFindings,
-      resolveBranchHEAD: opts.resolveBranchHEAD,
-      hashPrompt: opts.hashPrompt,
-    }),
-  };
-}
-
-/**
- * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
- * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
- */
-async function parkQuotaWaitForResetLegacy(opts: {
-  readonly step: StepId;
-  readonly err: QuotaWaitForResetError;
-  readonly ledger: LedgerEntry[];
-  readonly stateDir: string | undefined;
-  readonly sessionId: string;
-  readonly backend: Backend;
-  readonly deferredFindings: ReadonlyArray<Finding>;
-  readonly resolveBranchHEAD: () => Promise<string>;
-  readonly hashPrompt: (
-    promptFile: string | undefined,
-    step: StepId,
-  ) => Promise<string>;
-}): Promise<RunResult> {
-  const { err, step, ledger, stateDir, sessionId, backend, deferredFindings } =
-    opts;
-  const ledgerEntry: QuotaWaitForResetLedgerEvent =
-    err.applied.ledgerEntry ?? {
-      event: "quota_wait_for_reset",
-      pool: err.pool,
-      reason: err.disposition.reason,
-      step,
-      ts: new Date().toISOString(),
-      ...(err.disposition.resetAt !== undefined
-        ? { resetAt: err.disposition.resetAt.toISOString() }
-        : {}),
-    };
-  const marker: LedgerEntry = {
-    step: ledgerEntry.step ?? step,
-    event: "quota_wait_for_reset",
-    pool: ledgerEntry.pool,
-    reason: ledgerEntry.reason,
-    ts: ledgerEntry.ts,
-    ...(ledgerEntry.resetAt !== undefined ? { resetAt: ledgerEntry.resetAt } : {}),
-    ...(ledgerEntry.workerPid !== undefined
-      ? { workerPid: ledgerEntry.workerPid }
-      : {}),
-  };
-  ledger.push(marker);
-  if (stateDir !== undefined) {
-    try {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: ledgerEntry.ts,
-        },
-        stateDir,
-      );
-    } catch {
-      // Best-effort durable park marker — in-memory ledger still holds it.
-    }
-  }
-  const resetHint =
-    ledgerEntry.resetAt !== undefined
-      ? ` (resetAt ${ledgerEntry.resetAt})`
-      : "";
-  return {
-    status: "escalate",
-    stepLedger: ledger,
-    stopSummary: {
-      reason: "provider_degraded",
-      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
-      repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
-    },
-    deferredFindings,
-  };
 }
 
 function executableLedgerEntries(
@@ -823,10 +535,6 @@ function latestAnswerAfter(
     }
   }
   return undefined;
-}
-
-function normaliseScopePart(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function isBookkeepingSource(
@@ -877,83 +585,6 @@ function isFindingRepairScope(
   );
 }
 
-function stripLocationLine(value: string): string {
-  const withoutLineColumn = value
-    .trim()
-    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
-  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
-  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
-    return `${withoutSymbol}:`;
-  }
-  return withoutSymbol;
-}
-
-function locationScopeMatches(scope: string, location: string): boolean {
-  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
-  const normalisedLocation = normaliseScopePart(location);
-  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
-  if (
-    normalisedScope === normalisedLocation ||
-    normalisedScope === normalisedLocationPath
-  ) {
-    return true;
-  }
-  return (
-    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
-    normalisedLocationPath.endsWith(`/${normalisedScope}`) ||
-    normalisedLocationPath.includes(`/${normalisedScope}/`)
-  );
-}
-
-function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
-  const normalisedScope = normaliseScopePart(scope);
-  return values.some((value) => normaliseScopePart(value) === normalisedScope);
-}
-
-function findingMatchesBroadScope(
-  finding: Finding,
-  key: string,
-  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
-): boolean {
-  const locationScopes = scope.locations ?? [];
-  const categoryScopes = scope.categories ?? [];
-  const groupScope = scope.findingGroup;
-  const contextScope = scope.reviewContext;
-  const featureScope = scope.featureArea;
-  const textualValues = [finding.category, finding.claim_quote, key];
-
-  const locationMatches =
-    locationScopes.length === 0 ||
-    locationScopes.some((location) =>
-      locationScopeMatches(location, finding.location),
-    );
-  const categoryMatches =
-    categoryScopes.length === 0 ||
-    categoryScopes.some((category) =>
-      textScopeMatches(category, [finding.category]),
-    );
-  const groupMatches =
-    groupScope === undefined ||
-    locationScopeMatches(groupScope, finding.location) ||
-    textScopeMatches(groupScope, textualValues);
-  const contextMatches =
-    contextScope === undefined ||
-    locationScopeMatches(contextScope, finding.location) ||
-    textScopeMatches(contextScope, textualValues);
-  const featureMatches =
-    featureScope === undefined ||
-    locationScopeMatches(featureScope, finding.location) ||
-    textScopeMatches(featureScope, textualValues);
-
-  return (
-    locationMatches &&
-    categoryMatches &&
-    groupMatches &&
-    contextMatches &&
-    featureMatches
-  );
-}
-
 function isContinueFixingEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & ContinueFixingEvent {
@@ -984,65 +615,46 @@ function answerMapsToContinueFixing(answer: EscalationAnswerEvent): boolean {
   );
 }
 
-function matchingContinueFixingKeys(
+/**
+ * Explicit identity keys written on the human continue-fixing signal.
+ * Never derived from findings cargo (ADR 0131 / #899).
+ */
+function explicitContinueFixingKeys(
   event: ContinueFixingEvent,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const exactKeys = new Set<string>();
+  const keys: string[] = [];
   const addKey = (key: string | undefined) => {
-    if (key !== undefined && key.trim().length > 0) exactKeys.add(key);
+    if (key !== undefined && key.trim().length > 0) keys.push(key);
   };
   addKey(event.findingIdentityKey);
   for (const key of event.findingScope?.identityKeys ?? []) addKey(key);
+  return keys;
+}
 
-  const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
-  if (exactMatches.length > 0) return exactMatches;
-
+/**
+ * Whether the human continue-fixing event carries an actionable explicit
+ * signal (exact identity key and/or non-empty findingScope fields). Runner
+ * does NOT match that signal against findings cargo — scope filtering is the
+ * fixer's job (#899 / ADR 0131).
+ */
+function hasContinueFixingSignal(event: ContinueFixingEvent): boolean {
+  if (explicitContinueFixingKeys(event).length > 0) return true;
   const scope = event.findingScope;
-  if (scope === undefined) return [];
-  const hasBroadScope =
+  if (scope === undefined) return false;
+  return (
     (scope.locations?.length ?? 0) > 0 ||
     (scope.categories?.length ?? 0) > 0 ||
     (scope.findingGroup?.trim().length ?? 0) > 0 ||
     (scope.reviewContext?.trim().length ?? 0) > 0 ||
-    (scope.featureArea?.trim().length ?? 0) > 0;
-  if (!hasBroadScope) return [];
-
-  const broadMatches = activeFindings
-    .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
-    .filter(({ finding, key }) => {
-      if (key === undefined) return false;
-      return findingMatchesBroadScope(finding, key, scope);
-    })
-    .map(({ key }) => key!);
-
-  // Broad module/file scopes must not reset sibling findings together. Without
-  // a durable exact identity/group key, only a single active match is safe.
-  return broadMatches.length === 1 ? broadMatches : [];
+    (scope.featureArea?.trim().length ?? 0) > 0
+  );
 }
 
-function normalizeGitPath(path: string): string | undefined {
-  const trimmed = path.trim();
-  if (trimmed.length === 0) return undefined;
-  const renameTarget = trimmed.includes(" -> ")
-    ? trimmed.slice(trimmed.lastIndexOf(" -> ") + 4)
-    : trimmed;
-  const unquoted =
-    renameTarget.startsWith('"') && renameTarget.endsWith('"')
-      ? renameTarget.slice(1, -1)
-      : renameTarget;
-  const normalized = unquoted.trim().replace(/\\/g, "/");
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeRepairEvidencePath(path: string): string | undefined {
-  const normalized = normalizeGitPath(path);
-  if (normalized === undefined) return undefined;
-  if (/\s/.test(normalized)) return undefined;
-  return normalized.includes("/") || /\.[A-Za-z0-9]+$/.test(normalized)
-    ? normalized
-    : undefined;
+export function normalizeGitOutputLines(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function gitOutputLines(
@@ -1051,13 +663,11 @@ function gitOutputLines(
 ): string[] {
   if (worktree === undefined) return [];
   try {
-    return execFileSync("git", ["-C", worktree.path, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    return normalizeGitOutputLines(
+      shWithClock("git", ["-C", worktree.path, ...args], {
+        stage: "reconcile:git",
+      }),
+    );
   } catch {
     return [];
   }
@@ -1066,182 +676,26 @@ function gitOutputLines(
 function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
-
 /**
- * Paths changed by the S12 doc-release commit. Prefers the persisted S12
- * ledger branchHEAD over worktree HEAD so resume cannot read a later commit (#602).
- */
-export function docReleasePathsFromHead(
-  worktree: WorktreeHandle | undefined,
-  docReleaseCommitOid?: string,
-): readonly string[] | undefined {
-  if (worktree === undefined) return undefined;
-  const head = docReleaseCommitOid ?? gitHead(worktree);
-  return docReleasePathsFromCommit(worktree.path, head);
-}
-
-function actualRepairMovementPaths(
-  worktree: WorktreeHandle | undefined,
-  sinceHead?: string,
-): ReadonlyArray<string> {
-  if (worktree === undefined) return [];
-  const paths = new Set<string>();
-  const add = (path: string | undefined): void => {
-    if (path !== undefined) paths.add(path);
-  };
-
-  if (sinceHead !== undefined) {
-    for (const line of gitOutputLines(worktree, [
-      "diff",
-      "--name-only",
-      `${sinceHead}..HEAD`,
-    ])) {
-      add(normalizeGitPath(line));
-    }
-  }
-  for (const line of gitOutputLines(worktree, ["status", "--porcelain"])) {
-    add(normalizeGitPath(line.length > 3 ? line.slice(3) : line));
-  }
-
-  return [...paths];
-}
-
-function repairEvidenceMatchesKey(
-  evidence: RepairEvidence | undefined,
-  actualChangedPaths: ReadonlyArray<string>,
-  finding: Finding,
-  identityKey: string,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
-): boolean {
-  if (evidence === undefined || actualChangedPaths.length === 0) {
-    return false;
-  }
-  const matchingKeys = matchingContinueFixingKeys(
-    {
-      event: "runner_bookkeeping",
-      intent: "continue_fixing",
-      source: "resume_input",
-      ts: "repair-evidence",
-      findingScope: evidence.findingScope,
-    },
-    activeFindings,
-    activeIdentityKeys,
-  );
-  if (!matchingKeys.includes(identityKey)) return false;
-  const declaredChangedPaths = [
-    ...(evidence.changedFiles ?? []).map(normalizeGitPath),
-    ...(evidence.fixtures ?? []).map(normalizeGitPath),
-    ...(evidence.tests ?? []).map(normalizeRepairEvidencePath),
-  ].filter((path): path is string => path !== undefined);
-  const scopedActualMovement = actualChangedPaths.some((path) =>
-    locationScopeMatches(path, finding.location),
-  );
-  const declaredActualMovement =
-    declaredChangedPaths.length > 0 &&
-    declaredChangedPaths.some((declared) =>
-      actualChangedPaths.some(
-        (actual) =>
-          actual === declared ||
-          locationScopeMatches(actual, declared) ||
-          locationScopeMatches(declared, actual),
-      ),
-    );
-  if (!scopedActualMovement && !declaredActualMovement) return false;
-  return (
-    declaredChangedPaths.length === 0 ||
-    declaredActualMovement ||
-    declaredChangedPaths.some((path) => locationScopeMatches(path, finding.location))
-  );
-}
-
-const FINDING_SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
-  clarity: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-  critical: 4,
-};
-
-function sameFindingLineage(a: Finding, b: Finding): boolean {
-  return a.category === b.category && a.location === b.location;
-}
-
-function reviewerObservedProgress(input: {
-  readonly previousBlockingFindings: ReadonlyArray<Finding>;
-  readonly previousBlockingIdentityKeys: ReadonlyArray<string>;
-  readonly currentBlockingFindings: ReadonlyArray<Finding>;
-  readonly currentBlockingIdentityKeys: ReadonlyArray<string>;
-  readonly previousFinding: Finding;
-  readonly previousIdentityKey: string;
-  readonly previousNoProgressCount: number;
-}): boolean {
-  const currentBySameKey = input.currentBlockingFindings.find(
-    (finding) => findingIdentityKey(finding) === input.previousIdentityKey,
-  );
-  if (
-    currentBySameKey !== undefined &&
-    FINDING_SEVERITY_RANK[currentBySameKey.severity] <
-      FINDING_SEVERITY_RANK[input.previousFinding.severity]
-  ) {
-    return true;
-  }
-
-  return input.currentBlockingFindings.some(
-    (finding) =>
-      sameFindingLineage(input.previousFinding, finding) &&
-      FINDING_SEVERITY_RANK[finding.severity] <
-        FINDING_SEVERITY_RANK[input.previousFinding.severity],
-  );
-}
-
-interface LatestCoderRepair {
-  readonly repairEvidence?: RepairEvidence;
-  readonly repairMovementPaths: ReadonlyArray<string>;
-}
-
-function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepair {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    const output = entry.output;
-    if (output?.kind === "coder") {
-      return {
-        repairEvidence: output.repairEvidence,
-        repairMovementPaths: entry.repairMovementPaths ?? [],
-      };
-    }
-  }
-  return { repairMovementPaths: [] };
-}
-
-/**
- * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ * #677 / #927: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
  *
- * `preexistingAssertionTouchedForReverify` and
- * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
- * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
- * new durable fields: refuse keys already live on the S5 coder output, and the
- * assertion signal is recomputed from ledger branchHEADs + worktree git
- * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ * `preexistingAssertionTouchedForReverify`,
+ * `refusedFindingIdentityKeysForReverify`, and opaque `refuseRecordsForReverify`
+ * are process-local; a crash between S5 completing and S6 running would
+ * otherwise drop them. Prefer rebuild over new durable fields: refuse keys +
+ * cargo already live on the S5 coder output, and the assertion signal is
+ * recomputed from ledger branchHEADs + worktree git
+ * (same shape as #743 authorization rebuild / S4 findings-count replay).
  */
 interface S5ReverifySignals {
   readonly preexistingAssertionTouched: boolean;
   readonly refusedFindingIdentityKeys: readonly string[];
+  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
 }
 
 function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
   const head = (entry as PersistentLedgerEntry).branchHEAD;
   return isLikelyGitSha(head) ? head : undefined;
-}
-
-function refusedKeysFromCoderOutput(
-  output: Extract<StepOutput, { kind: "coder" }>,
-): readonly string[] {
-  const records = output.refuseRecords ?? [];
-  if (records.length > 0) {
-    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
-  }
-  return output.refusedFindingIdentityKeys ?? [];
 }
 
 export function rebuildS5ReverifySignalsFromLedger(
@@ -1266,7 +720,9 @@ export function rebuildS5ReverifySignalsFromLedger(
 
   const s5 = ledger[s5Index]!;
   const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
-  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+  // #927 / #919 M2: envelope keys only (cargo refuseRecords never invents keys).
+  const refuseLanding = coderRefuseReverifyLanding(output);
+  const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
 
   let preexistingAssertionTouched = false;
   if (worktree !== undefined) {
@@ -1294,10 +750,8 @@ export function rebuildS5ReverifySignalsFromLedger(
           afterFix,
         });
       } catch {
-        // Live S5 remains fail-closed. Resume rebuild must not abort an
-        // otherwise-recoverable plan when HEADs are not locally resolvable
-        // (protocol-failure recovery fixtures / missing worktree). Refuse
-        // keys still restore from the S5 coder output below.
+        // Host-git observations are best-effort bookkeeping. Missing local
+        // objects must not change the worker receipt's route.
         preexistingAssertionTouched = false;
       }
     }
@@ -1306,6 +760,9 @@ export function rebuildS5ReverifySignalsFromLedger(
   return {
     preexistingAssertionTouched,
     refusedFindingIdentityKeys,
+    ...(refuseLanding.refuseRecords !== undefined
+      ? { refuseRecords: refuseLanding.refuseRecords }
+      : {}),
   };
 }
 
@@ -1316,27 +773,30 @@ interface ContinueFixingRepair {
 
 function continueRepairFromEvent(
   event: ContinueFixingEvent,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  // Explicit human signal only. Do not read findings cargo or derive identity
+  // keys here — landing/fixer owns cargo identity materialization (#899).
+  if (!hasContinueFixingSignal(event)) return undefined;
+  // Channel (b): reopen only when the reviewer declared open findings.
+  // Disposition prose / cargo-row key matching is not a runner court (#877/#899).
+  if (openCount <= 0) return undefined;
+  return {
     event,
-    replay.blocking,
-    replay.blockingIdentityKeys,
-  );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event, matchingIdentityKeys };
+    matchingIdentityKeys: explicitContinueFixingKeys(event),
+  };
 }
 
 function continueRepairFromAnswer(
   answer: EscalationAnswerEvent | undefined,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   if (answer === undefined || !answerMapsToContinueFixing(answer)) {
     return undefined;
   }
   const source = answer.source;
   if (!isExecutableEscalationAnswerSource(source)) return undefined;
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  return continueRepairFromEvent(
     {
       event: "runner_bookkeeping",
       intent: "continue_fixing",
@@ -1349,22 +809,19 @@ function continueRepairFromAnswer(
         ? { findingScope: answer.findingScope }
         : {}),
     },
-    replay.blocking,
-    replay.blockingIdentityKeys,
+    openCount,
   );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event: answer, matchingIdentityKeys };
 }
 
 function latestContinueFixingAfter(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   index: number,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
     if (!isContinueFixingEntry(entry)) continue;
-    const repair = continueRepairFromEvent(entry, replay);
+    const repair = continueRepairFromEvent(entry, openCount);
     if (repair !== undefined) return repair;
   }
   return undefined;
@@ -1372,19 +829,10 @@ function latestContinueFixingAfter(
 
 function escalationKindForHandoff(
   status: HandoffStatus,
-  output: StepOutput | undefined,
 ): EscalationKind | undefined {
-  if (status !== "escalate") return undefined;
-  const escalation = escalateOf(output);
-  // #604 correctness r1 (P1-a) / ADR 0062: the DECISION gate (B-class park) fires
-  // ONLY for a worker-PROACTIVE "需人类拍板" escalate. A well-shaped escalate that
-  // the RUNNER SYNTHESIZED from a protocol failure (malformed reviewer output
-  // exhausted its reruns — marked `synthesizedFailure`) is an infra/protocol
-  // FAILURE (A-class), not a decision, even though its reason/diagnosis are
-  // well-formed strings. So a valid escalate maps to "decision" ONLY when it is
-  // NOT a synthesized failure.
-  if (escalation == null || !isValidEscalation(escalation)) return "failure";
-  return escalation.synthesizedFailure === true ? "failure" : "decision";
+  // This call site only transports route()'s worker-raised decision gate.
+  // Process failures use escalateTermination(..., "failure") directly.
+  return status === "parked" ? "decision" : undefined;
 }
 
 /**
@@ -1408,9 +856,10 @@ function lastAgentEntry(
  */
 function lastAgentStep(
   ledger: ReadonlyArray<LedgerEntry>,
-): StepId | undefined {
+): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.output != null) return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.output != null && isValidStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1422,392 +871,28 @@ function lastAgentStep(
  */
 function lastNonTerminalStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
-): StepId | undefined {
+): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.step !== "S8" && isValidStepId(entry.step)) return entry.step;
   }
   return undefined;
-}
-
-function isReviewLoopStep(step: StepId): boolean {
-  return step === "S9" || step === "S10" || step === "S11" || step === "S12";
-}
-
-function shipStatusFromLedger(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.step === "S7" && entry.output?.kind === "ship") {
-      return entry.output.status;
-    }
-  }
-  return undefined;
-}
-
-/** Drop superseded S9–S12 entries when resuming mid online-review loop (#600 F3). */
-function priorLedgerThroughLastShip(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-): ReadonlyArray<LedgerEntry> {
-  let shipIdx = -1;
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      !isBookkeepingEntry(entry) &&
-      entry.step === "S7" &&
-      entry.output?.kind === "ship"
-    ) {
-      shipIdx = i;
-      break;
-    }
-  }
-  if (shipIdx < 0) {
-    return ledger as ReadonlyArray<LedgerEntry>;
-  }
-  return ledger.slice(0, shipIdx + 1) as ReadonlyArray<LedgerEntry>;
-}
-
-function slicePrMergedMarkerPresent(
-  ledger: ReadonlyArray<LedgerEntry>,
-  convergedHeadOid: string | undefined,
-): boolean {
-  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
-    return false;
-  }
-  return ledger.some((entry) => isPrMergedMarker(entry, convergedHeadOid));
-}
-
-function sliceDocReleaseCompleted(ledger: ReadonlyArray<LedgerEntry>): boolean {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.step === "S12" && isValidDocReleaseResult(entry.output)) {
-      return entry.output.released;
-    }
-  }
-  return false;
-}
-
-/** branchHEAD of the last successful S12 doc-release ledger row (#602). */
-export function sliceDocReleaseCommitOid(
-  ledger: ReadonlyArray<
-    Pick<LedgerEntry, "step" | "output"> & { readonly branchHEAD?: string }
-  >,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.step === "S12" &&
-      isValidDocReleaseResult(entry.output) &&
-      entry.output.released &&
-      isLikelyGitSha(entry.branchHEAD)
-    ) {
-      return entry.branchHEAD;
-    }
-  }
-  return undefined;
-}
-
-function sliceAutoMergePending(
-  ledger: ReadonlyArray<LedgerEntry>,
-  convergedHeadOid: string | undefined,
-): boolean {
-  if (!sliceDocReleaseCompleted(ledger)) return false;
-  if (convergedHeadOid === undefined || convergedHeadOid.trim().length === 0) {
-    return false;
-  }
-  if (!onlineReviewConvergedForHead(ledger, convergedHeadOid)) return false;
-  return !slicePrMergedMarkerPresent(ledger, convergedHeadOid);
 }
 
 function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
 
-const CODER_STDOUT_MISSING_TAG_RE =
-  /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
 const WORKER_STDOUT_MISSING_TAG_RE =
   /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
-
-function isRecoverableCoderProtocolFailure(
-  entry: PersistentLedgerEntry,
-): boolean {
-  if (
-    entry.step !== "S8" ||
-    entry.handoffStatus !== "error" ||
-    entry.stopSummary == null
-  ) {
-    return false;
-  }
-
-  return CODER_STDOUT_MISSING_TAG_RE.test(entry.stopSummary.summary);
-}
-
-function protocolFailedLandedCoderStep(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-): LandedCoderProtocolFailure | undefined {
-  if (ledger.length < 2) return undefined;
-  const last = ledger[ledger.length - 1]!;
-  if (!isRecoverableCoderProtocolFailure(last)) return undefined;
-
-  let i = ledger.length - 2;
-  while (i >= 0 && ledger[i]!.step === "S8") {
-    i--;
-  }
-  if (i < 0) return undefined;
-
-  const entry = ledger[i]!;
-  if (
-    (entry.step !== "S2" && entry.step !== "S5") ||
-    entry.output != null ||
-    !isLikelyGitSha(entry.branchHEAD)
-  ) {
-    return undefined;
-  }
-
-  let previousHead: string | undefined;
-  for (let j = i - 1; j >= 0; j--) {
-    if (ledger[j]!.step === "S8") continue;
-    const head = ledger[j]!.branchHEAD;
-    if (isLikelyGitSha(head)) {
-      previousHead = head;
-      break;
-    }
-  }
-  if (previousHead === undefined || previousHead === entry.branchHEAD) {
-    return undefined;
-  }
-  return {
-    index: i,
-    step: entry.step,
-    previousHead,
-    branchHead: entry.branchHEAD,
-  };
-}
-
-function ledgerThroughRecoveredCoderOutput(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-  landedProtocolFailure: {
-    readonly index: number;
-    readonly output: StepOutput;
-  },
-): ReadonlyArray<LedgerEntry> {
-  return ledger
-    .slice(0, landedProtocolFailure.index + 1)
-    .map((entry, index) =>
-      index === landedProtocolFailure.index
-        ? { ...entry, output: landedProtocolFailure.output }
-        : entry,
-    ) as ReadonlyArray<LedgerEntry>;
-}
-
-async function planRecoveredLandedCoderProtocolFailure(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-  worktree: WorktreeHandle,
-  backend: Backend,
-): Promise<ResumePlan | undefined> {
-  const executableLedger = executableLedgerEntries(ledger);
-  const landedProtocolFailure =
-    protocolFailedLandedCoderStep(executableLedger);
-  if (
-    landedProtocolFailure === undefined ||
-    backend.countCommitsBetween === undefined
-  ) {
-    return undefined;
-  }
-
-  let commitsAdded: number;
-  try {
-    commitsAdded = await backend.countCommitsBetween(
-      worktree,
-      landedProtocolFailure.previousHead,
-      landedProtocolFailure.branchHead,
-    );
-  } catch {
-    return undefined;
-  }
-
-  if (!Number.isInteger(commitsAdded) || commitsAdded <= 0) {
-    return undefined;
-  }
-
-  const output: StepOutput = {
-    kind: "coder",
-    committed: true,
-    commitsAdded,
-  };
-  const pendingBlockingFindings =
-    landedProtocolFailure.step === "S5"
-      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
-      : undefined;
-  const decision = route({
-    from: landedProtocolFailure.step,
-    output,
-    ...(pendingBlockingFindings !== undefined
-      ? { pendingBlockingFindings }
-      : {}),
-  });
-  if (decision.kind === "handoff") {
-    return undefined;
-  }
-
-  return {
-    resumeStep: decision.step,
-    lastOutput: output,
-    priorLedger: ledgerThroughRecoveredCoderOutput(
-      executableLedger,
-      {
-        index: landedProtocolFailure.index,
-        output,
-      },
-    ),
-  };
-}
-
 function lastReviewerStep(
   ledger: ReadonlyArray<LedgerEntry>,
-): StepId | undefined {
+): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.output?.kind === "reviewer") return entry.step;
+    if (entry.output?.kind === "reviewer" && isValidStepId(entry.step)) return entry.step;
   }
   return undefined;
-}
-
-interface S4AdjudicationReplay {
-  readonly blocking: ReadonlyArray<Finding>;
-  readonly blockingIdentityKeys: ReadonlyArray<string>;
-  readonly deferred: ReadonlyArray<Finding>;
-  readonly findingDispositions: ReadonlyArray<FindingDisposition>;
-  readonly noProgressCounts: ReadonlyMap<string, number>;
-}
-
-function replayS4AdjudicationState(
-  ledger: ReadonlyArray<LedgerEntry>,
-): S4AdjudicationReplay {
-  let pendingBlockingFindings: Finding[] = [];
-  let pendingBlockingFindingIdentityKeys: string[] = [];
-  let deferredFindings: Finding[] = [];
-  let findingDispositions: FindingDisposition[] = [];
-  const noProgressCounts = new Map<string, number>();
-  let lastReviewerOutputForS4: StepOutput | undefined;
-  let lastReviewerStepForS4: StepId | undefined;
-  let lastCoderRepairEvidenceForS4: RepairEvidence | undefined;
-  let lastCoderActualRepairPathsForS4: ReadonlyArray<string> = [];
-
-  for (const entry of ledger) {
-    if (isBookkeepingEntry(entry)) {
-      continue;
-    }
-    if (entry.output?.kind === "coder") {
-      lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
-      lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
-    }
-    if (entry.output?.kind === "reviewer") {
-      lastReviewerOutputForS4 = entry.output;
-      lastReviewerStepForS4 = entry.step;
-      continue;
-    }
-    if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
-      continue;
-    }
-
-    const classification = classifyFindings(
-      lastReviewerOutputForS4.findings,
-      findingDispositions,
-    );
-    const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
-    let blocking = [...classification.blocking];
-    let blockingIdentityKeys = blocking.map(findingIdentityKey);
-    findingDispositions = [
-      ...(entry.findingDispositions ?? classification.dispositions),
-    ];
-
-    if (
-      lastReviewerStepForS4 === "S6" &&
-      pendingBlockingFindingIdentityKeys.length > 0
-    ) {
-      const adjudication = adjudicatePriorClaimedFixedFindings({
-        priorFindings: pendingBlockingFindings,
-        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
-        review: lastReviewerOutputForS4,
-      });
-      for (const key of adjudication.verifiedClosedIdentityKeys) {
-        noProgressCounts.delete(key);
-      }
-      const seenBlocking = new Set(blockingIdentityKeys);
-      for (const finding of adjudication.stillOpen) {
-        const key = findingIdentityKey(finding);
-        const previousFinding =
-          pendingBlockingFindings[
-            pendingBlockingFindingIdentityKeys.indexOf(key)
-          ] ?? finding;
-        const observedReviewerProgress = reviewerObservedProgress({
-          previousBlockingFindings: pendingBlockingFindings,
-          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-          currentBlockingFindings: reviewerBlocking,
-          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
-          previousFinding,
-          previousIdentityKey: key,
-          previousNoProgressCount: noProgressCounts.get(key) ?? 0,
-        });
-        if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
-        }
-        if (
-          repairEvidenceMatchesKey(
-            lastCoderRepairEvidenceForS4,
-            lastCoderActualRepairPathsForS4,
-            finding,
-            key,
-            pendingBlockingFindings,
-            pendingBlockingFindingIdentityKeys,
-          ) ||
-          observedReviewerProgress
-        ) {
-          noProgressCounts.set(key, 0);
-        } else {
-          noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
-        }
-      }
-    }
-
-    const blockingKeys = new Set(blockingIdentityKeys);
-    deferredFindings = deferredFindings.filter(
-      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
-    );
-    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
-    for (const finding of classification.deferred) {
-      const key = findingIdentityKey(finding);
-      if (!deferredKeys.has(key)) {
-        deferredFindings.push(finding);
-        deferredKeys.add(key);
-      }
-    }
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
-    if (lastReviewerStepForS4 !== "S6") {
-      for (const key of blockingIdentityKeys) {
-        if (!noProgressCounts.has(key)) noProgressCounts.set(key, 0);
-      }
-    }
-  }
-
-  return {
-    blocking: pendingBlockingFindings,
-    blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-    deferred: deferredFindings,
-    findingDispositions,
-    noProgressCounts,
-  };
-}
-
-function adjudicatedBlockingFindingsForPersistedS4(
-  ledger: ReadonlyArray<LedgerEntry>,
-): ReadonlyArray<Finding> | undefined {
-  return replayS4AdjudicationState(ledger).blocking;
 }
 
 /**
@@ -1819,12 +904,13 @@ function adjudicatedBlockingFindingsForPersistedS4(
  *   1. Empty ledger              → resume from S0 (treat as a fresh run).
  *   2. The last agent output escalated AND a later escalation_answered row exists
  *      → resume THAT step in its original session (resumeSession + sessionId).
- *      Without the appended answer, report the prior escalate terminal status.
+ *      Without the appended answer, report the prior parked/failed terminal status.
  *   3. The prior run reached a terminal handoff that is NOT being re-opened
  *      (S8 entry, or the last step routes straight to a handoff) → report that
- *      handoff's TRUE status (success / error / escalate) — never a hardcoded
- *      success. The S8 entry carries `handoffStatus` (#255); when the terminal
- *      status must be inferred (a crash before the S8 write), route() gives it.
+ *      handoff's TRUE public status (completed | parked | failed) — never a
+ *      hardcoded completed. The S8 entry carries `handoffStatus` (#255); when the
+ *      terminal status must be inferred (a crash before the S8 write), route()
+ *      gives it.
  *   4. Otherwise (crash mid-run) → continue from `route()`'s successor of the
  *      last recorded step, with a fresh dispatch.
  */
@@ -1846,21 +932,43 @@ function planResume(
   const agentEntry = lastAgentEntry(executableLedger);
 
   // #709 exemption: keep strict !== undefined (not != null) — escalationKind presence
-  // on S8(escalate) distinguishes legacy untagged (absent → fallthrough to Case 2
+  // on S8(parked) distinguishes legacy untagged (absent → fallthrough to Case 2
   // agentEscalate + answer reopen logic) from tagged kind (present → use "decision"
   // vs "failure" to decide reopen vs always-terminal). Traced: planResume Case1 vs
   // Case2/3a; familyEscalationState uses ==/=== directly; "unknown tagged" test forces
   // terminal for non-decision even w/ answer. null-vs-undefined load-bearing for
   // resume routing on deserialized persisted ledger (same JSONL class as stopSummary).
   // Explicit null treated as "tagged invalid kind" (terminal) not "absent legacy".
+  // #942 / #934 ID-005: legacy #929 / unknown handoff tokens fail closed as failed.
+  // No dual-read to completed/parked; scene preserved; cause = resume_state_invalid.
   if (
     lastEntry.step === "S8" &&
-    lastEntry.handoffStatus === "escalate" &&
+    lastEntry.handoffStatus !== undefined &&
+    (isLegacy929PublicStatusToken(lastEntry.handoffStatus) ||
+      ((lastEntry.handoffStatus as string) !== "completed" &&
+        (lastEntry.handoffStatus as string) !== "parked" &&
+        (lastEntry.handoffStatus as string) !== "failed"))
+  ) {
+    return {
+      terminalStatus: "failed",
+      terminalCause: "resume_state_invalid",
+      resumeStep: "S8",
+      lastOutput: agentEntry?.output,
+      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
+    };
+  }
+  // #982: S8(failed) is terminal — never reopen as an answerable decision,
+  // even when escalationKind is "decision". Only parked + decision reopens.
+  // Tagged failed falls through to Case 3a (true handoffStatus).
+  if (
+    lastEntry.step === "S8" &&
+    lastEntry.handoffStatus === "parked" &&
     lastEntry.escalationKind !== undefined
   ) {
     if (lastEntry.escalationKind === "failure") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1868,7 +976,8 @@ function planResume(
     }
     if (lastEntry.escalationKind !== "decision") {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1876,7 +985,7 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const replayedS4 = replayS4AdjudicationState(executableLedger);
+    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1884,16 +993,23 @@ function planResume(
     const continueFixingRepair =
       decisionStep === "S4"
         ? repairIntent !== undefined
-          ? continueRepairFromEvent(repairIntent, replayedS4)
-          : latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
-            continueRepairFromAnswer(answer, replayedS4)
+          ? continueRepairFromEvent(
+              repairIntent,
+              rebuiltBlocking.blockingFindingCount,
+            )
+          : latestContinueFixingAfter(
+              ledger,
+              lastEntryIndex,
+              rebuiltBlocking.blockingFindingCount,
+            ) ??
+            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
       (answer === undefined && continueFixingRepair === undefined)
     ) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry?.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1903,7 +1019,7 @@ function planResume(
     if (decisionStep === "S4") {
       if (continueFixingRepair === undefined) {
         return {
-          terminalStatus: "escalate",
+          terminalStatus: "parked",
           resumeStep: "S8",
           lastOutput: agentEntry?.output,
           priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1921,22 +1037,10 @@ function planResume(
       };
     }
 
-    if (decisionStep === "S7") {
-      let reopenIdx = executableLedger.length - 1;
-      while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") {
-        reopenIdx--;
-      }
-      return {
-        resumeStep: "S7",
-        escalationAnswer: answer,
-        lastOutput: agentEntry?.output,
-        priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
-      };
-    }
-
     if (
       agentEntry !== undefined &&
       agentEntry.step === decisionStep &&
+      isValidStepId(agentEntry.step) &&
       isValidEscalation(escalateOf(agentEntry.output))
     ) {
       const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
@@ -1944,6 +1048,10 @@ function planResume(
         resumeStep: agentEntry.step,
         resumeSessionId:
           typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
+        // #955: identity from the escalated row only — never invent from route.
+        ...(typeof agentEntry.modelSlug === "string"
+          ? { resumeSessionModel: agentEntry.modelSlug }
+          : {}),
         escalationAnswer: answer,
         lastOutput: agentEntry.output,
         priorLedger: ledger.slice(0, escalatedLedgerIdx) as ReadonlyArray<LedgerEntry>,
@@ -1951,7 +1059,7 @@ function planResume(
     }
 
     return {
-      terminalStatus: "escalate",
+      terminalStatus: "parked",
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -1959,32 +1067,25 @@ function planResume(
   }
 
   // Case 2: legacy/untagged agent decision-escalate residue — the last agent
-  // output carries a WELL-FORMED escalation. Only a later escalation_answered row
-  // re-opens THAT step in its original agent session; otherwise the prior
-  // S8(escalate) remains a pause.
+  // output carries an escalation object (the bell; its fields are cargo). Only a
+  // later escalation_answered row re-opens THAT step in its original agent
+  // session; otherwise the prior S8(parked) remains a pause.
   //
-  // integ-cmr m2 r1 (Finding 2): the guard is isValidEscalation, NOT a bare
-  // non-null check. route.ts:81 / validate.ts treat a MALFORMED escalate (e.g.
-  // `{}`, blank reason/diagnosis) as a contract violation → S8(status=error),
-  // and the runner tags that S8 handoffStatus:'error'. With a bare `!= null`
-  // check, Case 2 would fire on the garbage escalate BEFORE Case 3a's
-  // terminal-status report, silently re-running the step via resumeSession
-  // instead of reporting the true tagged error. Gating on isValidEscalation lets
-  // a malformed escalate fall through to Case 3a — only a well-shaped escalate
-  // plus a later answer event (a real "human answered an escalation" signal)
-  // triggers escalate-resume.
+  // Persisted legacy ledgers may predate the receipt bell normalizer. Keep the
+  // compatibility presence guard here; current receipt cargo quality never
+  // changes whether the worker pressed the decision bell.
   //
-  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
-  // escalate-resume, even when the escalate is WELL-FORMED. An escalate handoff
-  // whose S8 write faulted returns status:error in-run and best-effort persists
-  // a tagged 'error' S8 — the disk then holds a valid-escalate agent entry AND a
-  // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
+  // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(failed) ALSO supersedes
+  // escalate-resume, even when the decision bell is present. An escalate handoff
+  // whose S8 write faulted returns status:failed in-run and best-effort persists
+  // a tagged 'failed' S8 — the disk then holds a decision-bell agent entry AND a
+  // trailing S8(failed). The run failed; re-feeding must report that failed (Case
   // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
-  // the last entry is a tagged terminal-error S8. (A legitimate human-answered
-  // escalate has S8(escalate) plus a later answer row — NOT error — so it still
+  // the last entry is a tagged terminal-failed S8. (A legitimate human-answered
+  // escalate has S8(parked) plus a later answer row — NOT failed — so it still
   // resumes here.)
   const lastIsTaggedError =
-    lastEntry.step === "S8" && lastEntry.handoffStatus === "error";
+    lastEntry.step === "S8" && lastEntry.handoffStatus === "failed";
   const agentEscalate = escalateOf(agentEntry?.output);
   if (
     !lastIsTaggedError &&
@@ -1992,6 +1093,9 @@ function planResume(
     agentEscalate != null &&
     isValidEscalation(agentEscalate)
   ) {
+    if (!isValidStepId(agentEntry.step)) {
+      throw new Error("planResume: agent output cannot belong to bookkeeping ledger row");
+    }
     const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
     const answerSearchIndex =
       lastEntry.step === "S8" ? lastEntryIndex : escalatedLedgerIdx;
@@ -2002,7 +1106,7 @@ function planResume(
     );
     if (answer === undefined) {
       return {
-        terminalStatus: "escalate",
+        terminalStatus: "parked",
         resumeStep: "S8",
         lastOutput: agentEntry.output,
         priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -2020,68 +1124,26 @@ function planResume(
       resumeStep: agentEntry.step,
       resumeSessionId:
         typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
+      // #955: identity from the escalated row only — never invent from route.
+      ...(typeof agentEntry.modelSlug === "string"
+        ? { resumeSessionModel: agentEntry.modelSlug }
+        : {}),
       escalationAnswer: answer,
       lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
     };
   }
 
-  // Case 2b (integ-cmr int-r1, C-1): S7 SHIP escalate-resume. ship.md promises a
-  // ship `escalate` (gstack-ship STOP/HITL) is a real blocker the human answers →
-  // the runner RE-OPENS S7. But S7 is a runner-ACTION step, and ship outputs
-  // deliberately carry NO `escalate` field (escalateOf returns undefined for
-  // them — validate.ts), so escalateTermination("S7", …) records the failing S7
-  // entry WITHOUT an escalate output, then a trailing S8 tagged 'escalate'. Case 2
-  // (agent escalate-resume) therefore never fires for S7, and Case 3a below would
-  // report the escalate as a terminal status — leaving the slice permanently stuck
-  // (#331 left this to #336; integ-cmr judged it the real S7-escalate-resume gap).
-  //
-  // Recognise the pattern — last entry is S8(escalate), the deciding step is S7,
-  // and a later answer row exists — and RE-DISPATCH S7 (re-run the ship worker
-  // fresh; ship is a clean-session runner action, so there is no agent session to
-  // resumeSession into). Drop the trailing S8 boundary: we are re-opening, so the
-  // prior terminal is superseded.
-  // Only the SHIP step re-opens this way; an agent escalate (S2 build worker) is
-  // caught by Case 2 above (it has a well-formed escalate output) and never reaches here.
-  if (
-    lastEntry.step === "S8" &&
-    lastEntry.handoffStatus === "escalate" &&
-    lastNonTerminalStep(executableLedger) === "S7"
-  ) {
-    const answer = latestAnswerAfter(ledger, lastEntryIndex, "S7");
-    if (answer === undefined) {
-      return {
-        terminalStatus: "escalate",
-        resumeStep: "S8",
-        lastOutput: agentEntry?.output,
-        priorLedger: ledger as ReadonlyArray<LedgerEntry>,
-      };
-    }
-    // Re-opening S7 means the OLD S7 entry is superseded — drop BOTH the trailing
-    // S8(escalate) boundary AND the failing S7 entry it terminated. Slicing only at
-    // the S8 (the old `slice(0, s8Idx)`) LEFT the old S7 in the in-memory ledger, so
-    // the re-dispatch appended a SECOND S7 → two consecutive S7 entries (online
-    // review r1, 3 bots). The escalate-resume contract re-opens the step, it does
-    // not keep the superseded one. The S7 entry being re-opened is the last
-    // non-terminal (non-S8) entry; truncate at its index.
-    let reopenIdx = executableLedger.length - 1;
-    while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") reopenIdx--;
-    // reopenIdx now points at the failing S7 entry (lastNonTerminalStep === "S7").
-    return {
-      resumeStep: "S7",
-      escalationAnswer: answer,
-      lastOutput: agentEntry?.output,
-      priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
-    };
-  }
-
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
-  // (recorded in handoffStatus, #255) — a prior error/escalate must not be
-  // re-reported as success. If an older ledger lacks the tag, fall back to
-  // inferring via route() below.
+  // (recorded in handoffStatus, #255/#942) — a prior failed/parked must not be
+  // re-reported as completed. If an older ledger lacks the tag, fall back to
+  // inferring via route() below. Non-canonical tokens already failed closed above.
   if (lastEntry.step === "S8" && lastEntry.handoffStatus !== undefined) {
     return {
       terminalStatus: lastEntry.handoffStatus,
+      ...(lastEntry.handoffStatus === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
       lastOutput: agentEntry?.output,
       priorLedger: ledger as ReadonlyArray<LedgerEntry>,
@@ -2102,73 +1164,16 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(executableLedger) ?? lastEntry.step
       : lastEntry.step;
-  const pendingBlockingFindings =
-    routeFrom === "S4"
-      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
-      : undefined;
-  const routeOutput =
-    isReviewLoopStep(routeFrom) && routeFrom === lastEntry.step
-      ? lastEntry.output
-      : agentEntry?.output;
-  const shipStatusForRoute =
-    routeFrom === "S7"
-      ? shipStatusFromLedger(executableLedger) ?? "pushed"
-      : undefined;
-  const onlineReviewRoundForRoute =
-    routeFrom === "S9" || routeFrom === "S10"
-      ? onlineReviewRoundFromLedger(executableLedger)
-      : undefined;
+  if (!isValidStepId(routeFrom)) {
+    throw new Error("planResume: executable ledger row must use a canonical step id");
+  }
+  const routeOutput = agentEntry?.output;
   const decision = route({
     from: routeFrom,
     output: routeOutput,
-    ...(pendingBlockingFindings !== undefined
-      ? { pendingBlockingFindings }
-      : {}),
-    ...(shipStatusForRoute !== undefined
-      ? { shipStatus: shipStatusForRoute }
-      : {}),
-    ...(onlineReviewRoundForRoute !== undefined
-      ? { onlineReviewRound: onlineReviewRoundForRoute }
-      : {}),
   });
-  // #603 P1: S12→S11 must keep S12 + pr_merged bookkeeping. priorLedgerThroughLastShip
-  // truncates after S7 and would drop the durable merge marker S11 requires.
-  const preservePostMergeBookkeeping =
-    decision.kind === "next" &&
-    decision.step === "S11" &&
-    routeFrom === "S12";
-  const truncateReviewLoop =
-    isReviewLoopStep(routeFrom) &&
-    decision.kind === "next" &&
-    !preservePostMergeBookkeeping;
-  const priorForResume = truncateReviewLoop
-    ? priorLedgerThroughLastShip(ledger)
-    : (ledger as ReadonlyArray<LedgerEntry>);
-  const resumeLastOutput = truncateReviewLoop
-    ? undefined
-    : routeOutput;
-  // #600 r28: markers persist before the executable S10 row — crash in that window
-  // must resume into post-fix verify, not re-dispatch the fixer.
-  if (
-    slicePostFixVerifyPendingFromMarkerGap(ledger) &&
-    decision.kind === "next" &&
-    decision.step === "S10"
-  ) {
-    return {
-      resumeStep: "S9",
-      lastOutput: undefined,
-      priorLedger: priorForResume,
-    };
-  }
-  // R18/R20 Codex: CI park markers → re-enter S9 (re-poll CI), not S10/S8(error).
-  if (sliceOnlineReviewCiFailedPending(ledger)) {
-    return {
-      resumeStep: "S9",
-      lastOutput: undefined,
-      priorLedger: priorForResume,
-    };
-  }
-  // #683: quota wait park → re-enter the parked step (not S8(error)).
+  const priorForResume = ledger as ReadonlyArray<LedgerEntry>;
+  // #683: quota wait park → re-enter the parked step (not S8(failed)).
   const quotaWaitStep = sliceQuotaWaitPending(ledger);
   if (quotaWaitStep !== undefined) {
     return {
@@ -2177,86 +1182,20 @@ function planResume(
       priorLedger: priorForResume,
     };
   }
-  // R20 Codex P2: last executable S9 converged:true routes to S12 and would skip
-  // the live CI recheck on the S9 entry path. Force resume at S9 so check-runs
-  // are re-polled before doc-release / post-merge cleanup.
-  if (
-    decision.kind === "next" &&
-    decision.step === "S12" &&
-    routeFrom === "S9"
-  ) {
-    return {
-      resumeStep: "S9",
-      lastOutput: undefined,
-      priorLedger: priorLedgerThroughLastShip(ledger),
-    };
-  }
-  // #603 P2: parked non-terminal S11 must re-dispatch cleanup on re-feed, not
-  // report route(S11,!terminal)→S8(error) as a hard terminal. Keep full ledger
-  // bookkeeping (pr_merged) — only drop the superseded non-terminal S11 row(s).
-  if (
-    routeFrom === "S11" &&
-    isValidCleanupResult(routeOutput) &&
-    !routeOutput.terminal
-  ) {
-    let reopenIdx = ledger.length - 1;
-    while (reopenIdx >= 0) {
-      const entry = ledger[reopenIdx]!;
-      if (!isBookkeepingEntry(entry) && entry.step === "S11") {
-        break;
-      }
-      reopenIdx--;
-    }
-    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
-    if (reopenIdx < 0) {
-      throw new Error(
-        "planResume: expected non-terminal S11 ledger row but none found",
-      );
-    }
-    return {
-      resumeStep: "S11",
-      lastOutput: undefined,
-      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
-    };
-  }
-  // #735 US13: S12 released:false parks resumable — re-feed re-dispatches
-  // docRelease. Without this, route(S12,!released)→S8(error) sticks forever.
-  if (
-    routeFrom === "S12" &&
-    isValidDocReleaseResult(routeOutput) &&
-    !routeOutput.released
-  ) {
-    let reopenIdx = ledger.length - 1;
-    while (reopenIdx >= 0) {
-      const entry = ledger[reopenIdx]!;
-      if (!isBookkeepingEntry(entry) && entry.step === "S12") {
-        break;
-      }
-      reopenIdx--;
-    }
-    // Gemini R2 high: reopenIdx < 0 must not slice(0,0) and wipe the ledger.
-    if (reopenIdx < 0) {
-      throw new Error(
-        "planResume: expected released:false S12 ledger row but none found",
-      );
-    }
-    return {
-      resumeStep: "S12",
-      lastOutput: undefined,
-      priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
-    };
-  }
   if (decision.kind === "handoff") {
     return {
       terminalStatus: decision.status,
+      ...(decision.status === "failed"
+        ? { terminalCause: "runner_internal_error" as const }
+        : {}),
       resumeStep: "S8",
-      lastOutput: resumeLastOutput ?? agentEntry?.output,
+      lastOutput: routeOutput,
       priorLedger: priorForResume,
     };
   }
   return {
     resumeStep: decision.step,
-    lastOutput: resumeLastOutput,
+    lastOutput: routeOutput,
     priorLedger: priorForResume,
   };
 }
@@ -2273,47 +1212,41 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "typescript",
 ] as const;
 
-const MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS = 2;
+// #873 / ADR 0062: runner has NO authority to judge reviewer output format
+// (findings schema, tags, zod). Format belongs at write-point / worker.
+// Runner only: process exit / judge status tri-state / worker-raised decision gate.
 
 /**
- * The fixed StepSpecs for single-slice worker steps. Versioned promptFiles,
+ * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * ADR 0030 makes the per-slice loop runner-visible: S2 implements, S3 reviews,
- * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
+ * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
+ * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
+ * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
- * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
- * (the WITHIN-STEP Ralph retry budget — NOT a fix-loop give-up counter), soul,
- * toolchain.
+ * #253/#928 fields: model (CLI slug), maxIter (per-seat Sandcastle iteration
+ * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
+ * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
- * maxIter SEMANTICS: the WITHIN-STEP agent (Ralph) retry budget for one
- * `sandbox.run()`, NOT a give-up counter. Hitting it = the step ends normally; it
- * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
- * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
- *
- * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
- * with single-slot overrides (see {@link coderModel}); no image rebuild, no
+ * Swapping models = select ORCHESTRATOR_ROUTE or use owner-authored Coder-Rec;
+ * no image rebuild or
  * structural StepSpec change (PRD #244 Implementation Decisions + ADR 0031).
  */
 
 /**
- * The S2 coder worker's model slug, selected by the active route and optionally
- * overridden via `ORCHESTRATOR_CODER_MODEL`. The slug is resolved to the baked CLI
+ * The S2 coder worker's model slug, selected by the active route. The slug is resolved to the baked CLI
  * by agentForSlug; invalid route names / slugs fail closed before dispatch.
  */
 export function coderModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("coder", env);
 }
 
-export function reviewerModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("reviewer", env);
-}
-
-export function coderFixModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("coderFix", env);
-}
-
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";
+
+/** Type-guard for the single-slice agent worker seats (S2/S3/S5/S6). */
+function isWorkerStep(s: unknown): s is WorkerStepId {
+  return s === "S2" || s === "S3" || s === "S5" || s === "S6";
+}
 
 export function stepSpecsForRoute(
   route: Pick<ResolvedModelRoute, "slots">,
@@ -2325,22 +1258,25 @@ export function stepSpecsForRoute(
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
       // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
-      // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
-      // alone — no image rebuild, no StepSpec shape change.
+      // agentForSlug (realBackend); no image rebuild or StepSpec shape change.
       model: route.slots.coder,
-      completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
+      // clean exit + legal sidecar / typed envelope is completion.
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S3: {
       id: "S3",
-      role: "reviewer",
-      promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      // #925 / #919 S2/R8: persistent verify judge. Seat identity is step/id
+      // S3 only (isJudgeSeat); production role+soul are `"verify"` cargo.
+      // `#923` model-route slot is already verify. Leg-soul `"reviewer"` remains
+      // only inside multi-model review legs.
+      role: "verify",
+      promptFile: "judge_station.md",
+      model: route.slots.verify,
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S5: {
@@ -2348,22 +1284,36 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_fix.md",
       model: route.slots.coderFix,
-      completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S6: {
       id: "S6",
-      role: "reviewer",
-      promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      // #925 / #919 S2/R8: same judge seat as S3 — resume S3 session.
+      // Seat identity is step/id S6 (isJudgeSeat); role+soul `"verify"` cargo.
+      role: "verify",
+      promptFile: "judge_station.md",
+      model: route.slots.verify,
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
   };
+}
+
+/** The relay pool belongs to one wall-hit route entry, never the whole lineup. */
+function activeRelaySmokeEntryKey(
+  step: StepId | undefined,
+  route: Pick<ResolvedModelRoute, "slots">,
+): string | undefined {
+  // #923: single-slice map lives in modelRoutes (S3/S6 → verify); do not fork it.
+  if (!isWorkerStep(step)) {
+    return undefined;
+  }
+  const slot = relaySlotForSingleSliceWallStep(step);
+  return `${slot}:${route.slots[slot]}`;
 }
 
 export function stepSpecsForEnv(
@@ -2374,33 +1324,25 @@ export function stepSpecsForEnv(
 
 export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
   S2: "coder_implement.md",
-  S3: "reviewer_review.md",
+  S3: "judge_station.md",
   S5: "coder_fix.md",
-  S6: "reviewer_review.md",
+  S6: "judge_station.md",
 };
 
-/**
- * Synthesise a human-readable reason string for route()-detected error edges
- * (e.g. 0-commit). Backend-throw errors use the caught message directly.
- */
-function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
-  if ((step === "S2" || step === "S5") && output?.kind === "coder" && !output.committed) {
-    return `${step} coder worker produced no commits (committed:false)`;
-  }
+/** Synthesise a human-readable reason for a route-owned error edge. */
+function buildErrorReason(step: StepId, _output: StepOutput | undefined): string {
   return `step ${step} routed to error handoff`;
 }
 
-/** Compact, safe description of a (possibly malformed) step output for errors. */
-function describeOutput(output: StepOutput | undefined): string {
-  if (output === undefined) return "undefined";
-  if (output === null) return "null";
-  if (typeof output !== "object") return String(output);
-  const kind = (output as { kind?: unknown }).kind;
-  return `object with kind=${JSON.stringify(kind)}`;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/**
+ * #925 / #919 S1/M5: judge seats collapse residual paper via the sole
+ * {@link projectJudgeSeatOutput} helper. Membership = {@link isJudgeSeat}.
+ */
+function normalizeJudgeSeatOutput(
+  step: SliceStepId,
+  output: StepOutput,
+): StepOutput {
+  return isJudgeSeat({ step }) ? projectJudgeSeatOutput(output) : output;
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -2429,12 +1371,10 @@ function acceptedSuppressionsFromDispositions(
 }
 
 function successSummaryForCurrentState(input: {
-  readonly deferredFindings: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
 }): StopSummary {
-  // #604 slice 4 (ADR 0062): routing disposition kinds are gone and the deferred
-  // bucket is always empty, so there is no cross-module defer to surface here —
-  // a success summary carries accepted-suppression metadata only.
+  // #604 slice 4 (ADR 0062): a success summary carries accepted-suppression
+  // metadata only.
   const acceptedSuppressions = acceptedSuppressionsFromDispositions(
     input.findingDispositions,
   );
@@ -2455,16 +1395,15 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
         "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
     };
   }
+  // Pure reporting telemetry: this label does not choose retry, park, or
+  // termination. Those control decisions have already happened upstream.
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
     ) ||
     WORKER_STDOUT_MISSING_TAG_RE.test(errorPackage.reason)
   ) {
-    return contractDriftStopSummary({
-      summary: errorPackage.reason,
-      repairHint,
-    });
+    return contractDriftStopSummary({ summary: errorPackage.reason, repairHint });
   }
   return infraFailureStopSummary({
     summary: errorPackage.reason,
@@ -2472,38 +1411,26 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
   });
 }
 
-function untrustedExecutableInstructionSummary(
-  _snapshot: IssueSnapshot,
-): StopSummary | undefined {
-  // Non-owner Agent Brief headings are ordinary issue/comment text. Only the
-  // structured IssueSnapshot.agentBrief field is executable runner input.
-  return undefined;
-}
-
+/**
+ * Decision-kind escalate park stop summary.
+ * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
+ * the same park family (`decision_gate_park`) — no third stop token.
+ */
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
-  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
-  if (/review\/fix loop made no progress/i.test(escalation.reason)) {
-    return {
-      reason: "same_module_still_red",
-      summary: reason,
-      repairHint: "repair the same-module finding or change the implementation strategy before rerun",
-    };
-  }
-  return {
-    reason: "spec_conflict",
-    summary: reason,
+  return decisionGateParkStopSummary({
+    summary: `${escalation.reason}: ${escalation.diagnosis}`,
     repairHint: "answer the decision escalation and rerun",
-  };
+  });
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
-  const reason =
-    `${escalation.reason}: ${escalation.diagnosis}; ` +
-    `route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ` +
-    `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`;
+  const reason = admissionRouteFailureDiagnosis(
+    `${escalation.reason}: ${escalation.diagnosis}`,
+  );
   return infraFailureStopSummary({
     summary: reason,
-    repairHint: "fix the active model route or route env overrides before dispatching workers",
+    repairHint:
+      "fix ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before dispatching workers",
   });
 }
 
@@ -2517,261 +1444,713 @@ function latestLedgerStopSummary(
   return undefined;
 }
 
-function isReviewerStructuredOutputError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return (
-    err.name === "ZodError" ||
-    err.name === "StructuredOutputError" ||
-    /StructuredOutputError|structured output|missing <review>|<review>|ZodError/i.test(
-      err.message,
-    )
-  );
-}
-
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
     input.now !== undefined ? input.now() : new Date();
-  let modelRoute: ResolvedModelRoute;
-  try {
-    modelRoute = resolveActiveModelRoute();
-  } catch (err) {
-    const reason =
-      err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = stopSummaryForStartupRouteFailure({
-      reason: "startup route failure",
-      diagnosis: `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
+
+  // #1007 / #1017: process progress feed is one-invocation-owned.
+  // Standalone clears any prior same-process family binding so this run rebinds
+  // to its own stateDir. Family children (input.family set) inherit the family
+  // ledger already configured by runFamily / familyDriver — never overwrite.
+  if (input.family === undefined) {
+    clearProgressBroadcastConfig();
+  }
+
+  // #936 / #934 ID-005: Scene Recovery first — resident discovery before
+  // admission network work when a durable scene may already exist.
+  const scene = await discoverResidentScene(backend, issueNumber);
+  // #1007: bind progress feed as soon as resident stateDir is known so early
+  // terminal/fail exits can dual-write this invocation's progress.jsonl.
+  {
+    const existing = getProgressBroadcastConfig();
+    if (existing.ledgerDir === undefined && scene.kind === "resident") {
+      const residentStateDir = scene.state.stateDir;
+      if (
+        typeof residentStateDir === "string" &&
+        residentStateDir.length > 0
+      ) {
+        configureProgressBroadcast({ ledgerDir: residentStateDir });
+      }
+    }
+  }
+  if (scene.kind === "corrupted") {
+    const reason = scene.reason;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "repair or clear the resident worksite/ledger before re-entry",
     });
-    return {
-      status: "error",
+    // #1007: startup fail before shared helpers — dual-write terminal (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+    return failedRunResult({
+      cause: "resume_state_invalid",
       errorPackage: { failedStep: "S0", reason },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
-    };
+    });
   }
-  const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
-    interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-    warn: (message) => console.warn(`[orchestrator] ${message}`),
-  });
-  if (routePolicy.kind === "stop") {
-    const stopSummary = stopSummaryForStartupRouteFailure(routePolicy.escalation);
-    return {
-      status: "escalate",
+
+  // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
+  // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
+  // finished completed/failed/parked terminal (zero meta/smoke).
+  // Skip early short-circuit when a repairIntent is present — that path must
+  // still durable-write the intent (and surface write failures) before planResume.
+  if (scene.kind === "resident" && input.repairIntent === undefined) {
+    const earlyPlan = planResume(scene.state.ledger);
+    if (earlyPlan.terminalStatus !== undefined) {
+      const worktree = scene.state.worktree;
+      const ledger = earlyPlan.priorLedger;
+      if (earlyPlan.terminalStatus === "failed") {
+        const reason =
+          earlyPlan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
+        const errorPackage: ErrorPackage = {
+          failedStep: lastAgentStep(ledger) ?? "S8",
+          reason,
+          branchHead: worktree.branch,
+        };
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        // #1007: durable terminal replay must self-describe this invocation's feed.
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return failedRunResult({
+          cause: earlyPlan.terminalCause ?? "runner_internal_error",
+          errorPackage,
+          stepLedger: ledger,
+          stopSummary,
+        });
+      }
+      const stopSummary: StopSummary =
+        earlyPlan.terminalStatus === "completed"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a completed handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
+      // #1007: durable completed/parked replay — emit terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S8",
+        status: earlyPlan.terminalStatus,
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
+      return {
+        status: earlyPlan.terminalStatus,
+        branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
+        stepLedger: ledger,
+        stopSummary,
+      };
+    }
+  }
+
+  // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
+  // No env slot overrides, no interactive continue. Non-terminal resume still
+  // needs a lineup for dispatch.
+  const admitted = admitRouteFromEnv();
+  if (admitted.kind === "stop") {
+    const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
+    const isTight = admitted.escalation.reason === "tight route violation";
+    const cause: PublicFailedCause = isTight
+      ? "route_config_invalid"
+      : /coder-rec|coder_rec/i.test(admitted.escalation.reason)
+        ? "coder_rec_invalid"
+        : "route_config_invalid";
+    // #1007: startup route fail before shared helpers — dual-write terminal.
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+    return failedRunResult({
+      cause,
       errorPackage: {
         failedStep: "S0",
-        reason: `${routePolicy.escalation.reason}: ${routePolicy.escalation.diagnosis}`,
+        reason: `${admitted.escalation.reason}: ${admitted.escalation.diagnosis}`,
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
-    };
+    });
   }
   console.info(
-    `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
+    `[orchestrator] model route lineup\n${printableRouteLineup(admitted.route)}`,
   );
   // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
-  // coder (+ coderFix) slot at S0 and advance it after non-converging fix rounds.
-  modelRoute = routePolicy.route;
+  // coder (+ coderFix) slot at S0 (first seat stay-put; #926 owns advanceCoder).
+  let modelRoute: ResolvedModelRoute = admitted.route;
   let stepSpecs = stepSpecsForRoute(modelRoute);
-  /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
+  /** Issue body used for Coder-Rec parse (S0 meta.body). */
   let coderRecIssueBody: string | undefined;
-  /** When true, ORCHESTRATOR_CODER_MODEL won — never re-apply Coder-Rec. */
-  let coderRecEnvSkipped = false;
   let routeSmokeChecked = false;
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
   /**
+   * Correctness B3 — run-scoped pools that already hit a quota wall this run.
+   * Excluded from route-smoke knownLive promotion so a smoke-passed pool cannot
+   * re-enter as a live baton and ping-pong until the handoff cap.
+   */
+  const wallHitBillingPools = new Set<BillingPoolId>();
+  /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
-   * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
-   * but clears so #767 quality advance (S6 rounds) still runs.
+   * handoffs only: blocks Coder-Rec snap-back after a relay for the rest of
+   * the run. ADR 0132 deleted round-threshold quality advance.
    */
   let stickyRelayCoderSlug: string | undefined;
-  /** #686 — last written relay focus path (forwarded on next dispatch). */
-  let activeRelayFocusPath: string | undefined;
-  /** The only step allowed to consume the current relay pool and focus baton. */
+  /** S5 resource relay is independent from the normal S2 coder slot. */
+  let stickyRelayCoderFixSlug: string | undefined;
+  /**
+   * #926 — sticky judge-advanced coder slug. Holds after a successful
+   * `advanceCoder` so Coder-Rec first-seat re-apply cannot snap back. Resource
+   * relay stickiness still wins when set (capacity crisis overrides quality advance).
+   */
+  let stickyJudgeAdvanceCoderSlug: string | undefined;
+  /** #937 — last ephemeral relay brief (forwarded on next same-step dispatch). */
+  let activeRelayBrief: string | undefined;
+  /** The only step allowed to consume the current relay pool + ephemeral brief. */
   let activeRelayStep: StepId | undefined;
+  // #924: coder persistent session across S2 → S5 rounds (declared early so
+  // relay / first-seat Coder-Rec model changes can invalidate it).
+  let coderSessionId: string | undefined;
+  let coderSessionModel: string | undefined;
+  // #925: judge persistent session across S3 → S6 rounds (same model).
+  let judgeSessionId: string | undefined;
+  let judgeSessionModel: string | undefined;
 
-  const applyCoderRecSelection = async (
-    nonConvergingRounds: number,
-  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
-    if (coderRecEnvSkipped) return undefined;
-    // Resource-relay stickiness: hold the baton until #767 quality advance
-    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
+  /**
+   * Hold a sticky coder seat against Coder-Rec snap-back: rewrite coder
+   * (+coderFix), re-admit tight policy (#934 ID-002 / R7 F3), refresh stepSpecs,
+   * invalidate smoke, and retire the session when the runnable model changed.
+   */
+  const holdCoderSticky = (
+    slug: string,
+  ): { kind: "stop"; escalation: Escalation } | undefined => {
+    if (modelRoute.slots.coder === slug) return undefined;
+    const admitted = admitTightRoute(withCoderSlot(modelRoute, slug));
+    if (admitted.kind === "stop") return admitted;
+    modelRoute = admitted.route;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    routeSmokeChecked = false;
     if (
-      stickyRelayCoderSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
     ) {
-      if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
-        modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
+    return undefined;
+  };
+
+  /**
+   * #926 / #934 ID-005 — single bookkeeping write path for advance / stay-put
+   * markers. Post-worksite route/step truth is required durable: writeLedger
+   * failure surfaces as `record_persist_failed` (not ID-015 telemetry fail-open).
+   * Matches the coder_advance_stay_put audit fail-closed path.
+   */
+  const persistAdvanceBookkeeping = async (
+    marker: LedgerEntry,
+    forStep: "S3" | "S6",
+    label: string,
+  ): Promise<void> => {
+    ledger.push(marker);
+    if (stateDir === undefined) return;
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, forStep, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: marker.ts ?? new Date().toISOString(),
+        },
+        stateDir,
+      );
+    } catch (err) {
+      throw new Error(
+        `record_persist_failed: coder_advance (${label}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
+  const applyCoderRecSelection = async (): Promise<
+    | { kind: "stop"; escalation: Escalation }
+    | undefined
+  > => {
+    // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
+    // round-threshold quality advance. #934 R7 F3: re-admit tight after hold.
+    if (stickyRelayCoderSlug !== undefined) {
+      return holdCoderSticky(stickyRelayCoderSlug);
+    }
+    if (stickyRelayCoderFixSlug !== undefined) {
+      if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
+        // Single apply+admit court (same as live relay baton).
+        const admitted = admitRelayBaton(
+          modelRoute,
+          { slug: stickyRelayCoderFixSlug },
+          "S5",
+        );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
       }
       return undefined;
     }
-    if (stickyRelayCoderSlug !== undefined) {
-      stickyRelayCoderSlug = undefined;
-    }
-    const applied = applyCoderRecToRoute(
-      modelRoute,
-      coderRecIssueBody,
-      nonConvergingRounds,
-    );
-    if (applied.skippedForEnvOverride) {
-      coderRecEnvSkipped = true;
+    // #926 / #1002: judge-advanced repair seat holds against Coder-Rec
+    // withCoderSlot dual-rewrite of coderFix. Implement seat (coder) stays.
+    if (stickyJudgeAdvanceCoderSlug !== undefined) {
+      if (modelRoute.slots.coderFix !== stickyJudgeAdvanceCoderSlug) {
+        const admitted = admitRelayBaton(
+          modelRoute,
+          { slug: stickyJudgeAdvanceCoderSlug },
+          "S5",
+        );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
+      }
       return undefined;
     }
-    if (applied.route === modelRoute) return undefined;
-    modelRoute = applied.route;
-    // #686 P1: quality advance must not inherit the prior resource-relay pool —
-    // reselect from the new model's dispatch binding.
+    // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
+    const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
+    if (admittedRec.kind === "stop") {
+      return { kind: "stop", escalation: admittedRec.escalation };
+    }
+    if (admittedRec.route === modelRoute) return undefined;
+    modelRoute = admittedRec.route;
+    // #686 P1: a coder-slot change must not inherit the prior resource-relay
+    // pool — reselect from the new model's dispatch binding.
     currentBillingPool = billingPoolFromQuotaPool(
       poolForModelRef(modelRoute.slots.coder),
     );
     stepSpecs = stepSpecsForRoute(modelRoute);
-    // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
-    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
-    routeSmokeChecked = false;
-    if (applied.entry !== undefined) {
-      console.info(
-        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})` +
-          (nonConvergingRounds > 0
-            ? ` after ${nonConvergingRounds} non-converging review round(s)`
-            : ""),
-      );
+    // #924: model change invalidates the prior Sandcastle session — next
+    // coder seat establishes a new session (cannot resume across providers).
+    if (
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
+    ) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
     }
-    return applyRuntimeTightRoutePolicy(modelRoute, {
-      interactive: process.stdin.isTTY === true && process.stdout.isTTY === true,
-      warn: (message) => console.warn(`[orchestrator] ${message}`),
-    });
+    // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
+    // before its first dispatch (top-of-loop OR the S2/S5 re-apply path).
+    routeSmokeChecked = false;
+    console.info(
+      `[orchestrator] Coder-Rec applied → coder=${modelRoute.slots.coder}`,
+    );
+    return undefined;
   };
 
-  const stopForCoderRecTightRoutePolicy = (escalation: {
+  const stopForCoderRecTightRoutePolicy = async (escalation: {
     readonly reason: string;
     readonly diagnosis: string;
-  }): RunResult => {
+  }): Promise<RunResult> => {
     const stopSummary = stopSummaryForStartupRouteFailure(escalation);
-    return {
-      status: "escalate",
+    // #899: this stop can fire MID-RUN (the S2/S5 Coder-Rec re-apply path),
+    // not only at startup. It used to return an inline RunResult with an
+    // in-memory-only S8 — no disk row, no output — so the family saw a bare
+    // "failed", resume could not classify the breakpoint, and every re-ignition
+    // replayed the whole run from scratch. Terminal returns must speak and persist.
+    console.error(
+      `[orchestrator] ${escalation.reason}: ${escalation.diagnosis}`,
+    );
+    ledger.push({ step: "S8", stopSummary });
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "failed",
+      undefined,
+      undefined,
+      "failure",
+      stopSummary,
+    );
+    const cause: PublicFailedCause =
+      escalation.reason === "tight route violation" ||
+      /route/i.test(escalation.reason)
+        ? "route_config_invalid"
+        : "coder_rec_invalid";
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+    return failedRunResult({
+      cause,
       errorPackage: {
         failedStep: "S0",
         reason: `${escalation.reason}: ${escalation.diagnosis}`,
       },
-      stepLedger: [{ step: "S8", stopSummary }],
+      stepLedger: ledger,
       stopSummary,
-      deferredFindings: [],
-    };
+    });
   };
 
-  /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
-  const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
-    currentBillingPool = baton.pool;
-    activeRelayStep = wallStep ?? "S2";
-    const slots = { ...modelRoute.slots };
-    if (wallStep === "S3" || wallStep === "S6") {
-      slots.reviewer = baton.slug;
-    } else if (wallStep === "S7") {
-      slots.ship = baton.slug;
-    } else if (wallStep === "S9") {
-      slots.verify = baton.slug;
-    } else if (wallStep === "S10") {
-      slots.fixer = baton.slug;
-    } else if (wallStep === "S11") {
-      slots.cleanup = baton.slug;
-    } else if (wallStep === "S12") {
-      slots.docRelease = baton.slug;
-    } else {
-      // S2/S5/default — coder (+ coderFix) slot; sticky for resource relay only.
-      modelRoute = withCoderSlot(modelRoute, baton.slug);
-      stickyRelayCoderSlug = baton.slug;
-      stepSpecs = stepSpecsForRoute(modelRoute);
-      routeSmokeChecked = false;
+  /**
+   * Probe a candidate route for assignability (smoke) without terminalising.
+   * Used by judge advance so an unassignable roster-legal seat stays put.
+   */
+  const probeRouteSmoke = async (
+    candidate: ResolvedModelRoute,
+  ): Promise<
+    | { readonly ok: true; readonly route: ResolvedModelRoute }
+    | { readonly ok: false; readonly reason: string }
+  > => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      return {
+        ok: false,
+        reason:
+          "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      };
+    }
+    try {
+      const currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(
+            candidate,
+            activeRelayStep === undefined ? undefined : currentBillingPool,
+            activeRelaySmokeEntryKey(activeRelayStep, candidate),
+          )
+        : {};
+      let smoked = await backend.smokeModelRoute(
+        candidate,
+        currentCliVersions,
+        activeRelayStep === undefined ? undefined : currentBillingPool,
+        activeRelaySmokeEntryKey(activeRelayStep, candidate),
+      );
+      smoked = degradeOptionalRouteSmokeFailures(smoked).route;
+      const failure = routeSmokeFailure(
+        smoked,
+        Date.now(),
+        undefined,
+        currentCliVersions,
+      );
+      if (failure !== undefined) {
+        return { ok: false, reason: failure };
+      }
+      return { ok: true, route: smoked };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `route smoke failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  };
+
+  /**
+   * #926 / #919 / #1002 — execute a judge `advanceCoder` suggestion (or stay-put
+   * + audit). Shared topology via {@link executeAdvanceCoderSuggestion}; this
+   * court only owns bookkeeping + sticky state. Never terminals for roster
+   * unusability. #1002 07-18: rewrite **coderFix** repair seat only (S2 already
+   * delivered; rewriting coder is unreachable speculative generality).
+   */
+  const applyJudgeAdvanceCoder = async (
+    suggestion: string,
+    forStep: "S3" | "S6",
+  ): Promise<void> => {
+    const currentSlug = modelRoute.slots.coderFix;
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion,
+      currentSlug,
+      route: modelRoute,
+      applySlug: (route, slug) =>
+        applyRelayBatonToRoute(route, { slug }, "S5", { slots: ["coderFix"] }),
+      probe: probeRouteSmoke,
+    });
+
+    if (effect.kind === "noop") {
+      return;
+    }
+
+    if (effect.kind === "stay_put") {
+      await persistAdvanceBookkeeping(
+        {
+          step: forStep,
+          ...effect.audit,
+        },
+        forStep,
+        "stay-put",
+      );
       console.info(
-        `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}`,
+        `[orchestrator] #926 advanceCoder stay-put (${effect.reason}): ` +
+          `kept ${currentSlug}; suggestion=${effect.suggestion}`,
       );
       return;
     }
-    modelRoute = { ...modelRoute, slots };
+
+    // advanced — hold sticky repair seat; retire prior coder session (S5 model
+    // changed); billing pool follows the repair seat.
+    modelRoute = effect.route;
+    stickyJudgeAdvanceCoderSlug = effect.toSlug;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    // Candidate already smoked — skip the next ensureRouteSmoke gate.
+    routeSmokeChecked = true;
+    // New repair seat: fresh session (cannot resume across model change).
+    coderSessionId = undefined;
+    coderSessionModel = undefined;
+    currentBillingPool = billingPoolFromQuotaPool(
+      poolForModelRef(modelRoute.slots.coderFix),
+    );
+
+    await persistAdvanceBookkeeping(
+      {
+        step: forStep,
+        ...effect.audit,
+      },
+      forStep,
+      "advance",
+    );
+    console.info(
+      `[orchestrator] #926 advanceCoder → ${effect.entry.id} (${effect.entry.slug}) ` +
+        `from ${effect.fromSlug}; prior coder session retired`,
+    );
+  };
+
+  /**
+   * #686 / #934 R6 F1–F2 — apply a relay baton via the pure helper
+   * ({@link applyRelayBatonToRoute} / {@link admitRelayBaton}) so every slot
+   * recomputes tightFamilyViolations, then re-satisfy the same tight gate as
+   * admission. Hand-editing slots is deleted (verify/coderFix used to skip the
+   * pure path and leave violations stale).
+   */
+  const applyRelayBaton = (
+    baton: NextRelayBaton,
+    wallStep?: StepId,
+  ):
+    | { readonly kind: "ready" }
+    | { readonly kind: "stop"; readonly escalation: Escalation } => {
+    const step = wallStep ?? "S2";
+    const admitted = admitRelayBaton(modelRoute, baton, step);
+    if (admitted.kind === "stop") {
+      return admitted;
+    }
+    currentBillingPool = baton.pool;
+    activeRelayStep = step;
+    modelRoute = admitted.route;
+    const relaySlot = relaySlotForSingleSliceWallStep(step);
+    if (relaySlot === "coderFix") {
+      stickyRelayCoderFixSlug = baton.slug;
+    } else if (relaySlot === "coder") {
+      stickyRelayCoderSlug = baton.slug;
+    }
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     console.info(
       `[orchestrator] #686 relay baton → ${baton.modelId} (${baton.slug}) @ ${baton.pool}` +
         (wallStep !== undefined ? ` (slot for ${wallStep})` : ""),
     );
+    return { kind: "ready" };
   };
 
   // #686 P1: count the chain from the FULL ledger (resume history + in-memory),
-  // so post-ship trim / re-feed cannot reset MAX_RELAY_HANDOFFS.
+  // so post-handoff trim / re-feed cannot reset MAX_RELAY_HANDOFFS.
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
+  // Attempt markers belong to a dedicated durable ledger namespace, not the
+  // canonical step-result ledger. Keep the live-process delta separately so
+  // successful retries do not add duplicate worker rows to `RunResult.stepLedger`.
+  const mechanicalRedispatchAttempts = new Map<SliceStepId, number>();
+
+  const mechanicalRedispatchAttemptsFor = (step: SliceStepId): number => {
+    const history = mergeResumeLedgerHistory(resumeHistoryLedger, ledger);
+    let durableAttempts = 0;
+    // A canonical completed row starts a new logical invocation.  Markers
+    // before it have already been consumed by a successful invocation.
+    for (let index = history.length - 1; index >= 0; index--) {
+      const entry = history[index]!;
+      if (entry.step === step && entry.event === undefined) break;
+      // A relay baton re-enters the same step under a new worker/model scene.
+      // Its prior crash streak is audit history, not the next invocation's
+      // dispatch budget.
+      if (entry.step === step && entry.event === "relay_baton_handoff") break;
+      const isCurrentMarker =
+        entry.step === "mechanical_redispatch_attempt" && entry.forStep === step;
+      // Read r5 rows for crash-resume compatibility; new rows use the distinct
+      // marker namespace above.
+      const isLegacyMarker =
+        entry.step === step && entry.event === "mechanical_redispatch_attempt";
+      if (isCurrentMarker || isLegacyMarker) {
+        durableAttempts = Math.max(
+          durableAttempts,
+          entry.mechanicalRedispatchAttempt ?? 0,
+        );
+      }
+    }
+    return Math.max(mechanicalRedispatchAttempts.get(step) ?? 0, durableAttempts);
+  };
+
+  const completeMechanicalRetryInvocation = (step: SliceStepId): void => {
+    mechanicalRedispatchAttempts.delete(step);
+  };
+
+  const durableMechanicalRetryOptions = (
+    step: SliceStepId,
+    options: MechanicalRetryOptions = {},
+  ): MechanicalRetryOptions => ({
+    ...options,
+    attemptsAlreadyUsed: mechanicalRedispatchAttemptsFor(step),
+    onAttempt: async (attempt) => {
+      await options.onAttempt?.(attempt);
+      const marker: LedgerEntry = {
+        step: "mechanical_redispatch_attempt",
+        event: "mechanical_redispatch_attempt",
+        forStep: step,
+        mechanicalRedispatchAttempt: attempt,
+      };
+      mechanicalRedispatchAttempts.set(step, attempt);
+      if (stateDir === undefined) return;
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, step, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        },
+        stateDir,
+      );
+    },
+  });
+
+  const modelRefForWallStep = (wallStep: StepId): string => {
+    return modelRoute.slots[relaySlotForSingleSliceWallStep(wallStep)];
+  };
+
   const modelIdForWallStep = (wallStep: StepId): string => {
-    const slots = modelRoute.slots;
-    const slug =
-      wallStep === "S3" || wallStep === "S6"
-        ? slots.reviewer
-        : wallStep === "S7"
-          ? slots.ship
-          : wallStep === "S9"
-            ? slots.verify
-            : wallStep === "S10"
-              ? slots.fixer
-              : wallStep === "S11"
-                ? slots.cleanup
-                : wallStep === "S12"
-                  ? slots.docRelease
-                  : slots.coder;
-    return lookupCoderRosterEntry(slug)?.id ?? slug;
+    const modelRef = modelRefForWallStep(wallStep);
+    return lookupCoderRosterEntry(modelRef)?.id ?? modelRef;
   };
 
   const resolveRelayPools = (
     limitedPool: BillingPoolId,
     resetAt: Date | undefined,
+    /**
+     * Quota-wall path only: promote route-smoke-passed pools to live so a 429
+     * beyond T can apply a real baton without test-only `relayPools` injection.
+     * Resource / mechanical-retry paths leave this false — their live evidence
+     * is first-leg proof / hang probe, not smoke of unrelated route slots.
+     */
+    forQuotaWall = false,
   ): ReadonlyArray<BillingPoolEntry> => {
-    if (input.relayPools !== undefined) {
-      return input.relayPools.map((p) => ({
-        id: p.id as BillingPoolId,
-        status: p.status,
-        ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
-        parkThresholdMs: p.parkThresholdMs,
-        models: p.models,
-      }));
-    }
-    return buildDefaultBillingPools({ limitedPool, resetAt });
+    if (forQuotaWall) wallHitBillingPools.add(limitedPool);
+    return resolveRelayPoolsFromTable(
+      limitedPool,
+      resetAt,
+      input.relayPools,
+      forQuotaWall
+        ? knownLiveBillingPoolsFromRoute(modelRoute)
+        : undefined,
+      forQuotaWall ? wallHitBillingPools : undefined,
+    );
   };
 
-  const currentCoderModelId = (): string => {
-    const slug = modelRoute.slots.coder;
-    return lookupCoderRosterEntry(slug)?.id ?? slug;
+  const hasExplicitRelayPools = input.relayPools !== undefined;
+
+  const resolveResourceFailurePool = (input: {
+    readonly modelRef: string;
+    readonly knownPool?: BillingPoolId;
+    readonly capacity: boolean;
+  }): {
+    readonly currentPool: BillingPoolId;
+    readonly pools: ReadonlyArray<BillingPoolEntry>;
+  } => {
+    const inferredPool =
+      billingPoolForModelRef(input.modelRef) ??
+      billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const configuredPools = resolveRelayPools(inferredPool, undefined);
+    const confirmedPool =
+      input.knownPool ??
+      currentBillingPool ??
+      findLiveBillingPoolForModel(configuredPools, input.modelRef);
+    const currentPool = confirmedPool ?? inferredPool;
+    // A first-leg capacity result comes from the currently dispatched model,
+    // so it proves that its inferred billing pool is live. Keep an explicit
+    // relay table authoritative, and keep later relay legs tied to their
+    // recorded pool; only the default, unbatoned first leg gets this proof.
+    const firstLegCapacityPoolIsLive =
+      input.capacity &&
+      confirmedPool === undefined &&
+      !hasExplicitRelayPools;
+    return {
+      currentPool,
+      pools: configuredPools.map((pool) => {
+        if (pool.id !== currentPool) return pool;
+        if (!input.capacity) return { ...pool, status: "dead" as const };
+        return confirmedPool !== undefined || firstLegCapacityPoolIsLive
+          ? { ...pool, status: "live" as const }
+          : pool;
+      }),
+    };
   };
 
   const relayBillingPoolForDispatch = (
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
     activeRelayStep === dispatchStep ? currentBillingPool : undefined;
-  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
-    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const relayBriefForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayBrief : undefined;
   const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
     if (
       activeRelayStep !== completedStep ||
       completed === undefined ||
-      escalateOf(completed) !== undefined ||
-      (completed.kind === "coder" && !completed.committed)
+      escalateOf(completed) !== undefined
     ) return;
     currentBillingPool = undefined;
-    activeRelayFocusPath = undefined;
+    activeRelayBrief = undefined;
     activeRelayStep = undefined;
   };
 
-  const coderRecRoundsFromLedger = (
-    entries: ReadonlyArray<LedgerEntry>,
-  ): number => entries.reduce((n, e) => (e.step === "S6" ? n + 1 : n), 0);
-  // Family-run context (ADR 0022 decision 2). When present this is a CHILD slice
-  // of a family run: cut from the family base (decision 7) and S7 push is a local
-  // no-op (decision 2). Absent ⇒ the v0.1 standalone behaviour (base=main, push).
+  // Family-run context (ADR 0022 decision 2). Production always supplies this
+  // for a child. Focused skeleton tests may omit it and cut from the test base;
+  // S7 remains a local handoff in either case.
   const family = input.family;
-  // The cut base: the family base in family mode (decision 7), else "main"
-  // (SLICE_BASE, ADR 0017 §2). This is the only place "main" is parameterised —
+  // The cut base: the family base in production, else the focused-test default.
+  // This is the only place "main" is parameterised —
   // the Backend seam already takes base as a parameter (ADR 0017 §2); #293 just
   // feeds the family base instead of the hardcoded constant.
   const sliceBase = family !== undefined ? family.familyBase : SLICE_BASE;
@@ -2780,389 +2159,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State threaded across steps within this run.
   let worktree: WorktreeHandle | undefined;
   let lastOutput: StepOutput | undefined;
-  // #617: the `defer` action was removed from the reviewer contract, so this
-  // bucket is always empty; it is retained so resume state stays shape-compatible.
-  let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  /**
+   * ADR 0138 / #978: judge-authored fix packet body for the sole coder-fix
+   * content path. Verbatim transport only — never synthesised from findings.
+   */
+  let pendingFixPacketBody: string | undefined;
+  /**
+   * #926 / #937 / #934 ID-008: consecutive review/fix no-baton stay-puts.
+   * First stay-put is non-terminal (return to judge / preserve findings); a
+   * second consecutive typed-429 wall with no baton parks for external reset
+   * (ID-001) — never invents S8 error solely from candidate exhaustion.
+   */
+  let consecutiveReviewFixStayPuts = 0;
+  /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
+  let pendingBlockingFindingCount = 0;
+  let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  /** Opaque continue_fixing scope for S5 landing (C-R4-2A); never filters cargo. */
+  let pendingFixerFindingScope: FindingRepairScope | undefined;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
-  let lastCoderRepairEvidence: RepairEvidence | undefined;
-  let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   let preexistingAssertionTouchedForReverify = false;
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
-  const noProgressByFindingIdentityKey = new Map<string, number>();
-  let lastShipOutput: ShipResult | undefined;
-  let onlineReviewRound = 1;
-  // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
-  // separate full ledger for S9's cross-round history extraction.
+  /** #927 opaque refuse cargo for S6 judge re-adjudicate (not routing input). */
+  let refuseRecordsForReverify: readonly ReviewFixRefuseRecord[] | undefined;
+  // Preserve the full ledger for relay and resume accounting.
   let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
-  let onlineReviewLanding: WorkerLandingPayload | undefined;
-  let lastOnlineReviewFixCommitSha: string | undefined;
-  let lastOnlineReviewRoundTrigger: RoundTrigger | undefined;
-  let lastOnlineReviewPendingRoundTrigger: RoundTrigger | undefined;
-  /** S9 worker green but CI still queued/in_progress — re-poll S9, do not fixer/merge. */
-  let reenterS9ForPendingCi = false;
-  /** Consecutive pending-CI S9 re-entries (online R4 Codex P1 — must be bounded). */
-  let pendingCiS9Polls = 0;
-
-  function ghSh(file: string, args: string[]): string {
-    return execFileSync(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
-  }
-
-  function defaultRepo(): string {
-    const fromEnv = process.env.ORCHESTRATOR_REPO?.trim();
-    if (fromEnv && fromEnv.length > 0) return fromEnv;
-    if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1") {
-      return "Akagilnc/ming-salvage-sim";
-    }
-    try {
-      return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      return "Akagilnc/ming-salvage-sim";
-    }
-  }
-
-  async function pollMergeReadinessForShip(
-    ship: ShipResult,
-    pollCount: number,
-    mergeHeadOid: string,
-  ): Promise<PrReviewSnapshot> {
-    const prUrl = ship.pr;
-    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
-      throw new Error("merge readiness poll requires a non-empty PR URL from ship");
-    }
-    const repo = defaultRepo();
-    return pollPrReviewState(ghSh, {
-      repo,
-      prUrl,
-      pollCount,
-      roundTrigger: buildRoundTrigger(mergeHeadOid),
-    });
-  }
-
-  async function pollOnlineReviewForShip(
-    ship: ShipResult,
-    pollCount: number,
-  ): Promise<PrReviewSnapshot> {
-    const prUrl = ship.pr;
-    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
-      throw new Error("online review poll requires a non-empty PR URL from ship");
-    }
-    const repo = defaultRepo();
-    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
-    if (!livePoll) {
-      // #600 r6: hook and offline synthesis share the central admissibility gate —
-      // test backends may inject poll results only under explicit offline/test handles.
-      assertOfflineSyntheticPollAdmissible(prUrl, repo);
-      if (backend.pollOnlineReviewState !== undefined) {
-        const landing = await backend.pollOnlineReviewState({
-          repo,
-          prUrl,
-          pollCount,
-        });
-        const defaultBots = {
-          coderabbit: { state: "complete" as const, findingCount: 0 },
-          sourcery: { state: "complete" as const, findingCount: 0 },
-          codex: { state: "complete" as const, findingCount: 0 },
-          gemini: { state: "complete" as const, findingCount: 0 },
-        };
-        return {
-          repo,
-          prNumber: 0,
-          prUrl: landing.prUrl,
-          headOid: landing.headOid,
-          pollCount,
-          bots: (landing.bots ?? defaultBots) as PrReviewSnapshot["bots"],
-          threads: landing.threads.map((t) => ({
-            id: t.id,
-            threadNodeId: t.threadNodeId ?? t.id,
-            path: t.path,
-            line: t.line,
-            body: t.body,
-            authorLogin: t.authorLogin ?? "unknown",
-            isResolved: t.isResolved,
-            headOid: t.headOid,
-          })),
-          checkRuns: landing.checkRuns ?? [],
-          totalFindingCount: landing.totalFindingCount,
-          quiescent: landing.quiescent,
-          roundTriggerUsed: buildRoundTrigger(
-            landing.headOid,
-            "1970-01-01T00:00:00.000Z",
-          ),
-          checkRunsEmptyMeans: "converged",
-        };
-      }
-      return offlinePrReviewSnapshot({
-        repo,
-        prUrl,
-        headOid:
-          lastOnlineReviewFixCommitSha ??
-          ship.prHead ??
-          "offline-review-head",
-        pollCount,
-      });
-    }
-    // Resume gap: S7 ledger may lack prHead (pre-R17). Prefer live PR head so
-    // round-1 trigger does not use the offline sentinel and re-anchor away from
-    // the ship ledger timestamp (R17 Codex P2).
-    let shipPrHead = ship.prHead;
-    if (!isFilledString(shipPrHead) && isFilledString(ship.pr)) {
-      try {
-        const { prNumber } = parsePrRef(ship.pr, repo);
-        const raw = ghSh("gh", [
-          "api",
-          `repos/${repo}/pulls/${prNumber}`,
-          "--jq",
-          ".head.sha",
-        ]);
-        const live = raw.trim();
-        if (live.length > 0) shipPrHead = live;
-      } catch {
-        // leave undefined — resolve falls back to offline sentinel only if needed
-      }
-    }
-    const roundTrigger = resolveOnlineReviewRoundTrigger({
-      onlineReviewRound,
-      persistedRoundTrigger: lastOnlineReviewRoundTrigger,
-      pendingRetriggerFromFixGap:
-        lastOnlineReviewPendingRoundTrigger ??
-        slicePendingRoundTriggerFromFixGap(ledger),
-      fixCommitSha: lastOnlineReviewFixCommitSha,
-      shipPrHead,
-      shipLedgerTriggeredAt: shipLedgerTriggeredAtFromSliceLedger(ledger),
-    });
-    const snapshot = await waitForBotQuiescence(ghSh, {
-      repo,
-      prUrl,
-      roundTrigger,
-      clock:
-        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
-          ? immediateBotPollClock
-          : realBotPollClock,
-    });
-    // Persist the trigger actually used for evidence (may re-anchor on head drift).
-    lastOnlineReviewRoundTrigger = snapshot.roundTriggerUsed;
-    return snapshot;
-  }
-
-  async function persistPrMergedMarker(
-    record: PrMergedTerminalRecord,
-    convergedHeadOid: string,
-  ): Promise<void> {
-    const marker = {
-      step: "S12" as const,
-      event: "pr_merged" as const,
-      prUrl: record.prUrl,
-      prNumber: record.prNumber,
-      remoteBranchName: record.remoteBranchName,
-      mergedHeadOid: record.mergedHeadOid,
-      prHead: convergedHeadOid,
-    };
-    ledger.push(marker);
-    if (stateDir !== undefined) {
-      await backend.writeLedger({
-        ...marker,
-        sessionId,
-        prompt_hash: await hashPrompt(undefined, "S12", backend),
-        branchHEAD: record.mergedHeadOid,
-        ts: new Date().toISOString(),
-      }, stateDir);
-    }
-  }
-
-  async function runSliceAutoMergeHost(
-    ship: ShipResult,
-    convergedHeadOid: string,
-  ): Promise<
-    | { readonly kind: "ok"; readonly record: PrMergedTerminalRecord }
-    /** Transient post-doc CI pending — no sticky S8; re-feed re-enters auto-merge. */
-    | { readonly kind: "park_not_ready"; readonly stopSummary: StopSummary }
-    | { readonly kind: "escalate"; readonly stopSummary: StopSummary }
-  > {
-    const prUrl = ship.pr;
-    if (typeof prUrl !== "string" || prUrl.trim().length === 0) {
-      return {
-        kind: "escalate",
-        stopSummary: {
-          reason: "infra_failure",
-          summary: "auto-merge requires a ship PR URL",
-          repairHint: "re-run from a pr_opened ship output",
-        },
-      };
-    }
-    const repo = defaultRepo();
-    const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
-    const docReleaseOid = sliceDocReleaseCommitOid(ledger);
-    const docReleasePaths = docReleasePathsFromHead(worktree, docReleaseOid);
-    const expectedMergeHeadOid =
-      docReleaseOid ?? gitHead(worktree) ?? convergedHeadOid;
-    const offlineSynthetic = !livePoll;
-    const allowUnverifiedDocPaths = offlineAutoMergeAllowUnverifiedDocPaths(
-      prUrl,
-      repo,
-      offlineSynthetic,
-      docReleasePaths,
-    );
-    const mergeResult = await runAutoMergeStage({
-      sh: ghSh,
-      repo,
-      prUrl,
-      convergedHeadOid,
-      expectedMergeHeadOid,
-      docReleaseCompleted: true,
-      priorConvergenceRecorded: onlineReviewConvergedForHead(
-        ledger,
-        convergedHeadOid,
-      ),
-      prMergedMarkerPresent: slicePrMergedMarkerPresent(ledger, convergedHeadOid),
-      offlineSynthetic,
-      ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
-      ...(allowUnverifiedDocPaths ? { allowUnverifiedDocReleasePaths: true } : {}),
-      poll: async (round) => {
-        if (livePoll) {
-          return pollMergeReadinessForShip(ship, round, expectedMergeHeadOid);
-        }
-        // Post-doc-release merge readiness in offline/test: use the same
-        // converged synthetic snapshot as family auto-merge — not the S9 verify
-        // hook (which may carry intentional unresolved threads for landing tests).
-        return offlinePrReviewSnapshot({
-          repo,
-          prUrl,
-          headOid: convergedHeadOid,
-          pollCount: round,
-        });
-      },
-    });
-    if (!mergeResult.ok || mergeResult.record === undefined) {
-      const stopSummary =
-        mergeResult.stopSummary ?? {
-          reason: "decision_gate_park" as const,
-          summary: `auto-merge did not complete (${mergeResult.terminalState})`,
-          repairHint: "resolve merge blockers or answer the decision gate, then re-feed",
-        };
-      // #735 Codex P1: ci_pending/not_ready must not sticky-S8(escalate).
-      // Leave ledger at successful S12 so re-feed routes S12→S11 and re-polls.
-      if (mergeResult.terminalState === "not_ready") {
-        return { kind: "park_not_ready", stopSummary };
-      }
-      return { kind: "escalate", stopSummary };
-    }
-    if (mergeResult.terminalState !== "already_recorded") {
-      try {
-        await persistPrMergedMarker(mergeResult.record, convergedHeadOid);
-      } catch (err) {
-        const cause = err instanceof Error ? err.message : String(err);
-        return {
-          kind: "escalate",
-          stopSummary: {
-            reason: "infra_failure",
-            summary: `writeLedger failed while persisting pr_merged marker: ${cause}`,
-            repairHint:
-              "fix ledger persistence and re-feed to resume auto-merge",
-          },
-        };
-      }
-    }
-    return { kind: "ok", record: mergeResult.record };
-  }
-
-  function seedClassificationFromReviewerOutput(
-    reviewerOutput: StepOutput | undefined,
-    afterFix: boolean,
-  ): string[] {
-    if (reviewerOutput?.kind !== "reviewer") return [];
-    const classification = classifyFindings(
-      reviewerOutput.findings,
-      findingDispositions,
-    );
-    const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
-    let blocking = [...classification.blocking];
-    let blockingIdentityKeys = blocking.map(findingIdentityKey);
-    findingDispositions = [...classification.dispositions];
-    const noProgressIdentityKeys: string[] = [];
-
-    if (afterFix && pendingBlockingFindingIdentityKeys.length > 0) {
-      const adjudication = adjudicatePriorClaimedFixedFindings({
-        priorFindings: pendingBlockingFindings,
-        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
-        review: reviewerOutput,
-      });
-      for (const key of adjudication.verifiedClosedIdentityKeys) {
-        noProgressByFindingIdentityKey.delete(key);
-      }
-      const seenBlocking = new Set(blockingIdentityKeys);
-      for (const finding of adjudication.stillOpen) {
-        const key = findingIdentityKey(finding);
-        const previousFinding =
-          pendingBlockingFindings[
-            pendingBlockingFindingIdentityKeys.indexOf(key)
-          ] ?? finding;
-        const observedReviewerProgress = reviewerObservedProgress({
-          previousBlockingFindings: pendingBlockingFindings,
-          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-          currentBlockingFindings: reviewerBlocking,
-          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
-          previousFinding,
-          previousIdentityKey: key,
-          previousNoProgressCount: noProgressByFindingIdentityKey.get(key) ?? 0,
-        });
-        if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
-        }
-        if (
-          repairEvidenceMatchesKey(
-            lastCoderRepairEvidence,
-            lastCoderActualRepairPaths,
-            finding,
-            key,
-            pendingBlockingFindings,
-            pendingBlockingFindingIdentityKeys,
-          ) ||
-          observedReviewerProgress
-        ) {
-          noProgressByFindingIdentityKey.set(key, 0);
-        } else {
-          const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
-          noProgressByFindingIdentityKey.set(key, count);
-          if (count >= 2) noProgressIdentityKeys.push(key);
-        }
-      }
-    }
-
-    const blockingKeys = new Set(blockingIdentityKeys);
-    deferredFindings = deferredFindings.filter(
-      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
-    );
-    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
-    for (const finding of classification.deferred) {
-      const key = findingIdentityKey(finding);
-      if (!deferredKeys.has(key)) {
-        deferredFindings.push(finding);
-        deferredKeys.add(key);
-      }
-    }
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
-    if (!afterFix) {
-      for (const key of blockingIdentityKeys) {
-        if (!noProgressByFindingIdentityKey.has(key)) {
-          noProgressByFindingIdentityKey.set(key, 0);
-        }
-      }
-    }
-    return noProgressIdentityKeys;
-  }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -3175,27 +2198,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // zero-container fake path — which carry no per-step sandbox session — fall
   // back to this run-level id.
   const sessionId = globalThis.crypto.randomUUID();
+  // State directories deliberately survive and are deterministically derived
+  // from an issue. Telemetry therefore needs a separate per-invocation key:
+  // same-issue restarts must append a fresh environment row, never dedupe it.
+  const runId = mintRunId();
 
   /**
-   * Resolve the ledger's `branchHEAD` value (#256).
+   * Resolve the ledger's `branchHEAD` value (#256 / #934 ID-015).
    *
    * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
-   * optional `backend.worktreeHead`. Fallback (no worktree yet / no
-   * `worktreeHead` on the Backend / it returns undefined / it throws): the
-   * branch NAME, as in v0.1 — a ledger I/O helper must never abort the run on a
-   * git read fault.
+   * optional `backend.worktreeHead`. When that optional read fails or returns
+   * empty → warning + omit, never silent branch-name fallback.
    */
-  async function resolveBranchHEAD(): Promise<string> {
-    if (worktree === undefined) return "";
-    if (backend.worktreeHead !== undefined) {
-      try {
-        const sha = await backend.worktreeHead(worktree);
-        if (sha !== undefined && sha.length > 0) return sha;
-      } catch {
-        // fall through to the branch-name fallback
+  async function resolveBranchHEAD(): Promise<string | undefined> {
+    if (worktree === undefined || backend.worktreeHead === undefined) return undefined;
+    try {
+      const sha = await backend.worktreeHead(worktree);
+      if (sha !== undefined && sha.length > 0) {
+        return sha;
       }
+      console.warn(
+        "[orchestrator] optional branchHEAD read returned empty (omit)",
+      );
+      return undefined;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] optional branchHEAD read failed (omit): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return undefined;
     }
-    return worktree.branch;
   }
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
@@ -3215,7 +2248,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * After S1 (stateDir known):    flush any buffered entries first, then write.
    */
   async function emitLedger(
-    s: StepId,
+    s: SliceStepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
@@ -3228,14 +2261,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
-    repairMovementPaths?: ReadonlyArray<string>,
     monitorHandle?: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
+    // #955: record seat model on agent steps so resume identity is ledger truth.
+    const stepModelSlug = isWorkerStep(s) ? stepSpecs[s].model : undefined;
     const entry = buildPersistentEntry({
       step: s,
       output,
+      runId,
       sessionId: stepSessionId ?? sessionId,
       prompt_hash: ph,
       branchHEAD,
@@ -3243,14 +2278,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       handoffStatus,
       escalationKind,
       findingDispositions,
-      repairMovementPaths,
       stopSummary,
       monitorHandle,
-      ...(s === "S9" ? { onlineReviewRound } : {}),
+      ...(stepModelSlug !== undefined ? { modelSlug: stepModelSlug } : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
-      step: StepId,
+      step: SliceStepId,
       fields: Pick<PersistentLedgerEntry, "ts" | "branchHEAD">,
     ): void => {
       for (let i = ledger.length - 1; i >= 0; i--) {
@@ -3274,10 +2308,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const buffered = pendingEntries[0]!;
       await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
-      mirrorInMemoryLedgerPersistedFields(buffered.step, {
-        ts: buffered.ts,
-        branchHEAD: buffered.branchHEAD,
-      });
+      if (isStepId(buffered.step)) {
+        mirrorInMemoryLedgerPersistedFields(buffered.step, {
+          ts: buffered.ts,
+          branchHEAD: buffered.branchHEAD,
+        });
+      }
     }
     await backend.writeLedger(entry, stateDir);
     mirrorInMemoryLedgerPersistedFields(s, {
@@ -3292,7 +2328,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * {@link monitorHandleFromLedger} while the worker is still running.
    */
   async function persistMonitorHandleAtSpawn(
-    s: StepId,
+    s: SliceStepId,
     handle: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     if (stateDir === undefined) return;
@@ -3301,6 +2337,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const entry: PersistentLedgerEntry = {
       step: s,
       event: "worker_monitor_spawned",
+      runId,
       sessionId,
       prompt_hash: ph,
       branchHEAD,
@@ -3322,16 +2359,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * nor raw-reject. The in-memory ledger still records the step regardless.
    *
    * integ-cmr m2 r1 (Finding 1): `handoffStatus` is threaded through so the
-   * error-path terminal S8 is persisted TAGGED (handoffStatus:'error'). Without
+   * error-path terminal S8 is persisted TAGGED (handoffStatus:'failed'). Without
    * the tag, planResume Case 3a (which only reports a terminal status when
    * lastEntry.handoffStatus !== undefined) falls through to Case 3b/4 and routes
    * from the prior NON-S8 step — re-entering the fix loop on a no-progress bail,
-   * or reporting SUCCESS for a push-fail. The terminal status must be recorded
+   * or reporting completed for a push-fail. The terminal status must be recorded
    * on disk, not inferred. Non-terminal best-effort persists (the failing step)
    * pass handoffStatus=undefined, matching emitLedger's "undefined for non-S8".
    */
   async function persistBestEffort(
-    s: StepId,
+    s: SliceStepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
@@ -3345,7 +2382,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
-    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -3357,19 +2393,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         findingDispositions,
         escalationKind,
         stopSummary,
-        repairMovementPaths,
       );
-    } catch {
-      // Swallow: error termination must not be derailed by a ledger I/O fault.
+    } catch (err) {
+      // ID-005: secondary terminal-write failure must not mask the primary
+      // fate, but must still land in stderr/diagnostics (not empty-catch).
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[orchestrator] persistBestEffort writeLedger(${s}) failed: ${msg}`,
+      );
     }
   }
 
   /**
-   * Build an S8(status=error) termination from the failing step + caught error.
+   * Build an S8 public-failed termination from the failing step + caught error.
    *
    * #3: records BOTH the failing step and the terminal S8 in the in-memory
    * ledger AND persists them (best-effort) to the sibling state dir, so a
-   * resume reading the PERSISTED ledger sees the error termination instead of
+   * resume reading the PERSISTED ledger sees the failed termination instead of
    * the failing step + S8 vanishing.
    *
    * PRE-WORKTREE failures are an unpersistable special case (integ-cmr base r2,
@@ -3377,23 +2417,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * persistence is inherently impossible (the resume contract needs a worktree
    * sibling dir). This covers BOTH:
    *   - S0 fetchIssueMeta throw, AND
-   *   - S1 PRE-worktree throws: fetchIssueSnapshot / prepareWorktree (which run
+   *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
-   * S8(error), but NOTHING is persisted. Only POST-worktree S1 (writeSnapshot,
-   * which runs after stateDir is fixed) and later steps persist their error
-   * termination. So this contract does NOT promise "every S1 throw is persisted"
-   * — only post-worktree ones.
+   * public failed, but NOTHING is persisted. Only POST-worktree S1 (after
+   * stateDir is fixed) and later steps persist their failed termination.
+   * So this contract does NOT promise "every S1 throw is persisted" — only
+   * post-worktree ones.
    */
   async function errorTermination(
-    failedStep: StepId,
+    failedStep: SliceStepId,
     err: unknown,
     opts?: {
       recordInMemory?: boolean;
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
-      repairMovementPaths?: ReadonlyArray<string>;
       stopSummary?: StopSummary;
+      cause?: PublicFailedCause;
     },
   ): Promise<RunResult> {
     // integ-cmr base r2 (D): split the two concerns the old single
@@ -3420,6 +2460,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
     const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
+    // #942 — non-completed terminals must speak externally (not only return
+    // errorPackage). stopForCoderRec already console.errors; keep the same
+    // invariant on the shared errorTermination helper so mid-run crashes are
+    // visible without parsing the RunResult.
+    console.error(`[orchestrator] ${failedStep} failed: ${reason}`);
+
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
     // best-effort persist is still attempted so disk and memory agree (D),
@@ -3432,9 +2478,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ...(opts?.findingDispositions !== undefined
             ? { findingDispositions: opts.findingDispositions }
             : {}),
-          ...(opts?.repairMovementPaths !== undefined
-            ? { repairMovementPaths: opts.repairMovementPaths }
-            : {}),
         });
       }
       await persistBestEffort(
@@ -3446,16 +2489,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         opts?.findingDispositions,
         undefined,
         undefined,
-        opts?.repairMovementPaths,
       );
     }
 
     // Terminal S8 entry — in-memory + persisted. The PERSISTED entry is TAGGED
     // with the terminal status (integ-cmr m2 r1, Finding 1): errorTermination is
-    // always an ERROR handoff, so the disk S8 must carry handoffStatus:'error';
-    // a re-feed then reports the true error via planResume Case 3a instead of
+    // always a failed handoff, so the disk S8 must carry handoffStatus:'failed';
+    // a re-feed then reports the true failed via planResume Case 3a instead of
     // falling through to Case 3b/4 (which would re-route from the prior NON-S8
-    // step — reporting a spurious success). The in-memory entry stays untagged,
+    // step — reporting a spurious completed). The in-memory entry stays untagged,
     // matching the normal handoff path (only the disk ledger is the resume truth;
     // the in-memory ledger is the live result).
     ledger.push({ step: "S8", stopSummary });
@@ -3463,7 +2505,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       "S8",
       undefined,
       undefined,
-      "error",
+      "failed",
       undefined,
       undefined,
       undefined,
@@ -3474,106 +2516,129 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // (typically none before S4). ADR 0030 keeps per-slice review/fix work in
     // runner-visible S3/S4/S5/S6 steps; deferral tracking belongs to the later
     // family/integrated gates, not this error path.
-    return {
-      status: "error",
+    const cause: PublicFailedCause =
+      opts?.cause ??
+      (reason.startsWith("record_persist_failed")
+        ? "record_persist_failed"
+        : "runner_internal_error");
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+    return failedRunResult({
+      cause,
       errorPackage,
       stepLedger: ledger,
       stopSummary,
-      deferredFindings,
-    };
+    });
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Terminal ESCALATE handoff for a NON-agent worker step (S7 ship).
-   *
-   * The S2 build worker routes its `escalated` worker result through
-   * route()'s global escalate edge (via `workerResultToStep` → output.escalate).
-   * S7 is a runner-action boundary route() always maps to success, so a SHIP
-   * worker that escalates (gstack-ship STOP/HITL) must be turned into an
-   * S8(escalate) handoff HERE — not S8(error) (codex cmr R4 finding: a worker
-   * `{kind:"escalated"}` must keep escalate semantics). Mirrors errorTermination's
-   * ledger discipline but tags the S8 entry 'escalate', so a re-feed's planResume
-   * Case 3a reports `terminalStatus:"escalate"` (an honest escalate handoff).
-   *
-   * The worker `sessionId` is PERSISTED on the failing-step entry (resume truth).
-   * A later append-only answer row reopens S7 through `planResume`: the stale
-   * S7/S8 pause is truncated from the in-memory ledger and the ship worker is
-   * re-dispatched with the human answer in its focus file.
-   */
+  /** Transport a child worker's decision/failure park without judging its prose. */
   async function escalateTermination(
-    failedStep: StepId,
+    failedStep: SliceStepId,
     escalation: Escalation,
     sessionId?: string,
     escalationKind: EscalationKind = "decision",
+    output?: StepOutput,
+    stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
-    const stopSummary = stopSummaryForEscalation(escalation);
+    const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
+    // #942 — same non-completed loudness invariant as errorTermination /
+    // stopForCoderRec: operators must see the park without parsing RunResult.
+    console.error(
+      `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+    );
     if (failedStep !== "S8") {
-      ledger.push({ step: failedStep });
+      // #955 r7: escalated agent rows must carry modelSlug (creator identity)
+      // for human-answer resume — same source as main-path emitLedger /
+      // in-memory ledger push (isWorkerStep → seat model). Without it, r5's
+      // identity gate falls back to the current seat and can false-match after
+      // Coder-Rec seat swaps. persistBestEffort → emitLedger already stamps
+      // modelSlug for worker steps; in-memory RunResult.stepLedger must match.
+      const escalatedModelSlug = isWorkerStep(failedStep)
+        ? stepSpecs[failedStep].model
+        : undefined;
+      ledger.push({
+        step: failedStep,
+        ...(output !== undefined ? { output } : {}),
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        ...(escalatedModelSlug !== undefined
+          ? { modelSlug: escalatedModelSlug }
+          : {}),
+      });
       // Persist the failing step carrying its REAL worker session id (5th arg —
       // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
       // persisted ledger has the true session id for the human-answer resume.
-      //
-      // integ-cmr int-r2 (C-int2-1): for an escalating S7 the failing-step entry
-      // must ALSO carry the ship.md CONTENT hash (the same anti-tampering audit the
-      // happy S7 entry carries), not the degraded step-name hash. S7 is the only
-      // runner-action step dispatched via a WorkerSpec (shipWorkerSpec); agent
-      // steps already escalate through their own dispatch path, so deriving the
-      // ship promptFile only for S7 keeps every other failing step's persist
-      // unchanged (promptFile undefined → step-name hash, as before).
-      const failedPromptFile =
-        failedStep === "S7" ? SHIP_PROMPT_FILE : undefined;
-      await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
+      // modelSlug is written by emitLedger for worker steps (same seat model).
+      await persistBestEffort(failedStep, output, undefined, undefined, sessionId);
     }
+    // #942 ID-001: decision parks are public parked/2; failure escalations are failed/1.
+    const publicStatus = escalationKind === "decision" ? "parked" : "failed";
     ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
       "S8",
       undefined,
       undefined,
-      "escalate",
+      publicStatus,
       undefined,
       undefined,
       escalationKind,
       stopSummary,
     );
+    const errorPackage = {
+      failedStep,
+      reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+      branchHead: worktree?.branch,
+    };
+    // #1007: decision escalate → park+terminal (notify via park); failure → terminal.
+    // Shared helper so every escalateTermination consumer dual-writes progress.
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: publicStatus,
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary ?? escalation.diagnosis ?? escalation.reason,
+    });
+    if (publicStatus === "failed") {
+      return failedRunResult({
+        cause: "runner_internal_error",
+        errorPackage,
+        stepLedger: ledger,
+        stopSummary,
+      });
+    }
     return {
-      status: "escalate",
-      // Surface the escalation as the error package so the caller can read the
-      // reason/diagnosis (resume指引) — same diagnostic channel, escalate status.
-      errorPackage: {
-        failedStep,
-        reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
-        branchHead: worktree?.branch,
-      },
+      status: "parked",
+      errorPackage,
       stepLedger: ledger,
       stopSummary,
-      deferredFindings,
     };
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── #255: idempotent resume ───────────────────────────────────────────────
-  // Before anything else, check whether this issue has resume residue (an
-  // existing resident worktree + persisted ledger from a crash or an escalate).
+  // ── #255 / #936: idempotent resume from Scene Action discovery ───────────
+  // discoverResidentScene already ran at ignition (ID-005 Recovery first).
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
-  // (resume truth), reuse the worktree, clean uncommitted residue, and continue
-  // from the recorded breakpoint — no re-cut from S0, no re-running done steps.
-  //
-  // findResumeState is consulted FIRST: a resumed run already passed the S0
-  // gate on its first pass, so it must not re-gate. A backend transport failure
-  // here becomes an error handoff (consistent with #252), via errorTermination
-  // (base integ-cmr): no worktree exists yet, so — like the S0 fetch path —
-  // nothing is persistable, but the in-memory S8 + S8(error) result are still
-  // recorded so the caller gets a clean error package rather than a raw reject.
-  let resumeState: ResumeState | undefined;
-  try {
-    resumeState = await backend.findResumeState(issueNumber);
-  } catch (err) {
-    return await errorTermination("S0", err);
-  }
+  // (resume truth), reuse the worktree, and continue from the recorded
+  // breakpoint — no re-cut from S0, no re-running done steps.
+  logDriverStage("reconcile", undefined, { issue: issueNumber });
+  // #1007: progress feed already bound at scene recovery when resident stateDir
+  // was known; S1 still binds after prepareWorktree for fresh runs.
+  let resumeState: ResumeState | undefined =
+    scene.kind === "resident" ? scene.state : undefined;
+  const recordedRouteDegradations = new Set(
+    (resumeState?.ledger ?? [])
+      .filter((entry) => entry.event === "route_degraded")
+      .map((entry) => `${entry.droppedLeg}\0${entry.reason}`),
+  );
 
   // The runner drives the sequence; the agent never picks the next step.
-  let step: StepId = "S0";
+  let step: SliceStepId = "S0";
 
   // ── ADR 0030: runner-visible review/fix loop, no blind round cap ───────────
   // The runner dispatches S2/S3/S5/S6 as separate ledger-visible worker
@@ -3586,48 +2651,74 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // session (Sandcastle `resumeSession`) rather than a fresh `run()`. Used for
   // the escalate-resume case (the human answered; the build worker finishes in
   // its original memory-bearing session). Cleared after the step is dispatched once.
-  let resumeFor: { step: StepId; sessionId: string } | undefined;
+  // #955: `sessionModel` is the ledger-recorded creator of `sessionId` — the
+  // dispatch gate refuses to thread the id when the seat model differs.
+  let resumeFor:
+    | { step: SliceStepId; sessionId: string; sessionModel?: string }
+    | undefined;
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
   // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
   let resumeMonitorHandle:
     | import("./types.js").WorkerMonitorHandle
     | undefined;
 
+  /** #884: emit dispatch stage line once when first productive worker is entered. */
+  let dispatchStageLogged = false;
+
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
-    if (typeof backend.smokeModelRoute !== "function") {
-      const reason =
-        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
-      return {
-        status: "error",
+    const smokeFailed = (reason: string): RunResult => {
+      const stopSummary = infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          reason.includes("did not provide smokeModelRoute")
+            ? "provide a real model×pipe smoke executor before dispatching workers"
+            : reason.startsWith("route smoke failed:")
+              ? "repair the selected model×pipe tool smoke before dispatching workers"
+              : "rerun the route smoke or repair the selected model×pipe",
+      });
+      // #1007: smoke/startup fail — dual-write terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S0",
+        status: "failed",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
+      return failedRunResult({
+        cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: reason,
-          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
-        }),
-        deferredFindings: [],
-      };
+        stopSummary,
+      });
+    };
+    if (typeof backend.smokeModelRoute !== "function") {
+      return smokeFailed(
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      );
     }
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
     try {
+      logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
       currentCliVersions = backend.currentCliVersions
-        ? await backend.currentCliVersions(modelRoute)
+        ? await backend.currentCliVersions(
+            modelRoute,
+            activeRelayStep === undefined ? undefined : currentBillingPool,
+            activeRelaySmokeEntryKey(activeRelayStep, modelRoute),
+          )
         : {};
-      modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+      modelRoute = await backend.smokeModelRoute(
+        modelRoute,
+        currentCliVersions,
+        activeRelayStep === undefined ? undefined : currentBillingPool,
+        activeRelaySmokeEntryKey(activeRelayStep, modelRoute),
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return {
-        status: "error",
-        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: `route smoke failed: ${reason}`,
-          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
-        }),
-        deferredFindings: [],
-      };
+      return smokeFailed(`route smoke failed: ${reason}`);
     }
+    const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
+    modelRoute = degradation.route;
     const smokeFailure = routeSmokeFailure(
       modelRoute,
       Date.now(),
@@ -3635,16 +2726,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions,
     );
     if (smokeFailure !== undefined) {
-      return {
-        status: "error",
-        errorPackage: { failedStep: "S0", reason: smokeFailure },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: smokeFailure,
-          repairHint: "rerun the route smoke or repair the selected model×pipe",
-        }),
-        deferredFindings: [],
-      };
+      return smokeFailed(smokeFailure);
+    }
+    for (const dropped of degradation.dropped) {
+      console.error(
+        `[orchestrator] OPTIONAL CMR LEG DROPPED: ${dropped.slug}: ${dropped.reason}`,
+      );
+      const degradationKey = `${dropped.slug}\0${dropped.reason}`;
+      if (!recordedRouteDegradations.has(degradationKey)) {
+        const entry: PersistentLedgerEntry = {
+          step: "S0",
+          event: "route_degraded",
+          droppedLeg: dropped.slug,
+          reason: dropped.reason,
+          runId,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, "S0", backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        };
+        if (stateDir === undefined) pendingEntries.push(entry);
+        else await backend.writeLedger(entry, stateDir);
+        recordedRouteDegradations.add(degradationKey);
+      }
+    }
+    if (degradation.dropped.length > 0) {
+      console.info(
+        `[orchestrator] effective model route lineup\n${printableRouteLineup(modelRoute)}`,
+      );
     }
     routeSmokeChecked = true;
     return undefined;
@@ -3682,17 +2791,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
-    const plan =
-      (await planRecoveredLandedCoderProtocolFailure(
-        resumeLedger,
-        worktree,
-        backend,
-      )) ?? planResume(resumeLedger);
+    const plan = planResume(resumeLedger);
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
-    // in-flight CLI monitor handle from the persisted ledger so hang judge/kill
-    // can resume without global process-name matching.
+    // in-flight CLI monitor handle from the persisted ledger so observation +
+    // exact-handle adoption/terminate can resume without global process-name
+    // matching.
     resumeMonitorHandle = (() => {
       for (let i = resumeLedger.length - 1; i >= 0; i--) {
         const candidate = resumeLedger[i]!;
@@ -3719,109 +2824,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    for (const e of plan.priorLedger) {
-      if (e.step === "S7" && e.output?.kind === "ship") {
-        lastShipOutput = e.output;
-      }
-    }
-    // #600 r7: derive review-loop runtime from the FULL executable ledger before
-    // priorLedgerThroughLastShip drops superseded S9–S12 entries for display seed.
-    onlineReviewRound = onlineReviewRoundFromLedger(resumeLedger);
-    lastOnlineReviewFixCommitSha =
-      lastOnlineReviewFixCommitShaFromLedger(resumeLedger);
-    lastOnlineReviewRoundTrigger =
-      onlineReviewRoundTriggerFromLedger(resumeLedger);
-    lastOnlineReviewPendingRoundTrigger =
-      slicePendingRoundTriggerFromFixGap(resumeLedger);
-
-    const pendingGapRetrigger = lastOnlineReviewPendingRoundTrigger;
-    if (pendingGapRetrigger !== undefined && lastShipOutput?.pr != null) {
-      const resumeRepo = defaultRepo();
-      if (isLiveGithubReviewPollEnabled(lastShipOutput.pr, resumeRepo)) {
-        try {
-          const ensured = ensureOnlineReviewRetriggerAfterFixGap({
-            sh: ghSh,
-            repo: resumeRepo,
-            prUrl: lastShipOutput.pr,
-            gapTrigger: pendingGapRetrigger,
-          });
-          lastOnlineReviewRoundTrigger = ensured.roundTrigger;
-          lastOnlineReviewPendingRoundTrigger = undefined;
-          const retriggerMarker = {
-            step: "S10" as const,
-            event: "online_review_round_retrigger" as const,
-            roundTriggerHeadOid: ensured.roundTrigger.headOid,
-            roundTriggerAt: ensured.roundTrigger.triggeredAt,
-            onlineReviewRound,
-          };
-          ledger.push(retriggerMarker);
-          try {
-            await backend.writeLedger(
-              {
-                ...retriggerMarker,
-                sessionId,
-                prompt_hash: await hashPrompt(undefined, "S10", backend),
-                branchHEAD:
-                  lastOnlineReviewFixCommitSha ?? ensured.roundTrigger.headOid,
-                ts: new Date().toISOString(),
-              },
-              stateDir,
-            );
-          } catch (err) {
-            // Ledger write failed but gap may still be recoverable — park in-band.
-            return {
-              status: "escalate",
-              stepLedger: ledger,
-              stopSummary: {
-                reason: "infra_failure",
-                summary: `online review fix-gap retrigger marker persist failed: ${err instanceof Error ? err.message : String(err)}`,
-                repairHint:
-                  "re-feed the issue — fix-gap recovery will retry bot re-trigger persistence",
-              },
-              deferredFindings,
-            };
-          }
-        } catch (err) {
-          // Same-type as live S10 retrigger fail (R3 P1): do not S8(error) — leave
-          // pending gap for a later re-feed instead of stranding a fixed branch.
-          lastOnlineReviewPendingRoundTrigger = pendingGapRetrigger;
-          return {
-            status: "escalate",
-            stepLedger: ledger,
-            stopSummary: {
-              reason: "infra_failure",
-              summary: `online review fix-gap re-trigger failed on resume: ${err instanceof Error ? err.message : String(err)}`,
-              repairHint:
-                "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
-            },
-            deferredFindings,
-          };
-        }
-      }
-    }
-
-    // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
-    // must replay the prior S4 adjudications, because an S6 reviewer may carry an
-    // empty `findings[]` plus `still-active` dispositions for blockers inherited
-    // from older rounds. Reclassifying only the previous reviewer payload would
-    // treat absence as closure.
-    const replayedS4 = replayS4AdjudicationState(plan.priorLedger);
-    pendingBlockingFindings = [...replayedS4.blocking];
-    pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
-    deferredFindings = [...replayedS4.deferred];
-    findingDispositions = [...replayedS4.findingDispositions];
-    noProgressByFindingIdentityKey.clear();
-    for (const [key, count] of replayedS4.noProgressCounts) {
-      noProgressByFindingIdentityKey.set(key, count);
-    }
-    for (const key of plan.continueFixingRepair?.matchingIdentityKeys ?? []) {
-      noProgressByFindingIdentityKey.delete(key);
-    }
+    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
+    // prior ledger (judge continue + residual historical S4/reviewer open-count).
+    // Each projection replaces the pending blocker set; prose dispositions do
+    // not reopen findings. Terminal flips include refute→refuted and
+    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
+    // a crash/resume after S4 still hands the fixer host paths (materialised at
+    // landing).
+    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
+    pendingBlockingFindings = [...rebuiltBlocking.blocking];
+    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
+    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
+    findingDispositions = [...rebuiltBlocking.findingDispositions];
+    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
-    const latestRepair = latestCoderRepair(plan.priorLedger);
-    lastCoderRepairEvidence = latestRepair.repairEvidence;
-    lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
-
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
     // resume recomputes them from the persisted S5 coder row + ledger HEADs.
@@ -3833,40 +2850,64 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       rebuilt.preexistingAssertionTouched;
     refusedFindingIdentityKeysForReverify =
       rebuilt.refusedFindingIdentityKeys;
+    refuseRecordsForReverify = rebuilt.refuseRecords;
 
-    if (
-      (plan.resumeStep === "S9" || plan.resumeStep === "S10") &&
-      lastShipOutput !== undefined &&
-      onlineReviewLanding === undefined
-    ) {
-      const reconstructed = reconstructOnlineReviewLandingForResume({
-        fullLedger: resumeLedger,
-        ship: lastShipOutput,
-        stateDir,
-        round: onlineReviewRound,
-      });
-      if (reconstructed?.onlineReviewSnapshot !== undefined) {
-        onlineReviewLanding = reconstructed;
+    // #924: rebuild coder session continuity from the last S2/S5 ledger row so
+    // crash/re-feed still resumes the same agent session when models match.
+    // #955: prefer ledger `modelSlug` (creator identity); fall back to the seat
+    // of the recorded step only for legacy rows that predate the field.
+    // #955 r7: only real agent dispatch rows — bookkeeping/audit events
+    // (session_continuity_lost, worker_monitor_spawned, …) also carry step +
+    // sessionId but must not resurrect a dropped id after r5 identity loss.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (isBookkeepingEntry(entry)) continue;
+      if (
+        (entry.step === "S2" || entry.step === "S5") &&
+        typeof entry.sessionId === "string"
+      ) {
+        coderSessionId = entry.sessionId;
+        coderSessionModel =
+          typeof entry.modelSlug === "string"
+            ? entry.modelSlug
+            : entry.step === "S5"
+              ? stepSpecs.S5.model
+              : stepSpecs.S2.model;
+        break;
+      }
+    }
+    // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
+    // #955 r7: same bookkeeping exclusion as coder rebuild above.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (isBookkeepingEntry(entry)) continue;
+      if (
+        isJudgeSeat({ step: entry.step }) &&
+        typeof entry.sessionId === "string"
+      ) {
+        judgeSessionId = entry.sessionId;
+        judgeSessionModel =
+          typeof entry.modelSlug === "string"
+            ? entry.modelSlug
+            : entry.step === "S6"
+              ? stepSpecs.S6.model
+              : stepSpecs.S3.model;
+        break;
       }
     }
 
     if (plan.terminalStatus !== undefined) {
-      const resumeConvergedHead =
-        onlineReviewResumeHeadKeyFromLedger(ledger) ?? lastShipOutput?.prHead;
-      const resumeAutoMergePending =
-        plan.terminalStatus === "success" &&
-        typeof lastShipOutput?.pr === "string" &&
-        sliceAutoMergePending(ledger, resumeConvergedHead);
-      if (!resumeAutoMergePending) {
       // The prior run already reached a terminal handoff that is NOT being
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
-      // so cleanResidue is intentionally NOT run here (a residue-clean failure
-      // must not flip an already-finished run's reported status). Report the
-      // TRUE terminal status (success / error / escalate), never a hardcoded
-      // success (#255: a prior error/escalate must not masquerade as success).
-      if (plan.terminalStatus === "error") {
+      // so no destructive cleanup is run here (a cleanup failure must not flip
+      // an already-finished run's reported status). Report the
+      // TRUE public terminal status (completed | parked | failed), never a
+      // hardcoded completed (#255/#942: a prior failed/parked must not masquerade).
+      if (plan.terminalStatus === "failed") {
         const reason =
-          "prior run terminated with an error handoff (re-fed after completion)";
+          plan.terminalCause === "resume_state_invalid"
+            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+            : "prior run terminated with a failed handoff (re-fed after completion)";
         const errorPackage: ErrorPackage = {
           failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
           reason,
@@ -3874,67 +2915,52 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         const stopSummary =
           latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return {
-          status: "error",
+        // #1007: late durable terminal replay (e.g. repairIntent path) still emits.
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return failedRunResult({
+          cause: plan.terminalCause ?? "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-          deferredFindings,
-        };
+        });
       }
       const stopSummary: StopSummary =
-        plan.terminalStatus === "success"
+        plan.terminalStatus === "completed"
           ? {
               reason: "already_done",
-              summary: "prior run already reached a success handoff",
+              summary: "prior run already reached a completed handoff",
             }
           : latestLedgerStopSummary(ledger) ?? {
               reason: "spec_conflict",
               summary: "prior run is paused at an unanswered escalation",
               repairHint: "answer the escalation and rerun",
             };
+      // #1007: late durable completed/parked replay — emit terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S8",
+        status: plan.terminalStatus,
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return {
         status: plan.terminalStatus,
-        branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
+        branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
-        deferredFindings,
       };
-      }
-      if (resumeConvergedHead !== undefined && lastShipOutput !== undefined) {
-        const autoMerge = await runSliceAutoMergeHost(
-          lastShipOutput,
-          resumeConvergedHead,
-        );
-        if (
-          autoMerge.kind === "escalate" ||
-          autoMerge.kind === "park_not_ready"
-        ) {
-          return {
-            status: "escalate",
-            stepLedger: ledger,
-            stopSummary: autoMerge.stopSummary,
-            deferredFindings,
-          };
-        }
-        return {
-          status: "success",
-          branch: worktree.branch,
-          stepLedger: ledger,
-          stopSummary: successSummaryForCurrentState({
-            deferredFindings,
-            findingDispositions,
-          }),
-          deferredFindings,
-        };
-      }
     }
 
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
-    // HEADs is legal; reset/cleanResidue is not — uncommitted work + partial
-    // commits + `.relay-focus.md` are the payload. Relay state is read from the
-    // FULL resume ledger (not the post-ship display trim), so S9+/relay markers
-    // survive priorLedgerThroughLastShip.
+    // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
+    // commits + baton state are the payload. Relay state is read from the
+    // FULL resume ledger preserves every relay marker.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
     // the persisted reviewer output.
@@ -3942,54 +2968,86 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
     if (typeof plan.resumeSessionId === "string") {
-      resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
+      resumeFor = {
+        step: plan.resumeStep,
+        sessionId: plan.resumeSessionId,
+        ...(typeof plan.resumeSessionModel === "string"
+          ? { sessionModel: plan.resumeSessionModel }
+          : {}),
+      };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+    // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
+    // into S5 landing only. Runner still does not filter blockingFindings.
+    const repairScope = plan.continueFixingRepair?.event.findingScope;
+    if (repairScope !== undefined) {
+      pendingFixerFindingScope = repairScope;
+    }
 
     // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
-    // (including the S6-count advance position from the restored ledger) before
-    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
-    // sees undefined body → skippedForMissingMarking → silent preset revert.
-    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
-    // then snapshot) — never errorTerminate / poison the resume terminal state.
+    // (first seat only — ADR 0132 deleted S6-count rotation) before the first
+    // dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute sees
+    // undefined body → skippedForMissingMarking → silent preset revert.
+    // #936: Coder-Rec body comes from live meta only — snapshot dual court deleted.
+    // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely — never
+    // errorTerminate / poison the resume terminal state.
+    // #934 N1: meta throw ≠ successful empty body (legal no-marking → preset).
+    let resumeCoderRecMetaFailed = false;
     try {
       const meta = await backend.fetchIssueMeta(issueNumber);
       if (typeof meta.body === "string" && meta.body.length > 0) {
         coderRecIssueBody = meta.body;
       }
     } catch {
-      // fall through to snapshot
-    }
-    if (
-      (coderRecIssueBody === undefined || coderRecIssueBody.length === 0)
-    ) {
-      try {
-        const snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        if (snapshot.body.length > 0) {
-          coderRecIssueBody = snapshot.body;
-        }
-      } catch {
-        // fall through — continue with route preset
-      }
+      resumeCoderRecMetaFailed = true;
     }
     if (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) {
       console.info(
-        "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
+        resumeCoderRecMetaFailed
+          ? "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset"
+          : "[orchestrator] Coder-Rec resume: no Coder-Rec marking in issue body; continuing with route preset",
       );
     }
-    const coderRecPolicy = await applyCoderRecSelection(
-      coderRecRoundsFromLedger(ledger),
-    );
+    const coderRecPolicy = await applyCoderRecSelection();
     if (coderRecPolicy?.kind === "stop") {
-      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+      return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
-    const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
+
+    // #926 / #1002 — rebuild judge-advanced sticky **coderFix** seat from the
+    // latest successful coder_advance row (before resource-relay, which still
+    // wins when present). #934 R7 F3: re-admit tight after sticky re-hold.
+    for (let i = resumeLedger.length - 1; i >= 0; i--) {
+      const row = resumeLedger[i]!;
+      if (row.event === "coder_advance" && typeof row.toModelId === "string") {
+        const advanced = lookupCoderRosterEntry(row.toModelId);
+        const slug = advanced?.slug ?? row.toModelId;
+        stickyJudgeAdvanceCoderSlug = slug;
+        if (modelRoute.slots.coderFix !== slug) {
+          const admitted = admitRelayBaton(modelRoute, { slug }, "S5");
+          if (admitted.kind === "stop") {
+            return await stopForCoderRecTightRoutePolicy(admitted.escalation);
+          }
+          modelRoute = admitted.route;
+          stepSpecs = stepSpecsForRoute(modelRoute);
+          routeSmokeChecked = false;
+        }
+        break;
+      }
+    }
+
+    const relayResume = resumeRelayFromLedger(
+      resumeLedger.filter(
+        (entry): entry is PersistentLedgerEntry & { readonly step: StepId } =>
+          isStepId(entry.step),
+      ),
+      plan.resumeStep,
+    );
 
     // #686 — after #767 has rebuilt the base Coder-Rec route, resume from a
     // recorded baton before re-entering the interrupted step.
     if (relayResume !== undefined) {
       const batonEntry = lookupCoderRosterEntry(relayResume.toModelId);
-      applyRelayBaton(
+      const applied = applyRelayBaton(
         {
           modelId: relayResume.toModelId,
           slug: batonEntry?.slug ?? relayResume.toModelId,
@@ -3997,17 +3055,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
-      if (worktree.path !== undefined) {
-        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
-        if (existsSync(focus)) activeRelayFocusPath = focus;
+      if (applied.kind === "stop") {
+        return await stopForCoderRecTightRoutePolicy(applied.escalation);
       }
+      activeRelayBrief = renderEphemeralRelayBrief(relayResume);
     }
   }
 
   // The step machine has no fixed bound: route() always terminates the run via a
-  // handoff (success/escalate/error). ADR 0030 makes the per-slice review/fix
-  // loop visible in S3/S4/S5/S6, but still rejects a blind round cap; a `for (;;)`
-  // keeps the absence of any "数到 N 就停" cap explicit (US#18).
+  // public handoff (completed|parked|failed). ADR 0030 makes the per-slice
+  // review/fix loop visible in S3/S4/S5/S6, but still rejects a blind round
+  // cap; a `for (;;)` keeps the absence of any "数到 N 就停" cap explicit (US#18).
   orchestratorStepLoop: for (;;) {
     if (!routeSmokeChecked && step !== "S0") {
       const smokeResult = await ensureRouteSmoke();
@@ -4023,7 +3081,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let stepSessionId: string | undefined;
     // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
     // when the worker was spawned as a host-side CLI process. Persisted on the
-    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    // ledger so resume can rebuild the monitor handle for log last-activity without global pgrep.
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
     let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
@@ -4041,7 +3099,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         //   (a) ready-for-agent label
         //   (b) no sub-issues (leaf slice, not a parent/epic)
         //   (c) all blocked_by dependencies are closed
-        // A gate violation terminates as structured S8(error): the runner still
+        // A gate violation terminates as structured S8(failed): the runner still
         // stops before preparing a worktree or dispatching an agent step, but AFK
         // callers get the unified terminal result / stop summary instead of a raw
         // process error.
@@ -4052,12 +3110,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // the brief, when present, is just the most-authoritative part of that.
         let meta: IssueMeta;
         try {
+          // #884: admission = S0 input gate / live issue metadata fetch.
+          logDriverStage("admission", undefined, {
+            issue: issueNumber,
+          });
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
+          // #934 ID-003: GitHub auth needs external human login → typed decision
+          // gate (same class as family admission), not infra errorTermination.
+          if (isGithubAuthFailure(err)) {
+            const diagnosis = err instanceof Error ? err.message : String(err);
+            return await escalateTermination(
+              "S0",
+              {
+                reason: "GitHub authentication required",
+                diagnosis,
+              },
+              undefined,
+              "decision",
+              undefined,
+              decisionGateParkStopSummary({
+                summary: `GitHub authentication required: ${diagnosis}`,
+                repairHint:
+                  "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+              }),
+            );
+          }
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
           // the resume contract needs a worktree's sibling dir). errorTermination
           // records the in-memory S8 and persists only if stateDir is resolved.
-          return await errorTermination("S0", err);
+          // #942 / #934 ID-001: live metadata throw is issue_metadata_unavailable
+          // (not the default runner_internal_error).
+          return await errorTermination("S0", err, {
+            cause: "issue_metadata_unavailable",
+          });
         }
 
         if (meta.isClosed) {
@@ -4091,7 +3177,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // commander hands that ledger-merged set down via `family.mergedBlockers`;
         // those are SATISFIED, so a just-released child is not re-rejected by its
         // own S0 (the agy R2实锤 deadlock). This is an ADDED family-mode derivation
-        // that ONLY narrows the set: standalone runs (no `family`) have an empty
+        // that ONLY narrows the set: focused tests without `family` have an empty
         // `mergedBlockers`, so `openBlockedBy` below is byte-for-byte
         // `meta.openBlockedBy` and the original GitHub-closed gate is unchanged. A
         // blocker NOT ledger-merged (e.g. an external dependency) stays open and
@@ -4112,11 +3198,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
         // route once (not the preset, then a full re-smoke after mutation).
-        // Mid-loop advance still re-smokes via the S2/S5 path below.
+        // S2/S5 re-apply first-seat stay-put below (no round rotation).
         coderRecIssueBody = meta.body;
-        const coderRecPolicy = await applyCoderRecSelection(0);
+        const coderRecPolicy = await applyCoderRecSelection();
         if (coderRecPolicy?.kind === "stop") {
-          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
         }
 
         const smokeResult = await ensureRouteSmoke();
@@ -4126,58 +3212,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S1": {
-        // S1 load_context — runner action: full snapshot → resident worktree
-        // (base=`sliceBase`: "main" standalone, the family base in family mode —
-        // ADR 0022 decision 7) → write snapshot in (clean-room).
+        // S1 load_context — prepare resident worktree (base=`sliceBase`).
+        // #936 / #934 ID-002: snapshot dual court deleted — workers live-fetch
+        // issue truth; ledger is the only durable court after worksite exists.
         //
-        // integ-cmr base r2 (C): the first two S1 sub-steps run BEFORE the
-        // worktree exists, so there is no sibling stateDir yet — their error
-        // terminations are UNPERSISTABLE (same special case as S0 fetch). Only
-        // writeSnapshot below (after deriveStateDir) persists. This contract
-        // does NOT claim "every S1 throw is persisted".
-        let snapshot: IssueSnapshot;
-        try {
-          snapshot = await backend.fetchIssueSnapshot(issueNumber);
-        } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
-          return await errorTermination("S1", err);
-        }
+        // integ-cmr base r2 (C): prepareWorktree runs BEFORE the worktree
+        // exists, so there is no sibling stateDir yet — its error termination
+        // is UNPERSISTABLE (same special case as S0 fetch).
         try {
           worktree = await backend.prepareWorktree(issueNumber, sliceBase);
         } catch (err) {
-          // PRE-worktree throw → unpersistable; S8(error) in-memory only.
+          // PRE-worktree throw → unpersistable; S8(failed) in-memory only.
           return await errorTermination("S1", err);
         }
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
-        // soon as the worktree exists — BEFORE writeSnapshot — so that even a
-        // writeSnapshot failure can persist its error termination to the ledger
-        // (#3: error paths must persist, not vanish on resume).
+        // soon as the worktree exists so later error terminations persist.
         stateDir = deriveStateDir(worktree.path, issueNumber);
-        const sourceAuthFailure = untrustedExecutableInstructionSummary(snapshot);
-        if (sourceAuthFailure !== undefined) {
-          return await errorTermination(
-            "S1",
-            new Error(`source authentication failed: ${sourceAuthFailure.summary}`),
-            { stopSummary: sourceAuthFailure },
-          );
-        }
-        try {
-          await backend.writeSnapshot(worktree, snapshot);
-        } catch (err) {
-          return await errorTermination("S1", err);
-        }
-        // #767: if S0 lacked a body (lightweight fake / older meta), take it
-        // from the S1 snapshot and apply Coder-Rec before S2.
-        if (
-          (coderRecIssueBody === undefined || coderRecIssueBody.length === 0) &&
-          snapshot.body.length > 0
-        ) {
-          coderRecIssueBody = snapshot.body;
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
-          if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+        // #1007: bind progress feed to child ledger when family has not already.
+        {
+          const existing = getProgressBroadcastConfig();
+          if (existing.ledgerDir === undefined) {
+            configureProgressBroadcast({ ledgerDir: stateDir });
           }
         }
         break;
@@ -4187,25 +3242,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S3":
       case "S5":
       case "S6": {
-        // ADR 0030 productive steps:
-        //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
-        //   S6 fresh read-only full-diff re-review.
-        // Normal fix rounds are fresh runStep dispatches (git-truthing kept),
-        // never resumeSession. resumeSession is only the crash/escalate resume
-        // path when `resumeFor` carries a recorded session id.
+        // Productive steps:
+        //   S2 coder implement, S3 judge establish, S5 coder fix,
+        //   S6 judge resume (#925).
+        // #924: S2 establishes a coder session; S5 rounds resume it (same
+        // model). #925: S3 establishes a judge session; S6 rounds resume it.
+        // Crash/escalate `resumeFor` still wins when set.
+        // #1007 / #975 ④: every productive step gets an issue-numbered stage line
+        // (and progress.jsonl row when feed is configured). First entry also
+        // flips dispatchStageLogged for any callers that still gate on it.
+        logDriverStage("dispatch", `step=${step}`, {
+          issue: issueNumber,
+          step,
+        });
+        dispatchStageLogged = true;
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        // #767: before each coder dispatch, re-select from Coder-Rec using the
-        // number of completed S6 fix rounds as the non-convergence counter.
-        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
-        // top-of-loop check already ran for this iteration.
+        // #767 / ADR 0132: before each coder dispatch, re-apply Coder-Rec
+        // (first seat / sticky stay-put — no round-threshold rotation).
+        // Re-smoke here if the route mutated, because the top-of-loop check
+        // already ran for this iteration.
         if (step === "S2" || step === "S5") {
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
+          const coderRecPolicy = await applyCoderRecSelection();
           if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
           if (!routeSmokeChecked) {
             const smokeResult = await ensureRouteSmoke();
@@ -4213,14 +3274,113 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         promptFile = stepSpecs[step].promptFile;
-        const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
-        const coderHeadBeforeStep =
-          expectedKind === "coder" ? gitHead(worktree) : undefined;
+        const expectedKind = stepSpecs[step].role as "coder" | "reviewer" | "verify";
+        let stepTelemetryDir: string | undefined;
         try {
+          stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+        } catch (err) {
+          console.warn(
+            `[orchestrator] telemetry dir resolution failed (fail-open): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        const coderHeadBeforeStep = expectedKind === "coder"
+          ? gitHead(worktree)
+          : undefined;
+        let commitTelemetryWorker:
+          | { readonly stepId: string; readonly modelSlug: string }
+          | undefined;
+        /** Set when catch applies #926 stay-put and breaks to topology. */
+        let reviewFixStayPutRouted = false;
+        try {
+          // Dispatch-bound (slug, pool) — same binding stepSpecToWorkerSpec uses.
+          // #955: resume admission must ask provider capability, not only slug match.
+          // Pool = relay baton when this step owns it; else undefined (registry provider).
+          const billingPool = relayBillingPoolForDispatch(step);
+          const seatModel = stepSpecs[step].model;
+          const seatResumeCapable = resumeCapableForSlug(seatModel, billingPool);
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
-            resumeSessionId = resumeFor.sessionId;
+            // #955: crash/escalate resumeFor — identity match AND capability.
+            // Stored session id may only re-enter the model binding that created
+            // it. Mismatch / incapable → fresh (answer still delivered below);
+            // never hand a foreign id to the provider; never silent-drop.
+            const sessionModel = resumeFor.sessionModel;
+            const identityOk =
+              sessionModel === undefined || sessionModel === seatModel;
+            if (identityOk && seatResumeCapable) {
+              resumeSessionId = resumeFor.sessionId;
+            } else {
+              const lostReason = !seatResumeCapable
+                ? `provider_incapable (seat=${seatModel})`
+                : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
+              console.warn(
+                `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
+                  `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
+              );
+              const lostEntry: PersistentLedgerEntry = {
+                step,
+                event: "session_continuity_lost",
+                reason: lostReason,
+                ...(typeof sessionModel === "string"
+                  ? { fromModelId: sessionModel }
+                  : {}),
+                toModelId: seatModel,
+                sessionId: resumeFor.sessionId,
+                runId,
+                // Bookkeeping reuses the run-level UUID; the dropped id is above.
+                prompt_hash: await hashPrompt(undefined, step, backend),
+                branchHEAD: await resolveBranchHEAD(),
+                ts: new Date().toISOString(),
+              };
+              ledger.push({
+                step,
+                event: "session_continuity_lost",
+                reason: lostReason,
+                ...(typeof sessionModel === "string"
+                  ? { fromModelId: sessionModel }
+                  : {}),
+                toModelId: seatModel,
+                sessionId: resumeFor.sessionId,
+                ts: lostEntry.ts,
+              });
+              try {
+                if (stateDir !== undefined) {
+                  await backend.writeLedger(lostEntry, stateDir);
+                } else {
+                  pendingEntries.push(lostEntry);
+                }
+              } catch (err) {
+                console.warn(
+                  `[orchestrator] session_continuity_lost ledger write failed (fail-open): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              }
+            }
             resumeFor = undefined;
+          } else if (
+            // #924: normal S2→S5 continuity (and multi-round S5) resumes the
+            // retained coder session when the seat model still matches AND the
+            // dispatch-bound provider can resume (owner B: sessionStorage).
+            (step === "S2" || step === "S5") &&
+            typeof coderSessionId === "string" &&
+            coderSessionModel !== undefined &&
+            seatModel === coderSessionModel &&
+            seatResumeCapable
+          ) {
+            resumeSessionId = coderSessionId;
+          } else if (
+            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge
+            // session only when the bound provider is resume-capable.
+            isJudgeSeat({ step }) &&
+            typeof judgeSessionId === "string" &&
+            judgeSessionModel !== undefined &&
+            seatModel === judgeSessionModel &&
+            seatResumeCapable
+          ) {
+            resumeSessionId = judgeSessionId;
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -4232,19 +3392,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
-          let attempts = 0;
           for (;;) {
-            attempts += 1;
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
-            try {
+            {
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
+                billingPool,
               );
-              const focusPath = relayFocusForDispatch(step);
+              if (expectedKind === "coder") {
+                commitTelemetryWorker = {
+                  stepId: workerSpec.id,
+                  modelSlug: workerSpec.model,
+                };
+              }
+              const relayBrief = relayBriefForDispatch(step);
+              const priorJudgeVerdicts = isJudgeSeat({ step })
+                ? priorJudgeVerdictRowsFromLedger(ledger)
+                : undefined;
               const dispatchCtx = {
+                runId,
                 worktree,
                 stateDir,
                 modelRoute,
@@ -4252,10 +3421,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
-                ...(relayBillingPoolForDispatch(step) !== undefined
-                  ? { billingPool: relayBillingPoolForDispatch(step) }
+                ...(billingPool !== undefined
+                  ? { billingPool }
                   : {}),
-                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                ...(relayBrief !== undefined ? { relayBrief } : {}),
+                // #925: prior judge verdict rows for session-loss recovery /
+                // trajectory (runner never synthesises a narrative summary).
+                ...(priorJudgeVerdicts !== undefined &&
+                priorJudgeVerdicts.length > 0
+                  ? { priorJudgeVerdicts }
+                  : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -4263,7 +3438,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
-                      blockingFindingCount: pendingBlockingFindings.length,
+                      // Declared open-count, never cargo-array length (sparse
+                      // findings[] must not zero out the control envelope).
+                      blockingFindingCount: pendingBlockingFindingCount,
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
@@ -4274,58 +3451,94 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               refusedFindingIdentityKeysForReverify,
                           }
                         : {}),
+                      // #927: refuseRecords cargo is landing-only (信封宪法).
                     }
                   : {}),
               };
+              // ADR 0138 / #978: when a judge continue established a live open
+              // set, packet body is required and is the sole content path.
+              // Unusable non-judge → S5 (raw artifacts only) may lack a body —
+              // that edge is intentionally body-less, never bare-findings pack.
+              if (
+                step === "S5" &&
+                (pendingBlockingFindingCount > 0 ||
+                  pendingBlockingFindingIdentityKeys.length > 0)
+              ) {
+                try {
+                  pendingFixPacketBody = requireFixPacketBody({
+                    status: "continue",
+                    fixPacketBody: pendingFixPacketBody,
+                  });
+                } catch (err) {
+                  const reason =
+                    err instanceof Error
+                      ? err.message
+                      : "judge continue missing fixPacketBody (ADR 0138)";
+                  return await errorTermination(step, new Error(reason), {
+                    output: lastOutput,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue must author non-empty fixPacketBody; " +
+                        "runner transports it verbatim and will not pack bare findings",
+                    }),
+                  });
+                }
+              }
               const landingPayload =
                 step === "S5" || step === "S6"
                   ? {
-                      blockingFindings: pendingBlockingFindings,
+                      // ADR 0138: sole packet content path (verbatim judge body).
+                      ...(pendingFixPacketBody !== undefined
+                        ? { fixPacketBody: pendingFixPacketBody }
+                        : {}),
+                      ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
+                        ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+                        : {}),
+                      ...(step === "S5" && pendingFixerFindingScope !== undefined
+                        ? { findingScope: pendingFixerFindingScope }
+                        : {}),
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
+                      // #919 M3 / #927: refuse traffic keys sole on thin ctx
+                      // (above); landing carries opaque refuseRecords only.
+                      // #927: four-reason + evidence cargo for judge re-adjudicate
+                      // (landing only — never mirrored onto thin DispatchContext).
                       ...(step === "S6" &&
-                      refusedFindingIdentityKeysForReverify.length > 0
-                        ? {
-                            refusedFindingIdentityKeys:
-                              refusedFindingIdentityKeysForReverify,
-                          }
+                      refuseRecordsForReverify !== undefined &&
+                      refuseRecordsForReverify.length > 0
+                        ? { refuseRecords: refuseRecordsForReverify }
                         : {}),
                     }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
-              // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
-              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6 (the
-              // SHIP S7 is a separate dispatch below, with its own retry predicate).
+              // crash (`failed` / throw, including StructuredOutputError after
+              // Sandcastle maxRetries exhaust) with a fresh worker at the same
+              // fixed position (#899). This loop dispatches agent steps S2/S3/S5/S6.
+              // S7 is only the local child handoff handled by the loop below; it
+              // dispatches no worker and has no retry predicate.
               //
-              //  - CODER (S2/S5): no semantic-retry loop → inherits the generic retry
-              //    for EVERY process failure (the #592 asymmetry: a `failed` coder =
-              //    produced no commit = a process failure to re-attempt).
-              //  - REVIEWER (S3/S6): keeps its OWN bounded semantic loop below
-              //    (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS), which owns invalid/malformed
-              //    RESULTS and structured-output THROWS — the generic layer defers those
-              //    to it (no double-count). The generic layer DOES retry a NON-structured
-              //    crash (connection drop / container start), recovering a transient one;
-              //    a persistent crash is re-thrown so the reviewer loop surfaces it.
+              //  - CODER (S2/S5): process failure + typed-signal SOE enter retry.
+              //    Completed opaque cargo never changes routing.
+              //  - JUDGE (S3/S6): typed status tri-state is the sole routing
+              //    signal; SOE exhaust does NOT feed empty cargo to the fixer (#899).
               //
-              // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
-              // current scene — do NOT pass cleanResidue into withMechanicalRetry.
-              // Uncommitted work + partial commits are the payload; reading/comparing
-              // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
-              // optional hook for non-runner callers; this site intentionally omits it.)
+              // #661 / #937: process-level retry CONTINUES on the current scene —
+              // no Git reset/checkout/clean. Uncommitted work is the payload.
               //
-              // Note: S9 online-review verify uses a separate path with read-only
-              // contract_drift — that intent is preserved there.
-              const retryOpts: MechanicalRetryOptions =
-                expectedKind === "reviewer"
-                  ? {
-                      callerOwns: (o) =>
-                        "result" in o
-                          ? true
-                          : isReviewerStructuredOutputError(o.error),
-                      rethrowOnExhaustion: true,
-                    }
-                  : {};
+              // Reviewer: rethrow on throw-exhaust so S8(failed) surfaces process
+              // crashes and SOE exhaust alike — never feed empty cargo to fixer.
+              // Coder keeps default failed→durable abort (existing escalate path).
+              // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
+              // (role is always "verify" on those seats; dual-OR deleted).
+              const durableRetryOpts = durableMechanicalRetryOptions(
+                step,
+                isJudgeSeat({ step })
+                  ? { rethrowOnExhaustion: true }
+                  : {},
+              );
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -4342,11 +3555,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     {
                       onMonitorHandleSpawned: async (handle) => {
                         stepMonitorHandle = handle;
-                        try {
+                        // #934 ID-006 / #937: adoption/persist failure must
+                        // terminate the exact ChildProcess — rethrow so
+                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
+                        if (isValidStepId(s.id)) {
                           await persistMonitorHandleAtSpawn(s.id, handle);
-                        } catch {
-                          // Best-effort: spawn-time ledger write must not abort
-                          // the worker; post-step emitLedger still records it.
                         }
                       },
                     },
@@ -4354,1887 +3567,579 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
-                  return outcome.result;
+                  // The worker has already exited and its result is collected;
+                  // join the first-run environment side effect before this
+                  // runner advances or returns to an external caller. This
+                  // deliberately does not delay spawn / first output (#793).
+                  await outcome.telemetryEnvironmentStamp;
+                  const dispatched = outcome.result;
+                  if (dispatched.kind !== "completed") return dispatched;
+                  const dispatchedEscalation = escalateOf(dispatched.output);
+                  if (dispatchedEscalation !== undefined) {
+                    return dispatched;
+                  }
+
+                  return dispatched;
                 },
-                retryOpts,
+                durableRetryOpts,
               );
-            } catch (err) {
-              if (
-                expectedKind === "reviewer" &&
-                isReviewerStructuredOutputError(err) &&
-                attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
-              ) {
-                resumeSessionId = undefined;
-                continue;
+              if (result.kind === "completed") {
+                completeMechanicalRetryInvocation(step);
+                // Successful productive dispatch breaks the stay-put streak.
+                consecutiveReviewFixStayPuts = 0;
               }
-              if (
-                expectedKind === "reviewer" &&
-                isReviewerStructuredOutputError(err)
-              ) {
-                output = {
-                  kind: "reviewer",
-                  findings: [],
-                  escalate: {
-                    reason: "reviewer output remained invalid after bounded reruns",
-                    diagnosis:
-                      `step ${step} failed to produce valid reviewer output ` +
-                      `${attempts} times; last error: ${errorMessage(err)}`,
-                    // #604 correctness r1 (P1-a): a RUNNER-synthesized escalate from
-                    // exhausted malformed reruns is a PROTOCOL FAILURE, not a
-                    // worker-proactive decision — mark it so the handoff maps to
-                    // escalationKind:"failure" (A-class), never the decision gate.
-                    synthesizedFailure: true,
-                  },
-                };
-                stepSessionId = undefined;
-                break;
-              }
-              throw err;
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
-            const retryableReviewerFailure =
-              expectedKind === "reviewer" &&
-              (unwrapped === undefined ||
-                !isValidStepOutput(
-                  "output" in (unwrapped ?? {}) && !("kind" in (unwrapped ?? {}))
-                    ? (unwrapped as { output: StepOutput }).output
-                    : (unwrapped as StepOutput | undefined),
-                  "reviewer",
-                ));
-
-            if (retryableReviewerFailure) {
-              if (attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) {
-                resumeSessionId = undefined;
-                continue;
-              }
-              output = {
-                kind: "reviewer",
-                findings: [],
-                escalate: {
-                  reason: "reviewer output remained invalid after bounded reruns",
-                  diagnosis:
-                    `step ${step} produced invalid reviewer output ${attempts} times; ` +
-                    "runner stopped instead of retrying indefinitely",
-                  // #604 correctness r1 (P1-a): protocol failure, not a decision —
-                  // synthesized by the runner after exhausted reruns.
-                  synthesizedFailure: true,
-                },
-              };
-              stepSessionId =
-                result.kind === "completed" || result.kind === "escalated"
-                  ? result.sessionId
-                  : undefined;
-              break;
-            }
 
             if (unwrapped === undefined) {
-              // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
-              // hand off when a live baton exists; durable abort only when none.
-              if (
-                expectedKind === "coder" &&
-                isRelayCandidateExhaustion(reason) &&
-                canRelayInProcess()
-              ) {
-                const currentPool =
-                  currentBillingPool ??
-                  billingPoolFromQuotaPool(
-                    poolForModelRef(modelRoute.slots.coder),
-                  );
-                // Mark the wall-hit pool dead/limited so 换马甲 does not
-                // re-select the same model on a "different" pool forever when
-                // poolForModelRef disagrees with the baton's billing pool.
-                const pools = resolveRelayPools(currentPool, undefined).map(
-                  (p) =>
-                    p.id === currentPool
-                      ? { ...p, status: "dead" as const }
-                      : p,
-                );
-                const handoff = await applyResourceFailureHandoff({
-                  trigger: "mechanical_retry_exhausted",
-                  state_summary:
-                    reason ??
-                    `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
-                  reason: reason ?? "mechanical retry exhausted",
-                  currentModelId: currentCoderModelId(),
-                  currentPool,
-                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                  pools,
-                  reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-                  now: relayNow(),
-                  step,
-                });
-                if (handoff.kind === "relay" && handoff.ledgerEntry) {
-                  const entry = handoff.ledgerEntry;
-                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
-                  if (!staged.ok) {
-                    return await errorTermination(
-                      step,
-                      new Error(staged.reason),
-                    );
-                  }
-                  const marker: LedgerEntry = {
-                    step: entry.step ?? step,
-                    event: "relay_baton_handoff",
-                    trigger: entry.trigger,
-                    state_summary: entry.state_summary,
-                    ...(entry.remaining !== undefined
-                      ? { remaining: entry.remaining }
-                      : {}),
-                    ...(entry.reason !== undefined
-                      ? { reason: entry.reason }
-                      : {}),
-                    fromModelId: entry.fromModelId,
-                    fromPool: entry.fromPool,
-                    toModelId: entry.toModelId,
-                    toPool: entry.toPool,
-                    ts: entry.ts,
-                  };
-                  if (stateDir !== undefined) {
-                    try {
-                      await backend.writeLedger(
-                        {
-                          ...marker,
-                          sessionId,
-                          prompt_hash: await hashPrompt(
-                            undefined,
-                            step,
-                            backend,
-                          ),
-                          branchHEAD: await resolveBranchHEAD(),
-                          ts: entry.ts,
-                        },
-                        stateDir,
-                      );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(
-                        step,
-                        new Error(
-                          `relay handoff ledger write failed after mechanical retry exhaustion`,
-                        ),
-                      );
-                    }
-                  }
-                  try {
-                    staged.focus.commit();
-                  } catch (focusErr) {
-                    return await errorTermination(step, focusErr);
-                  }
-                  ledger.push(marker);
-                  activeRelayFocusPath = staged.focus.path;
-                  applyRelayBaton(handoff.nextBaton, step);
-                  continue orchestratorStepLoop;
-                }
-              }
-              return await errorTermination(
+              // #934 ID-004 / #937: process-root exhaustion is the phase's
+              // canonical failed edge — never a baton relay / park from silence.
+              const exhaustionReason =
+                reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
+              return await escalateTermination(
                 step,
-                new Error(
-                  `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
-                ),
+                {
+                  reason: `${step} mechanical redispatch exhausted`,
+                  diagnosis: exhaustionReason,
+                },
+                result.sessionId,
+                "failure",
+                undefined,
+                infraFailureStopSummary({
+                  summary: exhaustionReason,
+                  repairHint: `inspect ${step} worker protocol failure and rerun`,
+                }),
               );
             }
             const normalized =
               "output" in unwrapped && !("kind" in unwrapped)
                 ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
                 : { output: unwrapped as StepOutput, sessionId: undefined };
-            output = normalized.output;
+            output = normalizeJudgeSeatOutput(step, normalized.output);
             stepSessionId = normalized.sessionId;
+            // #924: retain coder session for S5 continuity (and multi-round S5).
+            if (
+              (step === "S2" || step === "S5") &&
+              typeof stepSessionId === "string"
+            ) {
+              coderSessionId = stepSessionId;
+              coderSessionModel = stepSpecs[step].model;
+            }
+            // #925 / #919 S1: retain judge session for S6 continuity.
+            if (isJudgeSeat({ step }) && typeof stepSessionId === "string") {
+              judgeSessionId = stepSessionId;
+              judgeSessionModel = stepSpecs[step].model;
+            }
             break;
           }
         } catch (err) {
+          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
+          // with the fourth fate channel. Decision gates arrive via typed station
+          // escalate; hang no longer invents host kill+relay from silence.
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (write handoff + focus, apply next baton, re-enter).
+          // with a live baton (ephemeral brief, apply next baton, re-enter).
+          //
+          // #934 ID-008 / #926 / #937: review/fix (S3/S5/S6) no-candidate is
+          // one stay-put seam — durable audit, keep owning coder, never invent
+          // terminal solely from candidate exhaustion, no fabricated judge paper,
+          // no clearing live findings. Topology returns to the persistent judge
+          // (S5→S6) or re-enters the fix desk with preserved findings (S3/S6→S5).
+          // After a full return-to-judge cycle still no baton: park for external
+          // quota reset when the wall is typed 429 (ID-001 park), never S8 error.
+          const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
+          const applyReviewFixStayPut = async (
+            stayReason: string,
+            stateSummary: string,
+            parkErr?: QuotaWaitForResetError,
+          ): Promise<"break" | RunResult> => {
+            const stayModel = modelIdForWallStep(step);
+            const stayTs = new Date().toISOString();
+            const stayEntry = {
+              step,
+              event: "coder_advance_stay_put" as const,
+              reason: stayReason,
+              fromModelId: stayModel,
+              toModelId: stayModel,
+              state_summary: stateSummary,
+              ts: stayTs,
+            };
+            ledger.push(stayEntry);
+            // #926 / #934 ID-015: stay-put audit is required durable truth — not
+            // fail-open. writeLedger failure surfaces as typed failed.
+            if (stateDir !== undefined) {
+              try {
+                await backend.writeLedger(
+                  {
+                    ...stayEntry,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, step, backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: stayTs,
+                  },
+                  stateDir,
+                );
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `record_persist_failed: coder_advance_stay_put audit: ${
+                      writeErr instanceof Error
+                        ? writeErr.message
+                        : String(writeErr)
+                    }`,
+                  ),
+                  { cause: "record_persist_failed" },
+                );
+              }
+            }
+            consecutiveReviewFixStayPuts += 1;
+            // Second consecutive no-baton wall after return-to-judge: wait for
+            // external quota reset (ID-001 park) — never invent terminal from
+            // candidate exhaustion (#926 / ID-008).
+            if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err: parkErr,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
+            }
+            if (step === "S5") {
+              // #926: return result to persistent judge (S5→S6). Noop fix
+              // receipt — live findings stay in pending* for S6.
+              output = {
+                kind: "coder",
+                committed: false,
+                commitsAdded: 0,
+              };
+              lastOutput = output;
+              reviewFixStayPutRouted = true;
+              return "break";
+            }
+            // S3/S6: never invent empty judge paper; never clear live findings.
+            // Prefer prior continue paper so route → S5 with the same open set;
+            // otherwise leave output undefined → unusable → S5 topology.
+            if (
+              lastOutput?.kind === "judge" &&
+              lastOutput.status === "continue" &&
+              pendingBlockingFindingCount > 0
+            ) {
+              output = lastOutput;
+            } else {
+              output = undefined;
+            }
+            // pendingBlockingFindings intentionally untouched.
+            reviewFixStayPutRouted = true;
+            return "break";
+          };
+
           if (isQuotaWaitForResetError(err)) {
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
-              return await parkQuotaWaitForResetLegacy({
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: no live baton`,
+                  err.message,
+                  err,
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              // Mirror capacity path: park ledger-write failure → errorTermination
+              // (not raw rejection from inside this catch).
+              try {
+                return await parkQuotaWaitForReset({
+                  step,
+                  err,
+                  ledger,
+                  stateDir,
+                  sessionId,
+                  backend,
+                  resolveBranchHEAD,
+                  hashPrompt: (promptFile, s) =>
+                    hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
+                });
+              } catch (writeErr) {
+                return await errorTermination(
+                  step,
+                  writeErr instanceof Error
+                    ? writeErr
+                    : new Error(String(writeErr)),
+                );
+              }
+            }
+            // parkOrRelayQuotaWall may throw on required ledger writes; surface
+            // via errorTermination so runOrchestrator returns S8, not rejects.
+            let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+            try {
+              outcome = await parkOrRelayQuotaWall({
                 step,
                 err,
                 ledger,
                 stateDir,
                 sessionId,
                 backend,
-                deferredFindings,
                 resolveBranchHEAD,
                 hashPrompt: (promptFile, s) =>
                   hashPrompt(promptFile, s, backend),
+                worktreePath: worktree?.path,
+                currentModelId: modelIdForWallStep(step),
+                currentPool,
+                rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                // #909 production live path: route-smoke knownLive for quota walls.
+                pools: resolveRelayPools(
+                  currentPool,
+                  err.disposition.resetAt,
+                  true,
+                ),
+                now: relayNow(),
+                issue: issueNumber,
               });
+            } catch (writeErr) {
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
             }
-            const outcome = await parkOrRelayQuotaWall({
-              step,
-              err,
-              ledger,
-              stateDir,
-              sessionId,
-              backend,
-              deferredFindings,
-              resolveBranchHEAD,
-              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
-              worktreePath: worktree?.path,
-              currentModelId: modelIdForWallStep(step),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-              now: relayNow(),
-            });
-            if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
+            if (outcome.kind === "park") {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `quota wall stay-put on ${step}: park/no baton`,
+                  err.message,
+                  err,
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              return outcome.result;
             }
-            applyRelayBaton(outcome.nextBaton, step);
+            if (outcome.relayBrief !== undefined) {
+              activeRelayBrief = outcome.relayBrief;
+            }
+            {
+              const applied = applyRelayBaton(outcome.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
             continue orchestratorStepLoop;
           }
-          // #686: hang-with-live-pool / self-reported blocked → resource relay
-          // (never mechanical-retry / never reset).
-          if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
-            canRelayInProcess()
-          ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.coder),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
+          // #686/#787/#937: capacity resource failure relays without retry
+          // (never mechanical-retry / never reset). Hang/self-report free-log
+          // constructors deleted with ID-006/007.
+          // #934 ID-008: review/fix no-candidate is stay-put even when the
+          // handoff chain is exhausted (canRelayInProcess false) — never invent
+          // terminal solely from capacity candidate exhaustion.
+          if (isCapacityRelayError(err)) {
+            if (!canRelayInProcess()) {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              return await errorTermination(step, err);
+            }
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: modelRefForWallStep(step),
+              capacity: true,
+            });
             const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
+              trigger: "capacity",
+              state_summary: "model checkpoint at capacity; drift preserved",
               reason: err instanceof Error ? err.message : String(err),
               currentModelId: modelIdForWallStep(step),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
               now: relayNow(),
               step,
             });
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination(
-                  step,
-                  new Error(staged.reason),
+            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
                 );
+                if (stay !== "break") return stay;
+                break;
               }
-              const marker: LedgerEntry = {
-                step: entry.step ?? step,
-                event: "relay_baton_handoff",
-                trigger: entry.trigger,
-                state_summary: entry.state_summary,
-                ...(entry.remaining !== undefined
-                  ? { remaining: entry.remaining }
-                  : {}),
-                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-                fromModelId: entry.fromModelId,
-                fromPool: entry.fromPool,
-                toModelId: entry.toModelId,
-                toPool: entry.toPool,
-                ts: entry.ts,
-              };
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger(
-                    {
-                      ...marker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(undefined, step, backend),
-                      branchHEAD: await resolveBranchHEAD(),
-                      ts: entry.ts,
-                    },
-                    stateDir,
-                  );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(step, err);
-                }
-              }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination(step, focusErr);
-              }
-              ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
-              applyRelayBaton(handoff.nextBaton, step);
-              continue orchestratorStepLoop;
+              return await errorTermination(step, err);
             }
+            const entry = handoff.ledgerEntry;
+            // #934 S2: single durable court (shared with quota-wall relay).
+            try {
+              await persistRelayBatonHandoff({
+                entry,
+                step,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: (promptFile, s) =>
+                  hashPrompt(promptFile, s, backend),
+                persistClass: "capacity",
+              });
+            } catch (writeErr) {
+              // Surface write failure class via errorTermination (not throw out).
+              return await errorTermination(
+                step,
+                writeErr instanceof Error
+                  ? writeErr
+                  : new Error(String(writeErr)),
+              );
+            }
+            activeRelayBrief = renderEphemeralRelayBrief(entry);
+            completeMechanicalRetryInvocation(step);
+            {
+              const applied = applyRelayBaton(handoff.nextBaton, step);
+              if (applied.kind === "stop") {
+                return await stopForCoderRecTightRoutePolicy(applied.escalation);
+              }
+            }
+            continue orchestratorStepLoop;
           }
           return await errorTermination(step, err);
+        }
+
+        // Fresh host HEAD capture is best-effort telemetry/bookkeeping only.
+        // Its availability cannot change the worker receipt's route.
+        const coderHeadAfterStep = expectedKind === "coder"
+          ? gitHead(worktree)
+          : undefined;
+
+        // #926 stay-put already set topology outputs and preserved live findings —
+        // skip worker-output projection so we do not clear the open set.
+        if (reviewFixStayPutRouted) {
+          if (output !== undefined) lastOutput = output;
+          break;
+        }
+
+        // #786: host-git commit observations are strictly sidecar-only.
+        // A failed read/write cannot affect the step's ledger or route decision.
+        // Trigger this from the expected worker role before any output contract
+        // gate: a worker may have committed before reporting malformed output.
+        if (expectedKind === "coder" && worktree !== undefined) {
+          const telemetryDir = stepTelemetryDir;
+          if (telemetryDir !== undefined && coderHeadAfterStep !== undefined) {
+            void scheduleCommitTelemetry({
+              ledgerDir: telemetryDir,
+              repoPath: worktree.path,
+              runId,
+              issue: issueNumber,
+              ...(commitTelemetryWorker !== undefined
+                ? { worker: commitTelemetryWorker }
+                : {}),
+              before: coderHeadBeforeStep === undefined
+                ? { kind: "resolve-before-head", commitsAdded:
+                    output.kind === "coder" && Number.isInteger(output.commitsAdded)
+                      ? output.commitsAdded
+                      : 1 }
+                : { kind: "held", oid: coderHeadBeforeStep },
+              after: { kind: "held", oid: coderHeadAfterStep },
+            });
+          }
         }
 
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
+        // #1007 AC1: always echo typed judge tri-state (including escalate) so
+        // latest verdict/counts are on the feed. Park/terminal alone do not fill
+        // AC1. Open-set projection stays gated on !carriesEscalate below.
+        if (isJudgeSeat({ step }) && output?.kind === "judge") {
+          const judgeRound =
+            ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
+          emitJudgeProgress({
+            issue: issueNumber,
+            step,
+            round: judgeRound,
+            verdict: output.status,
+            findingDispositions: output.findingDispositions,
+            findings: output.findings,
+            cargoPointer:
+              typeof output.fixPacketBody === "string" &&
+              output.fixPacketBody.length > 0
+                ? `ledger://issue-${issueNumber}/${step}/fixPacketBody`
+                : null,
+          });
+        }
         if (!carriesEscalate) {
-          if (!isValidStepOutput(output, expectedKind)) {
-            return await errorTermination(
-              step,
-              new Error(
-                `${step}: step output does not match the ${expectedKind} contract. ` +
-                  `Got: ${describeOutput(output)}. Refusing to route malformed output.`,
-              ),
-            );
+          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
+          // Production role is always "verify" on those seats; expectedKind OR
+          // was redundant. Residual role:"reviewer" is not live here.
+          if (isJudgeSeat({ step })) {
+            // #925: judge typed verdict is the sole routing signal. Unusable
+            // envelope → fixer path with raw artifact pointers (never silent clean).
+            if (output?.kind !== "judge") {
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
+              // Seed findingDispositions empty; route() will send unusable → S5.
+              lastOutput = output;
+              break;
+            }
+            // Apply continue dispositions via the shared projection helper
+            // (same helper resume rebuild uses — F2 single open-set seam).
+            if (output.status === "continue") {
+              // ADR 0138: missing/empty fixPacketBody is contract drift — fail
+              // loud here so S5 never falls back to bare-findings packing.
+              let authoredBody: string;
+              try {
+                authoredBody = requireFixPacketBody(output);
+              } catch (err) {
+                const reason =
+                  err instanceof Error
+                    ? err.message
+                    : "judge continue missing fixPacketBody (ADR 0138)";
+                return await errorTermination(step, new Error(reason), {
+                  output,
+                  findingDispositions,
+                  stopSummary: contractDriftStopSummary({
+                    summary: reason,
+                    repairHint:
+                      "judge status:continue must author non-empty fixPacketBody; " +
+                      "runner transports it verbatim and will not pack bare findings",
+                  }),
+                });
+              }
+              // #952 R6-C2: pass accumulated store statuses so terminal→terminal
+              // morphs fail at the write point (no open hardcode laundering).
+              const projected = projectJudgeContinueBlocking(
+                output,
+                storeStatusByIdentityFromDispositions(findingDispositions),
+              );
+              if (projected !== undefined) {
+                // Apply terminal store flips first, then gate empty live set (#919 M6).
+                if (projected.terminalDispositions.length > 0) {
+                  findingDispositions = [
+                    ...findingDispositions,
+                    ...projected.terminalDispositions,
+                  ];
+                }
+                pendingBlockingFindings = projected.blocking;
+                pendingBlockingFindingIdentityKeys =
+                  projected.blockingIdentityKeys;
+                pendingBlockingFindingCount = projected.blockingFindingCount;
+                pendingFixPacketBody = authoredBody;
+                if (pendingBlockingFindingCount > 0) {
+                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                    stepMonitorHandle,
+                    stepSessionId,
+                  );
+                } else if (projected.blockingIdentityKeys.length === 0) {
+                  // #952: 0 live + non-empty terminal flips (suppress/refute) =
+                  // terminal court closure — apply flips (above), do not S5,
+                  // route like converged via judgeStatusFromOutput. True empty
+                  // (0 live AND 0 terminals) remains M6 contract drift.
+                  if (projected.terminalDispositions.length === 0) {
+                    // #919 M6 / family M1 isomorphic: true empty continue is
+                    // court contract drift — never empty-spin S5. Unusable
+                    // (non-judge) still routes to S5 above; route() continue→S5
+                    // stays for non-empty live sets only.
+                    const reason =
+                      `judge ${step} continue with 0 live findings ` +
+                      `(court contract drift; empty continue must not spin coder-fix)`;
+                    return await errorTermination(step, new Error(reason), {
+                      output,
+                      findingDispositions,
+                      stopSummary: contractDriftStopSummary({
+                        summary: reason,
+                        repairHint:
+                          "judge status:continue requires non-empty live identity keys " +
+                          "or terminal-only dispositions (suppress/refute); " +
+                          "re-open the same judge seat or repair the seat envelope — " +
+                          "do not empty-spin S5 coder-fix",
+                      }),
+                    });
+                  }
+                  // Terminal-only: pending open set already 0; fall through so
+                  // ledger records flips + continue envelope, then route → S7.
+                }
+              }
+            } else {
+              // converged / escalate: no open findings for S5.
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingBlockingFindingCount = 0;
+              pendingFixPacketBody = undefined;
+            }
           }
-        } else if (!isValidEscalation(stepEscalate)) {
-          lastOutput = output;
-          break;
         }
         lastOutput = output;
         if (output.kind === "coder") {
-          lastCoderRepairEvidence = output.repairEvidence;
-          lastCoderActualRepairPaths = actualRepairMovementPaths(
-            worktree,
-            coderHeadBeforeStep,
-          );
           if (step === "S5" && coderHeadBeforeStep !== undefined) {
-            try {
-              const afterFix = gitHead(worktree);
-              if (afterFix === undefined) {
-                throw new Error(
-                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
-                );
+            const afterFix = coderHeadAfterStep;
+            if (afterFix !== undefined) {
+              try {
+                preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
+                  worktreePath: worktree.path,
+                  sliceBase: worktree.base,
+                  beforeFix: coderHeadBeforeStep,
+                  afterFix,
+                });
+              } catch {
+                preexistingAssertionTouchedForReverify = false;
               }
-              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
-                worktreePath: worktree.path,
-                sliceBase: worktree.base,
-                beforeFix: coderHeadBeforeStep,
-                afterFix,
-              });
-            } catch (err) {
-              return await errorTermination(step, err);
             }
           }
-          // #677: legal refuse — wire decision gate on the real S5 path.
-          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          // #677 / #927: legal refuse — envelope keys are traffic; refuseRecords
+          // are opaque cargo for the S6 judge. Never escalate/park on refuse;
+          // never drop envelope keys when cargo shape is non-#677.
           if (step === "S5") {
-            const records = output.refuseRecords ?? [];
-            if (records.length > 0) {
-              const legal = reviewFixDecisionGate({ records });
-              refusedFindingIdentityKeysForReverify =
-                legal?.refusedFindingIdentityKeys ?? [];
-            } else {
-              refusedFindingIdentityKeysForReverify =
-                output.refusedFindingIdentityKeys ?? [];
-            }
+            const refuseLanding = coderRefuseReverifyLanding(output);
+            refusedFindingIdentityKeysForReverify =
+              refuseLanding.refusedFindingIdentityKeys;
+            refuseRecordsForReverify = refuseLanding.refuseRecords;
           }
         }
-        if (step === "S3" || step === "S6") lastReviewerStepId = step;
+        if (isJudgeSeat({ step })) lastReviewerStepId = step;
+        if (step === "S5") {
+          pendingRawReviewerArtifacts = undefined;
+          pendingFixerFindingScope = undefined;
+        }
         break;
       }
 
       case "S4": {
-        let noProgressIdentityKeys: string[];
-        try {
-          noProgressIdentityKeys = seedClassificationFromReviewerOutput(
-            lastOutput,
-            lastReviewerStepId === "S6",
-          );
-        } catch (err) {
-          return await errorTermination("S4", err);
-        }
-        if (noProgressIdentityKeys.length > 0) {
-          return await escalateTermination("S4", {
-            reason: "review/fix loop made no progress",
-            diagnosis:
-              "Fresh re-review reported the same claimed-fixed finding still active " +
-              `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
-          });
-        }
+        // #925: S4 mechanical open-count station dissolved. Residual path for
+        // legacy ledgers only — classification already applied at S3/S6.
         break;
       }
 
       case "S7": {
-        // S7 push — runner action: push the resident slice branch. No PR, no
-        // merge (the Backend exposes neither).
+        // A slice always runs inside a family worktree. S7 is the child handoff:
+        // commits stay local for the family merger; no standalone ship/PR path exists.
         if (worktree === undefined) {
-          throw new Error("runner: S7 push reached before worktree prepared");
-        }
-        // Family mode (ADR 0022 decision 2): S7 is a LOCAL no-op. The child only
-        // commits to its own branch in the shared family clone — it does NOT push
-        // remotely (concurrent pushes from sibling children would clash on
-        // .git/refs/remotes; only the family base PRs once at the end). The step
-        // still records + routes to S8(success) exactly as a real push would; we
-        // just skip the backend.push() call. (ADR 0022: "完整复用 S0-S8，但家族
-        // 模式下 S7 的 backend.push 替换为本地 no-op".)
-        if (family !== undefined && family.noPush) {
-          break;
-        }
-        try {
-          // ADR 0026 / #331: S7 is now a SHIP worker dispatched through the
-          // unified seam (no longer an inline `backend.push`). #331 prefactor: the
-          // legacy wrapper forwards the ship worker to `backend.push` (behaviour
-          // unchanged); #336 makes it invoke `gstack-ship`.
-          //
-          // integ-cmr int-r2 (C-int2-1): bind the ship spec FIRST and thread its
-          // versioned promptFile ("ship.md") into the loop-scoped `promptFile` so the
-          // S7 ledger entry hashes the ship.md CONTENT (the WorkerSpec anti-tampering
-          // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
-          // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
-          // produced. The escalateTermination path below ALSO uses it (resume truth).
-          const shipSpec = shipWorkerSpec(modelRoute);
-          promptFile = shipSpec.promptFile;
-          const escalationAnswerForStep =
-            resumedEscalationAnswer?.forStep === "S7"
-              ? resumedEscalationAnswer
-              : undefined;
-          if (escalationAnswerForStep != null) {
-            resumedEscalationAnswer = undefined;
-          }
-          const shipCtx = {
-            worktree,
-            stateDir,
-            modelRoute,
-            ...(relayBillingPoolForDispatch("S7") !== undefined
-              ? { billingPool: relayBillingPoolForDispatch("S7") }
-              : {}),
-            ...(relayFocusForDispatch("S7") !== undefined
-              ? { relayFocusPath: relayFocusForDispatch("S7") }
-              : {}),
-            ...(escalationAnswerForStep != null
-              ? { escalationAnswer: escalationAnswerForStep }
-              : {}),
-          };
-          // #598 + #601: the ship step re-dispatches fresh on a PROCESS-LEVEL failure
-          // (a CRASH throw, or a STRUCTURAL `malformed`/`outcome_protocol_failure` —
-          // the worker emitted no parseable `<ship>` verdict, the dogfood-362 /
-          // family-405 incident class that used to durably abort the run on first
-          // occurrence). The `callerOwns` predicate claims ONLY a JUDGED `failed`
-          // verdict (a parsed `<ship>{failed:…}` delivery failure, or a branch-identity
-          // mismatch RealBackend maps to `failed`) so it passes through with ZERO retry
-          // — a decided delivery failure is never re-run. This is the SAME shared
-          // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
-          // the structural no-output case retries, the judged-verdict case does not.
-          // #661: continue on the current scene — never resetBeforeRetry/cleanResidue.
-          // gstack-ship's re-runnable design keeps push/PR idempotent without a wipe.
-          const shipResult = await withMechanicalRetry(
-            shipSpec,
-            shipCtx,
-            async (s, c) => {
-              // #684: production monitored dispatch (CLI → handle atomic with spawn).
-              const outcome = await dispatchWorkerWithMonitor(
-                backend,
-                s,
-                c,
-                undefined,
-                {
-                  onMonitorHandleSpawned: async (handle) => {
-                    stepMonitorHandle = handle;
-                    try {
-                      await persistMonitorHandleAtSpawn(s.id, handle);
-                    } catch {
-                      // Best-effort spawn-time persist.
-                    }
-                  },
-                },
-              );
-              if (outcome.monitorHandle !== undefined) {
-                stepMonitorHandle = outcome.monitorHandle;
-              }
-              return outcome.result;
-            },
-            {
-              callerOwns: (o) => "result" in o && o.result.kind === "failed",
-            },
-          );
-          // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
-          // S8(escalate) handoff, NOT an error — keep the escalate semantics so
-          // the human-answer resume re-opens it (codex cmr R4 finding). #331's
-          // legacy wrapper never escalates; the real ship worker (#336) does.
-          if (shipResult.kind === "escalated") {
-            return await escalateTermination(
-              "S7",
-              shipResult.escalation,
-              shipResult.sessionId,
-            );
-          }
-          // Otherwise the ship worker must return a `completed` result carrying a
-          // SHIP payload — a `completed` result whose output is some other kind (a
-          // mis-wired new-seam backend) or a failed/malformed result is NOT a
-          // successful ship and must not route to S8(success) (codex cmr R2:
-          // guard the output kind, as the agent steps + family cmr stage do).
-          if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
-            return await errorTermination(
-              "S7",
-              new Error(
-                `ship worker returned ${shipResult.kind}` +
-                  (shipResult.kind === "completed"
-                    ? ` with non-ship output kind '${shipResult.output.kind}'`
-                    : ` (${"reason" in shipResult ? shipResult.reason : "unknown"})`),
-              ),
-            );
-          }
-          // cmr S336 r4 (P1, symmetric to the family terminal gate): do NOT trust
-          // the discriminant alone. The terminal single-slice gate consumes any
-          // injected Backend's dispatchWorker — a backend that implements the seam
-          // but skips the success contract (RealBackend.dispatchWorker enforces it;
-          // a minimal seam-only backend need not) could return a `completed
-          // {kind:"ship"}` carrying an off-contract status, or one that shipped a
-          // DIFFERENT branch than the resident slice. Re-assert here, fail-CLOSED
-          // (defense-in-depth). The single-slice contract (prompts/ship.md) ALLOWS
-          // both `pushed` and `pr_opened` (pr_opened ⇒ a non-empty pr URL), and the
-          // shipped branch MUST be the resident worktree branch.
-          const ship = shipResult.output;
-          if (
-            ship.branch !== worktree.branch ||
-            (ship.status !== "pushed" && ship.status !== "pr_opened") ||
-            (ship.status === "pr_opened" && !isFilledString(ship.pr))
-          ) {
-            return await errorTermination(
-              "S7",
-              new Error(
-                `ship worker reported an off-contract delivery (branch="${ship.branch}", ` +
-                  `status="${ship.status}", pr=${ship.pr === undefined ? "absent" : `"${ship.pr}"`}) ` +
-                  `— expected branch "${worktree.branch}" with status "pushed" or "pr_opened" ` +
-                  `(pr_opened requires a non-empty pr URL); not a trusted slice delivery`,
-              ),
-            );
-          }
-          // Persist the validated SHIP payload + the worker's session id into the S7
-          // ledger entry (online review r1, 3 bots): the shared record/emitLedger
-          // path below writes `output`/`stepSessionId`, but S7 previously left both
-          // undefined — so the persisted ledger AND RunResult.stepLedger dropped the
-          // shipped branch/status and (for pr_opened) the PR URL, plus the ship
-          // worker's sessionId. Assign them so the delivery is recoverable from
-          // resume truth and surfaced to the caller.
-          //
-          // R17 Codex P2: always persist prHead for online-review round-1 anchor.
-          // RealBackend ship envelope historically omits it; without it resume uses
-          // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
-          let shipWithHead = ship;
-          if (!isFilledString(ship.prHead)) {
-            const headOid = await resolveBranchHEAD();
-            if (isFilledString(headOid)) {
-              shipWithHead = { ...ship, prHead: headOid };
-            }
-          }
-          output = shipWithHead;
-          lastShipOutput = shipWithHead;
-          stepSessionId = shipResult.sessionId;
-        } catch (err) {
-          // #683/#686: ship idle 429 → park or relay (same family as agent-step).
-          if (isQuotaWaitForResetError(err)) {
-            const currentPool =
-              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
-            if (!canRelayInProcess()) {
-              return await parkQuotaWaitForResetLegacy({
-                step: "S7",
-                err,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                deferredFindings,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-              });
-            }
-            const outcome = await parkOrRelayQuotaWall({
-              step: "S7",
-              err,
-              ledger,
-              stateDir,
-              sessionId,
-              backend,
-              deferredFindings,
-              resolveBranchHEAD,
-              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
-              worktreePath: worktree?.path,
-              currentModelId: modelIdForWallStep("S7"),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-              now: relayNow(),
-            });
-            if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
-            }
-            applyRelayBaton(outcome.nextBaton, "S7");
-            continue orchestratorStepLoop;
-          }
-          // #686: a live-pool hang or a worker's blocked relay tag is a
-          // resource failure on ship too. Preserve the current scene and hand
-          // the S7 slot to the next baton; never fall through to S8.
-          if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
-            canRelayInProcess()
-          ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.ship),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
-            const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
-              reason: err instanceof Error ? err.message : String(err),
-              currentModelId: modelIdForWallStep("S7"),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-              now: relayNow(),
-              step: "S7",
-            });
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination("S7", new Error(staged.reason));
-              }
-              const marker: LedgerEntry = {
-                step: entry.step ?? "S7",
-                event: "relay_baton_handoff",
-                trigger: entry.trigger,
-                state_summary: entry.state_summary,
-                ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
-                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-                fromModelId: entry.fromModelId,
-                fromPool: entry.fromPool,
-                toModelId: entry.toModelId,
-                toPool: entry.toPool,
-                ts: entry.ts,
-              };
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger({
-                    ...marker,
-                    sessionId,
-                    prompt_hash: await hashPrompt(undefined, "S7", backend),
-                    branchHEAD: await resolveBranchHEAD(),
-                    ts: entry.ts,
-                  }, stateDir);
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination("S7", err);
-                }
-              }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination("S7", focusErr);
-              }
-              ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
-              applyRelayBaton(handoff.nextBaton, "S7");
-              continue orchestratorStepLoop;
-            }
-          }
-          // Push failure → S8(error) with branch head so dev can diagnose
-          // without losing the commits already on the resident branch (#252).
-          // errorTermination records + persists both the S7 and S8 entries (#3).
-          return await errorTermination("S7", err);
-        }
-        break;
-      }
-
-      case "S9":
-      case "S10":
-      case "S11":
-      case "S12": {
-        // #600 online review loop: bot poll → fresh verify → fixer → fresh verify
-        // (ADR 0061). S12 real 文档发布 = #735; S11 cleanup = #603.
-        if (worktree === undefined) {
-          throw new Error(`runner: ${step} reached before worktree prepared`);
-        }
-        if (lastShipOutput === undefined || lastShipOutput.pr === undefined) {
-          return await errorTermination(
-            step,
-            new Error(
-              `${step} requires a prior S7 pr_opened ship output with a PR URL`,
-            ),
-          );
-        }
-        let reviewStep = step;
-        const reviewHeadKey =
-          onlineReviewResumeHeadKeyFromLedger(ledger) ??
-          convergenceHeadToRecord({
-            shipHead: lastShipOutput.prHead,
-            snapshotHead: onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-            postFixHead: lastOnlineReviewFixCommitSha,
-          });
-        if (
-          reviewStep === "S9" &&
-          onlineReviewConvergedForHead(ledger, reviewHeadKey)
-        ) {
-          // Cursor R12 medium: prior converged marker ≠ current CI still green.
-          // Re-poll check-runs; stay on S9 if pending/failed so cleanup cannot
-          // run under a red or invisible CI state.
-          let ciStillAllowsSkip = true;
-          if (
-            isLiveGithubReviewPollEnabled(
-              lastShipOutput.pr,
-              defaultRepo(),
-            )
-          ) {
-            try {
-              const ghSh: (
-                file: string,
-                args: string[],
-              ) => string = (file, args) =>
-                execFileSync(file, args, {
-                  encoding: "utf8",
-                  stdio: ["ignore", "pipe", "pipe"],
-                }).trim();
-              const recheck = pollPrReviewState(ghSh, {
-                repo: defaultRepo(),
-                prUrl: lastShipOutput.pr,
-                pollCount: 0,
-                roundTrigger: buildRoundTrigger(
-                  reviewHeadKey ?? lastShipOutput.prHead ?? "resume-head",
-                  new Date().toISOString(),
-                ),
-              });
-              const emptyMeans = recheck.checkRunsEmptyMeans ?? "pending";
-              const gate = classifyCheckRuns(recheck.checkRuns, emptyMeans);
-              ciStillAllowsSkip = gate === "converged";
-            } catch {
-              ciStillAllowsSkip = false;
-            }
-          }
-          if (ciStillAllowsSkip) {
-            reviewStep = "S12";
-          }
-        }
-        const reviewLoopSpec =
-          reviewStep === "S9"
-            ? verifyWorkerSpec(modelRoute)
-            : reviewStep === "S10"
-              ? fixerWorkerSpec(modelRoute)
-              : reviewStep === "S11"
-                ? cleanupWorkerSpec(modelRoute)
-                : docReleaseWorkerSpec(modelRoute);
-        promptFile = reviewLoopSpec.promptFile;
-        try {
-          if (reviewStep === "S9") {
-            let recheckFixMarkedFindingIdentityKeys =
-              onlineReviewLanding?.fixMarkedFindingIdentityKeys;
-            let recheckFixMarkedFindingThreads =
-              onlineReviewLanding?.fixMarkedFindingThreads;
-            // Resume without a snapshot still owes the recheck its durable
-            // authorization — rebuild from fix_committed / last S9 (#743 R6).
-            if (
-              onlineReviewRound > 1 &&
-              (recheckFixMarkedFindingIdentityKeys === undefined ||
-                recheckFixMarkedFindingIdentityKeys.length === 0)
-            ) {
-              const auth = fixMarkedFindingAuthorizationForResume(
-                mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
-              );
-              recheckFixMarkedFindingIdentityKeys =
-                auth.fixMarkedFindingIdentityKeys;
-              recheckFixMarkedFindingThreads = auth.fixMarkedFindingThreads;
-            }
-            const snapshot = await pollOnlineReviewForShip(
-              lastShipOutput,
-              onlineReviewRound,
-            );
-            if (stateDir !== undefined) {
-              writeOnlineReviewSnapshotFile(stateDir, snapshot);
-            }
-            const priorRoundFindings = priorOnlineReviewFindingsFromLedger(
-              mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
-              onlineReviewRound,
-            );
-            onlineReviewLanding = {
-              ...buildOnlineReviewLanding(
-                snapshot,
-                lastShipOutput,
-                onlineReviewRound,
-              ),
-              ...(priorRoundFindings.length > 0
-                ? { priorRoundFindings }
-                : {}),
-              ...(onlineReviewRound > 1
-                ? {
-                    fixMarkedFindingIdentityKeys:
-                      recheckFixMarkedFindingIdentityKeys ?? [],
-                    fixMarkedFindingThreads:
-                      recheckFixMarkedFindingThreads ?? [],
-                  }
-                : {}),
-            };
-          }
-          const reviewCtx = {
-            worktree,
-            stateDir,
-            modelRoute,
-            repo: defaultRepo(),
-            prUrl: lastShipOutput.pr,
-            prHead:
-              onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
-            onlineReviewRound,
-            ...(relayBillingPoolForDispatch(reviewStep) !== undefined
-              ? { billingPool: relayBillingPoolForDispatch(reviewStep) }
-              : {}),
-            ...(relayFocusForDispatch(reviewStep) !== undefined
-              ? { relayFocusPath: relayFocusForDispatch(reviewStep) }
-              : {}),
-          };
-          const headBefore =
-            reviewStep === "S9" ? await resolveBranchHEAD() : undefined;
-          const porcelainBefore =
-            reviewStep === "S9" && worktree != null
-              ? worktreePorcelainFingerprint(
-                  gitOutputLines(worktree, ["status", "--porcelain"]),
-                )
-              : undefined;
-          const assertVerifyReadOnlyContract = async (): Promise<void> => {
-            if (reviewStep !== "S9" || headBefore === undefined) return;
-            const headAfterAttempt = await resolveBranchHEAD();
-            const porcelainAfter =
-              worktree != null
-                ? worktreePorcelainFingerprint(
-                    gitOutputLines(worktree, ["status", "--porcelain"]),
-                  )
-                : "";
-            const drift = verifyReadOnlyWorktreeDrift({
-              headBefore,
-              headAfter: headAfterAttempt,
-              porcelainBefore: porcelainBefore ?? "",
-              porcelainAfter,
-            });
-            if (drift === "head") {
-              throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
-            }
-            if (drift === "worktree") {
-              throw new VerifyWorkerWorktreeDirtyError(
-                porcelainBefore ?? "",
-                porcelainAfter,
-              );
-            }
-          };
-          // S9: read-only contract drift is caller-owned (no cleanResidue on
-          // retry — verify must not rewrite the tree). S12 与全角色一致：crash
-          // 重试 continue-on-current-worktree AS-IS（user override 2026-07-10，
-          // 同 21906adf / #600）；已提交 HEAD 与未提交残渣均保留，soul 的
-          // residual-HEAD-push 契约负责收尾。勿再单侧加 reset（#740）。
-          const reviewResetOpt: MechanicalRetryOptions =
-            reviewStep === "S9"
-              ? {
-                  callerOwns: (o) =>
-                    "kind" in o &&
-                    o.kind === "thrown" &&
-                    (o.error instanceof VerifyWorkerHeadMovedError ||
-                      o.error instanceof VerifyWorkerWorktreeDirtyError),
-                  rethrowOnExhaustion: true,
-                }
-              : {};
-          if (
-            reviewStep === "S10" &&
-            (onlineReviewLanding === undefined ||
-              onlineReviewLanding.onlineReviewSnapshot === undefined)
-          ) {
-            return await errorTermination(
-              reviewStep,
-              new Error(
-                `${reviewStep} requires a reconstructed online review landing with ` +
-                  "onlineReviewSnapshot — resume must rebuild from the full ledger " +
-                  "and persisted snapshot before dispatching the fixer",
-              ),
-            );
-          }
-          const fixerLanding =
-            reviewStep === "S10" && onlineReviewLanding !== undefined
-              ? {
-                  ...onlineReviewLanding,
-                  fixMarkedFindingIdentityKeys:
-                    onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
-                  fixMarkedFindingThreads:
-                    onlineReviewLanding.fixMarkedFindingThreads ?? [],
-                  ...(onlineReviewLanding.findingFamilies !== undefined
-                    ? { findingFamilies: onlineReviewLanding.findingFamilies }
-                    : {}),
-                }
-              : onlineReviewLanding;
-          const convergedHeadForCleanup =
-            onlineReviewResumeHeadKeyFromLedger(ledger) ??
-            convergenceHeadToRecord({
-              shipHead: lastShipOutput.prHead,
-              snapshotHead:
-                onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-              postFixHead: lastOnlineReviewFixCommitSha,
-            }) ??
-            lastShipOutput.prHead;
-          let cleanupLanding: WorkerLandingPayload | undefined;
-          if (reviewStep === "S11") {
-            if (
-              convergedHeadForCleanup !== undefined &&
-              sliceAutoMergePending(ledger, convergedHeadForCleanup)
-            ) {
-              const autoMerge = await runSliceAutoMergeHost(
-                lastShipOutput,
-                convergedHeadForCleanup,
-              );
-              // #735 Codex P1: post-doc CI pending → park without sticky S8 so
-              // re-feed routes from last S12(released) → S11 and re-polls merge.
-              if (autoMerge.kind === "park_not_ready") {
-                return {
-                  status: "escalate",
-                  stepLedger: ledger,
-                  stopSummary: autoMerge.stopSummary,
-                  deferredFindings,
-                };
-              }
-              if (autoMerge.kind === "escalate") {
-                ledger.push({ step: "S8", stopSummary: autoMerge.stopSummary });
-                try {
-                  await emitLedger(
-                    "S8",
-                    undefined,
-                    undefined,
-                    "escalate",
-                    undefined,
-                    undefined,
-                    "decision",
-                    autoMerge.stopSummary,
-                  );
-                } catch (err) {
-                  return await errorTermination("S8", err, { recordInMemory: false });
-                }
-                return {
-                  status: "escalate",
-                  stepLedger: ledger,
-                  stopSummary: autoMerge.stopSummary,
-                  deferredFindings,
-                };
-              }
-            }
-            const prMergedRecord =
-              convergedHeadForCleanup !== undefined
-                ? slicePrMergedRecordFromLedger(ledger, convergedHeadForCleanup)
-                : undefined;
-            if (prMergedRecord === undefined) {
-              return await errorTermination(
-                "S11",
-                new Error(
-                  "post-merge cleanup requires a durable pr_merged ledger marker",
-                ),
-              );
-            }
-            cleanupLanding = {
-              ...(onlineReviewLanding ?? {}),
-              cleanupDispatch: buildCleanupLanding({
-                record: prMergedRecord,
-                coveredIssues: [issueNumber],
-                ...(family?.parentIssue !== undefined
-                  ? { parentIssue: family.parentIssue }
-                  : {}),
-              }),
-            };
-          }
-          const reviewLanding =
-            reviewStep === "S9" || reviewStep === "S10"
-              ? fixerLanding
-              : cleanupLanding;
-          let result: Awaited<ReturnType<typeof withMechanicalRetry>>;
-          try {
-            result = await withMechanicalRetry(
-              reviewLoopSpec,
-              reviewCtx,
-              async (s, c) => {
-                let dispatchError: unknown | undefined;
-                let workerResult: Awaited<
-                  ReturnType<typeof dispatchWorkerWithMonitor>
-                >["result"];
-                try {
-                  // #684: production monitored dispatch for review-loop workers.
-                  const outcome = await dispatchWorkerWithMonitor(
-                    backend,
-                    s,
-                    c,
-                    reviewLanding,
-                    {
-                      onMonitorHandleSpawned: async (handle) => {
-                        stepMonitorHandle = handle;
-                        try {
-                          await persistMonitorHandleAtSpawn(s.id, handle);
-                        } catch {
-                          // Best-effort spawn-time persist.
-                        }
-                      },
-                    },
-                  );
-                  workerResult = outcome.result;
-                  if (outcome.monitorHandle !== undefined) {
-                    stepMonitorHandle = outcome.monitorHandle;
-                  }
-                } catch (err) {
-                  dispatchError = err;
-                }
-                // Always assert (online R10 Codex P1): mutate-then-throw must
-                // surface contract_drift, not mechanical-retry on a dirty tree.
-                await assertVerifyReadOnlyContract();
-                if (dispatchError !== undefined) throw dispatchError;
-                return workerResult!;
-              },
-              reviewResetOpt,
-            );
-          } catch (err) {
-            if (err instanceof VerifyWorkerHeadMovedError) {
-              const stopSummary = verifyReviewerHeadMovedStopSummary({
-                headBefore: err.headBefore,
-                headAfter: err.headAfter,
-              });
-              return await errorTermination(reviewStep, err, { stopSummary });
-            }
-            if (err instanceof VerifyWorkerWorktreeDirtyError) {
-              const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
-                trackedStatus: err.porcelainAfter
-                  .trim()
-                  .split(/\r?\n/)
-                  .filter((line) => line.length > 0),
-              });
-              return await errorTermination(reviewStep, err, { stopSummary });
-            }
-            throw err;
-          }
-          if (result.kind !== "completed") {
-            // Self-check twin of family verify/fixer (Cursor R11): preserve
-            // escalated payload as decision_gate_park, not a bare process error.
-            if (result.kind === "escalated") {
-              const summary = `${reviewStep} worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-              return await errorTermination(reviewStep, new Error(summary), {
-                stopSummary: decisionGateParkStopSummary({
-                  summary,
-                  repairHint:
-                    "answer the decision gate / unstick the worker, then resume the online review loop",
-                }),
-              });
-            }
-            return await errorTermination(
-              reviewStep,
-              new Error(
-                `${reviewStep} worker returned ${result.kind}` +
-                  ("reason" in result ? `: ${result.reason}` : ""),
-              ),
-            );
-          }
-          const outputValid =
-            (reviewStep === "S9" && isValidVerifyResult(result.output)) ||
-            (reviewStep === "S10" && isValidFixerResult(result.output)) ||
-            (reviewStep === "S11" && isValidCleanupResult(result.output)) ||
-            (reviewStep === "S12" && isValidDocReleaseResult(result.output));
-          if (!outputValid) {
-            const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
-            return await errorTermination(
-              reviewStep,
-              new Error(
-                `${reviewStep} worker returned non-${reviewStep} output kind '${String(badKind)}'`,
-              ),
-            );
-          }
-          if (
-            reviewStep === "S11" &&
-            isValidCleanupResult(result.output) &&
-            !result.output.terminal
-          ) {
-            // #603 P2: retryable non-terminal cleanup (live_pr_fetch_failed /
-            // branch_ref_probe_failed / tip_drift residue) must park resumable —
-            // S8(error) would make re-feed report a hard terminal and never
-            // re-dispatch S11. tip_drift stays non-success (no reclaim).
-            const cleanupOutput = result.output;
-            const summary =
-              `cleanup worker returned non-terminal outcome: ${
-                cleanupOutput.skippedReasons?.join(", ") ?? "retry"
-              }`;
-            output = cleanupOutput;
-            step = reviewStep;
-            stepSessionId = result.sessionId;
-            lastOutput = cleanupOutput;
-            ledger.push({
-              step: "S11",
-              output: cleanupOutput,
-              ...(result.sessionId !== undefined
-                ? { sessionId: result.sessionId }
-                : {}),
-            });
-            try {
-              await emitLedger(
-                "S11",
-                cleanupOutput,
-                promptFile,
-                undefined,
-                result.sessionId,
-              );
-            } catch (ledgerErr) {
-              return await errorTermination("S11", ledgerErr, {
-                recordInMemory: false,
-                output: cleanupOutput,
-              });
-            }
-            return {
-              status: "escalate",
-              stepLedger: ledger,
-              stopSummary: {
-                reason: "infra_failure",
-                summary,
-                repairHint:
-                  "re-feed the issue — resume re-enters S11 post-merge cleanup (non-terminal ≠ success; tip_drift leaves branch residue)",
-              },
-              deferredFindings,
-            };
-          }
-          if (
-            reviewStep === "S12" &&
-            isValidDocReleaseResult(result.output) &&
-            !result.output.released
-          ) {
-            // #735 US13: skill/push failure → released:false must park resumable.
-            // S8(error) would make re-feed report a sticky terminal and never
-            // re-dispatch docRelease (mirror S11 non-terminal park).
-            const docOutput = result.output;
-            const summary =
-              "文档发布 worker returned released:false (skill fail / hang / required push fail)";
-            output = docOutput;
-            step = reviewStep;
-            stepSessionId = result.sessionId;
-            lastOutput = docOutput;
-            ledger.push({
-              step: "S12",
-              output: docOutput,
-              ...(result.sessionId !== undefined
-                ? { sessionId: result.sessionId }
-                : {}),
-            });
-            try {
-              await emitLedger(
-                "S12",
-                docOutput,
-                promptFile,
-                undefined,
-                result.sessionId,
-              );
-            } catch (ledgerErr) {
-              return await errorTermination("S12", ledgerErr, {
-                recordInMemory: false,
-                output: docOutput,
-              });
-            }
-            return {
-              status: "escalate",
-              stepLedger: ledger,
-              stopSummary: {
-                reason: "infra_failure",
-                summary,
-                repairHint:
-                  "re-feed the issue — resume re-enters S12 文档发布 (released:false ≠ terminal success; fix skill/push then retry)",
-              },
-              deferredFindings,
-            };
-          }
-          if (reviewStep === "S9" && isValidVerifyResult(result.output)) {
-            let verifyOutput = clampVerifyConvergenceForCheckRuns(
-              result.output,
-              onlineReviewLanding?.onlineReviewSnapshot,
-            );
-            const recheckOutcome = enforceRunnerOwnedRecheck(
-              verifyOutput,
-              onlineReviewRound,
-            );
-            if (recheckOutcome.kind === "recheck_contradiction") {
-              return await errorTermination(
-                reviewStep,
-                new Error(
-                  "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
-                ),
-                {
-                  output: verifyOutput,
-                  stopSummary: {
-                    reason: "infra_failure",
-                    summary:
-                      "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
-                    repairHint:
-                      "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
-                  },
-                },
-              );
-            }
-            verifyOutput = recheckOutcome;
-            if (
-              onlineReviewRound > 1 &&
-              onlineReviewLanding !== undefined &&
-              !recheckConvergenceConfirmsFixMarkedKeys(
-                verifyOutput,
-                onlineReviewLanding,
-              )
-            ) {
-              return await errorTermination(
-                reviewStep,
-                new Error(
-                  "post-fixer verify converged without confirming every fix-marked finding identity key",
-                ),
-                {
-                  output: verifyOutput,
-                  stopSummary: contractDriftStopSummary({
-                    summary:
-                      "post-fixer verify converged without confirming every fix-marked finding identity key",
-                    repairHint:
-                      "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
-                  }),
-                },
-              );
-            }
-            // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
-            // apply "all clear" side effects (online R2 Codex P2).
-            // Bound re-entry: bots may already be quiescent so poll returns
-            // immediately — without a counter/sleep this hot-loops S9 forever
-            // while CI runs (online R4 Codex P1).
-            if (
-              verifyBlockedOnlyOnPendingCheckRuns(
-                verifyOutput,
-                onlineReviewLanding?.onlineReviewSnapshot,
-              )
-            ) {
-              pendingCiS9Polls += 1;
-              if (pendingCiS9Polls > BOT_OVERDUE_POLL_COUNT) {
-                // R20 Codex P2: park resumable at S9 — do not S8(error) terminal
-                // (re-feed after CI finishes must re-poll S9, not report old error).
-                output = verifyOutput;
-                step = reviewStep;
-                stepSessionId = result.sessionId;
-                lastOutput = verifyOutput;
-                ledger.push({
-                  step: "S9",
-                  output: verifyOutput,
-                  onlineReviewRound,
-                  ...(result.sessionId !== undefined
-                    ? { sessionId: result.sessionId }
-                    : {}),
-                });
-                try {
-                  await emitLedger(
-                    "S9",
-                    verifyOutput,
-                    promptFile,
-                    undefined,
-                    result.sessionId,
-                  );
-                } catch (ledgerErr) {
-                  return await errorTermination("S9", ledgerErr, {
-                    recordInMemory: false,
-                    output: verifyOutput,
-                  });
-                }
-                const pendingHead =
-                  onlineReviewLanding?.onlineReviewSnapshot?.headOid ??
-                  lastOnlineReviewFixCommitSha ??
-                  lastShipOutput.prHead;
-                const pendingMarker = {
-                  step: "S9" as const,
-                  event: "online_review_ci_pending" as const,
-                  prUrl: lastShipOutput.pr,
-                  prHead: pendingHead,
-                  onlineReviewRound,
-                };
-                ledger.push(pendingMarker);
-                if (stateDir !== undefined) {
-                  try {
-                    await backend.writeLedger(
-                      {
-                        ...pendingMarker,
-                        sessionId,
-                        prompt_hash: await hashPrompt(promptFile, "S9", backend),
-                        branchHEAD: await resolveBranchHEAD(),
-                        ts: new Date().toISOString(),
-                      },
-                      stateDir,
-                    );
-                  } catch (err) {
-                    return await errorTermination("S9", err, {
-                      recordInMemory: false,
-                      output: verifyOutput,
-                    });
-                  }
-                }
-                return {
-                  status: "escalate",
-                  stepLedger: ledger,
-                  stopSummary: {
-                    reason: "infra_failure",
-                    summary:
-                      "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
-                    repairHint:
-                      "wait for CI to complete (or fail) on the PR head, then re-feed — resume re-enters S9",
-                  },
-                  deferredFindings,
-                };
-              }
-              reenterS9ForPendingCi = true;
-              output = verifyOutput;
-              step = reviewStep;
-              stepSessionId = result.sessionId;
-              lastOutput = verifyOutput;
-              break;
-            }
-            pendingCiS9Polls = 0;
-            try {
-              await assertVerifyReadOnlyContract();
-            } catch (err) {
-              if (err instanceof VerifyWorkerHeadMovedError) {
-                const stopSummary = verifyReviewerHeadMovedStopSummary({
-                  headBefore: err.headBefore,
-                  headAfter: err.headAfter,
-                });
-                return await errorTermination(reviewStep, err, { stopSummary });
-              }
-              if (err instanceof VerifyWorkerWorktreeDirtyError) {
-                const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
-                  trackedStatus: err.porcelainAfter
-                    .trim()
-                    .split(/\r?\n/)
-                    .filter((line) => line.length > 0),
-                });
-                return await errorTermination(reviewStep, err, { stopSummary });
-              }
-              throw err;
-            }
-            const headAfter = await resolveBranchHEAD();
-            let sideEffects: ReturnType<typeof applyVerifySideEffects>;
-            try {
-              sideEffects =
-                lastShipOutput.pr != null &&
-                isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
-                  ? applyVerifySideEffects({
-                      sh: ghSh,
-                      repo: reviewCtx.repo!,
-                      prUrl: lastShipOutput.pr,
-                      verify: verifyOutput,
-                      fixingCommitSha:
-                        onlineReviewRound > 1
-                          ? lastOnlineReviewFixCommitSha
-                          : undefined,
-                      landingThreads:
-                        onlineReviewLanding?.onlineReviewSnapshot?.threads,
-                      approvedFixMarkedFindingThreads:
-                        onlineReviewLanding?.fixMarkedFindingThreads,
-                    })
-                  : {
-                      deferredIssueUrls: [],
-                      repliesPosted: [],
-                      threadsResolved: [],
-                    };
-            } catch (err) {
-              return await errorTermination(reviewStep, err, {
-                output: verifyOutput,
-                stopSummary: verifySideEffectFailureStopSummary(err),
-              });
-            }
-            verifyOutput = {
-              ...verifyOutput,
-              ...(sideEffects.deferredIssueUrls.length > 0
-                ? { deferredIssueUrls: sideEffects.deferredIssueUrls }
-                : {}),
-            };
-            const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
-            const fixMarkedFindingThreads =
-              fixMarkedFindingThreadsFromVerify(verifyOutput);
-            if (onlineReviewLanding !== undefined) {
-              onlineReviewLanding = {
-                ...onlineReviewLanding,
-                fixMarkedFindingIdentityKeys: fixKeys,
-                fixMarkedFindingThreads,
-                ...(verifyOutput.findingFamilies !== undefined
-                  ? { findingFamilies: verifyOutput.findingFamilies }
-                  : {}),
-              };
-            }
-            // Same-type as stage (R8 Gemini): CI red + no bot fix marks → park with
-            // CI failure summary, do not route to S10 fixer ("nothing to fix").
-            const s9Snap = onlineReviewLanding?.onlineReviewSnapshot;
-            const s9CheckRuns = s9Snap?.checkRuns ?? [];
-            const s9EmptyMeans = s9Snap?.checkRunsEmptyMeans ?? "converged";
-            if (
-              classifyCheckRuns(s9CheckRuns, s9EmptyMeans) === "failed" &&
-              fixKeys.length === 0
-            ) {
-              output = verifyOutput;
-              step = reviewStep;
-              stepSessionId = result.sessionId;
-              lastOutput = verifyOutput;
-              ledger.push({
-                step: "S9",
-                output: verifyOutput,
-                onlineReviewRound,
-                ...(result.sessionId !== undefined
-                  ? { sessionId: result.sessionId }
-                  : {}),
-              });
-              try {
-                await emitLedger(
-                  "S9",
-                  verifyOutput,
-                  promptFile,
-                  undefined,
-                  result.sessionId,
-                );
-              } catch (ledgerErr) {
-                return await errorTermination("S9", ledgerErr, {
-                  recordInMemory: false,
-                  output: verifyOutput,
-                });
-              }
-              // R18 Codex P2: durable marker so re-feed resumes at S9 (re-poll CI),
-              // not route(S9, converged:false) → S10 empty fixer.
-              const ciFailHead =
-                s9Snap?.headOid ??
-                lastOnlineReviewFixCommitSha ??
-                lastShipOutput.prHead ??
-                headAfter;
-              const ciFailMarker = {
-                step: "S9" as const,
-                event: "online_review_ci_failed" as const,
-                prUrl: lastShipOutput.pr,
-                prHead: ciFailHead,
-                onlineReviewRound,
-              };
-              ledger.push(ciFailMarker);
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger(
-                    {
-                      ...ciFailMarker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(promptFile, "S9", backend),
-                      branchHEAD: headAfter,
-                      ts: new Date().toISOString(),
-                    },
-                    stateDir,
-                  );
-                } catch (err) {
-                  return await errorTermination("S9", err, {
-                    recordInMemory: false,
-                    output: verifyOutput,
-                  });
-                }
-              }
-              return {
-                status: "escalate",
-                stepLedger: ledger,
-                stopSummary: {
-                  reason: "infra_failure",
-                  summary:
-                    "online review bots are clean but CI check-runs failed on the PR head",
-                  repairHint:
-                    "fix the CI failures on the PR head and re-feed — resume re-enters S9 (not S10 fixer)",
-                },
-                deferredFindings,
-              };
-            }
-            if (verifyOutput.converged && stateDir !== undefined) {
-              const markerHead = convergenceHeadToRecord({
-                shipHead: lastShipOutput.prHead,
-                snapshotHead:
-                  onlineReviewLanding?.onlineReviewSnapshot?.headOid,
-                postFixHead: lastOnlineReviewFixCommitSha,
-                branchHeadAfter: headAfter,
-              });
-              const marker = {
-                step: "S9" as const,
-                event: "online_review_converged" as const,
-                prUrl: lastShipOutput.pr!,
-                prHead: markerHead ?? headAfter,
-                onlineReviewRound,
-              };
-              ledger.push(marker);
-              try {
-                await backend.writeLedger(
-                  {
-                    step: "S9",
-                    event: "online_review_converged",
-                    prUrl: marker.prUrl,
-                    prHead: marker.prHead,
-                    onlineReviewRound,
-                    sessionId,
-                    prompt_hash: await hashPrompt(promptFile, "S9", backend),
-                    branchHEAD: headAfter,
-                    ts: new Date().toISOString(),
-                  },
-                  stateDir,
-                );
-              } catch (err) {
-                return await errorTermination(reviewStep, err, { recordInMemory: false });
-              }
-            }
-            output = verifyOutput;
-          } else {
-            output = result.output;
-          }
-          if (
-            reviewStep === "S10" &&
-            isValidFixerResult(result.output) &&
-            fixerProceedsToVerify(result.output)
-          ) {
-            lastOnlineReviewFixCommitSha = fixerEnvelopeFixCommitSha(result.output)!;
-            if (
-              lastShipOutput.pr != null &&
-              isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
-            ) {
-              const nextRound = onlineReviewRound + 1;
-              const fixAuthKeys = (
-                onlineReviewLanding?.fixMarkedFindingIdentityKeys ?? []
-              ).filter((key) => typeof key === "string" && key.trim().length > 0);
-              const fixAuthThreads = (
-                onlineReviewLanding?.fixMarkedFindingThreads ?? []
-              ).flatMap((binding) =>
-                typeof binding.identityKey === "string" &&
-                binding.identityKey.trim().length > 0 &&
-                typeof binding.threadId === "string" &&
-                binding.threadId.trim().length > 0
-                  ? [
-                      {
-                        identityKey: binding.identityKey,
-                        threadId: binding.threadId,
-                      },
-                    ]
-                  : [],
-              );
-              const fixCommittedMarker = {
-                step: "S10" as const,
-                event: "online_review_fix_committed" as const,
-                fixCommitSha: lastOnlineReviewFixCommitSha!,
-                onlineReviewRound,
-                ...(fixAuthKeys.length > 0
-                  ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
-                  : {}),
-                ...(fixAuthThreads.length > 0
-                  ? { fixMarkedFindingThreads: fixAuthThreads }
-                  : {}),
-              };
-              ledger.push(fixCommittedMarker);
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger(
-                    {
-                      ...fixCommittedMarker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(promptFile, "S10", backend),
-                      branchHEAD: lastOnlineReviewFixCommitSha,
-                      ts: new Date().toISOString(),
-                    },
-                    stateDir,
-                  );
-                } catch (err) {
-                  return await errorTermination(reviewStep, err, {
-                    recordInMemory: false,
-                  });
-                }
-              }
-              // fix_committed is already durable. retriggerBotsAndPoll must not
-              // escape to S8(error) — that blocks fix-gap recovery on re-feed
-              // (online R3 Codex P1). Match stage retriggerAfterFix: in-band park
-              // with fix_committed gap left for ensureOnlineReviewRetriggerAfterFixGap.
-              try {
-                const retriggered = retriggerBotsAndPoll(
-                  ghSh,
-                  reviewCtx.repo!,
-                  lastShipOutput.pr,
-                  1,
-                  lastOnlineReviewFixCommitSha ??
-                    lastOnlineReviewRoundTrigger?.headOid ??
-                    lastShipOutput.prHead ??
-                    "offline-review-head",
-                );
-                lastOnlineReviewRoundTrigger = retriggered.roundTrigger;
-                lastOnlineReviewPendingRoundTrigger = undefined;
-                const retriggerMarker = {
-                  step: "S10" as const,
-                  event: "online_review_round_retrigger" as const,
-                  roundTriggerHeadOid: retriggered.roundTrigger.headOid,
-                  roundTriggerAt: retriggered.roundTrigger.triggeredAt,
-                  onlineReviewRound: nextRound,
-                };
-                ledger.push(retriggerMarker);
-                if (stateDir !== undefined) {
-                  try {
-                    await backend.writeLedger(
-                      {
-                        ...retriggerMarker,
-                        sessionId,
-                        prompt_hash: await hashPrompt(promptFile, "S10", backend),
-                        branchHEAD: lastOnlineReviewFixCommitSha,
-                        ts: new Date().toISOString(),
-                      },
-                      stateDir,
-                    );
-                  } catch (err) {
-                    // Codex R12 P2: marker-only write failure after bots already
-                    // re-triggered must park in-band (not S8 error). Unpaired /
-                    // partial gap remains recoverable on re-feed.
-                    const detail =
-                      err instanceof Error ? err.message : String(err);
-                    output = result.output;
-                    step = reviewStep;
-                    stepSessionId = result.sessionId;
-                    lastOutput = output;
-                    onlineReviewRound = nextRound;
-                    ledger.push({
-                      step: "S10",
-                      output: result.output,
-                      ...(result.sessionId !== undefined
-                        ? { sessionId: result.sessionId }
-                        : {}),
-                    });
-                    try {
-                      await emitLedger(
-                        "S10",
-                        result.output,
-                        promptFile,
-                        undefined,
-                        result.sessionId,
-                      );
-                    } catch (ledgerErr) {
-                      return await errorTermination("S10", ledgerErr, {
-                        recordInMemory: false,
-                        output: result.output,
-                      });
-                    }
-                    return {
-                      status: "escalate",
-                      stepLedger: ledger,
-                      stopSummary: {
-                        reason: "infra_failure",
-                        summary: `online review round-retrigger marker write failed after bots re-triggered: ${detail}`,
-                        repairHint:
-                          "re-feed the issue — fix-gap / resume will rebuild round trigger from markers and continue S9 verify",
-                      },
-                      deferredFindings,
-                    };
-                  }
-                }
-              } catch (err) {
-                // Leave unpaired fix_committed as a resumable gap (no S8 error).
-                lastOnlineReviewPendingRoundTrigger = buildRoundTrigger(
-                  lastOnlineReviewFixCommitSha!,
-                  new Date().toISOString(),
-                );
-                output = result.output;
-                step = reviewStep;
-                stepSessionId = result.sessionId;
-                lastOutput = output;
-                onlineReviewRound += 1;
-                // Push S10 success row then park in-band (escalate, not error).
-                ledger.push({
-                  step: "S10",
-                  output: result.output,
-                  ...(result.sessionId !== undefined
-                    ? { sessionId: result.sessionId }
-                    : {}),
-                });
-                try {
-                  await emitLedger(
-                    "S10",
-                    result.output,
-                    promptFile,
-                    undefined,
-                    result.sessionId,
-                  );
-                } catch (ledgerErr) {
-                  return await errorTermination("S10", ledgerErr, {
-                    recordInMemory: false,
-                    output: result.output,
-                  });
-                }
-                const detail =
-                  err instanceof Error ? err.message : String(err);
-                return {
-                  status: "escalate",
-                  stepLedger: ledger,
-                  stopSummary: {
-                    reason: "infra_failure",
-                    summary: `online review bot re-trigger failed after fix committed: ${detail}`,
-                    repairHint:
-                      "re-feed the issue — fix-gap recovery will post the bot re-trigger and continue S9 verify",
-                  },
-                  deferredFindings,
-                };
-              }
-            }
-            onlineReviewRound += 1;
-          }
-          step = reviewStep;
-          stepSessionId = result.sessionId;
-          lastOutput = output;
-        } catch (err) {
-          // #683/#686: S9–S12 online-review legs hit the same park/relay fork as
-          // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
-          // quota wall and break sliceQuotaWaitPending resume).
-          if (isQuotaWaitForResetError(err)) {
-            const currentPool =
-              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
-            if (!canRelayInProcess()) {
-              return await parkQuotaWaitForResetLegacy({
-                step: reviewStep,
-                err,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                deferredFindings,
-                resolveBranchHEAD,
-                hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
-              });
-            }
-            const outcome = await parkOrRelayQuotaWall({
-              step: reviewStep,
-              err,
-              ledger,
-              stateDir,
-              sessionId,
-              backend,
-              deferredFindings,
-              resolveBranchHEAD,
-              hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
-              worktreePath: worktree?.path,
-              currentModelId: modelIdForWallStep(reviewStep),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-              now: relayNow(),
-            });
-            if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
-            }
-            applyRelayBaton(outcome.nextBaton, reviewStep);
-            step = reviewStep;
-            continue orchestratorStepLoop;
-          }
-          // #686: S9–S12 must treat the other two resource-failure signals
-          // exactly like S2/S3/S5/S6: hand off on the current scene, not S8.
-          if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
-            canRelayInProcess()
-          ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(
-                      reviewStep === "S9"
-                        ? modelRoute.slots.verify
-                        : reviewStep === "S10"
-                          ? modelRoute.slots.fixer
-                          : reviewStep === "S11"
-                            ? modelRoute.slots.cleanup
-                            : modelRoute.slots.docRelease,
-                    ),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
-            const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
-              reason: err instanceof Error ? err.message : String(err),
-              currentModelId: modelIdForWallStep(reviewStep),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
-              now: relayNow(),
-              step: reviewStep,
-            });
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination(reviewStep, new Error(staged.reason));
-              }
-              const marker: LedgerEntry = {
-                step: entry.step ?? reviewStep,
-                event: "relay_baton_handoff",
-                trigger: entry.trigger,
-                state_summary: entry.state_summary,
-                ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
-                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-                fromModelId: entry.fromModelId,
-                fromPool: entry.fromPool,
-                toModelId: entry.toModelId,
-                toPool: entry.toPool,
-                ts: entry.ts,
-              };
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger({
-                    ...marker,
-                    sessionId,
-                    prompt_hash: await hashPrompt(undefined, reviewStep, backend),
-                    branchHEAD: await resolveBranchHEAD(),
-                    ts: entry.ts,
-                  }, stateDir);
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(reviewStep, err);
-                }
-              }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination(reviewStep, focusErr);
-              }
-              ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
-              applyRelayBaton(handoff.nextBaton, reviewStep);
-              step = reviewStep;
-              continue orchestratorStepLoop;
-            }
-          }
-          return await errorTermination(step, err);
+          throw new Error("runner: S7 reached before worktree prepared");
         }
         break;
       }
@@ -6252,26 +4157,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
-    // Shared delay with family stage (sleepPendingCiPollInterval).
-    if (reenterS9ForPendingCi) {
-      reenterS9ForPendingCi = false;
-      step = "S9";
-      await sleepPendingCiPollInterval();
-      continue;
-    }
-
+    // #925 / #919 / #952 S1: verdict + terminal store flips (refute/suppress)
+    // land on judge seats (S4 residual). Residual S4 still accepts dispositions
+    // if a legacy path writes them.
     const stepFindingDispositions =
-      step === "S4" ? findingDispositions : undefined;
-    const stepRepairMovementPaths =
-      output?.kind === "coder" ? lastCoderActualRepairPaths : undefined;
+      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
+    // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
+    // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
+    // (zero readers; dual-write already gone). #926 owns any roster consumption.
+    // #955: in-memory parity with emitLedger modelSlug (resume identity).
+    const inMemoryModelSlug = isWorkerStep(step)
+      ? stepSpecs[step].model
+      : undefined;
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
-      ...(step === "S9" ? { onlineReviewRound } : {}),
       // #604 correctness r5 (E2): carry the surfaced per-step session id on the
       // in-memory entry too. The persisted ledger (emitLedger below) already records
       // it, but RunResult.stepLedger (the in-memory ledger) previously dropped it —
@@ -6279,11 +4182,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // lean RunResult ledger saw `sessionId: undefined` and never forwarded the
       // real id for 原地 resume (FamilyChildEscalation.sessionId existed in name only).
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
+      ...(inMemoryModelSlug !== undefined ? { modelSlug: inMemoryModelSlug } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
-        : {}),
-      ...(stepRepairMovementPaths !== undefined
-        ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined
@@ -6291,13 +4192,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
-    // converge to S8(error) with an error package, NOT raw-reject out of
-    // runOrchestrator (PRD route table: any backend call throwing → S8(error)).
+    // converge to S8(failed) with an error package, NOT raw-reject out of
+    // runOrchestrator (PRD route table: any backend call throwing → S8(failed)).
     // The step is already recorded in-memory above, so don't double-record it.
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
-      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
+      // #684: pass the monitor handle so resume can rebuild log last-activity observation.
       await emitLedger(
         step,
         output,
@@ -6307,7 +4208,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stepFindingDispositions,
         undefined,
         undefined,
-        stepRepairMovementPaths,
         stepMonitorHandle,
       );
     } catch (err) {
@@ -6322,8 +4222,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         recordInMemory: false,
         output,
         findingDispositions: stepFindingDispositions,
-        repairMovementPaths: stepRepairMovementPaths,
       });
+    }
+
+    // #926: after a judge continue row is durably recorded, execute optional
+    // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
+    // #919 R1: sole isJudgeSeat membership (no redundant S3||S6 string OR).
+    // #934 ID-005: advance/stay-put ledger write is required durable truth —
+    // persist failure must error-terminate, not continue with lost route truth.
+    if (
+      isJudgeSeat({ step }) &&
+      output?.kind === "judge" &&
+      output.status === "continue" &&
+      typeof output.advanceCoder === "string"
+    ) {
+      try {
+        // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
+        await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+      } catch (err) {
+        return await errorTermination(
+          step,
+          err instanceof Error ? err : new Error(String(err)),
+          { recordInMemory: false, output },
+        );
+      }
     }
 
     // A relay baton is a step-local override. Once its relayed step has
@@ -6331,71 +4253,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
-    // The runner owns the review/fix loop, but termination is still not a blind
-    // "count rounds then give up" rule. Only malformed reviewer outputs have a
-    // bounded rerun budget; substantive convergence is driven by fresh reviewer
-    // findings and explicit escalation.
+    // #925 / ADR 0132: topology advances from the judge status tri-state
+    // (converged|continue|escalate) and explicit escalation; receipt cargo is
+    // not a fate input. Residual open-count paper is projected before route().
     const decision = route({
       from: step,
       output: lastOutput,
-      ...(step === "S4"
-        ? { pendingBlockingFindings }
-        : {}),
-      ...(step === "S7"
-        ? {
-            shipStatus:
-              lastShipOutput?.status ??
-              (family?.noPush ? "pushed" : undefined),
-          }
-        : {}),
-      ...(step === "S9" || step === "S10"
-        ? { onlineReviewRound }
-        : {}),
     });
 
     if (decision.kind === "handoff") {
-      // Online-review decision terminals map to escalationKind:"failure" pending
-      // #604's A/B re-open channel (B-class summary + A-class kind pairing is deliberate).
       const handoffStopSummary: StopSummary =
-        decision.status === "success"
-          ? successSummaryForCurrentState({ deferredFindings, findingDispositions })
-          : decision.status === "error"
+        decision.status === "completed"
+          ? successSummaryForCurrentState({ findingDispositions })
+          : decision.status === "failed"
             ? stopSummaryForErrorPackage({
                 failedStep: step,
                 reason: buildErrorReason(step, lastOutput),
                 branchHead: worktree?.branch,
               })
-            : decision.onlineReviewTerminal === "decision_gate_raised"
-              ? onlineReviewFixerNothingToFixStopSummary()
-              : decision.onlineReviewTerminal === "round_budget_exhausted"
-                ? {
-                    reason: "decision_gate_park",
-                    summary:
-                      "online review loop exhausted the 3-round budget (round_budget_exhausted) with remaining findings",
-                    repairHint:
-                      "answer the decision gate or defer remaining findings, then rerun",
-                  }
-                : decision.onlineReviewTerminal === "contract_drift"
-                  ? {
-                      reason: "contract_drift",
-                      summary:
-                        "online review verify worker moved HEAD (contract_drift)",
-                      repairHint:
-                        "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
-                    }
-                  : stopSummaryForEscalation(
-                      escalateOf(lastOutput) ?? {
-                        reason: "run escalated",
-                        diagnosis: `step ${step} routed to an escalate handoff`,
-                      },
-                    );
+            : stopSummaryForEscalation(
+                escalateOf(lastOutput) ?? {
+                  reason: "run escalated",
+                  diagnosis: `step ${step} routed to an escalate handoff`,
+                },
+              );
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
-      // S8(error), not a raw rejection. (deferredFindings stays whatever was
-      // collected.)
+      // S8(failed), not a raw rejection.
       // #255: tag the entry with the terminal status (decision.status) so a
-      // resuming run can tell a prior success / escalate / error apart (the S8
+      // resuming run can tell a prior completed / parked / failed apart (the S8
       // entry is otherwise identical for all three).
       try {
         await emitLedger(
@@ -6405,13 +4292,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           decision.status,
           undefined,
           undefined,
-          escalationKindForHandoff(decision.status, lastOutput),
+          escalationKindForHandoff(decision.status),
           handoffStopSummary,
         );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff
-        // ledger write — which happens for ANY handoff (S2 no-commit error,
-        // route error, escalate, push success). The old code hard-coded
+        // ledger write — which happens for ANY handoff (route error, escalate,
+        // local child success). The old code hard-coded
         // failedStep:"S7", misattributing it to push even on paths where push
         // never ran. Attribute to the REAL failing step (the S8 write) and name
         // the operation in the reason so the dev sees what actually failed.
@@ -6431,29 +4318,41 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
+        // Speak before best-effort re-persist (same loudness class as
+        // errorTermination; this path does not call that helper).
+        console.error(
+          `[orchestrator] S8 failed: writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
+        );
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
         // persistBestEffort swallows a secondary write fault — we already return
-        // status:error, a second ledger fault must not mask the original cause.
+        // status:failed, a second ledger fault must not mask the original cause.
         await persistBestEffort(
           "S8",
           undefined,
           undefined,
-          "error",
+          "failed",
           undefined,
           undefined,
           undefined,
           stopSummary,
         );
-        return {
-          status: "error",
+        // #1007: S8 handoff persist fail — dual-write terminal (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return failedRunResult({
+          cause: "record_persist_failed",
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-          deferredFindings,
-        };
+        });
       }
 
-      if (decision.status === "error") {
+      if (decision.status === "failed") {
         // Build an error package from the current step context so the developer
         // can diagnose without re-running the pipeline (#252 / US#30).
         const reason = buildErrorReason(step, lastOutput);
@@ -6462,35 +4361,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
-        return {
-          status: "error",
+        // #1007: terminal broadcast via shared dual-write helper (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step,
+          status: "failed",
+          stopReason: handoffStopSummary.reason,
+          gateSummary: handoffStopSummary.summary,
+        });
+        return failedRunResult({
+          cause: "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
-          deferredFindings,
-        };
+        });
       }
 
-      if (
-        decision.status === "success" &&
-        step === "S11" &&
-        worktree !== undefined &&
-        shouldReclaimSliceHost(ledger, "success") &&
-        backend.reapResidentWorktree !== undefined
-      ) {
-        try {
-          await backend.reapResidentWorktree(worktree);
-        } catch {
-          // Best-effort terminal GC — must not flip a successful handoff.
-        }
-      }
+      // #1007: park / completed terminal echo (typed stop reason only).
+      emitExitProgress({
+        issue: issueNumber,
+        step,
+        status: decision.status,
+        stopReason: handoffStopSummary.reason,
+        gateSummary: handoffStopSummary.summary,
+      });
 
       return {
         status: decision.status,
-        branch: decision.status === "success" ? worktree?.branch : undefined,
+        branch: decision.status === "completed" ? worktree?.branch : undefined,
         stepLedger: ledger,
         stopSummary: handoffStopSummary,
-        deferredFindings,
       };
     }
 

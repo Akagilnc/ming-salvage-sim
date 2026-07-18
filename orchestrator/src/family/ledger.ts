@@ -22,7 +22,6 @@ import type {
   CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
-  FindingDisposition,
 } from "../types.js";
 import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
@@ -31,11 +30,17 @@ import {
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
-import type {
-  FamilyBackend,
-  FamilyLedgerEntry,
-  IntegratedCmrPass,
+import {
+  emitShipProgress,
+  getProgressBroadcastConfig,
+} from "../progressBroadcast.js";
+import {
+  FAMILY_LEDGER_STATUS_VALUES,
+  type FamilyBackend,
+  type FamilyLedgerEntry,
+  type IntegratedCmrPass,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /**
  * The full-schema fields a #298 `merged` event can carry (ADR 0022 decision 5).
@@ -72,7 +77,7 @@ export interface MergedRecord {
  */
 export interface AbortedRecord {
   /** Which verify barrier was red. */
-  readonly phase: "wave" | "final";
+  readonly phase: VerifyCmrPhase;
   /** Which integrated CMR pass failed, when the abort came from a CMR pass. */
   readonly cmrPass?: IntegratedCmrPass;
   /** Human-readable abort reason (the verify error / cmr non-convergence). */
@@ -86,8 +91,6 @@ export interface AbortedRecord {
    * carries nothing (`undefined`), which the runner treats as an unclassified abort.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -133,6 +136,16 @@ export interface PrMergedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/**
+ * Landing docs/VERSION release completion (before merge). Durable so a crash
+ * after push does not re-dispatch the landing worker and duplicate release.
+ */
+export interface DocsReleasedRecord {
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+  readonly stopSummary?: StopSummary;
+}
+
 /** The fields for a green integrated CMR pass audit event (#419). */
 export interface CmrPassedRecord {
   readonly cmrPass: IntegratedCmrPass;
@@ -140,10 +153,25 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
+  /**
+   * Barrier phase that produced this green pass. Defaults to `"final"`.
+   * `#961` incremental IC checkpoints write `"correctness_checkpoint"`.
+   */
+  readonly phase?: VerifyCmrPhase;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** #930 — family judge session id for resume / prior-verdict rows. */
+  readonly sessionId?: string;
+  /** #930 — T2 judge status (converged on green pass). */
+  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /**
+   * #930 / #952 — disposition table (usually empty on green pass). Includes
+   * schema `action: "suppress"` when the judge parks a finding (queryable).
+   */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  readonly advanceCoder?: string;
 }
 
 /** A red integrated CMR review outcome handed back to the runner before fix (#550). */
@@ -151,15 +179,28 @@ export interface CmrReviewedRecord {
   readonly cmrPass: IntegratedCmrPass;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
+  /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
+  readonly phase?: VerifyCmrPhase;
   /**
    * Thin control envelope (#604 slice 3 / ADR 0062): the deduped identity keys of
    * the blocking findings the runner must route through coder-fix. The runner
    * reads ONLY this off a `cmr_reviewed` row.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   readonly stopSummary?: StopSummary;
+  /** #930 — family judge session id for resume / prior-verdict rows. */
+  readonly sessionId?: string;
+  /** #930 — T2 judge status (continue / escalate / unusable-re-furnace). */
+  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /**
+   * #930 / #952 — disposition table for session-loss prior rows. Schema actions
+   * (`refute` / `suppress` / `live`) — suppress is queryable here as
+   * `action: "suppress"` (family does not dual-write store-status rows).
+   */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  readonly advanceCoder?: string;
 }
 
 /** A separate coder-fix commit produced for a red integrated CMR finding (#550). */
@@ -170,12 +211,20 @@ export interface CmrFixCommittedRecord {
   readonly familyHeadAfter?: string;
   readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
+  /** Barrier phase; defaults to `"final"`. `#961` checkpoints use `"correctness_checkpoint"`. */
+  readonly phase?: VerifyCmrPhase;
+  /**
+   * #979 — Sandcastle session id of this coder-fix open. Ledger sole truth for
+   * same-chain fix-round resume (mirrors #966 judge sessionId on cmr_reviewed).
+   * Absent when the provider surfaced no id.
+   */
+  readonly sessionId?: string;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
 export interface FamilyEscalatedRecord {
   readonly escalationKind: EscalationKind;
-  readonly phase?: "wave" | "final";
+  readonly phase?: VerifyCmrPhase;
   readonly reason?: string;
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary (#450). */
@@ -291,7 +340,6 @@ export async function recordAborted(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -319,11 +367,14 @@ export async function recordCmrPassed(
     compact({
       status: "cmr_passed",
       event: "cmr_passed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
-      cmrDispositions: record.cmrDispositions,
+      sessionId: record.sessionId,
+      judgeStatus: record.judgeStatus ?? "converged",
+      findingDispositions: record.findingDispositions,
+      advanceCoder: record.advanceCoder,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -349,12 +400,15 @@ export async function recordCmrReviewed(
     compact({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
+      sessionId: record.sessionId,
+      judgeStatus: record.judgeStatus,
+      findingDispositions: record.findingDispositions,
+      advanceCoder: record.advanceCoder,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -379,16 +433,22 @@ export async function recordCmrFixCommitted(
   backend: FamilyBackend,
   record: CmrFixCommittedRecord,
 ): Promise<void> {
+  const sessionId =
+    typeof record.sessionId === "string" && record.sessionId.trim().length > 0
+      ? record.sessionId.trim()
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "cmr_fix_committed",
       event: "cmr_fix_committed",
-      phase: "final",
+      phase: record.phase ?? "final",
       cmrPass: record.cmrPass,
       reason: record.reason,
       familyHeadBefore: record.familyHeadBefore,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      // #979: durable fixer-chain session continuity (ledger sole truth).
+      ...(sessionId !== undefined ? { sessionId } : {}),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -412,6 +472,56 @@ export async function recordCmrFixCommitted(
         }),
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * #979 — latest family coder-fix session id from `cmr_fix_committed` ledger rows.
+ *
+ * Same-pass only (completeness vs correctness are separate findings chains).
+ * Newest matching fix row is sole authority: blank/missing sessionId → fresh
+ * (never resurrect an older id under a fresh-open row — same CR-10 as #966).
+ * A later `coder_advance` (model change) after any prior fix invalidates resume
+ * so the new coder opens fresh; `coder_advance_stay_put` does not invalidate.
+ * A later same-pass `cmr_passed` ends that findings chain — do not walk past it
+ * to an older pre-pass fix session (R6-C1); a fix after pass is a new chain.
+ */
+export function familyCoderFixResumeSessionIdFromLedger(
+  ledger: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly cmrPass?: string;
+    readonly sessionId?: string;
+  }>,
+  pass: string,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const status = entry.status ?? entry.event;
+    if (status === "coder_advance") {
+      // Seat reassigned after a prior fix — do not hand the old conversation to
+      // the new model binding.
+      return undefined;
+    }
+    if (status === "cmr_passed") {
+      // Converged court ends this pass's findings chain. Prefer same-pass match;
+      // if the pass field is absent on the event, treat as chain boundary too
+      // (fail closed: never resume across an unscoped pass marker).
+      if (entry.cmrPass === undefined || entry.cmrPass === pass) {
+        return undefined;
+      }
+      continue;
+    }
+    if (status === "cmr_fix_committed") {
+      if (entry.cmrPass !== pass) continue;
+      const sid = entry.sessionId;
+      // Align with recordCmrFixCommitted write-path trim: whitespace-only →
+      // absent / fresh (never hand a blank token to Sandcastle resume).
+      if (typeof sid !== "string") return undefined;
+      const trimmed = sid.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+  }
+  return undefined;
 }
 
 /** Append a PHASE-LEVEL family escalation marker (#439). */
@@ -445,7 +555,11 @@ export async function recordFamilyEscalated(
   );
 }
 
-/** Append a PHASE-LEVEL human answer to a family decision escalation (#439). */
+/**
+ * Append a PHASE-LEVEL human answer to a family decision escalation (#439).
+ * Child-bound answers inherit the parked worker session id so every durable
+ * decision-gate container identifies the session that will be resumed.
+ */
 export async function recordFamilyEscalationAnswered(
   backend: FamilyBackend,
   record: FamilyEscalationAnswerRecord,
@@ -454,6 +568,16 @@ export async function recordFamilyEscalationAnswered(
   if (answer.length === 0) {
     throw new Error("family escalation answer must be a non-empty string");
   }
+  const sessionId =
+    record.childIssue !== undefined
+      ? [...(await backend.readFamilyLedger())]
+          .reverse()
+          .find(
+            (entry) =>
+              isValidChildDecisionParked(entry) &&
+              entry.childIssue === record.childIssue,
+          )?.sessionId
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "escalation_answered",
@@ -464,6 +588,7 @@ export async function recordFamilyEscalationAnswered(
       // deadlocked the decision gate — a human-supplied answer never reopened the
       // parked child because the row could not be matched.
       childIssue: record.childIssue,
+      sessionId,
       answer,
       source: record.source,
       note: record.note,
@@ -515,8 +640,12 @@ export async function recordChildDecisionParked(
   );
 }
 
-/** Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)? */
-function isValidChildDecisionParked(
+/**
+ * Is this a valid, well-shaped `child_decision_parked` decision row (#604 slice 5)?
+ * Single authority for "ledger-proven decision park" shape — family runner #970
+ * injection gating reuses this (do not reimplement a weaker twin).
+ */
+export function isValidChildDecisionParked(
   entry: FamilyLedgerEntry,
 ): entry is FamilyLedgerEntry & { readonly childIssue: number } {
   return (
@@ -598,6 +727,7 @@ export function childEscalationAnswer(
         event: "escalation_answered",
         answer: entry.answer!,
         source: (entry.source ?? "human") as "human" | "resume_input",
+        ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
         ...(entry.note != null ? { note: entry.note } : {}),
       };
     }
@@ -621,6 +751,32 @@ export async function recordAdmissionSkipped(
       stopSummary: successStopSummary({
         admissionSkipped: [record],
       }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * #1006 — durable audit when the admission baseline health gate fails closed
+ * (family-base full suite red before fan-out). Not an unblock fact.
+ */
+export async function recordBaselineHealthFailed(
+  backend: FamilyBackend,
+  record: {
+    readonly reason: string;
+    readonly message: string;
+    readonly familyHeadAfter?: string;
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "baseline_health_failed",
+      event: "baseline_health_failed",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
     }) as FamilyLedgerEntry,
   );
 }
@@ -731,6 +887,20 @@ function latestValidFamilyAnswerAfter(
   return undefined;
 }
 
+/**
+ * Complete durable family escalation shape for terminal replay / ledger-without-worksite
+ * (#934 ID-005). Incomplete `status:"escalated"` rows (missing `event:"escalated"` or
+ * decision/failure kind) still surface via {@link familyEscalationState} so mid-run
+ * pause stays fail-closed, but they are NOT terminal durable truth.
+ */
+export function isCompleteFamilyEscalation(entry: FamilyLedgerEntry): boolean {
+  return (
+    entry.status === "escalated" &&
+    entry.event === "escalated" &&
+    (entry.escalationKind === "decision" || entry.escalationKind === "failure")
+  );
+}
+
 /** Latest family escalation and the later valid answer row that reopens it (#439). */
 export function familyEscalationState(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -745,6 +915,8 @@ export function familyEscalationState(
     if (isValidFamilyShipped(entry)) return undefined;
     if (isValidReviewLoopConverged(entry)) return undefined;
     if (entry.status !== "escalated") continue;
+    // Incomplete escalated rows still pause mid-run (do not disappear) but are
+    // not terminal-replayable — see isCompleteFamilyEscalation / scene recovery.
     if (entry.event !== "escalated") return { escalation: entry };
     const answer =
       entry.escalationKind === "decision"
@@ -756,9 +928,73 @@ export function familyEscalationState(
 }
 
 /**
+ * Barrier phase for CMR pass-admission / fix-chain reachability / ledger rows.
+ * Missing or non-checkpoint phases normalize to `"final"` (legacy rows).
+ * Sole normalizer for `correctness_checkpoint | final` (#982 / SHARED #19) —
+ * verifyCmr and ledger share this export (do not fork a twin helper).
+ */
+export function cmrBarrierPhaseOf(
+  phase: string | undefined,
+): "final" | "correctness_checkpoint" {
+  return phase === "correctness_checkpoint"
+    ? "correctness_checkpoint"
+    : "final";
+}
+
+/**
+ * Heads reachable from `fromHead` by walking same-barrier
+ * `cmr_fix_committed` rows that appear AFTER `startIndex` and whose
+ * `familyHeadBefore` is already reachable.
+ *
+ * Phase is scoped (#982 Codex P1 / #961): a `correctness_checkpoint` pass only
+ * extends via checkpoint-phase fix commits; a `final` pass only via final-phase
+ * fixes. Cross-phase fix advances must not free-skip a different court.
+ *
+ * Fail closed: incomplete fix rows (missing before/after) never extend the
+ * set; pre-pass fix rows are ignored because the scan starts after the pass.
+ */
+function barrierInternalHeadsReachableFrom(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  startIndex: number,
+  fromHead: string,
+  barrierPhase: "final" | "correctness_checkpoint",
+): Set<string> {
+  const reachable = new Set<string>([fromHead]);
+  for (let i = startIndex + 1; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_fix_committed" ||
+      e.event !== "cmr_fix_committed" ||
+      cmrBarrierPhaseOf(e.phase) !== barrierPhase
+    ) {
+      continue;
+    }
+    const before =
+      typeof e.familyHeadBefore === "string" ? e.familyHeadBefore.trim() : "";
+    const after =
+      typeof e.familyHeadAfter === "string" ? e.familyHeadAfter.trim() : "";
+    if (before.length === 0 || after.length === 0) continue;
+    if (reachable.has(before)) reachable.add(after);
+  }
+  return reachable;
+}
+
+/**
  * Did a specific integrated CMR pass already pass for the CURRENT family base
- * HEAD? This is a resume guard, so it fails closed when the current head is
- * missing or the ledger row lacks the complete cmr_passed shape.
+ * HEAD (or an earlier head in the same barrier whose subsequent advance is
+ * explained only by barrier-internal fix commits)?
+ *
+ * Resume guard (#434, revised #881 to match live barrier semantics; #961
+ * checkpoint phase; #982 separates checkpoint vs final admission):
+ *   - exact head match on a complete `cmr_passed` row of the **same phase** → skip
+ *   - head advanced ONLY via same-phase barrier-internal `cmr_fix_committed`
+ *     chain after that pass marker → skip
+ *   - head advanced without such a chain (barrier-external or other phase) → re-verify
+ *   - a `correctness_checkpoint` green never free-skips a later `final` court
+ *     (checkpoint reuse is for checkpoint admission / same-barrier resume only)
+ *
+ * Fails closed when the current head is missing or the ledger row lacks the
+ * complete cmr_passed shape (status/event/pass/head/routeFingerprint).
  */
 export function cmrPassAlreadyPassed(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -766,28 +1002,83 @@ export function cmrPassAlreadyPassed(
     readonly cmrPass: IntegratedCmrPass;
     readonly familyHeadAfter?: string;
     readonly routeFingerprint?: string;
+    /**
+     * Court phase asking for admission. Defaults to `"final"`.
+     * Checkpoint and final are distinct for pass reuse (#982).
+     */
+    readonly phase?: "final" | "correctness_checkpoint";
   },
 ): boolean {
-  if (input.familyHeadAfter == null || input.familyHeadAfter.trim().length === 0) {
+  if (
+    input.familyHeadAfter === undefined ||
+    input.familyHeadAfter.trim().length === 0
+  ) {
     return false;
   }
   if (
-    input.routeFingerprint == null ||
+    input.routeFingerprint === undefined ||
     input.routeFingerprint.trim().length === 0
   ) {
     return false;
   }
-  return entries.some(
-    (e) =>
-      e.status === "cmr_passed" &&
-      e.event === "cmr_passed" &&
-      e.phase === "final" &&
-      e.cmrPass === input.cmrPass &&
-      e.familyHeadAfter != null &&
-      e.familyHeadAfter === input.familyHeadAfter &&
-      e.routeFingerprint != null &&
-      e.routeFingerprint === input.routeFingerprint,
-  );
+  const currentHead = input.familyHeadAfter.trim();
+  const routeFingerprint = input.routeFingerprint.trim();
+  const queryPhase = cmrBarrierPhaseOf(input.phase);
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_passed" ||
+      e.event !== "cmr_passed" ||
+      // #982: checkpoint ≢ final for final-court skip.
+      cmrBarrierPhaseOf(e.phase) !== queryPhase ||
+      e.cmrPass !== input.cmrPass ||
+      e.familyHeadAfter === undefined ||
+      e.familyHeadAfter.trim().length === 0 ||
+      e.routeFingerprint === undefined ||
+      e.routeFingerprint.trim() !== routeFingerprint
+    ) {
+      continue;
+    }
+    const passHead = e.familyHeadAfter.trim();
+    if (passHead === currentHead) return true;
+    // #881: same barrier + same phase, head advanced only by barrier-internal fixes.
+    const reachable = barrierInternalHeadsReachableFrom(
+      entries,
+      i,
+      passHead,
+      queryPhase,
+    );
+    if (reachable.has(currentHead)) return true;
+  }
+  return false;
+}
+
+/**
+ * #961 / ADR 0139 — durable `lastCorrectnessConvergedHead` single source.
+ *
+ * Pure reader over the family ledger: the latest green correctness
+ * `cmr_passed` row's `familyHeadAfter` (checkpoint or final). Written only via
+ * {@link recordCmrPassed} for `cmrPass:"correctness"` (Integrated Correctness
+ * Action / Family Flow). Runner must not read this for admission or park.
+ */
+export function lastCorrectnessConvergedHeadFromLedger(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_passed" ||
+      e.event !== "cmr_passed" ||
+      e.cmrPass !== "correctness"
+    ) {
+      continue;
+    }
+    const head =
+      typeof e.familyHeadAfter === "string" ? e.familyHeadAfter.trim() : "";
+    if (head.length > 0) return head;
+  }
+  return undefined;
 }
 
 /**
@@ -833,6 +1124,14 @@ export async function recordShipped(
         }),
     }) as FamilyLedgerEntry,
   );
+  // #1007: first successful ship must echo progress (resume path also echoes;
+  // missing here left the only ship event on re-entry, not the open).
+  // Align epic with resume path when ambient progress config has it.
+  emitShipProgress({
+    epic: getProgressBroadcastConfig().epic,
+    pr,
+    familyHead: familyHeadAfter,
+  });
 }
 
 /**
@@ -924,6 +1223,49 @@ export function familyShippedRecordForReviewLoopResume(
           : {}),
       };
     }
+  }
+  return undefined;
+}
+
+/**
+ * Latest valid `shipped` marker for **this** barrier head that has not yet
+ * reached `review_loop_converged` for the same PR+head. Used for in-process
+ * online-review re-entry after `recordShipped` (quota wall must not re-ship).
+ *
+ * Correctness N1 / F1 residual:
+ * - Open shipped must match the **current family head / PR tip** — any-head open
+ *   shipped must not hijack final verify/CMR/ship.
+ * - Historical `review_loop_converged` on the same PR at an older head must not
+ *   wipe a later ship at a new head (converge is head-scoped).
+ */
+export function familyOpenShippedForOnlineReview(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
+  if (familyHeadAfter == null || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  const head = familyHeadAfter.trim();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidFamilyShipped(entry)) continue;
+    // Only the ship for THIS barrier head may skip re-ship.
+    if (entry.familyHeadAfter !== head) continue;
+    const pr = entry.pr.trim();
+    const alreadyConverged = entries.some(
+      (e) =>
+        isValidReviewLoopConverged(e) &&
+        e.pr.trim() === pr &&
+        e.familyHeadAfter === head,
+    );
+    if (alreadyConverged) continue;
+    return {
+      pr,
+      familyHeadAfter: entry.familyHeadAfter,
+      ...(entry.stopSummary !== undefined
+        ? { stopSummary: entry.stopSummary }
+        : {}),
+    };
   }
   return undefined;
 }
@@ -1124,6 +1466,81 @@ export function familyReviewLoopConvergedForHead(
 }
 
 /**
+ * Append the PHASE-LEVEL `docs_released` marker (landing docs before merge).
+ * Keyed by post-release family HEAD so resume skips a second VERSION/CHANGELOG.
+ */
+export async function recordDocsReleased(
+  backend: FamilyBackend,
+  record: DocsReleasedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (pr.length === 0) {
+    throw new Error("family docs_released marker must include a non-empty PR URL");
+  }
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family docs_released marker must include a non-empty familyHeadAfter",
+    );
+  }
+  await backend.appendFamilyLedger(
+    compact({
+      status: "docs_released",
+      event: "docs_released",
+      phase: "final",
+      pr,
+      familyHeadAfter,
+      stopSummary:
+        record.stopSummary ??
+        successStopSummary({
+          heads: {
+            actualFamilyHead: familyHeadAfter,
+            sources: { actualFamilyHead: "docs_released ledger row" },
+          },
+        }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+export function isValidDocsReleased(
+  entry: FamilyLedgerEntry,
+): entry is FamilyLedgerEntry & {
+  readonly status: "docs_released";
+  readonly event: "docs_released";
+  readonly pr: string;
+  readonly familyHeadAfter: string;
+} {
+  return (
+    entry.status === "docs_released" &&
+    entry.event === "docs_released" &&
+    typeof entry.pr === "string" &&
+    entry.pr.trim().length > 0 &&
+    typeof entry.familyHeadAfter === "string" &&
+    entry.familyHeadAfter.trim().length > 0
+  );
+}
+
+/** Docs-release completion row for THIS family HEAD (landing crash re-entry). */
+export function familyDocsReleasedForHead(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): DocsReleasedRecord | undefined {
+  if (familyHeadAfter === undefined || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  for (const e of entries) {
+    if (!isValidDocsReleased(e)) continue;
+    if (e.familyHeadAfter !== familyHeadAfter) continue;
+    return {
+      pr: e.pr,
+      familyHeadAfter: e.familyHeadAfter,
+      ...(e.stopSummary !== undefined ? { stopSummary: e.stopSummary } : {}),
+    };
+  }
+  return undefined;
+}
+
+/**
  * Append the PHASE-LEVEL `pr_merged` terminal marker (#602).
  */
 export async function recordPrMerged(
@@ -1291,32 +1708,6 @@ export function familyPostMergeCleanupForHead(
 }
 
 /**
- * Does the ledger contain a legacy terminal shipped marker that predates
- * `familyHeadAfter` binding? It proves a ship/PR already happened, but it cannot
- * prove which HEAD that PR covers, so resume must fail closed instead of either
- * silently skipping a newer head or re-running ship and duplicating the PR attempt.
- */
-export function hasUnboundLegacyShippedMarker(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): boolean {
-  return entries.some(
-    (e) =>
-      e.status === "shipped" &&
-      e.event === "shipped" &&
-      e.phase === "final" &&
-      typeof e.pr === "string" &&
-      e.pr.trim().length > 0 &&
-      (typeof e.familyHeadAfter !== "string" || e.familyHeadAfter.trim().length === 0),
-  );
-}
-
-export function hasBoundShippedMarker(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): boolean {
-  return entries.some((e) => isValidFamilyShipped(e));
-}
-
-/**
  * Derive the set of merged child issue numbers from the ledger entries.
  *
  * This is the unblock truth the commander reads (ADR 0022 decision 6②): a child
@@ -1340,4 +1731,112 @@ export function mergedSet(
     if (isMergedAccountingEntry(e)) out.add(e.childIssue!);
   }
   return out;
+}
+
+/**
+ * Known {@link FamilyLedgerEntry.status} values. Shape gate for JSONL parse —
+ * a line that JSON.parses as `null` / `{}` / bad status must fail closed the
+ * same way as an unparseable line (#934 S-3; mirror single-slice isLedgerEntryShape).
+ * Built from {@link FAMILY_LEDGER_STATUS_VALUES} — no hand-synced twin list.
+ */
+export const FAMILY_LEDGER_STATUSES: ReadonlySet<string> = new Set(
+  FAMILY_LEDGER_STATUS_VALUES,
+);
+
+/**
+ * Per-line structural gate for family-ledger.jsonl (#934 S-3).
+ * Thin `{childIssue, status:"merged"}` remains valid; null/primitive/array/{}
+ * and unknown status values are not.
+ */
+export function isFamilyLedgerEntryShape(
+  value: unknown,
+): value is FamilyLedgerEntry {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const status = (value as { status?: unknown }).status;
+  if (typeof status !== "string" || !FAMILY_LEDGER_STATUSES.has(status)) {
+    return false;
+  }
+  const childIssue = (value as { childIssue?: unknown }).childIssue;
+  if (
+    childIssue !== undefined &&
+    (typeof childIssue !== "number" ||
+      !Number.isSafeInteger(childIssue) ||
+      childIssue <= 0)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Reconstruct durable process-root attempts already consumed for a family
+ * worker step (#934 ID-004 / #937). Mirrors single-slice
+ * `mechanicalRedispatchAttemptsFor`: walk the ledger tail, count trailing
+ * failure markers for this workerStep, stop at any non-spawn boundary so a
+ * later successful phase does not inherit an earlier crash streak.
+ */
+export function mechanicalRedispatchAttemptsFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  workerStep: string,
+): number {
+  let durableAttempts = 0;
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    const attempt = entry.mechanicalRedispatchAttempt;
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.workerStep === workerStep &&
+      typeof attempt === "number" &&
+      Number.isSafeInteger(attempt) &&
+      attempt >= 1
+    ) {
+      durableAttempts = Math.max(durableAttempts, attempt);
+      continue;
+    }
+    // Spawn adoption / advisory git telemetry: worker_dispatched without a
+    // retry counter — skip so inter-retry spawn rows do not reset the streak.
+    if (
+      entry.event === "worker_dispatched" &&
+      entry.mechanicalRedispatchAttempt === undefined
+    ) {
+      continue;
+    }
+    // Any other durable fact (phase success, escalate, merge, …) is a budget
+    // boundary for this workerStep.
+    break;
+  }
+  return durableAttempts;
+}
+
+/**
+ * Parse family-ledger.jsonl fail-closed: every non-empty line must JSON.parse
+ * AND pass {@link isFamilyLedgerEntryShape}. Blank lines tolerated.
+ */
+export function parseFamilyLedgerJsonl(raw: string): FamilyLedgerEntry[] {
+  const entries: FamilyLedgerEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `corrupt family ledger: a non-empty family-ledger.jsonl line failed to parse — ` +
+          `refusing to resume on a partially-readable ledger (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isFamilyLedgerEntryShape(parsed)) {
+      throw new Error(
+        "corrupt family ledger: a family-ledger.jsonl line parsed but is not a " +
+          "valid FamilyLedgerEntry (must be an object with a known status) — " +
+          "refusing to resume on a malformed ledger (fail closed).",
+      );
+    }
+    entries.push(parsed);
+  }
+  return entries;
 }

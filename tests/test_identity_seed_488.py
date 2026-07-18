@@ -35,7 +35,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
         "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
     ).fetchone()
     content.characters["魏忠贤"].identity = 0
-    content.characters["魏忠贤"].seed_guilt = ""
+    content.characters["魏忠贤"].seed_guilt = {}
     _sync_offices_from_db_impl(content, db)
     after = db.conn.execute(
         "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
@@ -44,7 +44,7 @@ def test_identity_and_seed_guilt_survive_restore(game):
     guilt = json.loads(after["seed_guilt"])
     assert guilt["severity"] == "重"
     assert content.characters["魏忠贤"].identity == before["identity"]
-    assert json.loads(content.characters["魏忠贤"].seed_guilt) == guilt
+    assert content.characters["魏忠贤"].seed_guilt == guilt
 
 
 def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(tmp_path, content):
@@ -68,7 +68,7 @@ def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(
         "SELECT identity, seed_guilt FROM characters WHERE name=?", ("王承恩",)
     ).fetchone()
     assert row["identity"] == content.characters["魏忠贤"].identity
-    assert row["seed_guilt"] == content.characters["魏忠贤"].seed_guilt
+    assert json.loads(row["seed_guilt"]) == content.characters["魏忠贤"].seed_guilt
     assert inserted["identity"] == content.characters["王承恩"].identity
     restored.close()
 

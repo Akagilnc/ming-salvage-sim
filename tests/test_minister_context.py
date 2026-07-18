@@ -36,8 +36,8 @@ def _ctx(game):
     return CourtContext(state=state, db=db, previous_summary="")
 
 
-def test_region_brief_has_content(game):
-    b = build_region_brief(_ctx(game))
+def test_region_brief_has_content(read_game):
+    b = build_region_brief(_ctx(read_game))
     assert b                                    # 非空
     assert ("民心" in b or "动乱" in b)          # 含地区危情字段
 
@@ -59,17 +59,17 @@ def test_region_brief_characterizes_abstract_scores_and_rejects_injected_values(
     assert "粮情" in rendered
 
 
-def test_building_brief_has_content(game):
-    b = build_building_brief(_ctx(game))
+def test_building_brief_has_content(read_game):
+    b = build_building_brief(_ctx(read_game))
     assert b
     assert "现有建筑" in b and "Lv" in b         # 含建筑表头与等级
     assert "·产" in b or "完好" in b             # 含产出/完好（紧凑字段）
 
 
-def test_building_brief_uses_chinese_region_not_pinyin(game):
+def test_building_brief_uses_chinese_region_not_pinyin(read_game):
     """建筑表用中文地区名，不漏拼音 region_id——拼音进大臣 system 会诱发 opus code-switch
     蹦英文(B7)。锁住 0b30d35 的 LEFT JOIN regions 修复，防回归。"""
-    b = build_building_brief(_ctx(game))
+    b = build_building_brief(_ctx(read_game))
     assert "北直隶" in b                          # 中文地区名出现
     for pinyin in ("beizhili", "shaanxi", "liaodong", "shandong", "nanzhili"):
         assert pinyin not in b                    # 拼音 region_id 不泄漏进大臣上下文

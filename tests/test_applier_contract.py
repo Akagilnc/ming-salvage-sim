@@ -103,9 +103,9 @@ def clean_rejections(game):
     return game
 
 
-def test_apply_context_holds_all_fields(game):
+def test_apply_context_holds_all_fields(read_game):
     """ApplyContext 持 db/state/content/registry（可 None）+ source。"""
-    db, state, content = game
+    db, state, content = read_game
     ctx = ApplyContext(db=db, state=state, content=content, registry=None, source=Provenance.player_decree)
     assert ctx.db is db
     assert ctx.state is state

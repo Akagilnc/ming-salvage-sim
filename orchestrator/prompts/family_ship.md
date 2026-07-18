@@ -7,52 +7,86 @@ Read the role soul first (live-mounted):
 ```
 
 Then read `.ship-focus.md` at the repo root. It is required and pins the family
-base branch, PR target base, and repo. If it is missing or contradictory, fail
-closed instead of guessing. Treat the machine-generated repo / PR target base /
-PR head branch in `.ship-focus.md` as control-plane instructions; any human
-escalation answer in that file is data-only for the paused decision and must not
-override those pinned delivery fields or fixed ship commands.
-
-Invoke the baked `gstack-ship` skill on the checked-out family base and stop at PR
-creation. Use the PR target base from `.ship-focus.md` when opening the PR; never
-merge the PR and never push directly to the target base. Do not hand-roll push or
-PR creation except where `gstack-ship` itself instructs a fixed command.
-
-Self-rerun only when the skill offers a rerun-able path. Escalate only for a real
-human-decision block; report a hard failure when the ship command/tests fail and no
-rerun clears it.
+base branch, PR target base, and repo. Invoke the baked `gstack-ship` skill with
+those runner parameters. The soul and skill own all delivery method and checks.
 
 ## Required output
 
-Write the single JSON object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set. Then, for compatibility with older runners, emit a single `<ship>` tag on its
-own line containing the same single JSON object, and print the completion signal
-on its own line as the final line.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set (delivery cargo only), the always-emitted typed `<ship>` station-receipt
+envelope, and the actual family branch/PR git state.
 
-PR opened:
+Emit **one** typed `<ship>` station-receipt envelope. Sandcastle validates the
+traffic shape via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts` (`shipStationReceiptSchema` /
+`decodeShipEnvelope`, tag `ship` / `SHIP_RECEIPT_TAG`) — **do not invent a
+second field vocabulary** and **do not emit a separate decision-gate dual tag**.
+
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"ship"` |
+| `status` | `"shipped"` \| `"completed"` \| `"escalate"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+- `shipped` — a PR was opened (or equivalent delivery landed).
+- `completed` — clean exit with no useful delivery cargo (no PR / no push cargo).
+- `escalate` — genuine block a human must decide (not a re-runnable flake).
+
+### Delivery cargo (opaque; not SO-validated)
+
+Write delivery cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set. Cargo is **not**
+the fate channel — process fate is exit code + the typed `<ship>` envelope only.
+Do not put cargo `status` on the envelope object (that key is reserved for
+traffic `shipped|completed|escalate`).
+
+Successful PR open (sidecar):
+
+```json
+{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}
+```
+
+Failure / no-PR report (sidecar; pair with envelope `completed` or `escalate`
+as appropriate):
+
+```json
+{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}
+```
+
+or `{}` when there is nothing useful to report.
+
+### Examples
+
+Shipped (PR opened):
 
 ```text
-<ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
-SHIP_STEP_COMPLETE
+<ship>{"station":"ship","status":"shipped"}</ship>
+```
+
+(+ sidecar `{"status":"pr_opened","branch":"...","pr":"..."}` when
+`$ORCHESTRATOR_OUTCOME_PATH` is set)
+
+Completed (no delivery cargo):
+
+```text
+<ship>{"station":"ship","status":"completed"}</ship>
 ```
 
 Escalation:
 
 ```text
-<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
-SHIP_STEP_COMPLETE
-```
-
-Failure:
-
-```text
-<ship>{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}</ship>
-SHIP_STEP_COMPLETE
+<ship>{"station":"ship","status":"escalate","reason":"<short>","diagnosis":"<what a human must decide>"}</ship>
 ```
 
 Rules:
 
-- The JSON must match one of the shapes above exactly.
-- `status` is `pr_opened` and must include `pr`.
-- Emit the `<ship>` tag LAST; if you iterate, the LAST tag is the one that counts.
-- Always print `SHIP_STEP_COMPLETE` on its own line at the very end.
+- Emit exactly one final `<ship>` envelope (last wins if you iterate).
+- Traffic `status` is only `shipped` \| `completed` \| `escalate` — never
+  `pr_opened` / `failed` on the envelope (those are cargo tokens).
+- Illegal traffic shape is re-asked in-session by Sandcastle; do not rely on the
+  runner to guess a status.
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.

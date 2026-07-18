@@ -284,27 +284,27 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming",
-      "identity": 45,
       "seed_guilt": {
-        "crime": "户部尚书，依附内廷而守成取容，未见可坐实血债",
-        "severity": "轻"
-      }
+        "crime": "交结近侍又次等",
+        "severity": "中"
+      },
+      "identity": 45,
+      "power_id": "ming"
     },
     {
       "name": "张缙彦",
-      "office": "户部吏员",
-      "office_type": "户部",
+      "office": "清涧知县",
+      "office_type": "地方",
       "faction": "皇党",
       "aliases": [
         "张缙彦",
-        "张主事",
-        "张稽查"
+        "张坦公",
+        "张举人"
       ],
       "personal_skills": [
-        "钱粮稽核",
-        "押解对账",
-        "不避风险"
+        "经学应试",
+        "经世议论",
+        "地方治理"
       ],
       "loyalty": 70,
       "ability": 66,
@@ -314,12 +314,15 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming",
-      "identity": 70,
       "seed_guilt": {
-        "crime": "无",
+        "crime": "",
         "severity": "无"
-      }
+      },
+      "identity": 70,
+      "status": "offstage",
+      "debut_year": 1631,
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "杨嗣昌",
@@ -629,8 +632,8 @@
     },
     {
       "name": "李之藻",
-      "office": "前太仆寺少卿，西学士人",
-      "office_type": "工部",
+      "office": "历局修历起复",
+      "office_type": "礼部",
       "faction": "西学",
       "aliases": [
         "李之藻",
@@ -650,17 +653,52 @@
       "birth_year": 1565,
       "historical_death_year": 1630,
       "historical_death_month": 0,
-      "power_id": "ming",
-      "identity": 75,
       "seed_guilt": {
-        "crime": "无",
+        "crime": "",
         "severity": "无"
-      }
+      },
+      "identity": 75,
+      "status": "offstage",
+      "debut_year": 1629,
+      "debut_month": 0,
+      "location": "beizhili",
+      "power_id": "ming"
+    },
+    {
+      "name": "徐应秋",
+      "office": "礼部仪制司主事",
+      "office_type": "礼部",
+      "faction": "中立",
+      "aliases": [
+        "徐应秋",
+        "徐云林"
+      ],
+      "personal_skills": [
+        "经史考据",
+        "典章议论"
+      ],
+      "loyalty": 50,
+      "ability": 64,
+      "integrity": 58,
+      "courage": 46,
+      "style": "博学持论",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "seed_guilt": {
+        "crime": "",
+        "severity": "无"
+      },
+      "identity": 50,
+      "status": "active",
+      "debut_year": 1627,
+      "debut_month": 0,
+      "power_id": "ming"
     },
     {
       "name": "汤若望",
-      "office": "西洋传教士，历法火器顾问",
-      "office_type": "工部",
+      "office": "钦天监历局修历",
+      "office_type": "礼部",
       "faction": "西学",
       "aliases": [
         "汤若望",
@@ -680,12 +718,16 @@
       "birth_year": 1592,
       "historical_death_year": 1666,
       "historical_death_month": 0,
-      "power_id": "ming",
-      "identity": 72,
       "seed_guilt": {
-        "crime": "无",
+        "crime": "",
         "severity": "无"
-      }
+      },
+      "identity": 72,
+      "status": "offstage",
+      "debut_year": 1630,
+      "debut_month": 0,
+      "location": "beizhili",
+      "power_id": "ming"
     },
     {
       "name": "袁可立",
@@ -1382,26 +1424,29 @@
       "status": "dismissed",
       "status_reason": "延绥兵变弹压不力，革职候勘",
       "reason_code": "获罪削籍",
-      "power_id": "ming",
-      "identity": 50,
       "seed_guilt": {
         "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
         "severity": "轻"
-      }
+      },
+      "identity": 50,
+      "power_id": "ming"
     },
     {
       "name": "李从心",
-      "office": "陕西布政使",
-      "office_type": "地方",
+      "office": "工部尚书，总理河道，兼都察院右副都御史",
+      "office_type": "工部",
       "faction": "阉党",
       "aliases": [
         "李从心",
-        "李布政",
-        "陕西布政使"
+        "李尚书",
+        "李总河",
+        "工部尚书",
+        "总理河道"
       ],
       "personal_skills": [
-        "地方钱谷",
-        "布政转运",
+        "河道治理",
+        "漕运工程",
+        "工部营造",
         "内廷关说"
       ],
       "loyalty": 40,
@@ -1412,12 +1457,12 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming",
-      "identity": 42,
       "seed_guilt": {
-        "crime": "陕西布政使，依附内廷并把持地方钱谷，未见可坐实血债",
-        "severity": "轻"
-      }
+        "crime": "交结近侍又次等",
+        "severity": "中"
+      },
+      "identity": 42,
+      "power_id": "ming"
     },
     {
       "name": "卢象升",
@@ -3309,6 +3354,66 @@
         "crime": "无(此刻约四五岁孩童;后为永历帝南明末事,铁律不预坐)",
         "severity": "无"
       }
+    },
+    {
+      "name": "许誉卿",
+      "office": "兵科给事中",
+      "office_type": "六科",
+      "faction": "东林",
+      "aliases": [
+        "许誉卿",
+        "许公实",
+        "许给事"
+      ],
+      "personal_skills": [
+        "封驳建言",
+        "纠劾权阉",
+        "科道章奏"
+      ],
+      "loyalty": 64,
+      "ability": 68,
+      "integrity": 78,
+      "courage": 76,
+      "style": "敢言持论",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "华亭人，万历四十四年进士；天启三年授吏科给事中，崇祯即位后起兵科给事中。出处：《万历四十四年丙辰科进士履历》；《明史》卷258《许誉卿传》。",
+      "debut_year": 0,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "京师"
+    },
+    {
+      "name": "韩一良",
+      "office": "户科给事中",
+      "office_type": "六科",
+      "faction": "中立",
+      "aliases": [
+        "韩一良",
+        "韩象儒",
+        "韩给事"
+      ],
+      "personal_skills": [
+        "财政纠察",
+        "直言弹劾",
+        "吏治清议"
+      ],
+      "loyalty": 60,
+      "ability": 67,
+      "integrity": 80,
+      "courage": 78,
+      "style": "刚直敢谏",
+      "birth_year": 0,
+      "historical_death_year": 0,
+      "historical_death_month": 0,
+      "status": "offstage",
+      "summary": "澄城人，万历四十七年进士；崇祯元年任户科给事中，上疏论吏治贪墨。出处：《明史》卷258《韩一良传》；《明季北略》卷4。",
+      "debut_year": 1628,
+      "debut_month": 0,
+      "power_id": "ming",
+      "location": "京师"
     },
     {
       "name": "朱术桂",

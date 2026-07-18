@@ -40,6 +40,7 @@ const CONSORT_MOCK: Minister = {
 function renderModal(props: {
   minister: Minister;
   portraitPrefix: string;
+  chat?: Array<{ role: "user" | "minister"; content: string }>;
   busy?: string;
   onCancel?: () => void;
   chatFailures?: PendingActionFailure[];
@@ -54,7 +55,7 @@ function renderModal(props: {
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         busy={props.busy ?? ""}
-        chat={[]}
+        chat={props.chat ?? []}
         suggestions={[]}
         pendingUserMessage=""
         streamingMinisterMessage=""
@@ -328,6 +329,23 @@ describe("ChatModal — placeholder switches on character type", () => {
   });
 });
 
+describe("ChatModal — organic markdown display cleanup", () => {
+  it("strips markdown from minister replies while preserving the emperor's text", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [
+        { role: "user", content: "朕要看 **原文**。" },
+        { role: "minister", content: "**臣谨奏**：\n- 钱粮已足。" },
+      ],
+    });
+
+    const messages = Array.from(document.querySelectorAll(".chat-message p"));
+    expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
+    expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
+  });
+});
+
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {
   const thinkingText = (): string =>
     (document.querySelector(".chat-message.thinking p")?.textContent ?? "");
@@ -410,6 +428,26 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
 });
 
 describe("ReportModal — two-page settlement bulletin", () => {
+  it("renders narrative and account reports without literal organic markdown", () => {
+    renderReportModal({
+      report: "**辽东军情**\n- 军前缺饷",
+      accountReport: "**实账**\n1. 户部已支银",
+    });
+
+    expect(document.body.textContent).toContain("辽东军情");
+    expect(document.body.textContent).toContain("军前缺饷");
+    expect(document.body.textContent).not.toContain("**");
+    expect(document.body.textContent).not.toContain("- 军前缺饷");
+
+    const page2 = Array.from(document.querySelectorAll("button"))
+      .find((btn) => btn.textContent?.includes("实账"));
+    act(() => (page2 as HTMLButtonElement).click());
+
+    expect(document.body.textContent).toContain("户部已支银");
+    expect(document.body.textContent).not.toContain("**");
+    expect(document.body.textContent).not.toContain("1. 户部已支银");
+  });
+
   it("shows narrative as page 1 and account text as manually selected page 2", () => {
     renderReportModal({
       report: "辽东有警，诸臣奏闻。",

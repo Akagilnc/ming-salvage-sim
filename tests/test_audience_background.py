@@ -676,11 +676,11 @@ def test_chat_stream_rejects_second_concurrent_turn_same_minister(game):
     assert web_game._audience_turn_in_flight(minister_name) is False
 
 
-def test_chat_stream_closed_before_turn_creation_is_noop(game):
+def test_chat_stream_closed_before_turn_creation_is_noop(read_game):
     """#383 Testing Decisions「turn 创建前 vs 创建后边界」的创建前半：观察者在生成器首次
     迭代前就离开（close 未 next）→ no-op，不留 chat_turns / chat_messages。turn 创建（首次
     迭代）后才进入「退出≠取消」语义，由 observer-departure 测试覆盖创建后半。"""
-    db, state, content = game
+    db, state, content = read_game
     minister_name = "毕自严"
     agent = _FakeAgent()
     web_game = _web_game(db, state, content, agent)
