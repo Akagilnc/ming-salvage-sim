@@ -4,7 +4,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { executeAdvanceCoderSuggestion } from "../../src/advanceCoderEffect.js";
+import {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+} from "../../src/advanceCoderEffect.js";
 import { lookupCoderRosterEntry } from "../../src/coderRoster.js";
 import {
   applyRelayBatonToRoute,
@@ -144,5 +148,63 @@ describe("#919 pure: executeAdvanceCoderSuggestion", () => {
     expect(effect.kind).toBe("advanced");
     if (effect.kind !== "advanced") return;
     expect(effect.route).toBe(smoked);
+  });
+});
+
+describe("#1017 latestCoderAdvanceToSlug seat filter", () => {
+  it("returns only matching advanceSeat; ignores other seat and unscoped rows", () => {
+    const ledger = [
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "coderFix" as const,
+      },
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.4",
+        // unscoped legacy — fail closed
+      },
+      {
+        event: "coder_advance_stay_put",
+        status: "coder_advance_stay_put",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer" as const,
+      },
+    ];
+    expect(latestCoderAdvanceToSlug(ledger, "fixer")).toBeUndefined();
+    expect(latestCoderAdvanceToSlug(ledger, "coderFix")).toBe("gpt-5.6-sol");
+
+    const withFixer = [
+      ...ledger,
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer" as const,
+      },
+    ];
+    expect(latestCoderAdvanceToSlug(withFixer, "fixer")).toBe("gpt-5.6-sol");
+  });
+
+  it("familyAdvanceCoderAuditFields stamps advanceSeat", async () => {
+    const route = resolveActiveModelRoute({});
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion: "sol@med",
+      currentSlug: route.slots.fixer,
+      route,
+      applySlug: (r, slug) =>
+        applyRelayBatonToRoute(r, { slug }, "S10", { slots: ["fixer"] }),
+    });
+    expect(effect.kind).toBe("advanced");
+    if (effect.kind !== "advanced") return;
+    expect(familyAdvanceCoderAuditFields(effect, "sol@med", "fixer")).toMatchObject(
+      {
+        event: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer",
+      },
+    );
   });
 });

@@ -12,11 +12,13 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,6 +131,26 @@ describe("#1012 ensureRegularFileForBindMount", () => {
       writeFileSync(path, '{"keep":true}\n', "utf8");
       ensureRegularFileForBindMount(path);
       expect(readFileSync(path, "utf8")).toBe('{"keep":true}\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("#1017 refuses a symlink at the bind-mount path (no follow / no redirect)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fix-findings-ensure-symlink-"));
+    const target = join(dir, "real-payload.json");
+    const path = join(dir, "fix-findings.json");
+    try {
+      writeFileSync(target, '{"secret":true}\n', "utf8");
+      symlinkSync(target, path);
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+
+      expect(() => ensureRegularFileForBindMount(path)).toThrow(
+        /refuse symlink/,
+      );
+      // Symlink and target left intact (no silent rewrite through the link).
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+      expect(readFileSync(target, "utf8")).toBe('{"secret":true}\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

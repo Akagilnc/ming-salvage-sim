@@ -27,7 +27,13 @@
  * rebuild. scripts/apply-sandcastle-cancel-patch.mjs is a thin postinstall CLI
  * wrap (imports this module from src/ before dist exists).
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -248,6 +254,23 @@ export function upgradeKillLoopSelfExclude(source: string): string | null {
 }
 
 /**
+ * True when container-runtime cancel patch has the full kill-hook set, not
+ * just markers / tokens. Partial patches must continue (or throw), never
+ * short-circuit as done (#1017 R2).
+ */
+export function isContainerRuntimeFullyPatched(source: string): boolean {
+  return (
+    source.includes(MARKER_TOKEN) &&
+    source.includes("SC_CANCEL_TOKEN") &&
+    source.includes("onAbortExtra") &&
+    source.includes("__scCancelWireAbortKill") &&
+    source.includes("__scCancelUnwire") &&
+    source.includes("inContainerKill") &&
+    hasSelfExcludeKillLoop(source)
+  );
+}
+
+/**
  * docker/podman: detached host client + in-container pkill by cancel token.
  * `runtime` is "docker" or "podman".
  * docker minifies the Promise resolve param as `resolve2`; podman keeps `resolve`.
@@ -256,12 +279,7 @@ export function patchContainerRuntime(
   source: string,
   runtime: "docker" | "podman",
 ): string {
-  if (
-    source.includes(MARKER_TOKEN) &&
-    source.includes("SC_CANCEL_TOKEN") &&
-    source.includes("onAbortExtra") &&
-    hasSelfExcludeKillLoop(source)
-  ) {
+  if (isContainerRuntimeFullyPatched(source)) {
     return ensureHelper(source);
   }
 
@@ -433,10 +451,25 @@ export function patchInvokeAgent(source: string): string {
   return next;
 }
 
+/**
+ * Atomic replace: write temp sibling then rename. Cleans temp on failure.
+ * Avoids truncating the live dist file mid-write (#1017 R2).
+ */
 function writeIfChanged(path: string, content: string): boolean {
   const prev = existsSync(path) ? readFileSync(path, "utf8") : null;
   if (prev === content) return false;
-  writeFileSync(path, content, "utf8");
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, content, "utf8");
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      if (existsSync(tmp)) unlinkSync(tmp);
+    } catch {
+      // best-effort temp cleanup
+    }
+    throw err;
+  }
   return true;
 }
 

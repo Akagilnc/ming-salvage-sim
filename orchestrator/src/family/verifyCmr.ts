@@ -1223,7 +1223,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     modelRoute = effect.route;
     if (effect.kind === "stay_put" || effect.kind === "advanced") {
       await input.familyBackend.appendFamilyLedger({
-        ...familyAdvanceCoderAuditFields(effect, suggestion),
+        ...familyAdvanceCoderAuditFields(effect, suggestion, "fixer"),
       });
       console.info(
         effect.kind === "advanced"
@@ -1237,11 +1237,12 @@ export async function runFamilyOnlineReviewLoop(input: {
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
   const familyLedger = await input.familyBackend.readFamilyLedger();
-  // #1002 — rebuild sticky **fixer** from latest family ledger coder_advance
-  // (not stay_put) before first dispatch. Mirrors single-slice re-hold so
-  // process re-entry keeps the advanced repair seat without re-suggestion.
+  // #1002 / #1017 — rebuild sticky **fixer** from latest family ledger
+  // coder_advance scoped to advanceSeat:"fixer" (not stay_put, not CMR
+  // coderFix advances on the same ledger). Process re-entry keeps the
+  // advanced online-review repair seat without re-suggestion.
   {
-    const advancedTo = latestCoderAdvanceToSlug(familyLedger);
+    const advancedTo = latestCoderAdvanceToSlug(familyLedger, "fixer");
     if (advancedTo !== undefined) {
       const advanced = lookupCoderRosterEntry(advancedTo);
       const slug = advanced?.slug ?? advancedTo;
@@ -2334,7 +2335,11 @@ async function runIntegratedCmrPass(input: {
       activeRoute = effect.route;
       if (effect.kind === "stay_put" || effect.kind === "advanced") {
         await familyBackend.appendFamilyLedger({
-          ...familyAdvanceCoderAuditFields(effect, advanceSuggestion),
+          ...familyAdvanceCoderAuditFields(
+            effect,
+            advanceSuggestion,
+            "coderFix",
+          ),
           phase: ledgerPhase,
           cmrPass: pass,
         });

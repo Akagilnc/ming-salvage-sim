@@ -168,6 +168,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     expect(advance).toMatchObject({
       fromModelId: defaultFixer,
       toModelId: "gpt-5.6-sol",
+      advanceSeat: "fixer",
     });
   });
 
@@ -245,6 +246,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
       fromModelId: defaultFixer,
       toModelId: "gpt-5.6-sol",
       advanceCoder: "sol@med",
+      advanceSeat: "fixer",
       ts: "2026-07-18T00:00:00.000Z",
     });
     // stay_put after advance must not cancel re-hold (same as single-slice scan).
@@ -255,6 +257,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
       fromModelId: "gpt-5.6-sol",
       toModelId: "gpt-5.6-sol",
       advanceCoder: "not-a-real-coder",
+      advanceSeat: "fixer",
       ts: "2026-07-18T00:00:01.000Z",
     });
 
@@ -267,5 +270,51 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
     expect(backend.fixerModels[0]).toBe("gpt-5.6-sol");
     expect(backend.fixerModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
+  });
+
+  it("#1017 CMR coderFix advance does not sticky online-review fixer", async () => {
+    // Shared family ledger: a CMR-scoped coder_advance must not re-hold the
+    // online-review fixer seat (court/seat discriminator).
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+    const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
+    expect(defaultFixer).not.toBe("gpt-5.6-sol");
+
+    const backend = new OnlineReviewAdvanceBackend([
+      { converged: false },
+      { converged: true },
+    ]);
+    // Latest advance is CMR coderFix — must be ignored by fixer re-hold.
+    await backend.appendFamilyLedger({
+      status: "coder_advance",
+      event: "coder_advance",
+      reason: "coder_advance",
+      fromModelId: "gpt-5.4",
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "sol@med",
+      advanceSeat: "coderFix",
+      phase: "final",
+      cmrPass: "correctness",
+      ts: "2026-07-18T00:00:00.000Z",
+    });
+    // Legacy unscoped row (no advanceSeat) also must not sticky fixer.
+    await backend.appendFamilyLedger({
+      status: "coder_advance",
+      event: "coder_advance",
+      reason: "coder_advance",
+      fromModelId: "gpt-5.4",
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "sol@med",
+      ts: "2026-07-18T00:00:02.000Z",
+    });
+
+    const result = await runFamilyOnlineReviewLoop({
+      familyBackend: backend,
+      familyBase: "family/1002",
+      ship: OFFLINE_SHIP,
+    });
+
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(backend.fixerModels[0]).toBe(defaultFixer);
+    expect(backend.fixerModels.every((m) => m === defaultFixer)).toBe(true);
   });
 });

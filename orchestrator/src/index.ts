@@ -326,6 +326,7 @@ export {
 export type {
   AdvanceCoderEffectResult,
   AdvanceCoderProbe,
+  AdvanceRepairSeat,
 } from "./advanceCoderEffect.js";
 export {
   applyCoderRecToRoute,

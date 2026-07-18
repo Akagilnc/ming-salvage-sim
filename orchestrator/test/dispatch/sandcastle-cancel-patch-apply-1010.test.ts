@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -24,6 +25,7 @@ import {
   HOST_KILL_END,
   HOST_KILL_HELPER,
   HOST_KILL_START,
+  isContainerRuntimeFullyPatched,
   patchContainerRuntime,
   patchInvokeAgent,
   patchNoSandbox,
@@ -62,6 +64,13 @@ function unpatchedDockerExecHead(): string {
     "              ]\n" +
     "            });"
   );
+}
+
+/** podman dist uses `resolve` (not minified resolve2) and spawn("podman", …). */
+function unpatchedPodmanExecHead(): string {
+  return unpatchedDockerExecHead()
+    .replace("resolve2", "resolve")
+    .replace('"docker"', '"podman"');
 }
 
 /** Minimal pre-#1010 invokeAgent abort + idle + exec-opts shape. */
@@ -276,6 +285,22 @@ describe("#1010 patch upgrade: $$ self-exclude in place + helper strip", () => {
     expect(next).toContain("SC_CANCEL_TOKEN");
     expect(hasSelfExcludeKillLoop(next)).toBe(true);
     expect(next).toContain("onAbortExtra");
+    expect(isContainerRuntimeFullyPatched(next)).toBe(true);
+  });
+
+  it("#1017 markers/tokens alone do not short-circuit as fully patched", () => {
+    // Partial: marker + token + onAbortExtra + $$ but no unwire / inContainerKill.
+    const partial =
+      "/* header */\n" +
+      HOST_KILL_HELPER +
+      "SC_CANCEL_TOKEN=sc1010_x\n" +
+      'const script = "for p in $(pgrep -f SC_CANCEL_TOKEN=" + cancelToken + " 2>/dev/null); do [ \\"$p\\" = \\"$$\\" ] && continue; pkill -" + sig + " -P $p; done";\n' +
+      "onAbortExtra\n";
+    expect(isContainerRuntimeFullyPatched(partial)).toBe(false);
+    // Without exec head, continuing the patch must fail loud — not silent no-op.
+    expect(() => patchContainerRuntime(partial, "docker")).toThrow(
+      /needle-miss|exec head not found/i,
+    );
   });
 
   it("patchInvokeAgent injects fireExecAbort on idle-timeout path", () => {
@@ -284,6 +309,45 @@ describe("#1010 patch upgrade: $$ self-exclude in place + helper strip", () => {
     expect(next).toContain("execAbortController");
     expect(next).toContain("fireExecAbort(new AgentIdleTimeoutError");
     expect(next).toContain("signal: execAbortController.signal");
+  });
+});
+
+describe("#1017 writeIfChanged atomic replace", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const r of roots.splice(0)) {
+      rmSync(r, { recursive: true, force: true });
+    }
+  });
+
+  it("applySandcastleCancelPatch replaces via temp+rename (content lands intact)", () => {
+    const root = mkdtempSync(join(tmpdir(), "sc-patch-atomic-1017-"));
+    roots.push(root);
+    mkdirSync(join(root, "dist", "sandboxes"), { recursive: true });
+    writeFileSync(join(root, "package.json"), '{"version":"0.12.0"}');
+    // Minimal valid needles so full apply succeeds once.
+    writeFileSync(
+      join(root, "dist", "chunk-CP3TYXZA.js"),
+      `// head\n${unpatchedDockerExecHead()}\n// tail\n`,
+    );
+    writeFileSync(
+      join(root, "dist", "chunk-62WN33RK.js"),
+      `// head\n${UNPATCHED_SPAWN}\n// tail\n`,
+    );
+    writeFileSync(
+      join(root, "dist", "sandboxes", "podman.js"),
+      `// head\n${unpatchedPodmanExecHead()}\n// tail\n`,
+    );
+    writeFileSync(join(root, "dist", "index.js"), UNPATCHED_INVOKE);
+
+    const result = applySandcastleCancelPatch(root);
+    expect(result.changed).toBe(4);
+    const docker = readFileSync(join(root, "dist", "chunk-CP3TYXZA.js"), "utf8");
+    expect(isContainerRuntimeFullyPatched(docker)).toBe(true);
+    expect(docker).toContain("__scCancelUnwire");
+    // No leftover temp siblings after successful atomic rename.
+    const distFiles = readdirSync(join(root, "dist"));
+    expect(distFiles.every((n) => !n.endsWith(".tmp"))).toBe(true);
   });
 });
 
