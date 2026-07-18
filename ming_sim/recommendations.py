@@ -6,13 +6,8 @@ import json
 from typing import Any, Dict, Iterable, List
 
 from .knowledge import knowledge_row_visible_to
-from .context import IDENTITY_BUCKET_CUTOFFS
-from .qualitative import qualitative_bucket
+from .qualitative import identity_bucket
 
-
-def _identity_bucket(value: object) -> int:
-    """Use the same low/middle/high identity cuts as minister context."""
-    return qualitative_bucket(value, IDENTITY_BUCKET_CUTOFFS, default=50)
 
 def _source_visible_to(row: Any, recommender: str, *, target: Any = None, db: Any) -> bool:
     """Apply the #459 exclusion boundary before using a source's roster."""
@@ -110,7 +105,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     if source is None:
         return []
     faction = str(source["faction"] or "")
-    recommender_identity_bucket = _identity_bucket(source["identity"])
+    recommender_identity_bucket = identity_bucket(source["identity"])
     known = _known_names(db, recommender)
     rows = conn.execute(
         "SELECT name, office, office_type, faction, identity, status, reason_code, status_reason "
@@ -128,7 +123,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
         if (
             same_faction
             and str(row["name"]) not in known
-            and _identity_bucket(row["identity"]) > recommender_identity_bucket
+            and identity_bucket(row["identity"]) > recommender_identity_bucket
         ):
             continue
         if not same_faction and str(row["name"]) not in known:

@@ -16,9 +16,7 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import Army, Character, Event, GameState, Region
-from ming_sim.qualitative import identity_band, qualitative_band, qualitative_bucket
-
-IDENTITY_BUCKET_CUTOFFS = (40, 80)
+from ming_sim.qualitative import identity_band, identity_bucket, qualitative_band
 from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
@@ -203,7 +201,7 @@ def _character_band(field: str, value: object) -> str:
 
 
 def _identity_bucket(value: object) -> str:
-    return ("low", "middle", "high")[qualitative_bucket(value, IDENTITY_BUCKET_CUTOFFS, default=50)]
+    return ("low", "middle", "high")[identity_bucket(value)]
 
 
 def _faction_band(field: str, value: object) -> str:
