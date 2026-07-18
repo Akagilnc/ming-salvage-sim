@@ -154,11 +154,6 @@ function retentionForKind(kind: WorkerKind): WorkerContextRetention {
     : "clean";
 }
 
-function ensureGitExcluded(worktreePath: string, pattern: string): void {
-  // Shared best-effort info/exclude write (#1014 DRY).
-  ensureGitInfoExclude(worktreePath, pattern);
-}
-
 function writeFixFindingsLandingFile(
   spec: WorkerSpec,
   ctx: DispatchContext,
@@ -190,7 +185,7 @@ function writeFixFindingsLandingFile(
   if (ctx.stateDir !== undefined) {
     mkdirSync(ctx.stateDir, { recursive: true });
   } else {
-    ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
+    ensureGitInfoExclude(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
   }
   // Host monitor paths are not visible inside the fixer container. Copy
   // readable raw products into the sandbox cwd and rewrite pointers (#899).
@@ -201,8 +196,8 @@ function writeFixFindingsLandingFile(
           ctx.worktree.path,
         )
       : undefined;
-  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
-  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+  ensureGitInfoExclude(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+  ensureGitInfoExclude(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
   // ADR 0138 / #978: packet content is judge-authored fixPacketBody only.
   // Identity keys stay on the thin control envelope (ctx); never derive packet
   // content from bare findings rows (deleted dual path).
