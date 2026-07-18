@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import {
   admitBaselineHealth,
   buildBaselineContainerFullTestArgv,
+  classifyBaselineFailure,
   formatBaselineExecFailureOutput,
   formatBaselineHealthFailurePackage,
   NOOP_BASELINE_FIX_ATTEMPT,
@@ -380,8 +381,11 @@ describe("#1006 exec failure capture (message+stdout+stderr)", () => {
         workingRepo: "/clones/family-1006",
         familyBase: "family/1006",
         verifyCwd: "/clones/family-1006/orchestrator",
+        // Host installDeps class succeeds; only docker full is red.
+        provisionDeps: async () => undefined,
       },
-      () => {
+      (file) => {
+        if (file === "git") return "";
         throw err;
       },
     );
@@ -450,6 +454,114 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     // shellEscape quotes tokens that contain whitespace.
     expect(remoteCmd).toContain("'/clones/family 1006'");
     expect(remoteCmd).toMatch(/git -C .+ checkout --quiet/);
+  });
+});
+
+describe("#1006 host deps provision before container full (installDeps class)", () => {
+  it("runBaselineFullTestsInWorkerContainer provisions verifyCwd deps before docker npm test", async () => {
+    const order: string[] = [];
+    let provisionCwd: string | undefined;
+    const result = await runBaselineFullTestsInWorkerContainer(
+      {
+        imageName: "ming-orchestrator-coder:test",
+        workingRepo: "/clones/family-1006",
+        familyBase: "family/1006",
+        verifyCwd: "/clones/family-1006/orchestrator",
+        depsTemplateRoot: "/src/ming",
+        provisionDeps: async (cwd) => {
+          provisionCwd = cwd;
+          order.push("provision");
+        },
+      },
+      (file, args) => {
+        // Host checkout of family base (manifests match) or docker full.
+        if (file === "git") {
+          order.push("git-checkout");
+          return "";
+        }
+        if (file === "docker") {
+          order.push("docker");
+          return "";
+        }
+        throw new Error(`unexpected sh: ${file} ${args.join(" ")}`);
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(provisionCwd).toBe("/clones/family-1006/orchestrator");
+    // Provision must complete before docker so bind-mounted node_modules exist.
+    expect(order.indexOf("provision")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("docker")).toBeGreaterThan(order.indexOf("provision"));
+    // Host checkout before provision so package.json/lock match family base.
+    expect(order.indexOf("git-checkout")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("provision")).toBeGreaterThan(order.indexOf("git-checkout"));
+  });
+
+  it("provision failure is infra red (not suite pre-fix ticket)", async () => {
+    const result = await runBaselineFullTestsInWorkerContainer(
+      {
+        imageName: "ming-orchestrator-coder:test",
+        workingRepo: "/clones/family-1006",
+        familyBase: "family/1006",
+        verifyCwd: "/clones/family-1006/orchestrator",
+        provisionDeps: async () => {
+          throw new Error("npm ci failed: network unreachable");
+        },
+      },
+      (file) => {
+        if (file === "git") return "";
+        throw new Error(`docker must not run after provision failure (got ${file})`);
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(classifyBaselineFailure(result)).toBe("infra");
+    const pkg = formatBaselineHealthFailurePackage(result);
+    expect(pkg).toMatch(/infra|infrastructure|deps|provision|npm ci/i);
+    // Must not *recommend* filing a suite pre-fix ticket (negation OK).
+    expect(pkg).not.toMatch(/file one (single )?pre-fix ticket|建议开前置|开前置修复票/i);
+  });
+});
+
+describe("#1006 infra vs suite failure diagnosis", () => {
+  it("classifies docker-missing / daemon failures as infra (no pre-fix ticket)", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 127,
+      output:
+        "Error: spawn docker ENOENT\n" +
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
+    const pkg = formatBaselineHealthFailurePackage(failure);
+    expect(pkg).toMatch(/infra|infrastructure|docker/i);
+    expect(pkg).not.toMatch(/file one (single )?pre-fix ticket|建议开前置|开前置修复票/i);
+    expect(pkg).toMatch(/repair|docker|re-admit|re-run|rerun/i);
+  });
+
+  it("classifies suite FAIL with failedTests as suite (still suggests one pre-fix ticket)", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 1,
+      output:
+        "FAIL  test/dispatch/grok-mid-run-auth-964.test.ts > stdin seam\n" +
+        "Failed to read '/dev/stdin': os error 6",
+      failedTests: ["test/dispatch/grok-mid-run-auth-964.test.ts"],
+    };
+    expect(classifyBaselineFailure(failure)).toBe("suite");
+    const pkg = formatBaselineHealthFailurePackage(failure);
+    expect(pkg).toMatch(/pre-fix ticket|前置修复票|file one/i);
+    expect(pkg).toContain("grok-mid-run-auth-964");
+  });
+
+  it("explicit failureClass:infra wins over suite-looking output", () => {
+    const failure: Extract<BaselineFullTestResult, { ok: false }> = {
+      ok: false,
+      exitCode: 1,
+      output: "FAIL  something.test.ts\n",
+      failedTests: ["something.test.ts"],
+      failureClass: "infra",
+    };
+    expect(classifyBaselineFailure(failure)).toBe("infra");
   });
 });
 
@@ -589,6 +701,58 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
       expect(result.cause).toBe("baseline_health_failed");
     }
     expect(childBackend?.fanOutCalls ?? 0).toBe(0);
+  });
+
+  it("infra baseline red → fail-closed without pre-fix ticket repairHint", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const source = makeSourceRepo();
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "baseline-ledger-infra-")));
+    let childBackend: TrackingChildBackend | undefined;
+
+    const result = await runFamilyDriver({
+      epicIssue: 1006,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1006",
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "ming-orchestrator-coder:test",
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => {
+        childBackend = new TrackingChildBackend(clone);
+        return childBackend;
+      },
+      familyBackendFactory: (clone, startHead) =>
+        controlledFamilyBackend(
+          clone,
+          startHead,
+          ledgerDir,
+          "ming-orchestrator-coder:test",
+        ),
+      baselineFullTestRunner: async () => ({
+        ok: false,
+        exitCode: 127,
+        output: "Error: spawn docker ENOENT",
+        failureClass: "infra" as const,
+      }),
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.cause).toBe("baseline_health_failed");
+    }
+    expect(childBackend?.fanOutCalls ?? 0).toBe(0);
+    // Diagnosis may say "do NOT open a pre-fix ticket"; must not *recommend* filing one.
+    expect(result.escalation?.diagnosis ?? "").not.toMatch(
+      /file one (single )?pre-fix ticket|建议开前置|开前置修复票/i,
+    );
+    expect(result.stopSummary.repairHint ?? "").toMatch(/docker|infra|provision|deps/i);
+    expect(result.stopSummary.repairHint ?? "").not.toMatch(
+      /file one pre-fix ticket|file one single pre-fix/i,
+    );
   });
 
   it("base full green → fan-out proceeds (success path not blocked)", async () => {
