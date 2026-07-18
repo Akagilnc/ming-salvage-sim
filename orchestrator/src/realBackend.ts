@@ -94,7 +94,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
-import { ensureIsoOperationalExcludes } from "./gitInfoExclude.js";
+import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
@@ -2013,12 +2013,12 @@ export class RealBackend implements Backend {
     this.assertIndependentClone();
     // #1014: exclude runner-owned iso sidecars so family final CMR dirty-pin
     // (status --untracked-files=all) does not hard-stop on live .ledger-* /
-    // .sandcastle/ droppings. Throw-through when a real .git is on disk (AC1:
-    // excludes must be present; failure leaves workingRepoReady=false). Unit
-    // fixtures that stub independence without a filesystem .git skip the write;
-    // production clones always have .git after buildOrReuseClone.
+    // .sandcastle/ droppings. append* (throw-through) when a real .git is on
+    // disk (AC1: excludes must be present; failure leaves workingRepoReady=
+    // false). Unit fixtures that stub independence without a filesystem .git
+    // skip the write; production clones always have .git after buildOrReuseClone.
     if (existsSync(join(this.workingRepo, ".git"))) {
-      ensureIsoOperationalExcludes(this.workingRepo);
+      appendIsoOperationalExcludes(this.workingRepo);
     }
     this.workingRepoReady = true;
   }

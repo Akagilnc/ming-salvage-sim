@@ -5,9 +5,11 @@
  * operational sidecars stay invisible to `git status --untracked-files=all`
  * without entering the review content surface (#1014).
  *
- * Single write primitive for orchestrator info/exclude updates — callers
- * choose best-effort ({@link ensureGitInfoExclude}) or throw-through
- * ({@link appendGitInfoExclude}).
+ * Fail-semantics families (do not mix prefixes):
+ *   - `ensure*`  — best-effort; swallow resolve/IO errors (fixtures / optional
+ *     runtime excludes). See {@link ensureGitInfoExclude}.
+ *   - `append*`  — throw-through; fail closed on resolve/IO errors. See
+ *     {@link appendGitInfoExclude} and {@link appendIsoOperationalExcludes}.
  */
 
 import {
@@ -83,10 +85,13 @@ export function ensureGitInfoExclude(repoPath: string, pattern: string): void {
 
 /**
  * Provision-time exclude for iso operational sidecars (#1014).
- * Throw-through: AC1 requires patterns present after provision — fail closed
- * so callers never mark the working repo ready without the excludes written.
+ *
+ * Throw-through (`append*` family, NOT `ensure*`): AC1 requires patterns
+ * present after provision — fail closed so callers never mark the working
+ * repo ready without the excludes written. Opposite of
+ * {@link ensureGitInfoExclude} (best-effort swallow).
  */
-export function ensureIsoOperationalExcludes(repoPath: string): void {
+export function appendIsoOperationalExcludes(repoPath: string): void {
   for (const pattern of ISO_OPERATIONAL_GIT_EXCLUDE_PATTERNS) {
     appendGitInfoExclude(repoPath, pattern);
   }
