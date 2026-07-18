@@ -278,10 +278,45 @@ export interface BaselineContainerFullTestRequest {
 }
 
 /**
+ * Container-side worksite root for the baseline full probe.
+ *
+ * Host clones often live under `/root/.sc-orchestrator/…` when the orchestrator
+ * runs as root. The worker image runs as non-root `agent`, who cannot traverse
+ * `/root`. Always bind-mount the host worksite at this agent-readable path and
+ * translate `verifyCwd` relative to it (Codex online P1 / #1006).
+ */
+export const BASELINE_CONTAINER_WORKSITE = "/home/agent/baseline-worksite";
+
+/**
+ * Map host verifyCwd under workingRepo → container path under
+ * {@link BASELINE_CONTAINER_WORKSITE}.
+ */
+export function containerBaselineVerifyCwd(
+  workingRepo: string,
+  verifyCwd: string,
+): string {
+  const hostRoot = workingRepo.endsWith("/")
+    ? workingRepo.slice(0, -1)
+    : workingRepo;
+  if (verifyCwd === hostRoot || verifyCwd === workingRepo) {
+    return BASELINE_CONTAINER_WORKSITE;
+  }
+  const prefix = hostRoot + "/";
+  if (verifyCwd.startsWith(prefix)) {
+    const rel = verifyCwd.slice(prefix.length);
+    return rel.length > 0
+      ? `${BASELINE_CONTAINER_WORKSITE}/${rel}`
+      : BASELINE_CONTAINER_WORKSITE;
+  }
+  // Fallback: treat verifyCwd as absolute-but-unrelated; still work under worksite.
+  return BASELINE_CONTAINER_WORKSITE;
+}
+
+/**
  * Production argv for the worker-image full suite.
- * Same image class as coder workers; repo bind-mounted at the host path so
- * paths match the worksite; `npm test` runs *inside* the container — never as
- * a bare host invocation (owner hard constraint: no lying host greens).
+ * Same image class as coder workers; host worksite bind-mounted at an
+ * agent-readable container path; `npm test` runs *inside* the container —
+ * never as a bare host invocation (owner hard constraint: no lying host greens).
  *
  * Host must already have provisioned `verifyCwd` node_modules (see
  * {@link runBaselineFullTestsInWorkerContainer}); the bind mount carries them in.
@@ -302,6 +337,10 @@ export function buildBaselineContainerFullTestArgv(
   const spawnedEnvFlags = Object.entries(SPAWNED_WORKER_ENV).flatMap(
     ([key, value]) => ["-e", `${key}=${value}`],
   );
+  const containerCwd = containerBaselineVerifyCwd(
+    req.workingRepo,
+    req.verifyCwd,
+  );
   return [
     "docker",
     "run",
@@ -313,10 +352,11 @@ export function buildBaselineContainerFullTestArgv(
     // Image USER is `agent` (Containerfile); match worker perms/path layout.
     "--user",
     "agent",
+    // Host path may be under /root; container path must be agent-traversable.
     "-v",
-    `${req.workingRepo}:${req.workingRepo}`,
+    `${req.workingRepo}:${BASELINE_CONTAINER_WORKSITE}`,
     "-w",
-    req.verifyCwd,
+    containerCwd,
     req.imageName,
     "bash",
     "-lc",
