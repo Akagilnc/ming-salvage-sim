@@ -14,9 +14,15 @@
  *
  * Hard constraint (owner): production full must run inside the same worker
  * image / container class as coder workers — never host `npm test` alone.
+ *
+ * Sandcastle parity (best-effort this slice): same `imageName`, bind-mount the
+ * family worksite at the host path (worker cwd pattern), `HOME=/home/agent`,
+ * `OPENCLAW_SESSION=1` (SPAWNED_WORKER_ENV), and `--user agent`. Full agent
+ * `sc.run` lifecycle is not required for a pure full-suite probe — no LLM.
  */
 
 import { shWithClock } from "./externalCall.js";
+import { shellEscape } from "./shellEscape.js";
 
 /** Outcome of one canonical full suite invocation. */
 export type BaselineFullTestResult =
@@ -46,6 +52,7 @@ export type BaselineFixAttemptResult = {
  * One optional baseline fix round (owner shape: red → at most one fix → recheck).
  * Production may inject a real fixer dispatch; tests inject controlled outcomes.
  * Absence ⇒ fail-closed immediately on first red (报错 path, also owner-accepted).
+ * When present but `attempted: false` ⇒ same fail-closed, no recheck burn.
  */
 export type BaselineFixAttempt = (
   failure: Extract<BaselineFullTestResult, { ok: false }>,
@@ -58,6 +65,18 @@ export interface AdmitBaselineHealthInput {
   /** At most one attempt; never looped. */
   readonly tryFix?: BaselineFixAttempt;
 }
+
+/**
+ * Production default when no real baseline LLM fixer is wired.
+ * Owner shape allows 报错 on red; auto fixer is out of this slice's scope —
+ * the one-shot hook is always present so a real {@link BaselineFixAttempt}
+ * can be injected later without rewiring the admission court. Never invents green.
+ */
+export const NOOP_BASELINE_FIX_ATTEMPT: BaselineFixAttempt = async () => ({
+  attempted: false,
+  summary:
+    "baseline auto-fixer not wired this slice — fail-closed after one red (owner-accepted 报错 path)",
+});
 
 /** Suggest filing a single pre-fix ticket rather than N parallel child fixes. */
 export function formatBaselineHealthFailurePackage(
@@ -83,7 +102,7 @@ export function formatBaselineHealthFailurePackage(
 
 /**
  * Pure admission court for the baseline health gate.
- * Green → ready. Red → optional one fix + recheck; still red → stop package.
+ * Green → ready. Red → optional one fix + recheck; still red / not attempted → stop.
  */
 export async function admitBaselineHealth(
   input: AdmitBaselineHealthInput,
@@ -97,7 +116,13 @@ export async function admitBaselineHealth(
     return stopFromFailure(first, 0);
   }
 
-  await input.tryFix(first);
+  const fix = await input.tryFix(first);
+  // attempted:false (noop / declined) → fail-closed on the first red; do not
+  // burn a second full suite wall-clock when nothing was changed.
+  if (!fix.attempted) {
+    return stopFromFailure(first, 0);
+  }
+
   const second = await input.runFullTests();
   if (second.ok) {
     return { kind: "ready", fixAttempts: 1 };
@@ -133,6 +158,10 @@ export interface BaselineContainerFullTestRequest {
  * Same image class as coder workers; repo bind-mounted at the host path so
  * paths match the worksite; `npm test` runs *inside* the container — never as
  * a bare host invocation (owner hard constraint: no lying host greens).
+ *
+ * Best-effort sandcastle parity (not full `sc.run`): imageName + worksite
+ * bind-mount + `HOME=/home/agent` + `OPENCLAW_SESSION=1` + `--user agent`.
+ * Agent auth/soul mounts are irrelevant for a pure `npm test` probe.
  */
 export function buildBaselineContainerFullTestArgv(
   req: BaselineContainerFullTestRequest,
@@ -140,13 +169,21 @@ export function buildBaselineContainerFullTestArgv(
   // Checkout family base then run the project's canonical full entry.
   // `npm test` is the orchestrator full gate (typecheck + vitest run).
   const remoteCmd = [
-    `git -C ${shellSingleQuote(req.workingRepo)} checkout --quiet ${shellSingleQuote(req.familyBase)}`,
+    `git -C ${shellEscape(req.workingRepo)} checkout --quiet ${shellEscape(req.familyBase)}`,
     "npm test",
   ].join(" && ");
   return [
     "docker",
     "run",
     "--rm",
+    // Worker-class env parity (SPAWNED_WORKER_ENV + sandcastle HOME default).
+    "-e",
+    "OPENCLAW_SESSION=1",
+    "-e",
+    "HOME=/home/agent",
+    // Image USER is `agent` (Containerfile); match worker perms/path layout.
+    "--user",
+    "agent",
     "-v",
     `${req.workingRepo}:${req.workingRepo}`,
     "-w",
@@ -158,8 +195,34 @@ export function buildBaselineContainerFullTestArgv(
   ];
 }
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+/**
+ * Capture execFileSync-style failure detail: message + stdout + stderr.
+ *
+ * Node's `Command failed: …` message alone drops the locatable reason —
+ * vitest puts FAIL bodies on **stdout**, noise often on stderr. Same shape as
+ * family verify's summarizeError (codex R3): keep BOTH streams labeled.
+ */
+export function formatBaselineExecFailureOutput(err: unknown): string {
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    parts.push(err.message);
+  } else if (err != null) {
+    parts.push(String(err));
+  }
+  if (err !== null && typeof err === "object") {
+    const e = err as { stdout?: unknown; stderr?: unknown };
+    const stderr = streamText(e.stderr).trim();
+    const stdout = streamText(e.stdout).trim();
+    if (stderr.length > 0) parts.push(`stderr:\n${stderr}`);
+    if (stdout.length > 0) parts.push(`stdout:\n${stdout}`);
+  }
+  return parts.join("\n");
+}
+
+function streamText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v instanceof Buffer) return v.toString("utf8");
+  return "";
 }
 
 /**
@@ -191,6 +254,7 @@ export type BaselineSh = (
 /**
  * Production runner: docker worker image + mounted family clone + `npm test`.
  * Throws are mapped to ok:false so admission stays fail-closed.
+ * Failure output = message+stdout+stderr so extractFailedTestPaths sees vitest FAIL.
  */
 export async function runBaselineFullTestsInWorkerContainer(
   req: BaselineContainerFullTestRequest,
@@ -212,7 +276,7 @@ export async function runBaselineFullTestsInWorkerContainer(
     });
     return { ok: true };
   } catch (err) {
-    const output = err instanceof Error ? err.message : String(err);
+    const output = formatBaselineExecFailureOutput(err);
     const exitCode =
       err !== null &&
       typeof err === "object" &&
