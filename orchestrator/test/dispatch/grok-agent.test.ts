@@ -92,6 +92,8 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).toContain("-m grok-4.5");
+    expect(cmd.command).not.toMatch(/\blogin\b/);
+    expect(cmd.command).not.toMatch(/--device-auth|--device-code/);
     expect(cmd.command).not.toMatch(/\bpi\b/);
     expect(cmd.stdin).toBe("echo OK");
   });
