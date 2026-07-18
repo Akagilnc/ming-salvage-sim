@@ -5,7 +5,7 @@
  *   1. grokAgent buildPrintCommand — headless-only CLI shape (never interactive login form)
  *   2. Containerfile grok pin — production mechanism for fail-fast non-interactive auth
  *      (0.2.102+; 0.2.93 entered device-code wait under headless empty auth)
- *   3. Live headless empty-auth probe against real/baked grok — short hard timeout proves
+ *   3. Live headless empty-auth probe through grokAgent's real command — short hard timeout proves
  *      fail-fast ("Not signed in") rather than interactive device-auth hang
  *   4. runMergerAgent / resolveMergeConflict / mergeChild — Sandcastle AgentError becomes
  *      Action-typed failure (structured non-resolve → conflicted + reason), never uncaught
@@ -164,20 +164,6 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   return env;
 }
 
-/**
- * Production worker print shape (grokAgent buildPrintCommand): prompt-file stdin +
- * streaming-json + always-approve. Never `grok login` / device-code.
- */
-const HEADLESS_PRINT_ARGS = [
-  "--prompt-file",
-  "/dev/stdin",
-  "--output-format",
-  "streaming-json",
-  "--always-approve",
-  "--permission-mode",
-  "bypassPermissions",
-] as const;
-
 function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   status: number | null;
   signal: NodeJS.Signals | null;
@@ -187,11 +173,15 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
+  const built = grokAgent("grok-4.5", { captureSessions: false }).buildPrintCommand({
+    prompt: "ping\n",
+    dangerouslySkipPermissions: true,
+  });
   const t0 = Date.now();
   if (target.kind === "host") {
-    const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
+    const r = spawnSync("sh", ["-c", built.command], {
       encoding: "utf8",
-      input: "ping\n",
+      input: built.stdin,
       env,
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
@@ -211,7 +201,7 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
-  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  // Run the production command under a shell (image sleep-infinity entrypoint otherwise).
   const r = spawnSync(
     "docker",
     [
@@ -219,17 +209,18 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
       "--rm",
       "-i",
       "--entrypoint",
-      "/usr/local/bin/grok",
+      "/bin/sh",
       "-e",
       "HOME=/tmp/964-empty-home",
       "-v",
       `${emptyHome}:/tmp/964-empty-home`,
       target.image,
-      ...HEADLESS_PRINT_ARGS,
+      "-c",
+      built.command,
     ],
     {
       encoding: "utf8",
-      input: "ping\n",
+      input: built.stdin,
       env: emptyAuthEnv(emptyHome),
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
@@ -364,7 +355,9 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       dangerouslySkipPermissions: true,
     });
     expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("--prompt-file /dev/stdin");
+    expect(cmd.command).toContain("prompt_file=$(mktemp)");
+    expect(cmd.command).toContain('cat > "$prompt_file"');
+    expect(cmd.command).toContain('--prompt-file "$prompt_file"');
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).not.toMatch(/\blogin\b/);
@@ -431,11 +424,10 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       "Reply with exactly: nonce-964",
     );
     expect(built.file).toBe("grok");
-    expect(built.args).toContain("--prompt-file");
-    expect(built.args).toContain("/dev/stdin");
+    expect(built.args).toContain("-p");
+    expect(built.args).toContain("Reply with exactly: nonce-964");
     expect(built.args).toContain("--always-approve");
-    expect(built.args).not.toContain("-p");
-    expect(built.input).toBe("Reply with exactly: nonce-964");
+    expect(built.input).toBeUndefined();
   });
 
   it("does not introduce an auth_expired (or other new) public failed cause", () => {

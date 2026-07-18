@@ -133,7 +133,7 @@ export function createGrokStreamParser(): (line: string) => Array<
 
 /**
  * Build a sandcastle AgentProvider that runs the real `grok` CLI in headless
- * mode (`-p` / `--prompt-file /dev/stdin` + streaming-json + always-approve).
+ * mode (stdin materialized to `--prompt-file` + streaming-json + always-approve).
  */
 export function grokAgent(
   model: string,
@@ -156,14 +156,19 @@ export function grokAgent(
         ? ` --resume ${shellEscape(resumeSession)}`
         : "";
       const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
-      // Prompt via stdin + --prompt-file /dev/stdin avoids the Linux 128KB
-      // argv limit (same motivation as codex/pi stdin prompts). Headless-only:
+      // Sandcastle supplies prompts through a Node child-process pipe. Grok
+      // reopens --prompt-file itself, and reopening /dev/stdin fails with ENXIO
+      // for that pipe shape. Materialize stdin into a private temporary file so
+      // large prompts still avoid the Linux argv limit and Grok reads a regular
+      // file. Headless-only:
       // never `grok login` / device-auth (#964). Auth death is the CLI's native
       // non-interactive fail ("Not signed in" on pin ≥0.2.102) → AgentError →
       // owning Action typed failure (not an interactive wait).
       return {
         command:
-          `grok --prompt-file /dev/stdin --output-format streaming-json` +
+          `prompt_file=$(mktemp) && chmod 600 "$prompt_file" && ` +
+          `trap 'rm -f "$prompt_file"' EXIT && cat > "$prompt_file" && ` +
+          `grok --prompt-file "$prompt_file" --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
           `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}`,
         stdin: prompt,
