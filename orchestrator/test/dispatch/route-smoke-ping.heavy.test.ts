@@ -1,4 +1,3 @@
-// @vitest-pool heavy
 /**
  * #884 — bare-ping route smoke redesign + driver stage lines.
  *

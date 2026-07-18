@@ -1,4 +1,3 @@
-// @vitest-pool heavy
 /**
  * #683 / #937 — quota probe remains for explicit 429 walls; monitored dispatch
  * no longer probes/kills/relays on silence (ID-007). Free-log relay tags are

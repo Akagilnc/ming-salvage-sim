@@ -1,4 +1,3 @@
-// @vitest-pool heavy
 /**
  * #940 — CMR / online review / 线上复验 only consume typed judge.
  *
