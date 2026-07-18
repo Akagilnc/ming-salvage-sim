@@ -8755,7 +8755,7 @@ class GameDB:
             payload = {}
         apply_state = state
         if int(pa["turn"]) < int(state.turn):
-            apply_state = self._state_for_pending_action_turn(state, int(pa["turn"]))
+            apply_state = self._state_for_turn(state, int(pa["turn"]))
         with atomic(self):
             savepoint = f"pending_action_retry_{int(pa['id'])}"
             self.conn.execute(f"SAVEPOINT {savepoint}")
@@ -8791,8 +8791,8 @@ class GameDB:
         }
 
     @staticmethod
-    def _state_for_pending_action_turn(state: GameState, turn: int) -> GameState:
-        """给旧回合 failed 动作重试用的签发态；按月回推 year/period，metrics 共享只读。"""
+    def _state_for_turn(state: GameState, turn: int) -> GameState:
+        """按 turn 回推当时的 year/period；metrics 共享只读。"""
         delta = int(state.turn) - int(turn)
         year = int(state.year)
         period = int(state.period)
@@ -10606,7 +10606,7 @@ class GameDB:
         minister = str(minister_name or "").strip()
         body = str(content or "")
         proj_turn = int(origin_turn if origin_turn is not None else state.turn)
-        proj_state = state if proj_turn == int(state.turn) else replace(state, turn=proj_turn)
+        proj_state = state if proj_turn == int(state.turn) else self._state_for_turn(state, proj_turn)
         self.record_participation_record(
             proj_state,
             {"participants": [minister], "title": "召对", "body": body},
