@@ -1,29 +1,22 @@
-/**
- * #686 — relay dispatch: baton handoff across quota walls / hangs / self-report.
- *
- * Seams under test (owner ratification 2026-07-08 + 2026-07-10 deltas):
- *   1. free-log parseRelayTag DELETED (#937 ID-007) — inventory pin
- *   2. resource handoff triggers (quota/capacity/blocked) via applyResourceFailureHandoff
- *   3. resource failure NEVER calls resetBeforeRetry (#661 boundary)
- *   4. state_summary → ledger + ephemeral relay brief; resume from any baton
- *   5. closing baton → normal review gate (no relay exemption)
- *   6. route pool table + three-tier park/relay at #683 disposition point
- *   7. next baton = #767 roster + pool-orthogonal lookup (换马甲 then 顺位)
- *   8. R1: REAL runner park sites (S9/S2) wire the fork — not a parallel dead seam
- */
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  execFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  tmpdir,
+  join,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
   CODER_ROSTER,
   lookupCoderRosterEntry,
   resolveCoderRecOrder,
   selectCoderRecEntry,
-} from "../../src/coderRoster.js";
-import { modelIdForSlug } from "../../src/modelRegistry.js";
-import {
+  modelIdForSlug,
   DEFAULT_PARK_THRESHOLD_MS,
   DEFAULT_POOL_MODELS,
   billingPoolFromQuotaPool,
@@ -33,11 +26,9 @@ import {
   resolveRelayPools,
   selectCapacityRelayBaton,
   selectNextRelayBaton,
-  type BillingPoolEntry,
-  type BillingPoolId,
-  type PoolTable,
-} from "../../src/quotaPoolTable.js";
-import {
+  BillingPoolEntry,
+  BillingPoolId,
+  PoolTable,
   MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
   buildRelayHandoffLedgerEntry,
@@ -49,14 +40,13 @@ import {
   isRelayChainReadyForReviewGate,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,
-  type RelayHandoffLedgerEvent,
-} from "../../src/relayDispatch.js";
-import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
-import { buildCliMonitorSpawnSpec } from "../../src/cliMonitorHooks.js";
-import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../../src/dispatchWorker.js";
-import { runOrchestrator } from "../../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
-import type {
+  RelayHandoffLedgerEvent,
+  QuotaWaitForResetError,
+  buildCliMonitorSpawnSpec,
+  dispatchWorkerWithMonitor,
+  legacyDispatchWorker,
+  runOrchestrator,
+  skeletonReviewLoopWorkerResult,
   Backend,
   DispatchContext,
   IssueMeta,
@@ -67,32 +57,9 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-} from "../../src/types.js";
-
-/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
-const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-
-function writeRoutePreset(name: string, slots: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "relay-preset-"));
-  const path = join(dir, "route-presets.json");
-  // Clone factory "normal" shape (full legs/optional markers) so capacity
-  // relay pool attribution matches production, then apply slot overrides.
-  const factoryNormal = JSON.parse(
-    readFileSync(join(process.cwd(), "config", "route-presets.json"), "utf8"),
-  ).normal;
-  writeFileSync(
-    path,
-    JSON.stringify({
-      [name]: {
-        ...factoryNormal,
-        slots: { ...factoryNormal.slots, ...slots },
-      },
-      // Keep normal available for any mid-test resolve that names it.
-      normal: factoryNormal,
-    }),
-  );
-  return path;
-}
+  RELAY_FOCUS_FILENAME,
+  writeRoutePreset,
+} from "./relay.shared.js";
 
 describe("#937 free-log relay parse surface deleted (ID-007/016)", () => {
   it("production module no longer exports parseRelayTag", async () => {

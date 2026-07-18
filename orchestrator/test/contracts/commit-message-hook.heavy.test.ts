@@ -1,36 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  execFileSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  tmpdir,
+  join,
+  dirname,
+  fileURLToPath,
+  here,
+  HOOK,
+  hookState,
+  runHook,
+} from "./commit-message-hook.shared.js";
 
-// The commit-msg hook is baked into the worker image and wired via
-// `git config --global core.hooksPath` (Containerfile). It tags every
-// in-container commit's subject with the `sandcastle:` prefix so a family run's
-// machine commits are framable (`git log --grep '^sandcastle:'`,
-// orchestrator/CLAUDE.md). These tests exercise the script directly (no
-// container) by running it on a temp commit-message file, the same way git
-// invokes `commit-msg <path-to-COMMIT_EDITMSG>`.
-
-const here = dirname(fileURLToPath(import.meta.url));
-const HOOK = join(here, "..", "..", "image", "hooks", "commit-msg");
-
-let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "commit-msg-hook-"));
+  hookState.dir = mkdtempSync(join(tmpdir(), "commit-msg-hook-"));
 });
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(hookState.dir, { recursive: true, force: true });
 });
-
-/** Write a commit message file, run the hook on it, return the rewritten message. */
-function runHook(message: string): string {
-  const f = join(dir, "COMMIT_EDITMSG");
-  writeFileSync(f, message);
-  execFileSync("sh", [HOOK, f]);
-  return readFileSync(f, "utf8");
-}
 
 describe("commit-msg hook — sandcastle: prefix", () => {
 

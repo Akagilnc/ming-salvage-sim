@@ -1,85 +1,31 @@
-/**
- * #955 — grokAgent implements the sandcastle resume contract.
- *
- * Sandcastle's capability predicate is interface-based: `provider.sessionStorage`
- * present ⇒ resumeSession and Output.object maxRetries>0 are allowed (the
- * "claudeCode, codex, or pi" in its error text is prose, not the check).
- * The grok CLI natively supports `--resume [<id>]` / `--fork-session`, and
- * stores sessions as one DIRECTORY per session id under
- * `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/`.
- */
-import { execFile } from "node:child_process";
 import {
+  execFile,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
   existsSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { BindMountSandboxHandle } from "@ai-hero/sandcastle";
-import { afterEach, describe, expect, it } from "vitest";
-import { grokAgent } from "../../src/grokAgent.js";
-import { resumeCapableForSlug } from "../../src/modelRegistry.js";
+  tmpdir,
+  join,
+  BindMountSandboxHandle,
+  afterEach,
+  describe,
+  expect,
+  it,
+  grokAgent,
+  resumeCapableForSlug,
+  tempDirs,
+  tmp,
+  localHandleWithStdin,
+  RUN_GROK_RESUME_SMOKE,
+} from "./grok-resume.shared.js";
 
-const tempDirs: string[] = [];
-function tmp(prefix: string): string {
-  const d = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(d);
-  return d;
-}
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
 });
-
-/**
- * Fake sandbox handle: `exec` runs the command through a real local shell so
- * tar/base64 transfer behaves exactly as in a container — the "sandbox" is
- * just another directory on this machine. Fully typed as BindMountSandboxHandle
- * (no `as never`); unused transfer methods are no-op stubs.
- */
-function localHandleWithStdin(worktreePath: string): BindMountSandboxHandle {
-  return {
-    worktreePath,
-    exec: (
-      command: string,
-      options?: {
-        onLine?: (line: string) => void;
-        cwd?: string;
-        sudo?: boolean;
-        stdin?: string;
-      },
-    ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-      new Promise((resolve) => {
-        const child = execFile(
-          "bash",
-          ["-c", command],
-          { cwd: options?.cwd ?? worktreePath, maxBuffer: 64 * 1024 * 1024 },
-          (err, stdout, stderr) => {
-            const code = err
-              ? ((err as { code?: number }).code ?? 1)
-              : 0;
-            resolve({
-              stdout: String(stdout),
-              stderr: String(stderr),
-              exitCode: typeof code === "number" ? code : 1,
-            });
-          },
-        );
-        if (options?.stdin !== undefined) {
-          child.stdin?.write(options.stdin);
-        }
-        child.stdin?.end();
-      }),
-    copyFileIn: async () => {},
-    copyFileOut: async () => {},
-    close: async () => {},
-  };
-}
 
 describe("#955 grok session storage — sandbox transfer roundtrip (real tar/base64 via local shell)", () => {
   it("captureToHost pulls a sandbox session dir and rewrites cwd paths", async () => {
@@ -296,12 +242,6 @@ describe("#955 grok session storage — failure paths", () => {
     });
   });
 });
-
-/**
- * Live smoke: real grok CLI start → sessionId → --resume → context recall.
- * Env-gated (GROK_RESUME_SMOKE=1); CI defaults to skip. Serial + long timeout.
- */
-const RUN_GROK_RESUME_SMOKE = process.env.GROK_RESUME_SMOKE === "1";
 
 describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
   "#955 live grok --resume smoke (GROK_RESUME_SMOKE=1)",

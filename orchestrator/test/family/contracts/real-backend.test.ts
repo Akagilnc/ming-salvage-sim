@@ -1,27 +1,5 @@
-/**
- * #291 RealFamilyBackend — the REAL {@link FamilyBackend} implementation, the
- * "真后端" behind the family seam #293 立 (control flow) leaves unfilled.
- *
- * The family layer's operations are each a few git/file ops or one `sc.run`:
- *   - mergeChildIntoFamilyBase → `git checkout <familyBase>` + `git merge --no-ff`
- *   - resolveMergeConflict     → one `sc.run` under the merger soul (injected seam)
- *   - appendFamilyLedger/read  → a sibling JSONL OUTSIDE the family base worktree
- *   - runFamilyVerify          → `npx tsc --noEmit` + `npx vitest run`
- *   - runIntegratedCmr         → a thin wrap of local `ak-cross-m-review` (seam)
- *   - recordAborted            → one phase-level `aborted` ledger append
- *   - escalateFamily           → a durable stuck-point record (resume entry)
- *   - ReconcileGit four predicates → `git rev-parse` / `--verify` / `merge-base`
- *
- * PURE / DETERMINISTIC parts (ledger JSONL, the git argv the merge/verify/cmr/pr
- * commands run, the reconcile predicate argv) are unit-tested here with:
- *   - REAL git in a `mktemp` repo (real `git merge` / `rev-parse` / `merge-base`),
- *   - a `sh`-intercepting / `sc.run`-intercepting subclass for the external side
- *     effects (the merger agent / `gh pr create` / `ak-cross-m-review`) — fakes
- *     verify the CALL CONTRACT; no real container, no real GitHub, no real push.
- */
-
-import { execFileSync } from "node:child_process";
 import {
+  execFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -29,109 +7,59 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-import * as sc from "@ai-hero/sandcastle";
-// Production discovery used by public ignition resolveVerifyCwd (#939).
-import { discoverSubprojects } from "../../../src/familyDriver.js";
-import {
+  tmpdir,
+  dirname,
+  join,
+  fileURLToPath,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+  sc,
+  discoverSubprojects,
   MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
-  type MergerAuth,
+  MergerAuth,
   parseCmrOutcome,
   REFERENCED_FAMILY_PROMPT_FILES,
   RealFamilyBackend,
-  type RealFamilyBackendOptions,
-} from "../../../src/family/realFamilyBackend.js";
-import { familyEscalationState } from "../../../src/family/ledger.js";
-import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
-import {
+  RealFamilyBackendOptions,
+  familyEscalationState,
+  MAX_DISPATCH_ATTEMPTS,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
   soulsMount,
-} from "../../../src/realBackend.js";
-import type {
   ConflictResolveRequest,
   FamilyVerifyRequest,
   IntegratedCmrRequest,
   IntegratedCmrResult,
-} from "../../../src/family/types.js";
-import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../../src/familyDriver.js";
-import { PROVISION_SUBPROCESS_TIMEOUT_MS } from "../../../src/provisionNodeModules.js";
-import type { WorkerSpec } from "../../../src/types.js";
-import * as telemetry from "../../../src/telemetry.js";
-import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+  DEFAULT_IMAGE_TAG,
+  resolveImageTag,
+  PROVISION_SUBPROCESS_TIMEOUT_MS,
+  WorkerSpec,
+  telemetry,
+  buildExplicitLandingLiveHooks,
+  here,
+  realPromptsDir,
+  realSoulsDir,
+  git,
+  makeRepo,
+  commitFile,
+  tempState,
+  trackTempDir,
+  trackRepo,
+  opts,
+  FakeSeamsBackend,
+} from "./real-backend.shared.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const realPromptsDir = join(here, "..", "..", "..", "prompts");
-const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
-
-/** Run a real git command in `cwd` and return trimmed stdout. */
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-}
-
-/** Build a real temp git repo with an initial commit; return its path. */
-function makeRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "rfb-"));
-  git(dir, "init", "-q");
-  git(dir, "config", "user.email", "t@t.t");
-  git(dir, "config", "user.name", "t");
-  git(dir, "config", "commit.gpgsign", "false");
-  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: dir });
-  return dir;
-}
-
-/** Commit a file on the current branch; return the new HEAD SHA. */
-function commitFile(repo: string, file: string, content: string): string {
-  execFileSync("bash", ["-c", `printf '%s' '${content}' > '${join(repo, file)}'`]);
-  git(repo, "add", file);
-  execFileSync("git", ["commit", "-q", "-m", `add ${file}`], { cwd: repo });
-  return git(repo, "rev-parse", "HEAD");
-}
-
-let repos: string[] = [];
-// online R1 CodeRabbit: `opts()` mints a temp ledger dir per call — track them too,
-// else they leak across the suite and accumulate over a long CI run.
-let ledgerDirs: string[] = [];
-function trackTempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  ledgerDirs.push(dir);
-  return dir;
-}
-function trackRepo(): string {
-  const r = makeRepo();
-  repos.push(r);
-  return r;
-}
 afterEach(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
-  for (const d of ledgerDirs) rmSync(d, { recursive: true, force: true });
-  repos = [];
-  ledgerDirs = [];
+  for (const r of tempState.repos) rmSync(r, { recursive: true, force: true });
+  for (const d of tempState.ledgerDirs) rmSync(d, { recursive: true, force: true });
+  tempState.repos = [];
+  tempState.ledgerDirs = [];
 });
-
-/** Default options pointing the Backend at a real repo + the real prompts dir. */
-function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {}): RealFamilyBackendOptions {
-  const ledgerDir = mkdtempSync(join(tmpdir(), "rfb-ledger-"));
-  ledgerDirs.push(ledgerDir);
-  return {
-    workingRepo,
-    familyBase: "family/293-base",
-    ledgerDir,
-    repo: "Akagilnc/ming-salvage-sim",
-    base: "main",
-    promptsDir: realPromptsDir,
-    soulsDir: realSoulsDir,
-    imageName: "img",
-    ...over,
-  };
-}
 
 // ═══════════════════════════════ 3. ReconcileGit ════════════════════════════
 
@@ -405,7 +333,7 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
   });
 
   it("R3: a SINGLE-project repo (package.json at the clone ROOT) falls back to workingRepo verify", async () => {
-    // gemini R3: dropping the `?? workingRepo` fallback made single-project repos
+    // gemini R3: dropping the `?? workingRepo` fallback made single-project tempState.repos
     // (package.json at root, no subproject) skip verify entirely. Restore the
     // fallback — but ONLY when the root IS a Node project (multi-project non-Node
     // root still skips, R1 T2).
@@ -640,7 +568,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
   /** A promptsDir holding exactly the named family prompt files. */
   function promptsDirWith(files: string[]): string {
     const dir = mkdtempSync(join(tmpdir(), "rfb-prompts-"));
-    ledgerDirs.push(dir); // reuse the afterEach cleanup list
+    tempState.ledgerDirs.push(dir); // reuse the afterEach cleanup list
     for (const f of files) {
       execFileSync("bash", ["-c", `printf '%s' 'x' > '${join(dir, f)}'`]);
     }
@@ -682,133 +610,6 @@ describe("family CMR prompt output contract", () => {
     }
   });
 });
-
-// ═══════════════════ 4. resolveMergeConflict (sc.run seam) ═══════════════════
-
-/** A subclass that fakes the external seams (merger agent / verify / cmr / sh). */
-class FakeSeamsBackend extends RealFamilyBackend {
-  resolveLandingLiveHooks(input: {
-    prUrl: string;
-    convergedHeadOid: string;
-    familyBase: string;
-  }) {
-    return buildExplicitLandingLiveHooks({
-      prUrl: input.prUrl,
-      headOid: input.convergedHeadOid,
-      remoteBranchName: input.familyBase,
-    });
-  }
-
-  mergerOutcome: ReturnType<typeof mergerOutcomeFromResult> = { resolved: true };
-  mergerCalls: ConflictResolveRequest[] = [];
-  verifyOutcome: "green" | "red" = "green";
-  verifyCalls: FamilyVerifyRequest[] = [];
-  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
-  cmrCalls: IntegratedCmrRequest[] = [];
-  shCalls: Array<{ file: string; args: string[] }> = [];
-  prViewResponse: unknown = {
-    number: 777,
-    url: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
-    baseRefName: "main",
-    headRefName: "family/293-base",
-    headRefOid: " pr-head-1 ",
-    headRepositoryOwner: { login: "Akagilnc" },
-    state: "OPEN",
-    mergeStateStatus: "CLEAN",
-  };
-  prListResponse: unknown = [];
-  mergeInProgressFake = false;
-  // STATEFUL fake of the family-base ref so the resolve postcondition (the family
-  // base ref moved past familyHeadBefore + child is its ancestor) is exercised
-  // realistically. `rev-parse <familyBase>` returns familyBaseHeadFake; running the
-  // merger ADVANCES it to resolvedHeadFake (a landed merge moves the family base
-  // ref). The default models a clean LANDED resolve.
-  familyBaseHeadFake = "base-head"; // rev-parse <familyBase> — current value (mutated by the merger)
-  resolvedHeadFake = "resolved-head"; // what the family base ref advances to on a landed resolve
-  childHeadFake = "child-head"; // rev-parse <childBranch>
-  childLandedFake = true; // isAncestorOf(childHead, familyBase ref)
-  mergerLandsOnFamilyBase = true; // does running the merger advance the family base ref?
-
-  protected override async runMergerAgent(req: ConflictResolveRequest) {
-    this.mergerCalls.push(req);
-    // A real landed resolve advances the family base ref; a misbehaving agent that
-    // aborted/reset (mergerLandsOnFamilyBase=false) leaves it unmoved.
-    if (this.mergerOutcome.resolved && this.mergerLandsOnFamilyBase) {
-      this.familyBaseHeadFake = this.resolvedHeadFake;
-    }
-    return this.mergerOutcome;
-  }
-  protected override async runVerifyCommands(req: FamilyVerifyRequest): Promise<void> {
-    this.verifyCalls.push(req);
-    if (this.verifyOutcome === "red") {
-      throw new Error("Command failed: npx vitest run\n 3 failed | 507 passed");
-    }
-  }
-  protected override async runCmr(req: IntegratedCmrRequest) {
-    this.cmrCalls.push(req);
-    return this.cmrResult;
-  }
-  protected override mergeInProgress(_repo: string): boolean {
-    return this.mergeInProgressFake;
-  }
-  protected override isAncestorOf(_ancestor: string, _descendant: string, _repo: string): boolean {
-    return this.childLandedFake;
-  }
-  protected override isMergeCommit(_commit: string, _repo: string): boolean {
-    return this.childLandedFake;
-  }
-  // Intercept the git/gh/npx subprocess seam so no real command runs.
-  protected override sh(file: string, args: string[], _cwd?: string): string {
-    this.shCalls.push({ file, args });
-    if (file === "git" && args[0] === "rev-parse") {
-      // rev-parse <familyBase> → the (stateful) family base ref; rev-parse HEAD →
-      // wherever HEAD is; rev-parse <childBranch> → the child head. The resolve
-      // postcondition reads the FAMILY BASE REF (codex R3), so familyHeadBefore and
-      // the post-resolve familyHead both come from familyBaseHeadFake — which the
-      // merger advances only on a landed resolve.
-      if (args[1] === this.familyBase) return this.familyBaseHeadFake;
-      if (args[1] === "HEAD") return this.resolvedHeadFake;
-      return this.childHeadFake;
-    }
-    if (file === "gh" && args[0] === "pr" && args[1] === "create") {
-      return "https://github.com/Akagilnc/ming-salvage-sim/pull/777";
-    }
-    if (file === "gh" && args[0] === "pr" && args[1] === "view") {
-      return JSON.stringify({
-        number: 777,
-        url: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
-        mergeStateStatus: "CLEAN",
-        ...(this.prViewResponse as Record<string, unknown>),
-      });
-    }
-    if (file === "gh" && args[0] === "pr" && args[1] === "list") {
-      return JSON.stringify(this.prListResponse);
-    }
-    return "";
-  }
-
-  // the configured family base (RealFamilyBackend.opts is protected → accessible).
-  private get familyBase(): string {
-    return this.opts.familyBase;
-  }
-
-  // Expose the protected sandbox-config seam so the merger soul injection +
-  // skills-mount path are unit-testable without a real container.
-  public sandboxConfig(auth: any = {}) {
-    return this.mergerSandboxConfig(auth);
-  }
-
-  // Expose for family-coder souls mount assertion (#372).
-  public familyCoderConfig() {
-    return this.familyCoderSandboxConfig(
-      { codexAuthDir: "/tmp/codex", claudeToken: "tok" } as any,
-      "sonnet",
-      {} as any,
-      { path: "/tmp/land.json", sandboxPath: ".land.json" },
-    );
-  }
-
-}
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
 

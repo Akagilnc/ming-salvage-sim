@@ -12,6 +12,11 @@ describe("canonical fast entry tax guard (#990)", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          ...(fixture.endsWith("import-original-probe.ts")
+            ? {
+                NODE_OPTIONS: "--trace-warnings",
+              }
+            : {}),
           VITEST_FAST_GUARD_FIXTURE: fixture,
         },
         encoding: "utf8",

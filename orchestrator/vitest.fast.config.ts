@@ -11,6 +11,6 @@ export default defineConfig({
       ? []
       : ["test/**/*.heavy.test.ts"],
     environment: "node",
-    setupFiles: ["test/setup-route-env.ts", "test/setup-fast-tax-guard.ts"],
+    setupFiles: ["test/setup-route-env.ts"],
   },
 });
