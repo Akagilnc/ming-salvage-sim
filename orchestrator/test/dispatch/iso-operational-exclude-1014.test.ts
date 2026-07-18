@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ISO_OPERATIONAL_GIT_EXCLUDE_PATTERNS,
-  ensureIsoOperationalExcludes,
+  appendIsoOperationalExcludes,
 } from "../../src/gitInfoExclude.js";
 import {
   clonePathFor,
@@ -88,13 +88,13 @@ describe("#1014 iso operational sidecar git excludes", () => {
     ]);
   });
 
-  it("ensureIsoOperationalExcludes writes both patterns idempotently (CRLF-safe)", () => {
+  it("appendIsoOperationalExcludes writes both patterns idempotently (CRLF-safe)", () => {
     const repo = makeSourceRepo();
     const excludePath = join(repo, ".git", "info", "exclude");
     writeFileSync(excludePath, ".ledger-*/\r\n", "utf8");
 
-    ensureIsoOperationalExcludes(repo);
-    ensureIsoOperationalExcludes(repo); // second call must not duplicate
+    appendIsoOperationalExcludes(repo);
+    appendIsoOperationalExcludes(repo); // second call must not duplicate
 
     const lines = excludeLines(repo);
     expect(lines.filter((l) => l === ".ledger-*/")).toHaveLength(1);
@@ -167,9 +167,9 @@ describe("#1014 iso operational sidecar git excludes", () => {
     expect(porcelainAll(iso)).toMatch(/README/);
   });
 
-  it("ensureIsoOperationalExcludes throws when info/exclude cannot be written (fail-closed)", () => {
-    // Non-git path: rev-parse fails → throw-through, not silent swallow.
+  it("appendIsoOperationalExcludes throws when info/exclude cannot be written (fail-closed)", () => {
+    // Non-git path: rev-parse fails → throw-through (append* family), not ensure* swallow.
     const notARepo = trackTemp("iso-1014-nongit-");
-    expect(() => ensureIsoOperationalExcludes(notARepo)).toThrow();
+    expect(() => appendIsoOperationalExcludes(notARepo)).toThrow();
   });
 });
