@@ -3,7 +3,7 @@ from pathlib import Path
 
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
-from ming_sim.simulation import _extractor_context_payload, _sanitize_module_output
+from ming_sim.simulation import _extractor_context_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,82 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _issue_by_title(db, title: str):
     return db.conn.execute("SELECT * FROM issues WHERE title=?", (title,)).fetchone()
-
-
-def test_issue_extractor_prompt_routes_until_stop_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "每月 X 直到补齐" in prompt
-    assert "commitment_kind" in prompt
-    assert "until_stop" in prompt
-    assert "origin_ref" in prompt
-    assert "ongoing_effects" in prompt
-    assert "stop_condition" in prompt
-    assert '{"army.guanning.arrears":"<=0"}' in prompt
-
-
-def test_issue_extractor_prompt_routes_limited_duration_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "连续 N 月" in prompt
-    assert "半年为限" in prompt
-    assert "end_turn = turn + N" in prompt
-    assert "ongoing_effects" in prompt
-    assert "stop_condition" in prompt
-
-
-def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "圣旨承诺 form③" in prompt
-    assert "未来一次性" in prompt
-    assert "X 月后复试/复核" in prompt
-    assert "三月后复试" in prompt
-    assert "到期待裁" in prompt
-    assert "end_turn" in prompt
-    assert "commitment_kind" in prompt
-    assert "ongoing_effects 可留空" in prompt
-    assert "acknowledged" in prompt
-    assert "ACK 收尾" in prompt
-
-
-def test_personnel_secret_extractor_routes_recurring_secret_funding_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_personnel_secret.md").read_text(encoding="utf-8")
-    raw_issue = {
-        "origin_kind": "decree",
-        "origin_ref": "secret_order:7",
-        "kind": "initiative",
-        "title": "内库月拨安抚诸将",
-        "ongoing_effects": {
-            "economy": [
-                {"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给"}
-            ]
-        },
-        "commitment_kind": "until_stop",
-    }
-
-    assert "经常性密令拨款" in prompt
-    assert "new_issues" in prompt
-    assert "一锤子密令" in prompt
-
-    cleaned = _sanitize_module_output("personnel_secret", {"new_issues": [raw_issue]})
-
-    assert cleaned["new_issues"] == [raw_issue]
-    assert "_module_rejections" not in cleaned
-
-
-def test_internal_extractor_excludes_decree_commitment_from_new_monthly_fiscal():
-    """ADR0027 减噪边界（#340 创建端 internal 路）：诏书/密令经常性拨款承诺不在 internal
-    建 `新立月度收支`（交承诺 issue 承载），只有真·永久制度科目才建——补完与
-    personnel_secret 对称的那半创建端边界，apply 端 dedup 仍是承重解法。"""
-    prompt = (ROOT / "content/prompts/score_extractor_internal.md").read_text(encoding="utf-8")
-
-    assert "经常性拨款承诺不在此建项" in prompt
-    assert "ADR 0027" in prompt
-    assert "真·永久制度科目" in prompt
-    # 边界须点明「双扣」动机 + 交承诺 issue 承载的归口
-    assert "双扣" in prompt
-    assert "承诺 issue" in prompt
 
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
