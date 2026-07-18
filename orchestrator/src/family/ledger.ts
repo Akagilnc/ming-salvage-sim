@@ -751,6 +751,32 @@ export async function recordAdmissionSkipped(
   );
 }
 
+/**
+ * #1006 — durable audit when the admission baseline health gate fails closed
+ * (family-base full suite red before fan-out). Not an unblock fact.
+ */
+export async function recordBaselineHealthFailed(
+  backend: FamilyBackend,
+  record: {
+    readonly reason: string;
+    readonly message: string;
+    readonly familyHeadAfter?: string;
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "baseline_health_failed",
+      event: "baseline_health_failed",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
+    }) as FamilyLedgerEntry,
+  );
+}
+
 function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
   return (
     entry.status === "escalation_answered" &&
