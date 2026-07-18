@@ -246,7 +246,7 @@ def character_context(character: Character) -> str:
         f"清廉{_character_band('integrity', character.integrity)}、"
         f"胆略{_character_band('courage', character.courage)}、"
         f"党派认同{identity_band(character.identity)}、"
-        f"阴谋{_INTRIGUE_PLACEHOLDER}。"
+        f"{_INTRIGUE_PLACEHOLDER}。"
     )
 
 

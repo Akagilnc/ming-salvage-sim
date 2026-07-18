@@ -7,6 +7,30 @@ import pytest
 from ming_sim.knowledge import build_character_knowledge
 
 
+def test_regional_world_keeps_qualitative_and_countable_region_facts(game):
+    """本职地区见闻须同时保留定性轴与独立的税额、炮数事实。"""
+    db, state, content = game
+    db.conn.execute(
+        "UPDATE regions SET public_support=13, unrest=87, grain_security=60, "
+        "tax_per_turn=20, cannon=3"
+    )
+    db.conn.commit()
+    regional = next(
+        knowledge["world"]["regional"]
+        for character in content.characters.values()
+        if db.get_character_status(character.name)[0] == "active"
+        for knowledge in [build_character_knowledge(db, state, character.name)]
+        if "regional" in knowledge["world"]
+    )
+
+    assert "民心" in regional
+    assert "动乱" in regional
+    assert "粮情" in regional
+    assert "税20万两/月" in regional
+    assert "城防炮3门" in regional
+    assert "已略去" not in regional
+
+
 @pytest.mark.parametrize(
     ("target_kind", "expected_visible"),
     [
