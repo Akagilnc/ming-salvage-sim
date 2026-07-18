@@ -177,6 +177,35 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
         restored.close()
 
 
+def test_undo_chat_turn_permanently_removes_mindreading_record(tmp_path, content):
+    path = tmp_path / "mindreading-undo.db"
+    db = GameDB(str(path), content)
+    payload = {
+        "reader": "王承恩",
+        "target": "温体仁",
+        "source": "臣有本奏。",
+        "precision": "明晰",
+        "narration": "近臣低声陈明未尽之意。",
+    }
+    try:
+        db.seed_static_data()
+        state = db.load_state()
+        chat_turn_id = db.create_chat_turn(state, payload["target"], "undo-test", 0)
+        db.record_mindreading(chat_turn_id, payload)
+
+        db.undo_chat_turn(chat_turn_id)
+
+        assert db.list_mindreading_records(chat_turn_id) == []
+    finally:
+        db.close()
+
+    restored = GameDB(str(path), content)
+    try:
+        assert restored.list_mindreading_records(chat_turn_id) == []
+    finally:
+        restored.close()
+
+
 def test_runtime_uses_existing_model_config_factory(game, monkeypatch):
     _db, _state, _content = game
     runtime_config = object()
