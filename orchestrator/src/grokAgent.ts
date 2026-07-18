@@ -175,11 +175,11 @@ export function grokAgent(
           `cleanup_prompt() { rm -f "$prompt_file"; }; ` +
           `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; ` +
           `if [ -n "$grok_pid" ]; then kill -s "$signal" "$grok_pid" 2>/dev/null; wait "$grok_pid" 2>/dev/null; fi; ` +
-          `cleanup_prompt; kill -s "$signal" "$$"; }; ` +
+          `cleanup_prompt; exec perl -MPOSIX=SIG_UNBLOCK,sigprocmask -e '$SIG{$ARGV[0]} = "DEFAULT"; my $n = POSIX->can("SIG$ARGV[0]")->(); sigprocmask(SIG_UNBLOCK, POSIX::SigSet->new($n)); kill $ARGV[0], $$; sleep 1' "$signal"; }; ` +
           `trap cleanup_prompt EXIT; ` +
           `trap 'relay_signal HUP' HUP; trap 'relay_signal INT' INT; trap 'relay_signal TERM' TERM; ` +
           `cat > "$prompt_file"; ` +
-          `(exec env --default-signal=HUP,INT,TERM grok --prompt-file "$prompt_file" --output-format streaming-json` +
+          `(exec perl -e 'for (qw(HUP INT TERM)) { $SIG{$_} = "DEFAULT" } exec @ARGV' grok --prompt-file "$prompt_file" --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
           `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}) & ` +
           `grok_pid=$!; wait "$grok_pid"`,
