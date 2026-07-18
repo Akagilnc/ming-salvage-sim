@@ -418,6 +418,141 @@ describe("#1019 AC3 — true infra failure still fails loud", () => {
   });
 });
 
+describe("#1019 CodeRabbit — stale answer must not inject into a new decision session", () => {
+  it("answer bound to session A is not written when child residue is parked on session B", async () => {
+    // Family: park(session A) + answer(sessionId A). Child residue then shows a
+    // NEW decision park on session B (different forStep lineage / new gate).
+    // Re-entry must NOT inject the old answer onto session B / new forStep.
+    const SESSION_A = "child-1019-decision-gate-session-A";
+    const SESSION_B = "child-1019-decision-gate-session-B";
+    const OLD_ANSWER = "field X is optional; proceed with the optional shape";
+    const CHILD = 1019;
+
+    const singleSliceBackend = new BaseChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+
+    // Family ledger: old park A answered with sessionId A.
+    familyBackend.ledger.push(
+      {
+        childIssue: CHILD,
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        phase: "wave",
+        escalationKind: "decision",
+        reason: "Design-level ambiguity on field X",
+        diagnosis: "product decision required before implementation can proceed",
+        sessionId: SESSION_A,
+        familyHeadAfter: "family-base-0",
+      } as FamilyLedgerEntry,
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        childIssue: CHILD,
+        sessionId: SESSION_A,
+        answer: OLD_ANSWER,
+        source: "human",
+      } as FamilyLedgerEntry,
+    );
+
+    // Child ledger: old S2/S8 park on A, then a NEW S2/S8 decision park on B.
+    // Latest parked sessionId is B → inject path would see canInjectInPlace=true
+    // with parkedSessionId=B; answer.sessionId=A must be refused.
+    singleSliceBackend.childLedgers.set(CHILD, [
+      {
+        step: "S2",
+        sessionId: SESSION_A,
+        prompt_hash: "hash-S2-A",
+        branchHEAD: `feat/child-${CHILD}`,
+        ts: "2026-07-18T00:00:00.000Z",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          escalate: STUCK,
+        },
+      },
+      {
+        step: "S8",
+        sessionId: SESSION_A,
+        prompt_hash: "hash-S8-A",
+        branchHEAD: `feat/child-${CHILD}`,
+        ts: "2026-07-18T00:00:01.000Z",
+        handoffStatus: "parked",
+        escalationKind: "decision",
+      },
+      {
+        step: "S2",
+        sessionId: SESSION_B,
+        prompt_hash: "hash-S2-B",
+        branchHEAD: `feat/child-${CHILD}`,
+        ts: "2026-07-18T01:00:00.000Z",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          escalate: STUCK,
+        },
+      },
+      {
+        step: "S8",
+        sessionId: SESSION_B,
+        prompt_hash: "hash-S8-B",
+        branchHEAD: `feat/child-${CHILD}`,
+        ts: "2026-07-18T01:00:01.000Z",
+        handoffStatus: "parked",
+        escalationKind: "decision",
+      },
+    ]);
+
+    const ledgerLenBefore =
+      singleSliceBackend.childLedgers.get(CHILD)?.length ?? 0;
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: epicWith(CHILD),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1019-base",
+    });
+
+    const childLedger = singleSliceBackend.childLedgers.get(CHILD) ?? [];
+    // No inject of the old answer onto the new session / new gate.
+    const staleInjects = childLedger.filter(
+      (e) =>
+        e.event === "escalation_answered" &&
+        e.answer === OLD_ANSWER &&
+        (e.sessionId === SESSION_B || e.forStep === "S2"),
+    );
+    expect(staleInjects).toEqual([]);
+    // Ledger must not grow by a wrong-session inject row.
+    expect(
+      childLedger.filter((e) => e.event === "escalation_answered").length,
+    ).toBe(0);
+    expect(childLedger.length).toBeGreaterThanOrEqual(ledgerLenBefore);
+    // Must not complete-by-wrong-answer (resume with stale cargo).
+    expect(result.children.find((c) => c.issue === CHILD)?.status).not.toBe(
+      "ran",
+    );
+    expect(familyBackend.merges.some((m) => m.childIssue === CHILD)).toBe(
+      false,
+    );
+    // No resume of session B carrying the old answer path.
+    expect(
+      singleSliceBackend.resumeSessionCalls.some(
+        ([issue, , sessionId]) => issue === CHILD && sessionId === SESSION_B,
+      ),
+    ).toBe(false);
+    // And no fresh-redispatch cargo either (stale answer is discarded for this gate).
+    expect(
+      familyBackend.ledger.some(
+        (e) =>
+          e.childIssue === CHILD && e.reason === "child_answer_fresh_redispatch",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("#1019 mixed-wave park recording", () => {
   it("records child_decision_parked even when a sibling failed in the same wave", async () => {
     // #988-style sibling fails + #991-style decision park in one wave must still
