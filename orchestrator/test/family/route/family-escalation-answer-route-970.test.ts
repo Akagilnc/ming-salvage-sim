@@ -3,18 +3,19 @@
  *
  * Field failure (#485): a family-level correctness-park answer whose TEXT mentions
  * a child (e.g. "先完成 #883") was treated as a child decision-gate resume and
- * injected into runChild. Without a parked child session the #604 fail-closed path
- * returned silent `failed` → wave ends incomplete (`owning_issue_still_red`) with
- * zero durable progress and a swallowed reason.
+ * injected into runChild. Without a parked child session the old #604 fail-closed
+ * path returned silent `failed` → incomplete with a swallowed reason.
  *
- * Contract:
+ * Contract (post-#1019):
  *   1. Mentioning a child issue in answer text ≠ that child has a decision park.
  *      Inject into runChild only when the family ledger proves a decision-kind park
  *      (escalationKind=decision + parked sessionId) for that child.
  *   2. Otherwise the answer is a family-level directive: noop for runChild, still
  *      consumed as a family answer.
- *   3. True child answer without parked single-slice state fails closed with loud
- *      typed reason `child_answer_without_parked_state` and a durable ledger row.
+ *   3. True child-bound answer without injectable single-slice resume → #1019
+ *      fresh redispatch with answer cargo (`child_answer_fresh_redispatch` audit),
+ *      not fail-closed `child_answer_without_parked_state`. Canonical tracer:
+ *      `cross-launcher-redispatch-1019.test.ts` AC1.
  */
 
 import { describe, expect, it } from "vitest";
@@ -422,9 +423,6 @@ describe("#970 / #1019 — true child answer without parked resume → fresh red
       familyBase: "family/485-base",
     });
 
-    expect(result.children.find((c) => c.issue === 883)?.failureCause).not.toBe(
-      "child_answer_without_parked_state",
-    );
     expect(
       familyBackend.ledger.some(
         (e) =>
