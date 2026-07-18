@@ -17,9 +17,9 @@ from ming_sim.flows import army_needed
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_army_payload_exposes_army_needed(game):
+def test_army_payload_exposes_army_needed(read_game):
     """army_payload 须暴露引擎实扣应发 army_needed（供 web/LLM 呈现「月饷」），与 flows.army_needed 一致。"""
-    db, _state, _ = game
+    db, _state, _ = read_game
     payload = db.army_payload()
     assert payload, "应有军队"
     by_id = {p["id"]: p for p in payload}
@@ -216,9 +216,9 @@ def test_danger_order_preserves_fractional_arrears(game):
     assert ordered.index("Z高欠饷军") < ordered.index("A低欠饷军")
 
 
-def test_army_rows_non_danger_sorted_by_theater_name(game):
+def test_army_rows_non_danger_sorted_by_theater_name(read_game):
     """#173 cmr：非 danger 路（走 SQL ORDER BY theater,name）排序保持原语义、limit 生效。"""
-    db, _state, _ = game
+    db, _state, _ = read_game
     rows = db.army_rows(danger_order=False)
     if len(rows) < 2:
         pytest.skip("需≥2 支军队验排序/limit（数据前提）")

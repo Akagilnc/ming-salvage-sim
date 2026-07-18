@@ -27,8 +27,8 @@ def test_score_fields_include_firearm_and_cannon():
     assert "cannon_equipment" in ARMY_SCORE_FIELDS
 
 
-def test_armies_table_has_firearm_columns(game):
-    db, _, _ = game
+def test_armies_table_has_firearm_columns(read_game):
+    db, _, _ = read_game
     cols = _cols(db, "armies")
     assert "firearm_equipment" in cols
     assert "cannon_equipment" in cols

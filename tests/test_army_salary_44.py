@@ -39,8 +39,8 @@ def _use_legacy_fiscal_engine(db):
     ("jizhen", 9),      # 52000 × 1.55 / 10000 = 8.06 → ceil 9
     ("southwest_tusi", 2),  # 24000 × 0.8 / 10000 = 1.92 → ceil 2
 ])
-def test_army_needed_derives_from_manpower_rate(game, army_id, expected):
-    db, state, _ = game
+def test_army_needed_derives_from_manpower_rate(read_game, army_id, expected):
+    db, state, _ = read_game
     assert army_needed(_army_row(db, army_id)) == expected
 
 
@@ -72,9 +72,9 @@ def test_army_needed_shrink_lowers_pay(game):
     assert army_needed(_army_row(db, "xuan_da")) < before
 
 
-def test_army_needed_non_ming_no_pay(game):
+def test_army_needed_non_ming_no_pay(read_game):
     # 非明军（owner_power != ming）不强加饷需（叛军/外族不吃明国库）。
-    db, state, _ = game
+    db, state, _ = read_game
     row = db.conn.execute(
         "SELECT * FROM armies WHERE owner_power!='ming' LIMIT 1").fetchone()
     if row is None:
@@ -174,11 +174,11 @@ def test_backfill_anchor_when_column_present_but_data_unusable(game, manpower, m
     )
 
 
-def test_total_ming_salary_is_72_ceil_sum(game):
+def test_total_ming_salary_is_72_ceil_sum(read_game):
     # 实际总月应发 = sum(ceil(每军))=72 万两。设计「66.5」是 sum(小数月应发)；army_needed 每军 ceil
     # （万两整数、不少发），ceil 累积使总额 72 > 66.5（cmr r1 codex/claude 实测）。开局 vs 旧 65 = +10.8%
     # （非设计表述的 +2.4%）——ceil 公式 vs「66.5 零冲击」是设计内部不一致，ceil 公式经 ratify，此处锁实际值。
-    db, state, _ = game
+    db, state, _ = read_game
     rows = db.conn.execute("SELECT * FROM armies WHERE owner_power='ming'").fetchall()
     total = sum(army_needed(r) for r in rows)
     assert total == 72, f"明军总月应发 = sum(ceil)=72 万两（设计 66.5 为小数和），实得 {total}"
