@@ -1,5 +1,6 @@
 """ADR 0009 person archive schema contract."""
 
+import json
 import sqlite3
 
 from ming_sim.content import load_character_content

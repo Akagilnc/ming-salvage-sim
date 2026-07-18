@@ -1,25 +1,21 @@
-"""#48：密令英文 status enum 不得泄漏进喂 simulator/extractor 的承载层。
+"""#48/#883：密令状态承载归一，且公共 LLM 不预读密令。
 
 根因：decree.py 把密令 DB 行（带英文 status=active/pending_review）整条塞进喂 simulator
 的扁平 list，simulator 照抄进「密旨动向」邸报段 → 中文游戏里冒出「孙承宗密旨（active）」。
 
 修法：decree.py 抽纯函数 group_secret_orders_for_sim(rows) 把行按状态分进中文键两组
-（在办/待核议），条目剥掉英文 status。simulator/extractor 收到的密令承载零英文 enum，
-泄漏「构造上消失」。
+（在办/待核议），条目剥掉英文 status。#883 再将该承载移出公共 simulator payload，
+仅交给专用密令 extractor。
 
 本档单测覆盖两层边界保证：
 ① 纯函数分组 + 剥 status + 字段保留 + done/failed 不进；
-② 构建出的 payload["secret_orders"] 字段序列化后零 active/pending_review/status 字面，
-   且 data_note 不再描述密令的 status 字段（data_note 仍含 active_issues 等其它字段名，
-   故只断言 secret_orders 承载与 data_note 的 status 描述，不整体扫 active 子串）。
+② 构建出的公共 payload 不含 secret_orders 或密令说明。
 另含恢复端归一（旧 list 形状 ctx 重分组）与 resolve_context dict 往返。
 两个 prompt（season_simulator.md 密旨动向段、score_extractor_personnel_secret.md 密令段）
 的措辞改动 LLM 输出非确定不可单测，走 cross-model 评审。
 """
 
 from __future__ import annotations
-
-import json
 
 
 def _row(oid, status, *, minister="孙承宗", title="查抄魏党", content="清查魏忠贤遗党赃私",
@@ -145,10 +141,8 @@ def test_group_hardens_against_malformed_input():
     assert isinstance(bad["title"], str)
 
 
-def test_simulator_payload_secret_orders_has_no_english_enum(game):
-    """边界保证：payload["secret_orders"] 序列化后零 active/pending_review/status 字面
-    （LLM 收不到英文 enum，泄漏构造上消失）；data_note 不再述密令 status 字段（data_note 仍含
-    active_issues 等其它字段名，故只断言其无 status 描述，不整体扫 active 子串）。"""
+def test_simulator_payload_never_contains_secret_orders(game):
+    """契约钉 #883：月末邸报判官的公共输入不预读任何密令。"""
     from ming_sim.decree import group_secret_orders_for_sim
     from ming_sim.simulation import build_simulator_payload
 
@@ -166,28 +160,18 @@ def test_simulator_payload_secret_orders_has_no_english_enum(game):
     )
     payload = build_simulator_payload(state, db, "诏书正文", "", secret_orders=grouped)
 
-    # 正向：分组承载结构在
-    assert set(payload["secret_orders"].keys()) == {"在办", "待核议"}
-    assert any(o["id"] == oid_active for o in payload["secret_orders"]["在办"])
-    assert any(o["id"] == oid_review for o in payload["secret_orders"]["待核议"])
-
-    # 边界：密令承载序列化零英文 enum / status 字面
-    blob = json.dumps(payload["secret_orders"], ensure_ascii=False)
-    assert "active" not in blob
-    assert "pending_review" not in blob
-    assert "status" not in blob
-
-    # data_note 同为 LLM 可见，密令条目说明里不得再述 status 字段
-    assert "status" not in payload["data_note"]
+    assert oid_active and oid_review  # setup covers both active order states.
+    assert "secret_orders" not in payload
+    assert "密令" not in payload["data_note"]
 
 
-def test_build_simulator_payload_defaults_secret_orders_to_empty_dict(read_game):
-    """不传密令时 secret_orders 默认空 dict（不是空 list）——`secret_orders or {}` 的默认形状。"""
+def test_build_simulator_payload_omits_secret_orders_when_none_are_present(read_game):
+    """契约钉 #883：空盘面也不保留公共密令字段这个旁路。"""
     from ming_sim.simulation import build_simulator_payload
 
     db, state, _ = read_game
     payload = build_simulator_payload(state, db, "", "")
-    assert payload["secret_orders"] == {}
+    assert "secret_orders" not in payload
 
 
 def test_group_reads_progress_from_legacy_progress_key():

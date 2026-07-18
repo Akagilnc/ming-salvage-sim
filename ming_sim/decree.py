@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -105,6 +104,48 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
         for item in raw
         if isinstance(item, dict) and str(item.get("id") or "").strip()
     }
+
+
+def _record_settlement_narrative_sources(
+    db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
+) -> None:
+    """Archive settlement prose without making an aggregate an access boundary.
+
+    A simulator narrative is an aggregate and may paraphrase a restricted
+    source.  When this turn has restricted material it is never an audience
+    source: independently persisted source items and explicit public archive
+    counterparts provide the only readable material.
+    """
+    items = db.knowledge_items_for_turn(state.turn)
+    restricted_ids = [
+        str(item.get("source_id") or "")
+        for item in items if item.get("excluded_names")
+    ]
+    # Audience chat is not an input to the month-end simulator.  Its presence
+    # in the same turn therefore cannot taint an independently produced public
+    # settlement narrative.  Other restricted shared sources still block it.
+    # #883/#976: active secret-order briefs are private structure — their
+    # presence alone must NOT swallow pure public narrative (F3).  Public LLM
+    # inputs never preload secrets (structure); no text-filter strip.
+    restricted_kinds = set()
+    for source_id in restricted_ids:
+        row = db.conn.execute(
+            "SELECT kind FROM character_knowledge_sources WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+        restricted_kinds.add(str(row["kind"] or "") if row is not None else "unknown")
+    has_restricted_source = db._has_restricted_source_gate(
+        any(kind != "audience" for kind in restricted_kinds)
+    )
+    source_id = f"settlement:narrative:{state.turn}"
+    if has_restricted_source:
+        return
+    narrative_text = str(narrative or "").strip()
+    if not narrative_text:
+        return
+    db.record_public_knowledge_event(
+        state, "本回合邸报", narrative_text, source_id=source_id, commit=commit,
+    )
 
 
 def write_decree_with_agno(
@@ -344,12 +385,22 @@ def resolve_directives(
             db.commit_pending_actions(state, content=content, registry=registry)
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
-            db.save_turn_report(state, narrative)
+            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # #976: same hold-release as normal settle path.
+            db.release_held_audience_knowledge(commit=False)
+            # Inertia/ongoing effects may create participant-scoped sources.
+            # Materialize the complete source set only after those writes and
+            # before either aggregate archive is saved, matching the normal
+            # settlement path's source-first authorization boundary.
+            _record_settlement_narrative_sources(db, state, narrative, commit=False)
+            db.persist_knowledge_items_for_turn(state, commit=False)
+            db.save_turn_report(
+                state, narrative, knowledge_items=[], commit=False
+            )
             db.save_turn_extraction(
                 state, decree_text=decree_text, narrative=narrative,
                 extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
             )
-            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
             # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
             # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
             # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
@@ -647,11 +698,17 @@ def _settle_after_narrative(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
-    extractor_shared_context = build_extractor_shared_context(
-        db, state, effective_narrative, decree_text,
-        relevant_memories=relevant_memories,
-        secret_orders=secret_orders_for_sim,
-    )
+    # #883: per-module supplemental context so only personnel_secret receives
+    # secret-order prose; other public extractors never pre-read it.
+    extractor_shared_contexts = {
+        module: build_extractor_shared_context(
+            db, state, effective_narrative, decree_text,
+            relevant_memories=relevant_memories,
+            secret_orders=secret_orders_for_sim,
+            module=module,
+        )
+        for module in EXTRACTION_MODULES
+    }
     sanitizer = create_json_sanitizer_agent(llm_config, agno_db)
     extractor_input = ""
     extractor_output = ""
@@ -663,7 +720,7 @@ def _settle_after_narrative(
                 agno_db,
                 module,
                 simulator_payload=simulator_payload,
-                supplemental_context=extractor_shared_context,
+                supplemental_context=extractor_shared_contexts[module],
             )
             for module in EXTRACTION_MODULES
         }
@@ -1267,7 +1324,20 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
-    db.save_turn_report(state, narrative)
+    # #976: release held pure-public audience chat (non-withheld) before
+    # archive materialization so 参与即知 lands without secret-origin rows.
+    db.release_held_audience_knowledge(commit=False)
+    # The simulator narrative is the real settlement input for the public
+    # gazette.  Keep it as its own source before archiving, so a mixed
+    # aggregate cannot become the only durable representation of this turn.
+    _record_settlement_narrative_sources(db, state, narrative, commit=False)
+    # Persist the per-source public projection before either aggregate archive
+    # is written.  turn_report/chapter are derived prose and cannot provide an
+    # authorization boundary when they mix public and restricted matters.
+    db.persist_knowledge_items_for_turn(state, commit=False)
+    db.save_turn_report(
+        state, narrative, knowledge_items=[], commit=False
+    )
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
     # 供玩家明细/时间线读取（raw canonical delta 的重跑真源在 pending_resolve_context）。
@@ -1399,13 +1469,10 @@ def resolve_decisions_phase2(
         return result.report
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
-    # #48 恢复端闭环：HITL 续跑直接复用存档的 narrative + simulator_payload（不重推演），
-    # extractor 实际从 simulator_payload 读密令分组（module 模式剔除补充上下文里的副本）。
-    # 故把分组承载归一成 dict——新档原样、旧 list 形状 ctx 就地重分组——再喂下游，使新
-    # extractor prompt（读 secret_orders.在办/待核议）在旧档恢复时也不漏抽密令副作用/结案。
+    # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
+    # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
+    # （_recovered_grouped 归一 list/dict）；simulator_payload 是公共轨，不含密令正文。
     sim_payload = ctx["simulator_payload"] if isinstance(ctx["simulator_payload"], dict) else {}
-    if isinstance(sim_payload.get("secret_orders"), list):
-        sim_payload = {**sim_payload, "secret_orders": _recovered_grouped(sim_payload["secret_orders"])}
     # #146 A：来源从 ctx 继承（phase1 皇帝下旨存的 player_decree）。HITL 续跑 / 崩溃重抽都不改来源
     # ——皇帝原旨没变、来源就没变。非法/缺失回落 system_simulation（旧档兼容，同 resolve_settling_recovery）。
     ctx_source = _provenance_from_stored(ctx.get("source"))

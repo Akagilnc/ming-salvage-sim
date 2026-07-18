@@ -72,12 +72,22 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
     characters: Dict[str, Character] = {}
     for idx, raw in enumerate(require_list(data.get("characters"), "characters.json.characters"), 1):
         item = require_dict(raw, f"characters.json.characters[{idx}]")
+        path = f"characters.json.characters[{idx}]"
         name = str_field(item, "name", f"characters.json.characters[{idx}]")
+        character_fields = dict(item)
+        character_fields.setdefault("identity", 50)
+        identity = int_field(character_fields, "identity", path)
+        if not 0 <= identity <= 100:
+            raise SystemExit(f"设定字段超出范围：{path}.identity（应为 0–100）")
         seed_guilt_raw = item.get("seed_guilt")
         if seed_guilt_raw is None:
             seed_guilt_raw = {}
         if not isinstance(seed_guilt_raw, dict):
-            raise SystemExit(f"characters.json.characters[{idx}].seed_guilt 必须是 JSON 对象。")
+            raise SystemExit(f"{path}.seed_guilt 必须是 JSON 对象。")
+        if seed_guilt_raw and set(seed_guilt_raw) != {"crime", "severity"}:
+            raise SystemExit(
+                f"设定字段结构非法：{path}.seed_guilt（仅允许 crime、severity）"
+            )
         seed_guilt_fields = dict(seed_guilt_raw)
         seed_guilt_fields.setdefault("crime", "")
         seed_guilt_fields.setdefault("severity", "无")
@@ -85,6 +95,8 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
         crime_raw = seed_guilt_fields["crime"]
         if not isinstance(crime_raw, str):
             raise SystemExit(f"设定字段应为字符串：{seed_guilt_context}.crime")
+        if not crime_raw.strip() and seed_guilt_fields["severity"] != "无":
+            raise SystemExit(f"设定字段应为非空字符串：{seed_guilt_context}.crime")
         seed_guilt = {
             "crime": crime_raw.strip(),
             "severity": str_field(seed_guilt_fields, "severity", seed_guilt_context),
@@ -94,8 +106,10 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
                 f"characters.json.characters[{idx}].seed_guilt.severity 非法："
                 f"{seed_guilt['severity']!r}（仅无/轻/中/重）。"
             )
-        character_fields = dict(item)
-        character_fields.setdefault("identity", 50)
+        if not seed_guilt_raw:
+            seed_guilt = {}
+        if name in characters:
+            raise SystemExit(f"characters.json 不得存在重复人物名：{name}")
         characters[name] = Character(
             name=name,
             office=str_field(item, "office", f"characters.json.characters[{idx}]"),
@@ -121,8 +135,25 @@ def load_character_content() -> Tuple[Dict[str, Faction], Dict[str, Character]]:
             reason_code=str(item.get("reason_code") or "").strip(),
             summary=str(item.get("summary") or ""),
             portrait_id=str(item.get("portrait_id") or ""),
+            identity=identity,
             seed_guilt=seed_guilt,
-            identity=int_field(character_fields, "identity", f"characters.json.characters[{idx}]"),
+        )
+
+    names_and_aliases_by_faction: Dict[str, Set[str]] = {}
+    for character in characters.values():
+        for name_or_alias in (character.name, *character.aliases):
+            names_and_aliases_by_faction.setdefault(name_or_alias, set()).add(
+                character.faction
+            )
+    cross_faction_names_or_aliases = sorted(
+        name_or_alias
+        for name_or_alias, factions_for_name_or_alias in names_and_aliases_by_faction.items()
+        if len(factions_for_name_or_alias) > 1
+    )
+    if cross_faction_names_or_aliases:
+        raise SystemExit(
+            "characters.json 不得存在跨派别人物名或别名："
+            + "、".join(cross_faction_names_or_aliases)
         )
 
     if not factions or not characters:
@@ -591,6 +622,7 @@ def load_skill_content() -> Tuple[
     Dict[str, str],
     Set[str],
     Dict[str, Dict[str, object]],
+    Dict[str, List[str]],
 ]:
     data = require_dict(load_json_asset("skills.json"), "skills.json")
     office_skills_data = dict_of_string_lists(data.get("office_skills"), "skills.json.office_skills")
@@ -605,6 +637,20 @@ def load_skill_content() -> Tuple[
     grant_keywords = dict_of_string_lists(data.get("grant_keywords"), "skills.json.grant_keywords")
     directive_keywords = dict_of_strings(data.get("directive_keywords"), "skills.json.directive_keywords")
     directive_skill_ids = set(string_list(data.get("directive_skill_ids"), "skills.json.directive_skill_ids"))
+    knowledge_domains = dict_of_string_lists(
+        data.get("office_knowledge_domains"), "skills.json.office_knowledge_domains"
+    )
+    allowed_knowledge_domains = {
+        "treasury", "military", "regional", "personnel", "construction", "security", "court"
+    }
+    for office_type, domains in knowledge_domains.items():
+        if not domains:
+            raise SystemExit(f"skills.json.office_knowledge_domains.{office_type} 不能为空")
+        unknown = sorted(set(domains) - allowed_knowledge_domains)
+        if unknown:
+            raise SystemExit(
+                f"skills.json.office_knowledge_domains.{office_type} 含未知知识域：{','.join(unknown)}"
+            )
 
     office_definitions: Dict[str, Dict[str, object]] = {}
     for office_type, raw in require_dict(data.get("office_definitions"), "skills.json.office_definitions").items():
@@ -646,6 +692,7 @@ def load_skill_content() -> Tuple[
         directive_keywords,
         directive_skill_ids,
         office_definitions,
+        knowledge_domains,
     )
 
 
@@ -727,6 +774,7 @@ class GameContent:
     directive_keywords: Dict[str, str] = field(default_factory=dict)
     directive_skill_ids: Set[str] = field(default_factory=set)
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    office_knowledge_domains: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     skill_tool_templates: Dict[str, str] = field(default_factory=dict)
 
     # 提示词
@@ -765,7 +813,21 @@ class GameContent:
             directive_keywords,
             directive_skill_ids,
             office_definitions,
+            office_knowledge_domains,
         ) = load_skill_content()
+        missing_knowledge_domains = sorted(
+            {
+                character.office_type
+                for character in characters.values()
+                if character.office_type
+            }
+            - set(office_knowledge_domains)
+        )
+        if missing_knowledge_domains:
+            raise SystemExit(
+                "skills.json.office_knowledge_domains 缺少职位映射："
+                + ",".join(missing_knowledge_domains)
+            )
         return cls(
             factions=factions,
             characters=characters,
@@ -789,6 +851,10 @@ class GameContent:
             directive_keywords=directive_keywords,
             directive_skill_ids=directive_skill_ids,
             office_definitions=office_definitions,
+            office_knowledge_domains={
+                office_type: tuple(domains)
+                for office_type, domains in office_knowledge_domains.items()
+            },
             fiscal_items=load_fiscal_config(),
             skill_tool_templates=dict_of_strings(load_json_asset("skill_tools.json"), "skill_tools.json"),
             game_world_prompt=load_text_asset("prompts/game_world.md"),

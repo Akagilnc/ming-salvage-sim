@@ -1405,9 +1405,9 @@ def test_one_shot_end_turn_commitment_surfaces_in_existing_review_channel(game):
 
     payload = build_simulator_payload(state, db, "", "")
 
-    assert "due_commitments" not in payload
+    assert "secret_orders" not in payload
     due_items = [
-        item for item in payload["secret_orders"]["待核议"]
+        item for item in payload["due_commitments"]
         if item.get("entry_kind") == "due_commitment"
     ]
     assert len(due_items) == 1
@@ -1452,7 +1452,7 @@ def test_semantically_empty_one_shot_commitment_surfaces_and_acks_once(game):
 
     due_payload = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in due_payload["secret_orders"].get("待核议", [])
+        item for item in due_payload["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ]
 
@@ -1483,14 +1483,14 @@ def test_semantically_empty_one_shot_commitment_surfaces_and_acks_once(game):
     assert _issue_row(db, issue_id)["status"] == "dropped"
     after_ack = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in after_ack["secret_orders"].get("待核议", [])
+        item for item in after_ack["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
     _settle_empty_month(db, state, content)
     next_month = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in next_month["secret_orders"].get("待核议", [])
+        item for item in next_month["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
@@ -1523,7 +1523,7 @@ def test_metadata_only_one_shot_commitment_surfaces_and_acks_once(game):
 
     due_payload = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in due_payload["secret_orders"].get("待核议", [])
+        item for item in due_payload["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ]
 
@@ -1554,7 +1554,7 @@ def test_metadata_only_one_shot_commitment_surfaces_and_acks_once(game):
     assert _issue_row(db, issue_id)["status"] == "dropped"
     after_ack = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in after_ack["secret_orders"].get("待核议", [])
+        item for item in after_ack["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
@@ -1587,14 +1587,14 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
 
     before_due = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in before_due["secret_orders"].get("待核议", [])
+        item for item in before_due["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
     _settle_empty_month(db, state, content)
     due_payload = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in due_payload["secret_orders"]["待核议"]
+        item for item in due_payload["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ]
 
@@ -1630,13 +1630,13 @@ def test_due_one_shot_commitment_ack_closes_review_loop_without_effects(game):
 
     after_ack = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in after_ack["secret_orders"].get("待核议", [])
+        item for item in after_ack["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []
 
     _settle_empty_month(db, state, content)
     next_month = build_simulator_payload(state, db, "", "")
     assert [
-        item for item in next_month["secret_orders"].get("待核议", [])
+        item for item in next_month["due_commitments"]
         if item.get("entry_kind") == "due_commitment" and item.get("issue_id") == issue_id
     ] == []

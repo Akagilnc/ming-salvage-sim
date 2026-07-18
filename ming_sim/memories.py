@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Mapping, Optional
 
 from agno.agent import Agent
 
@@ -64,6 +64,39 @@ def _directive_summary(text: str) -> str:
     s = re.sub(r"奉天承运皇帝诏曰[:：]?", "", text or "").strip()
     s = s.replace("钦此。", "").replace("钦此", "").strip()
     return _short(s, 80)
+
+
+def _public_chapter_counterpart(
+    items: Iterable[Mapping[str, object]],
+) -> Optional[str]:
+    """Return only independently public source material for a chapter write.
+
+    A chapter body is LLM-rendered aggregate prose, so it cannot itself grant a
+    reader access when the turn also contains restricted sources.  Give the
+    archive writer a separate public counterpart made from the source-scoped
+    turn items; the writer keeps legacy aggregate behaviour only when there
+    are no source items to project.
+    """
+    source_items = list(items)
+    items = [
+        item for item in source_items
+        # Archive rows are derived read-model projections, not independently
+        # authorizable source material.  A chapter counterpart may aggregate
+        # only the source rows that existed before either archive was written.
+        if not str(item.get("source_id") or "").startswith(
+            ("turn_report:", "chapter_source:", "projection:", "settlement:narrative:")
+        )
+    ]
+    if not items:
+        # ``None`` means no source snapshot exists, retaining the legacy body
+        # fallback.  An empty string means this turn has only derived rows and
+        # must not publish the chapter aggregate a second time.
+        return "" if source_items else None
+    return "\n".join(
+        str(item.get("body") or item.get("title") or "")
+        for item in items
+        if not item.get("excluded_names")
+    )
 
 
 # ── 结构化效果摘要：从 applied（已落库增量）拼一句「本月效果」，喂章节 agent + 时间线兜底 ──
@@ -274,6 +307,13 @@ def record_chapter_memory(
         head = _short(narrative, 100)
         body = f"本月：{effect}。{head}".strip("。") + "。"
 
-    memory_id = db.save_chapter_memory(state, title=title, body=body, tags=tags)
+    knowledge_items = db.knowledge_items_for_turn(state.turn)
+    public_body = _public_chapter_counterpart(knowledge_items)
+    memory_id = db.save_chapter_memory(
+        state, title=title, body=body, tags=tags,
+        knowledge_items=knowledge_items,
+        public_body=public_body,
+        commit=False,
+    )
     tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
     return memory_id
