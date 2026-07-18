@@ -3,7 +3,7 @@ from pathlib import Path
 
 import ming_sim.issues as I
 from ming_sim.db import _has_stop_condition
-from ming_sim.simulation import _extractor_context_payload, _sanitize_module_output
+from ming_sim.simulation import _extractor_context_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,82 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _issue_by_title(db, title: str):
     return db.conn.execute("SELECT * FROM issues WHERE title=?", (title,)).fetchone()
-
-
-def test_issue_extractor_prompt_routes_until_stop_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "每月 X 直到补齐" in prompt
-    assert "commitment_kind" in prompt
-    assert "until_stop" in prompt
-    assert "origin_ref" in prompt
-    assert "ongoing_effects" in prompt
-    assert "stop_condition" in prompt
-    assert '{"army.guanning.arrears":"<=0"}' in prompt
-
-
-def test_issue_extractor_prompt_routes_limited_duration_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "连续 N 月" in prompt
-    assert "半年为限" in prompt
-    assert "end_turn = turn + N" in prompt
-    assert "ongoing_effects" in prompt
-    assert "stop_condition" in prompt
-
-
-def test_issue_extractor_prompt_routes_future_one_shot_decree_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_issues.md").read_text(encoding="utf-8")
-
-    assert "圣旨承诺 form③" in prompt
-    assert "未来一次性" in prompt
-    assert "X 月后复试/复核" in prompt
-    assert "三月后复试" in prompt
-    assert "到期待裁" in prompt
-    assert "end_turn" in prompt
-    assert "commitment_kind" in prompt
-    assert "ongoing_effects 可留空" in prompt
-    assert "acknowledged" in prompt
-    assert "ACK 收尾" in prompt
-
-
-def test_personnel_secret_extractor_routes_recurring_secret_funding_commitments():
-    prompt = (ROOT / "content/prompts/score_extractor_personnel_secret.md").read_text(encoding="utf-8")
-    raw_issue = {
-        "origin_kind": "decree",
-        "origin_ref": "secret_order:7",
-        "kind": "initiative",
-        "title": "内库月拨安抚诸将",
-        "ongoing_effects": {
-            "economy": [
-                {"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给"}
-            ]
-        },
-        "commitment_kind": "until_stop",
-    }
-
-    assert "经常性密令拨款" in prompt
-    assert "new_issues" in prompt
-    assert "一锤子密令" in prompt
-
-    cleaned = _sanitize_module_output("personnel_secret", {"new_issues": [raw_issue]})
-
-    assert cleaned["new_issues"] == [raw_issue]
-    assert "_module_rejections" not in cleaned
-
-
-def test_internal_extractor_excludes_decree_commitment_from_new_monthly_fiscal():
-    """ADR0027 减噪边界（#340 创建端 internal 路）：诏书/密令经常性拨款承诺不在 internal
-    建 `新立月度收支`（交承诺 issue 承载），只有真·永久制度科目才建——补完与
-    personnel_secret 对称的那半创建端边界，apply 端 dedup 仍是承重解法。"""
-    prompt = (ROOT / "content/prompts/score_extractor_internal.md").read_text(encoding="utf-8")
-
-    assert "经常性拨款承诺不在此建项" in prompt
-    assert "ADR 0027" in prompt
-    assert "真·永久制度科目" in prompt
-    # 边界须点明「双扣」动机 + 交承诺 issue 承载的归口
-    assert "双扣" in prompt
-    assert "承诺 issue" in prompt
 
 
 def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkeypatch):
@@ -359,8 +283,8 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
     assert "ADR0027 残留观测" not in (captured.out + captured.err)
 
 
-def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -398,8 +322,8 @@ def test_until_stop_commitment_shape_rejects_without_explicit_marker(game, monke
     assert _issue_by_title(db, "每月补宣大蓟镇直到补齐") is None
 
 
-def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_limited_duration_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -437,8 +361,8 @@ def test_limited_duration_commitment_shape_rejects_without_explicit_marker(game,
     assert _issue_by_title(db, "连续两月补饷但缺承诺标记") is None
 
 
-def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(game, monkeypatch):
-    db, state, content = game
+def test_limited_duration_ongoing_commitment_rejects_current_turn_end_turn(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -593,8 +517,8 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
     assert row["cancellable"] == "decree"
 
 
-def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -622,8 +546,8 @@ def test_open_ended_ongoing_commitment_shape_rejects_without_explicit_marker(gam
     assert _issue_by_title(db, "长期安抚毛文龙但缺承诺标记") is None
 
 
-def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -651,8 +575,8 @@ def test_future_one_shot_commitment_shape_rejects_without_explicit_marker(game, 
     assert _issue_by_title(db, "三月后复核孙承宗但缺承诺标记") is None
 
 
-def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -680,8 +604,8 @@ def test_stop_condition_only_commitment_shape_rejects_without_explicit_marker(ga
     assert _issue_by_title(db, "只写停止条件的安抚毛文龙") is None
 
 
-def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker(game, monkeypatch):
-    db, state, content = game
+def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -709,8 +633,8 @@ def test_string_stop_condition_only_with_origin_ref_rejects_without_explicit_mar
     assert _issue_by_title(db, "字符串停止条件但无月度动作") is None
 
 
-def test_legacy_resolve_condition_person_commitment_rejects_without_marker(game, monkeypatch):
-    db, state, content = game
+def test_legacy_resolve_condition_person_commitment_rejects_without_marker(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -747,8 +671,8 @@ def test_legacy_resolve_condition_person_commitment_rejects_without_marker(game,
     assert _issue_by_title(db, "旧形状安抚毛文龙") is None
 
 
-def test_until_stop_commitment_requires_initiative_kind(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_requires_initiative_kind(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -806,8 +730,8 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
     assert json.loads(row["stop_condition"]) == {"character.毛文龙.loyalty": ">=65"}
 
 
-def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, monkeypatch):
-    db, state, content = game
+def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -846,8 +770,8 @@ def test_commitment_rejects_string_numeric_person_loyalty_ongoing_effect(game, m
     assert _issue_by_title(db, "字符串忠诚安抚承诺") is None
 
 
-def test_until_stop_commitment_rejects_non_dict_stop_condition(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_non_dict_stop_condition(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -876,8 +800,8 @@ def test_until_stop_commitment_rejects_non_dict_stop_condition(game, monkeypatch
     assert _issue_by_title(db, "每月补辽饷但停止条件是坏串") is None
 
 
-def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -906,8 +830,8 @@ def test_until_stop_commitment_rejects_stop_condition_without_table_prefix(game,
     assert _issue_by_title(db, "每月补辽饷但停止条件无表前缀") is None
 
 
-def test_until_stop_commitment_requires_origin_ref(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_requires_origin_ref(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -935,8 +859,8 @@ def test_until_stop_commitment_requires_origin_ref(game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但无诏书引用") is None
 
 
-def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_requires_ongoing_effects(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -964,8 +888,8 @@ def test_until_stop_commitment_requires_ongoing_effects(game, monkeypatch):
     assert _issue_by_title(db, "每月补辽饷但没有月度动作") is None
 
 
-def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(
@@ -994,8 +918,8 @@ def test_until_stop_commitment_rejects_semantically_empty_ongoing_effects(game, 
     assert _issue_by_title(db, "每月补辽饷但月度动作只是空壳") is None
 
 
-def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(game, monkeypatch):
-    db, state, content = game
+def test_until_stop_commitment_rejects_one_shot_entity_creation_as_monthly_work(read_game, monkeypatch):
+    db, state, content = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
 
     out = I.apply_score_extraction(

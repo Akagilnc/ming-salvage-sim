@@ -144,9 +144,9 @@ def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
     assert "请陛下定夺准驳" in result.answer
 
 
-def test_tool_call_pending_directive_reply_gets_confirmation_cue(game):
+def test_tool_call_pending_directive_reply_gets_confirmation_cue(read_game):
     """#412: agno/tool-call staged directives also need the visible approval cue."""
-    db, state, _ = game
+    db, state, _ = read_game
     result = _result()
     result.pending_action_id = 42
     result.answer = "臣领旨。"
@@ -159,9 +159,9 @@ def test_tool_call_pending_directive_reply_gets_confirmation_cue(game):
     assert "请陛下定夺准驳" in result.answer
 
 
-def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(game):
+def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(read_game):
     """#413: agno/tool-call staged secret orders also need the visible approval cue."""
-    db, state, _ = game
+    db, state, _ = read_game
     result = _result()
     result.pending_action_id = 43
     result.answer = "臣领密旨。"
@@ -1166,7 +1166,7 @@ def test_legacy_registered_secret_order_marker_parser_restages(game):
     assert db.list_pending_actions(state.turn)[0]["kind"] == "secret_order"
 
 
-def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
+def test_secret_order_extract_fallback_preserves_structured_metadata(monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
@@ -1287,9 +1287,9 @@ def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, mon
     assert "督办陕西赈灾" in row["content"]
 
 
-def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(game, monkeypatch):
+def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(read_game, monkeypatch):
     """Codex ship review: API tool-call 已建密令时，前缀 fallback 不得再发起一次会被丢弃的抽取。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
 
@@ -1385,9 +1385,9 @@ def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_f
     ).fetchone()[0] == 1
 
 
-def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
+def test_noop_appointment_intent_is_not_staged(read_game, monkeypatch):
     """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     target = next(
         ch for ch in content.characters.values()
@@ -1944,10 +1944,10 @@ def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
     assert "本轮确认" not in body
 
 
-def test_noop_appointment_alias_target_is_not_staged(game, monkeypatch):
+def test_noop_appointment_alias_target_is_not_staged(read_game, monkeypatch):
     """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
     其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     target = next(
         ch for ch in content.characters.values()
@@ -2064,9 +2064,9 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
     assert row["text"] == merged_text
 
 
-def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
+def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, monkeypatch):
     """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
-    db, state, content = game
+    db, state, content = read_game
     minister = next(
         ch for ch in content.characters.values()
         if getattr(ch, "office_type", "") not in ("后宫",)
@@ -2119,10 +2119,10 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(game, monke
     assert calls == ["classify"]
 
 
-def test_non_parallel_safe_runner_skips_concurrent_classifier(game, monkeypatch):
+def test_non_parallel_safe_runner_skips_concurrent_classifier(read_game, monkeypatch):
     """非并发安全 runner（agy）不得把动作分类器与回话并发跑（会撞 keychain auth-race，
     cmr Gate2 F-E）：_start_cli_action_intent 返 None → 回话后回落串行抽取，动作不丢。"""
-    db, state, content = game
+    db, state, content = read_game
     minister = next(
         ch for ch in content.characters.values()
         if getattr(ch, "office_type", "") not in ("后宫",)
@@ -2210,9 +2210,9 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     assert seen == [cfg]
 
 
-def test_no_backend_is_noop(game, monkeypatch):
+def test_no_backend_is_noop(read_game, monkeypatch):
     """未启 CLI 后端（走原 api 路径）时，胶水不动任何东西。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     result = _result()
     result.answer = "臣领旨。敕谕户部发银三万两。钦此。"
@@ -2374,9 +2374,9 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     assert refreshed.count(who) == 2
 
 
-def test_existing_directive_not_overwritten(game, monkeypatch):
+def test_existing_directive_not_overwritten(read_game, monkeypatch):
     """agno 工具已产 directive 时，胶水不重复入档（result.proposed_directive 非空）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     _no_conv_action(monkeypatch)
     sentinel = SimpleNamespace(id=999, text="原工具产出", status="draft")
