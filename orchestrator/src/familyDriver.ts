@@ -1634,57 +1634,74 @@ export async function runFamilyDriver(
   // 5b. #1006 baseline health gate — admission hot-check member (with smoke):
   // family base must be full-green under the worker container class before any
   // child fan-out. Red → ledger + fail-closed (optional one fix round first).
-  logDriverStage("admission", `baseline health gate epic #${options.epicIssue}`);
-  const baselineRunner = resolveBaselineFullTestRunner(options, {
-    workingRepo,
-    familyBase: options.familyBase,
-    imageName: options.imageName,
-    verifyCwd:
-      options.verifyCwd ?? resolveBaselineVerifyCwd(workingRepo),
-    // Same warm template as family verify installDeps (#746).
-    depsTemplateRoot: options.sourceRepo,
-  });
-  const baseline = await admitBaselineHealth({
-    runFullTests: baselineRunner,
-    // Always wire the one-shot path (owner: 红 → 一轮 fixer 或报错). Default
-    // NOOP returns attempted:false → fail-closed without inventing green.
-    tryFix: options.baselineFixAttempt ?? NOOP_BASELINE_FIX_ATTEMPT,
-  });
-  if (baseline.kind === "stop") {
-    await recordBaselineHealthFailed(familyBackend, {
-      reason: baseline.escalation.reason,
-      message: baseline.escalation.diagnosis,
-      familyHeadAfter: familyBaseStartHead,
-    });
-    const children = epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
-    const stopSummary = infraFailureStopSummary({
-      summary: baseline.escalation.diagnosis,
-      // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
-      repairHint: baselineHealthRepairHint(baseline.failure),
-    });
-    // #1007 / #1009: baseline admission fail must dual-write terminal progress
-    // like sibling early exits (fail-open). Residual call-site risk remains
-    // elsewhere — no global exit framework this round.
-    emitExitProgress({
-      epic: options.epicIssue,
-      status: "failed",
-      stopReason: stopSummary.reason,
-      gateSummary: stopSummary.summary,
-    });
-    return failedFamilyResult({
-      cause: "baseline_health_failed",
+  //
+  // #1017 C1: gate semantics = *fresh pre-fan-out* base health only. A resident
+  // non-terminal family that already has durable child progress (merged onto
+  // familyBase) must not re-admit the advanced base as "baseline disease" —
+  // that mislabels post-merge suite red as baseline_health_failed and skips
+  // every remaining child forever. Fresh / resident-without-progress keep the
+  // fail-closed path below.
+  const skipBaselineHealthGate =
+    familyScene.kind === "resident" &&
+    mergedSet(familyScene.ledger).size > 0;
+  if (skipBaselineHealthGate) {
+    logDriverStage(
+      "admission",
+      `baseline health gate skipped (resident child progress) epic #${options.epicIssue}`,
+    );
+  } else {
+    logDriverStage("admission", `baseline health gate epic #${options.epicIssue}`);
+    const baselineRunner = resolveBaselineFullTestRunner(options, {
+      workingRepo,
       familyBase: options.familyBase,
-      familyHead: familyBaseStartHead,
-      escalation: baseline.escalation,
-      stopSummary,
-      children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
+      imageName: options.imageName,
+      verifyCwd:
+        options.verifyCwd ?? resolveBaselineVerifyCwd(workingRepo),
+      // Same warm template as family verify installDeps (#746).
+      depsTemplateRoot: options.sourceRepo,
     });
+    const baseline = await admitBaselineHealth({
+      runFullTests: baselineRunner,
+      // Always wire the one-shot path (owner: 红 → 一轮 fixer 或报错). Default
+      // NOOP returns attempted:false → fail-closed without inventing green.
+      tryFix: options.baselineFixAttempt ?? NOOP_BASELINE_FIX_ATTEMPT,
+    });
+    if (baseline.kind === "stop") {
+      await recordBaselineHealthFailed(familyBackend, {
+        reason: baseline.escalation.reason,
+        message: baseline.escalation.diagnosis,
+        familyHeadAfter: familyBaseStartHead,
+      });
+      const children = epic.children.map((child) => ({
+        issue: child.issue,
+        status: "skipped" as const,
+      }));
+      const stopSummary = infraFailureStopSummary({
+        summary: baseline.escalation.diagnosis,
+        // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
+        repairHint: baselineHealthRepairHint(baseline.failure),
+      });
+      // #1007 / #1009: baseline admission fail must dual-write terminal progress
+      // like sibling early exits (fail-open). Residual call-site risk remains
+      // elsewhere — no global exit framework this round.
+      emitExitProgress({
+        epic: options.epicIssue,
+        status: "failed",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
+      return failedFamilyResult({
+        cause: "baseline_health_failed",
+        familyBase: options.familyBase,
+        familyHead: familyBaseStartHead,
+        escalation: baseline.escalation,
+        stopSummary,
+        children,
+        ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+          ? { admissionSkipped: epic.admissionSkipped }
+          : {}),
+      });
+    }
   }
 
   // 6. Assemble the run input + the resume seams, and run the spine.

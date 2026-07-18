@@ -73,6 +73,7 @@ import {
   executeAdvanceCoderSuggestion,
   familyAdvanceCoderAuditFields,
   latestCoderAdvanceToSlug,
+  type AdvanceRepairSeat,
 } from "../advanceCoderEffect.js";
 import { lookupCoderRosterEntry } from "../coderRoster.js";
 import {
@@ -272,6 +273,34 @@ export interface VerifyCmrResult {
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
   return { ok: false, ran: true, failedStatus: status };
+}
+
+/**
+ * #1002 / #1017 — rebuild one sticky repair seat from the latest successful
+ * family-ledger `coder_advance` scoped to that seat (not stay_put, not the
+ * other court). Online-review uses `fixer` (S10); CMR uses `coderFix` (S5).
+ * Courts must not cross-bleed on process re-entry.
+ */
+function reholdRepairSeatFromFamilyLedger(
+  route: ResolvedModelRoute,
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly status?: string;
+    readonly toModelId?: string;
+    readonly advanceSeat?: string;
+  }>,
+  seat: AdvanceRepairSeat,
+  step: "S5" | "S10",
+): { readonly route: ResolvedModelRoute; readonly reheldSlug?: string } {
+  const advancedTo = latestCoderAdvanceToSlug(ledger, seat);
+  if (advancedTo === undefined) return { route };
+  const advanced = lookupCoderRosterEntry(advancedTo);
+  const slug = advanced?.slug ?? advancedTo;
+  if (route.slots[seat] === slug) return { route, reheldSlug: slug };
+  return {
+    route: applyRelayBatonToRoute(route, { slug }, step, { slots: [seat] }),
+    reheldSlug: slug,
+  };
 }
 
 async function runFamilyVerifyOrAbort(input: {
@@ -1242,18 +1271,21 @@ export async function runFamilyOnlineReviewLoop(input: {
   // coderFix advances on the same ledger). Process re-entry keeps the
   // advanced online-review repair seat without re-suggestion.
   {
-    const advancedTo = latestCoderAdvanceToSlug(familyLedger, "fixer");
-    if (advancedTo !== undefined) {
-      const advanced = lookupCoderRosterEntry(advancedTo);
-      const slug = advanced?.slug ?? advancedTo;
-      if (modelRoute.slots.fixer !== slug) {
-        modelRoute = applyRelayBatonToRoute(modelRoute, { slug }, "S10", {
-          slots: ["fixer"],
-        });
-        console.info(
-          `[family] #1002 re-hold sticky fixer from ledger coder_advance → ${slug}`,
-        );
-      }
+    const beforeFixer = modelRoute.slots.fixer;
+    const reheld = reholdRepairSeatFromFamilyLedger(
+      modelRoute,
+      familyLedger,
+      "fixer",
+      "S10",
+    );
+    modelRoute = reheld.route;
+    if (
+      reheld.reheldSlug !== undefined &&
+      beforeFixer !== reheld.reheldSlug
+    ) {
+      console.info(
+        `[family] #1002 re-hold sticky fixer from ledger coder_advance → ${reheld.reheldSlug}`,
+      );
     }
   }
   const shipTriggeredAt = shipLedgerTriggeredAtFromFamilyLedger(
@@ -2666,6 +2698,30 @@ export async function runVerifyCmr(
       stopSummary,
     });
     return stageGate("cmr_failed");
+  }
+
+  // #1002 / #1017 C2 — rebuild sticky **coderFix** from latest family ledger
+  // coder_advance scoped to advanceSeat:"coderFix" (not stay_put, not online-
+  // review fixer advances). Process re-entry after CMR advance must keep the
+  // advanced repair seat without re-suggestion.
+  {
+    const familyLedgerForRoute = await familyBackend.readFamilyLedger();
+    const beforeSlug = resolvedRoute.slots.coderFix;
+    const reheld = reholdRepairSeatFromFamilyLedger(
+      resolvedRoute,
+      familyLedgerForRoute,
+      "coderFix",
+      "S5",
+    );
+    resolvedRoute = reheld.route;
+    if (
+      reheld.reheldSlug !== undefined &&
+      beforeSlug !== reheld.reheldSlug
+    ) {
+      console.info(
+        `[family] #1002 re-hold sticky coderFix from ledger coder_advance → ${reheld.reheldSlug}`,
+      );
+    }
   }
 
   // #961 / ADR 0139: incremental Integrated Correctness checkpoint — full-strength

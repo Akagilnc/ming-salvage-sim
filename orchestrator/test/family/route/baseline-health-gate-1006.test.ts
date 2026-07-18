@@ -958,4 +958,143 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     expect(childBackend).toBeDefined();
     expect(childBackend!.fanOutCalls).toBeGreaterThan(0);
   });
+
+  it("#1017 C1: resident non-terminal with merged child skips baseline gate (post-merge resume)", async () => {
+    // Baseline gate = fresh pre-fan-out base health only. After a child has
+    // already landed on familyBase, suite red on the advanced base must not be
+    // mislabeled baseline_health_failed (would skip all remaining work forever).
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const source = makeSourceRepo();
+    // Real SHA so resume reconcile/is-ancestor stays on real git objects.
+    const startSha = git(source, "rev-parse", "HEAD");
+    const ledgerDir = track(
+      mkdtempSync(join(tmpdir(), "baseline-ledger-resident-progress-")),
+    );
+    // Resident scene: parseable non-terminal ledger + worksite start-head.
+    // Child 10061 already merged — durable child progress on family base.
+    writeFileSync(
+      join(ledgerDir, FAMILY_LEDGER_FILENAME),
+      `${JSON.stringify({
+        status: "merged",
+        event: "merged",
+        childIssue: 10061,
+        familyHeadAfter: startSha,
+      })}\n`,
+      "utf8",
+    );
+    writeFileSync(join(ledgerDir, "family-base-start-head"), `${startSha}\n`, "utf8");
+
+    let baselineCalls = 0;
+    const result = await runFamilyDriver({
+      epicIssue: 1006,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1006",
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "ming-orchestrator-coder:test",
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => new TrackingChildBackend(clone),
+      familyBackendFactory: (clone, startHead) =>
+        controlledFamilyBackend(
+          clone,
+          startHead,
+          ledgerDir,
+          "ming-orchestrator-coder:test",
+        ),
+      // Would fail-closed on a fresh path — must not stop resume.
+      baselineFullTestRunner: async () => {
+        baselineCalls += 1;
+        return {
+          ok: false,
+          exitCode: 1,
+          output: "FAIL post-merge-wip.test.ts\n",
+          failedTests: ["post-merge-wip.test.ts"],
+        };
+      },
+    });
+
+    // Gate must not run (or stop) as baseline disease on post-merge resume.
+    expect(baselineCalls).toBe(0);
+    if (result.status === "failed") {
+      expect(result.cause).not.toBe("baseline_health_failed");
+    }
+    // Ledger must not grow a baseline_health_failed row from this resume.
+    const ledgerPath = join(ledgerDir, FAMILY_LEDGER_FILENAME);
+    const rows = readFileSync(ledgerPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as FamilyLedgerEntry);
+    expect(
+      rows.some(
+        (r) =>
+          r.status === "baseline_health_failed" ||
+          r.event === "baseline_health_failed",
+      ),
+    ).toBe(false);
+  });
+
+  it("#1017 C1: resident without child progress still fail-closes baseline red", async () => {
+    // Empty productive progress: resident worksite + empty-ish ledger must keep
+    // fresh-style baseline fail-closed (gate is still pre-fan-out admission).
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const source = makeSourceRepo();
+    const ledgerDir = track(
+      mkdtempSync(join(tmpdir(), "baseline-ledger-resident-no-progress-")),
+    );
+    // Non-terminal ledger row that is NOT merged child progress.
+    writeFileSync(
+      join(ledgerDir, FAMILY_LEDGER_FILENAME),
+      `${JSON.stringify({
+        status: "admission_skipped",
+        event: "admission_skipped",
+        childIssue: 99999,
+        reason: "not ready",
+      })}\n`,
+      "utf8",
+    );
+    writeFileSync(join(ledgerDir, "family-base-start-head"), "start0\n", "utf8");
+
+    let baselineCalls = 0;
+    const result = await runFamilyDriver({
+      epicIssue: 1006,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1006",
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "ming-orchestrator-coder:test",
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => new TrackingChildBackend(clone),
+      familyBackendFactory: (clone, startHead) =>
+        controlledFamilyBackend(
+          clone,
+          startHead,
+          ledgerDir,
+          "ming-orchestrator-coder:test",
+        ),
+      baselineFullTestRunner: async () => {
+        baselineCalls += 1;
+        return {
+          ok: false,
+          exitCode: 1,
+          output: "FAIL still-pre-fanout.test.ts\n",
+          failedTests: ["still-pre-fanout.test.ts"],
+        };
+      },
+    });
+
+    expect(baselineCalls).toBe(1);
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.cause).toBe("baseline_health_failed");
+    }
+  });
 });
