@@ -47,6 +47,10 @@ import {
   isFileNotFound,
 } from "../fsErrors.js";
 import {
+  appendGitInfoExclude,
+  ensureGitInfoExclude,
+} from "../gitInfoExclude.js";
+import {
   appendFileSync,
   existsSync,
   mkdirSync,
@@ -2559,30 +2563,8 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Add a transient cmr runtime file to the worktree's local git excludes. */
   protected excludeFromGit(filename: string): void {
     try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
-        );
-      }
+      // Shared info/exclude write (#1014 DRY); throw-through for CMR must-exclude.
+      appendGitInfoExclude(this.opts.workingRepo, filename);
     } catch (err) {
       throw new Error(
         `excludeFromGit: failed to exclude transient CMR runtime file "${filename}": ` +
@@ -3023,34 +3005,9 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** Best-effort exclude for optional runtime files that must never be committed. */
   protected excludeOptionalRuntimeFileFromGit(filename: string): void {
-    try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") + filename + "\n",
-          "utf8",
-        );
-      }
-    } catch {
-      // Best-effort: if excludes can't be written the file is still produced; the
-      // ship worker delivers the family base, and a stray untracked focus file is
-      // harmless (gstack-ship ships the family base's TRACKED commits).
-    }
+    // Shared best-effort info/exclude write (#1014 DRY). Silent swallow matches
+    // prior behavior: file is still produced if excludes can't be written.
+    ensureGitInfoExclude(this.opts.workingRepo, filename);
   }
 
   /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
