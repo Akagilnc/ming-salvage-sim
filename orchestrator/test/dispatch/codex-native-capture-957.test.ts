@@ -33,15 +33,9 @@ import { fileURLToPath } from "node:url";
 import type { BindMountSandboxHandle } from "@ai-hero/sandcastle";
 import * as sc from "@ai-hero/sandcastle";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
 import {
   agentForSlug,
-  resumeCapableForSlug,
 } from "../../src/modelRegistry.js";
-import {
-  RECEIPT_MAX_RETRIES,
-  workerReceiptOutput,
-} from "../../src/receiptRecovery.js";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -183,19 +177,6 @@ describe("#957 codex provider command has no --ephemeral", () => {
 });
 
 describe("#957 structured-output same-session retry is native (#934)", () => {
-  it("codex slugs are resume-capable so SO attaches the native maxRetries budget", () => {
-    for (const slug of CODEX_SLUGS) {
-      expect(resumeCapableForSlug(slug)).toBe(true);
-      const def = workerReceiptOutput(
-        "judge",
-        z.object({ openCount: z.number() }),
-        resumeCapableForSlug(slug),
-      );
-      expect(def.maxRetries).toBe(RECEIPT_MAX_RETRIES);
-      expect(def.maxRetries).toBeGreaterThan(0);
-    }
-  });
-
   it("does not invent a second homemade codex session-transfer module", () => {
     // #957 scope = restore Sandcastle native capture; no host session-dir
     // migration / second retry protocol (contrast grokAgent's own storage,

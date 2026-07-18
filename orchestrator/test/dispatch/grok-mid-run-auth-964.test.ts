@@ -22,7 +22,15 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -161,22 +169,11 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   delete env.XAI_API_KEY;
   delete env.GROK_API_KEY;
   delete env.XAI_KEY;
+  // Transport harness flags must never leak into the live auth probe.
+  delete env.GROK_HOLD_OPEN;
+  delete env.GROK_PROMPT_PATH_OUT;
   return env;
 }
-
-/**
- * Production worker print shape (grokAgent buildPrintCommand): prompt-file stdin +
- * streaming-json + always-approve. Never `grok login` / device-code.
- */
-const HEADLESS_PRINT_ARGS = [
-  "--prompt-file",
-  "/dev/stdin",
-  "--output-format",
-  "streaming-json",
-  "--always-approve",
-  "--permission-mode",
-  "bypassPermissions",
-] as const;
 
 type HeadlessProbeResult = {
   status: number | null;
@@ -219,25 +216,56 @@ function runHostPipeProbe(
   };
 }
 
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): HeadlessProbeResult {
+function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  combined: string;
+  elapsedMs: number;
+  stagedFiles: string[];
+} {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
+  const staging = join(emptyHome, "staging");
+  mkdirSync(staging);
+  const built = grokAgent("grok-4.5").buildPrintCommand({
+    prompt: "ping\n",
+    dangerouslySkipPermissions: true,
+  });
   const t0 = Date.now();
   if (target.kind === "host") {
-    // Node child_process uses a socketpair for `input`; grok re-opens
-    // /dev/stdin and Linux rejects opening that socket with ENXIO. Production
-    // workers receive stdin through docker/podman -i, which presents a pipe.
-    // Build the same fd shape here instead of testing a Node-only artifact.
-    return runHostPipeProbe(
-      target.bin,
-      HEADLESS_PRINT_ARGS,
-      env,
-      HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-    );
+    const binDir = join(emptyHome, "bin");
+    mkdirSync(binDir);
+    symlinkSync(target.bin, join(binDir, "grok"));
+    const r = spawnSync("bash", ["-c", built.command], {
+      encoding: "utf8",
+      input: built.stdin,
+      env: {
+        ...env,
+        PATH: `${binDir}:${env.PATH ?? ""}`,
+        TMPDIR: staging,
+      },
+      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+      maxBuffer: 2 * 1024 * 1024,
+      killSignal: "SIGKILL",
+    });
+    const timedOut =
+      r.error?.message?.includes("TIMEDOUT") === true ||
+      r.signal === "SIGTERM" ||
+      r.signal === "SIGKILL";
+    return {
+      status: r.status,
+      signal: r.signal,
+      timedOut,
+      combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
+      elapsedMs: Date.now() - t0,
+      stagedFiles: readdirSync(staging),
+    };
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
-  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  // Entrypoint is /bin/sh so the production buildPrintCommand shell (mktemp/cat/
+  // trap/grok) runs end-to-end; image default is sleep-infinity.
   const r = spawnSync(
     "docker",
     [
@@ -245,17 +273,20 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): HeadlessProbeResult
       "--rm",
       "-i",
       "--entrypoint",
-      "/usr/local/bin/grok",
+      "/bin/sh",
       "-e",
       "HOME=/tmp/964-empty-home",
+      "-e",
+      "TMPDIR=/tmp/964-empty-home/staging",
       "-v",
       `${emptyHome}:/tmp/964-empty-home`,
       target.image,
-      ...HEADLESS_PRINT_ARGS,
+      "-c",
+      built.command,
     ],
     {
       encoding: "utf8",
-      input: "ping\n",
+      input: built.stdin,
       env: emptyAuthEnv(emptyHome),
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
@@ -272,6 +303,7 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): HeadlessProbeResult
     timedOut,
     combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
     elapsedMs: Date.now() - t0,
+    stagedFiles: readdirSync(staging),
   };
 }
 
@@ -384,20 +416,6 @@ class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
 }
 
 describe("#964 grok headless auth — native fail-fast surface", () => {
-  it("grokAgent print command stays headless (prompt-file + streaming-json; no login subcommand)", () => {
-    const cmd = grokAgent("grok-4.5").buildPrintCommand({
-      prompt: "resolve the conflict",
-      dangerouslySkipPermissions: true,
-    });
-    expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("--prompt-file /dev/stdin");
-    expect(cmd.command).toContain("--output-format streaming-json");
-    expect(cmd.command).toContain("--always-approve");
-    expect(cmd.command).not.toMatch(/\blogin\b/);
-    expect(cmd.command).not.toMatch(/--device-auth|--device-code/);
-    expect(cmd.stdin).toBe("resolve the conflict");
-  });
-
   it("pins container grok to a fail-fast non-interactive release (0.2.102+)", () => {
     // Production mechanism (#964): pin ≥0.2.102 so headless auth death fail-fasts
     // ("Not signed in") instead of interactive device-code wait (0.2.93 flight3).
@@ -465,6 +483,7 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
       // Well under the wall — hang regression would burn the full timeout.
       expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
+      expect(result.stagedFiles).toEqual([]);
     },
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );

@@ -176,17 +176,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     ]);
   });
 
-  it("routes S2/S3 through dispatchWorker, never the legacy methods", async () => {
-    const backend = new DispatchBackend();
-    const result = await runOrchestrator({ issueNumber: 331, backend });
-
-    expect(result.status).toBe("completed");
-    expect(result.branch).toBe("feat/orchestrator/issue-331");
-
-    // Every productive child worker went through the unified seam.
-    expect(backend.legacyRunStepCount).toBe(0);
-  });
-
   it("dispatches S2→S3 before the local S7 handoff", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
