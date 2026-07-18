@@ -363,8 +363,9 @@ export function buildBaselineContainerFullTestArgv(
     `${req.workingRepo}:${BASELINE_CONTAINER_WORKSITE}`,
     "-w",
     containerCwd,
-    req.imageName,
+    "--entrypoint",
     "bash",
+    req.imageName,
     "-lc",
     "npm test",
   ];
