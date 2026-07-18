@@ -34,9 +34,9 @@ def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
 
 
 @pytest.mark.parametrize("bad", [[], "", 0, "foo", 5])
-def test_run_settle_rejects_non_dict_raw_delta(game, bad):
+def test_run_settle_rejects_non_dict_raw_delta(read_game, bad):
     """run_settle 边界:非 dict(falsy 的 []/""/0 + 非 falsy 的 str/int)一律响亮报错、不推进(codex-P1a + Sourcery)。"""
-    db, state, content = game
+    db, state, content = read_game
     before = state.turn
     with pytest.raises(ValueError):
         run_settle(db, state, content, bad)
@@ -86,9 +86,9 @@ def test_run_settle_records_non_dict_nested_value(game):
     assert '"entity_id": "shanxi"' in row["item_json"]
 
 
-def test_run_settle_rejects_unknown_toplevel_key(game):
+def test_run_settle_rejects_unknown_toplevel_key(read_game):
     """未知顶层 key(拼写错,如 地区变更↔地区变化)响亮报错,不静默无效推进(codex-P1b)。"""
-    db, state, content = game
+    db, state, content = read_game
     before = state.turn
     with pytest.raises(ValueError):
         run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})

@@ -281,11 +281,11 @@ def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(
     assert db.list_secret_orders(status="pending") == []
 
 
-def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeypatch):
+def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(read_game, monkeypatch):
     """#413/#414: 兼容端点只能进入召对确认流,不得直写 pending action 绕过大臣回话。"""
     import asyncio
 
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     calls = []
 
@@ -332,11 +332,11 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeyp
     assert db.list_pending_actions(state.turn) == []
 
 
-def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypatch):
+def test_api_create_secret_order_preserves_explicit_zero_deadline(read_game, monkeypatch):
     """按钮端点显式传 deadline_months=0 时，也要把 0 月交给统一密令前缀文本。"""
     import asyncio
 
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     calls = []
 
@@ -368,11 +368,11 @@ def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypa
     assert result["pending_action_id"] == 7
 
 
-def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypatch):
+def test_api_create_secret_order_supports_pydantic_v1_fields_set(read_game, monkeypatch):
     """兼容 Pydantic v1:显式传 deadline_months=0 时字段集合在 __fields_set__。"""
     import asyncio
 
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     calls = []
 
@@ -404,11 +404,11 @@ def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypat
     assert result["pending_action_id"] == 7
 
 
-def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
+def test_api_create_secret_order_ignores_malformed_tags(read_game, monkeypatch):
     """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
     import asyncio
 
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     calls = []
 
@@ -755,14 +755,14 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
     assert failures[0]["retryable"] is True
 
 
-def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatch):
+def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monkeypatch):
     """退朝无诏若结算中止，也要按颁诏同口径返回已处理的 409。"""
     import asyncio
     import pytest
     import web_app
     from ming_sim.exceptions import SettlementAbort
 
-    db, state, content = game
+    db, state, content = read_game
     stub = types.SimpleNamespace(
         db=db,
         state=state,

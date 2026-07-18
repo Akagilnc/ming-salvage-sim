@@ -148,8 +148,8 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["commitment_kind"] == "until_stop"
 
 
-def test_decree_commitment_shape_with_string_stop_condition_requires_marker(game):
-    db, state, _ = game
+def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
+    db, state, _ = read_game
 
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
