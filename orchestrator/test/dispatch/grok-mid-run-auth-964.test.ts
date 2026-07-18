@@ -184,6 +184,27 @@ function resolveExplicitGrokBin(bin: string): GrokProbeTarget {
   }
 }
 
+function requirePinnedHostTarget(
+  skip: (note?: string) => never,
+): Extract<GrokProbeTarget, { kind: "host" }> {
+  const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
+  if (!bin) {
+    return skip(`[#964] unavailable: no host grok ${GROK_FAIL_FAST_PIN}`);
+  }
+  const version = hostGrokVersion(bin);
+  if (!version.includes(GROK_FAIL_FAST_PIN)) {
+    const versionLabel = version.split(/\r?\n/, 1)[0] || "no version";
+    return skip(
+      `[#964] unavailable: host grok is not ${GROK_FAIL_FAST_PIN} (${bin}: ${versionLabel})`,
+    );
+  }
+  const target = resolveExplicitGrokBin(bin);
+  if (target.kind !== "host") {
+    return skip(`[#964] unavailable: GROK_BIN did not resolve to host target (${bin})`);
+  }
+  return target;
+}
+
 function runHeadlessEmptyAuthProbe(
   target: GrokProbeTarget,
   pathOverride?: string,
@@ -445,25 +466,22 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
 
-  it("live GROK_BIN target remains authoritative when PATH has no grok", () => {
-    const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
-    if (!bin || !hostGrokVersion(bin).includes(GROK_FAIL_FAST_PIN)) return;
-
-    const result = runHeadlessEmptyAuthProbe(resolveExplicitGrokBin(bin), "/usr/bin:/bin");
+  it("live GROK_BIN target remains authoritative when PATH has no grok", ({ skip }) => {
+    const result = runHeadlessEmptyAuthProbe(
+      requirePinnedHostTarget(skip),
+      "/usr/bin:/bin",
+    );
     expect(result.status, result.combined).not.toBe(0);
     expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
   });
 
-  it("live GROK_BIN target wins over a different grok on PATH", () => {
-    const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
-    if (!bin || !hostGrokVersion(bin).includes(GROK_FAIL_FAST_PIN)) return;
-
+  it("live GROK_BIN target wins over a different grok on PATH", ({ skip }) => {
     const decoyDir = mkDir("964-decoy-grok-");
     const decoy = join(decoyDir, "grok");
     writeFileSync(decoy, "#!/bin/sh\necho WRONG_GROK >&2\nexit 77\n");
     chmodSync(decoy, 0o755);
     const result = runHeadlessEmptyAuthProbe(
-      resolveExplicitGrokBin(bin),
+      requirePinnedHostTarget(skip),
       `${decoyDir}:/usr/bin:/bin`,
     );
     expect(result.combined).not.toContain("WRONG_GROK");
