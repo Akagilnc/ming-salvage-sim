@@ -16,6 +16,13 @@
  * elsewhere (e.g. no fan-out sub-agents).
  */
 
+/** One review-leg transport observation (exit + raw stdout). */
+export type LegTransport = {
+  readonly slug: string;
+  readonly exitCode: number;
+  readonly stdout: string | null | undefined;
+};
+
 /**
  * True when a review leg produced legal paper under ADR 0141.
  *
@@ -30,4 +37,25 @@ export function isLegalLegPaper(input: {
 }): boolean {
   if (input.exitCode !== 0) return false;
   return (input.stdout ?? "").trim().length > 0;
+}
+
+/**
+ * Build family-cmr `successfulLegs` from observed transports (ADR 0141).
+ *
+ * Present = {@link isLegalLegPaper}; order follows the transport list.
+ * Content shape is never a gate. Production host path:
+ * {@link cmrOutcomeFromResult} overlays this list onto judge/verdict cargo
+ * when `legTransports` are supplied (argument or soft cargo).
+ */
+export function successfulLegsFromTransports(
+  transports: ReadonlyArray<LegTransport>,
+): string[] {
+  const present: string[] = [];
+  for (const leg of transports) {
+    if (typeof leg.slug !== "string") continue;
+    const slug = leg.slug.trim();
+    if (slug.length === 0) continue;
+    if (isLegalLegPaper(leg)) present.push(slug);
+  }
+  return present;
 }

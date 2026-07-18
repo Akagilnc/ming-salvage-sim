@@ -7,20 +7,26 @@
  * family court never opened (leg-level content-shape admissibility
  * rejected the panel before the judge could emit a typed verdict).
  *
- * Seams under test:
- *   1. {@link isLegalLegPaper} — transport-only leg presence (exit 0 +
- *      non-empty raw stdout); content shape is never a gate.
- *   2. {@link runVerifyCmr} real family court entry — when the CMR worker
- *      emits a live typed judge verdict with prose-leg cargo present, the
- *      court opens and closes; runner does not park for "no usable legs".
+ * Seams under test (production path — not test-only helpers):
+ *   1. {@link isLegalLegPaper} / {@link successfulLegsFromTransports} —
+ *      transport-only panel presence (exit 0 + non-empty raw stdout).
+ *   2. {@link cmrOutcomeFromResult} overlay — host path that builds
+ *      successfulLegs from leg transports for family cmr cargo.
+ *   3. {@link runVerifyCmr} — court opens on typed judge verdict whose
+ *      successfulLegs were production-derived from prose transports
+ *      (no pre-minted successfulLegs already-pass).
  *
  * Zero schema change on the judge↔runner envelope (ADR 0131).
  */
 
 import { describe, expect, it } from "vitest";
 
+import { cmrOutcomeFromResult } from "../../../src/family/realFamilyBackend.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
-import { isLegalLegPaper } from "../../../src/legPaper.js";
+import {
+  isLegalLegPaper,
+  successfulLegsFromTransports,
+} from "../../../src/legPaper.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -34,12 +40,36 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
-import { liveCmrJudgeContinue, liveCmrJudgeGreen } from "../../helpers/judge-fixtures.js";
+import {
+  liveCmrJudgeContinue,
+  liveCmrJudgeGreen,
+} from "../../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
-/** 485 autopsy shape: legs that returned prose / no-anchor candidates. */
-const PROSE_LEGS_485 = ["grok", "opus"] as const;
+/** 485 autopsy shape: pure-prose / no-anchor legs that must still count present. */
+const PURE_PROSE_STDOUT = [
+  "## Completeness review",
+  "I walked the delivery base against the AC set.",
+  "No structural gap remains; module wiring covers the required surfaces.",
+  "Note: this is free prose without candidate field tags.",
+].join("\n");
+
+const NO_ANCHOR_STDOUT = [
+  "Progress: finished reading the diff.",
+  "Overall impression: the family base looks complete enough to ship.",
+  "I did not emit structured candidates with location anchors.",
+].join("\n");
+
+const PROGRESS_STDOUT =
+  "Working… still scanning authority sources… almost done.";
+
+/** Transports as the container would land them (exit + raw stdout only). */
+const PROSE_LEG_TRANSPORTS_485 = [
+  { slug: "grok", exitCode: 0, stdout: PURE_PROSE_STDOUT },
+  { slug: "opus", exitCode: 0, stdout: NO_ANCHOR_STDOUT },
+  { slug: "agy", exitCode: 1, stdout: "" },
+] as const;
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -116,37 +146,80 @@ class ScriptedProseLegCourtBackend implements FamilyBackend {
   }
 }
 
+/**
+ * Production path: typed judge envelope without successfulLegs already-pass,
+ * plus host-observed leg transports → cmrOutcomeFromResult builds presence.
+ */
+function productionOutcomeFromProseTransports(input: {
+  readonly status: "converged" | "continue";
+  readonly transports: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
+  readonly fixPacketBody?: string;
+}): Extract<
+  ReturnType<typeof cmrOutcomeFromResult>,
+  { readonly kind: "judge" }
+> {
+  const typedReceipt =
+    input.status === "converged"
+      ? {
+          station: "judge" as const,
+          status: "converged" as const,
+          skippedLegs: [
+            { slug: "agy", reason: "provider unavailable (transport dead)" },
+          ],
+          ...CMR_EVIDENCE,
+          // Deliberately omit successfulLegs — host must build from transports.
+        }
+      : {
+          station: "judge" as const,
+          status: "continue" as const,
+          findingDispositions: [
+            {
+              identityKey: "prose-leg:gap",
+              action: "live" as const,
+            },
+          ],
+          fixPacketBody:
+            input.fixPacketBody ??
+            "judge distilled live finding from prose leg evidence",
+          // Soft cargo only — must not ride on strict traffic keys (reason is
+          // escalate traffic; continue strict schema rejects unknown keys).
+          skippedLegs: [
+            { slug: "agy", reason: "provider unavailable (transport dead)" },
+          ],
+          ...CMR_EVIDENCE,
+        };
+
+  const outcome = cmrOutcomeFromResult({
+    output: typedReceipt,
+    legTransports: input.transports,
+  });
+  expect(outcome.kind).toBe("judge");
+  if (outcome.kind !== "judge") {
+    throw new Error("expected kind:judge from production overlay");
+  }
+  return outcome;
+}
+
 describe("#1005 ADR 0141 isLegalLegPaper — transport-only presence", () => {
   it("accepts pure prose stdout on exit 0 (485 grok-style leg)", () => {
-    const prose = [
-      "## Completeness review",
-      "I walked the delivery base against the AC set.",
-      "No structural gap remains; module wiring covers the required surfaces.",
-      "Note: this is free prose without candidate field tags.",
-    ].join("\n");
     expect(
-      isLegalLegPaper({ exitCode: 0, stdout: prose }),
+      isLegalLegPaper({ exitCode: 0, stdout: PURE_PROSE_STDOUT }),
     ).toBe(true);
   });
 
   it("accepts unanchored / no-candidate free text on exit 0 (485 opus-style leg)", () => {
-    // No path:line anchors, no structured candidate blocks — still legal paper.
-    const noAnchor = [
-      "Progress: finished reading the diff.",
-      "Overall impression: the family base looks complete enough to ship.",
-      "I did not emit structured candidates with location anchors.",
-    ].join("\n");
     expect(
-      isLegalLegPaper({ exitCode: 0, stdout: noAnchor }),
+      isLegalLegPaper({ exitCode: 0, stdout: NO_ANCHOR_STDOUT }),
     ).toBe(true);
   });
 
   it("accepts progress-style narration on exit 0 (deleted 「进度散文＝无卷」)", () => {
     expect(
-      isLegalLegPaper({
-        exitCode: 0,
-        stdout: "Working… still scanning authority sources… almost done.",
-      }),
+      isLegalLegPaper({ exitCode: 0, stdout: PROGRESS_STDOUT }),
     ).toBe(true);
   });
 
@@ -167,16 +240,98 @@ describe("#1005 ADR 0141 isLegalLegPaper — transport-only presence", () => {
   });
 });
 
-describe("#1005 ADR 0141 family court — prose legs still open the court", () => {
-  it("live judge converged with pure-prose successfulLegs ships (court opens, typed verdict)", async () => {
-    // 485 shape: two vendor legs present as transport success; judge distilled
-    // a typed converged verdict. Runner must not park for content-shape.
+describe("#1005 ADR 0141 successfulLegsFromTransports — production panel builder", () => {
+  it("builds successfulLegs from pure-prose / no-anchor exit0 transports", () => {
+    expect(successfulLegsFromTransports([...PROSE_LEG_TRANSPORTS_485])).toEqual([
+      "grok",
+      "opus",
+    ]);
+  });
+
+  it("includes progress-style narration legs and excludes dead transports", () => {
+    expect(
+      successfulLegsFromTransports([
+        { slug: "grok", exitCode: 0, stdout: PROGRESS_STDOUT },
+        { slug: "opus", exitCode: 0, stdout: "   " },
+        { slug: "agy", exitCode: 2, stdout: "stderr only" },
+      ]),
+    ).toEqual(["grok"]);
+  });
+});
+
+describe("#1005 ADR 0141 cmrOutcomeFromResult — host overlay builds successfulLegs", () => {
+  it("overlays successfulLegs from prose legTransports when cargo omits them", () => {
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        // No successfulLegs — production must not require pre-mint.
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+      legTransports: [...PROSE_LEG_TRANSPORTS_485],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+  });
+
+  it("host legTransports override a content-shape-empty successfulLegs cargo", () => {
+    // Skill/judge may still emit [] after a stale content-shape reject; host
+    // presence authority is transport-only when legTransports are supplied.
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        successfulLegs: [],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+      legTransports: [...PROSE_LEG_TRANSPORTS_485],
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+  });
+
+  it("rebuilds successfulLegs from cargo legTransports via isLegalLegPaper", () => {
+    // Soft cargo may land per-leg transports; host rebuilds presence.
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        legTransports: [...PROSE_LEG_TRANSPORTS_485],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+  });
+});
+
+describe("#1005 ADR 0141 family court — prose transports open the court", () => {
+  it("live judge converged with production-derived prose successfulLegs ships", async () => {
+    // Production panel path: transports → cmrOutcomeFromResult → successfulLegs.
+    // Court must open without a pre-minted successfulLegs already-pass fixture.
+    const production = productionOutcomeFromProseTransports({
+      status: "converged",
+      transports: [...PROSE_LEG_TRANSPORTS_485],
+    });
+    expect(production.successfulLegs).toEqual(["grok", "opus"]);
+
     const backend = new ScriptedProseLegCourtBackend(
       liveCmrJudgeGreen({
-        successfulLegs: [...PROSE_LEGS_485],
-        skippedLegs: [
-          { slug: "agy", reason: "provider unavailable (transport dead)" },
-        ],
+        // Cargo comes only from production overlay — not hand-minted slugs.
+        successfulLegs: production.successfulLegs,
+        skippedLegs: production.skippedLegs,
         ...CMR_EVIDENCE,
       }),
     );
@@ -201,7 +356,6 @@ describe("#1005 ADR 0141 family court — prose legs still open the court", () =
           ),
       ),
     ).toBe(false);
-    // Typed judge path: court recorded cmr_passed with judgeStatus converged.
     expect(
       backend.ledger.some(
         (entry) =>
@@ -211,7 +365,7 @@ describe("#1005 ADR 0141 family court — prose legs still open the court", () =
     ).toBe(true);
   });
 
-  it("live judge continue with prose-leg cargo still emits typed continue (court opens)", async () => {
+  it("live judge continue with production-derived prose-leg cargo still opens court", async () => {
     const liveFinding = {
       severity: "high" as const,
       category: "correctness",
@@ -220,9 +374,18 @@ describe("#1005 ADR 0141 family court — prose legs still open the court", () =
       suggested_fix: "close the gap",
       action: "fix_now" as const,
     };
+
+    const production = productionOutcomeFromProseTransports({
+      status: "continue",
+      transports: [...PROSE_LEG_TRANSPORTS_485],
+      fixPacketBody: "judge distilled live finding from prose leg evidence",
+    });
+    expect(production.successfulLegs).toEqual(["grok", "opus"]);
+
     const backend = new ScriptedProseLegCourtBackend(
       liveCmrJudgeContinue([liveFinding], {
-        successfulLegs: [...PROSE_LEGS_485],
+        successfulLegs: production.successfulLegs,
+        skippedLegs: production.skippedLegs,
         reason: "judge distilled live finding from prose leg evidence",
         ...CMR_EVIDENCE,
       }),
@@ -235,8 +398,6 @@ describe("#1005 ADR 0141 family court — prose legs still open the court", () =
       familyHeadAfter: "head-485-prose",
     });
 
-    // continue + live → coder-fix path; court opened (cmr_reviewed), not
-    // content-shape park for "no usable legs".
     expect(result.ran).toBe(true);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
