@@ -900,7 +900,7 @@ function escalatedChildStep(
 }
 
 /** #1019 audit: answered park degraded to fresh redispatch (dead/missing session). */
-export const CHILD_ANSWER_FRESH_REDISPATCH =
+const CHILD_ANSWER_FRESH_REDISPATCH =
   "child_answer_fresh_redispatch" as const;
 
 function lastChildHandoffStatus(
@@ -1001,7 +1001,7 @@ async function runChild(
         childIssue: child.issue,
         status: "worker_dispatched",
         event: "worker_dispatched",
-        workerStep: "child_answer_fresh_redispatch",
+        workerStep: CHILD_ANSWER_FRESH_REDISPATCH,
         reason: CHILD_ANSWER_FRESH_REDISPATCH,
       });
     }
@@ -2550,7 +2550,9 @@ export async function runFamily(
           familyBase,
           familyChildIssues,
           familyBackend,
-          // #604 slice 5 / #970: only ledger-proven decision parks with sessionId.
+          // #604 / #970 / #1019: child-bound answer from park row or
+          // latestChildBoundAnswer; runChild injects in-place when sessionId
+          // exists, else degrades to fresh redispatch (sessionId-less ok).
           parkedChildAnswers.get(child.issue),
         ),
       ),
