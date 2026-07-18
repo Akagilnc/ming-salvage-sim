@@ -66,6 +66,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const familyPromptsDir = join(here, "..", "..", "..", "prompts");
 const familySoulsDir = join(here, "..", "..", "..", "image", "souls");
 
+// These tests exercise real git repositories, worktrees, and merges. Under the
+// full suite their subprocesses share the host with the other heavy tests, so
+// Vitest's 5s unit-test default is not a meaningful completion budget.
+const E2E_DRIVER_TEST_TIMEOUT_MS = 15_000;
+
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
@@ -381,7 +386,7 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     expect(backend.cmrCalls.every((c) => c.familyBase === familyBase)).toBe(true);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
-  });
+  }, E2E_DRIVER_TEST_TIMEOUT_MS);
 });
 
 /**
@@ -497,7 +502,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /parse package\.json|failed to parse/i,
     );
-  });
+  }, E2E_DRIVER_TEST_TIMEOUT_MS);
 
   it("invalid scripts shape at verifyCwd → status verify_failed (not legal empty skip)", async () => {
     const source = track(makeSourceRepo());
@@ -542,7 +547,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /scripts.*must be an object/i,
     );
-  });
+  }, E2E_DRIVER_TEST_TIMEOUT_MS);
 
   it("successful empty verifiable scripts → legal skip; driver can complete", async () => {
     const source = track(makeSourceRepo());
@@ -597,5 +602,5 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     // the rest of the production final barrier can complete (#934 ID-011).
     expect(result.status).toBe("completed");
     expect(backend?.shipCalls).toEqual([familyBase]);
-  });
+  }, E2E_DRIVER_TEST_TIMEOUT_MS);
 });
