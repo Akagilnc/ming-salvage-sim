@@ -766,7 +766,10 @@ export interface IntegratedCmrResult {
   readonly findingsCount?: number;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
-  /** CMR leg slugs that actually produced a usable review this pass. */
+  /**
+   * CMR leg slugs present this pass (ADR 0141: transport success = exit 0 +
+   * non-empty raw stdout). Soft cargo only — content shape is never a gate.
+   */
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
