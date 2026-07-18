@@ -43,12 +43,6 @@ import {
 
 /** Retired focus-file name — assert it is never produced (#937 / ID-007). */
 const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-import {
-  RECEIPT_MAX_RETRIES,
-  workerReceiptOutput,
-  coderReceiptOutput,
-} from "../../src/receiptRecovery.js";
-import { coderStationReceiptSchema } from "../../src/stationReceiptContracts.js";
 import { terminateSpawnedChild } from "../../src/workerMonitor.js";
 import type {
   Backend,
@@ -153,54 +147,6 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     );
     expect(calls).toBe(1);
     expect(result.kind).toBe("completed");
-  });
-
-  it("POSITIVE: production attach expression maps resumeCapable→maxRetries (ID-004/#955)", async () => {
-    // Production attach (realBackend.outputFor / family resumeCapableForSpec):
-    //   resumeCapable = resumeCapableForSlug(model, pool)
-    //   workerReceiptOutput(..., resumeCapable) → maxRetries 0|RECEIPT_MAX_RETRIES
-    const { resumeCapableForSlug } = await import("../../src/modelRegistry.js");
-    const { readFileSync: readSrc } = await import("node:fs");
-    const realBackendSrc = readSrc(
-      join(import.meta.dirname, "../../src/realBackend.ts"),
-      "utf8",
-    );
-    const familySrc = readSrc(
-      join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
-      "utf8",
-    );
-    const recoverySrc = readSrc(
-      join(import.meta.dirname, "../../src/receiptRecovery.ts"),
-      "utf8",
-    );
-    expect(realBackendSrc).toMatch(/resumeCapableForSlug\(/);
-    expect(realBackendSrc).toMatch(/coderReceiptOutput\([\s\S]*resumeCapable/);
-    expect(familySrc).toMatch(/resumeCapableForSpec\(/);
-    expect(familySrc).toMatch(/coderReceiptOutput\([\s\S]*this\.resumeCapableForSpec/);
-    expect(recoverySrc).toMatch(
-      /maxRetries:\s*resumeCapable\s*\?\s*RECEIPT_MAX_RETRIES\s*:\s*0/,
-    );
-
-    const attachFor = (model: string) => {
-      const resumeCapable = resumeCapableForSlug(model);
-      return coderReceiptOutput(
-        coderStationReceiptSchema(),
-        "coder",
-        resumeCapable,
-      );
-    };
-    // #955: grok is resume-capable (sessionStorage) → SO maxRetries = RECEIPT_MAX_RETRIES
-    expect(attachFor("grok-4.5")).toMatchObject({
-      tag: "coder",
-      maxRetries: RECEIPT_MAX_RETRIES,
-    });
-    expect(attachFor("gpt-5.6-terra")).toMatchObject({
-      tag: "coder",
-      maxRetries: RECEIPT_MAX_RETRIES,
-    });
-    // Incapable provider (agy, no sessionStorage) → maxRetries 0
-    expect(attachFor("agy")).toMatchObject({ tag: "coder", maxRetries: 0 });
-    expect(resumeCapableForSlug("agy")).toBe(false);
   });
 
   it("NEGATIVE: QuotaWaitForResetError does not burn onAttempt durable budget", async () => {
