@@ -7314,6 +7314,10 @@ class GameDB:
                     draft_ids_to_delete.append(did)
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            self.conn.execute(
+                "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
+                (int(chat_turn_id),),
+            )
             for item in items:
                 table = str(item["target_table"])
                 strategy = str(item["rollback_strategy"])
