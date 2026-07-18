@@ -21,7 +21,7 @@
  * hang fix; the live probe guards regression if a hangy CLI reappears on PATH / image.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -178,13 +178,97 @@ const HEADLESS_PRINT_ARGS = [
   "bypassPermissions",
 ] as const;
 
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+type HeadlessProbeResult = {
   status: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
   combined: string;
   elapsedMs: number;
-} {
+};
+
+function runHostPipeProbe(
+  bin: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<HeadlessProbeResult> {
+  const t0 = Date.now();
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/bash", [
+      "-c",
+      [
+        "bin=$1; shift",
+        "child=",
+        "cleanup() {",
+        "  trap - TERM",
+        "  if [[ -n $child ]]; then",
+        "    kill -KILL \"$child\" 2>/dev/null || true",
+        "    wait \"$child\" 2>/dev/null || true",
+        "  fi",
+        "  exit 124",
+        "}",
+        "trap cleanup TERM",
+        'printf "%s\\n" "$PROBE_INPUT" | "$bin" "$@" &',
+        "child=$!",
+        "wait \"$child\"",
+        "status=$?",
+        "trap - TERM",
+        "exit $status",
+      ].join("\n"),
+      "grok-headless-probe",
+      bin,
+      ...args,
+    ], {
+      detached: true,
+      env: { ...env, PROBE_INPUT: "ping" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let combined = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { combined += chunk; });
+    child.stderr.on("data", (chunk: string) => { combined += chunk; });
+
+    let timedOut = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (child.pid !== undefined) {
+        try {
+          child.kill("SIGTERM");
+          forceKillTimer = setTimeout(() => {
+            try {
+              process.kill(-child.pid!, "SIGKILL");
+            } catch (error: any) {
+              if (error?.code !== "ESRCH") reject(error);
+            }
+          }, 250);
+        } catch (error: any) {
+          if (error?.code !== "ESRCH") reject(error);
+        }
+      }
+    }, timeoutMs);
+
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      reject(error);
+    });
+    child.once("close", (status, signal) => {
+      clearTimeout(timer);
+      if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      resolve({
+        status,
+        signal,
+        timedOut,
+        combined,
+        elapsedMs: Date.now() - t0,
+      });
+    });
+  });
+}
+
+async function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): Promise<HeadlessProbeResult> {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
   const t0 = Date.now();
@@ -193,30 +277,12 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
     // /dev/stdin and Linux rejects opening that socket with ENXIO. Production
     // workers receive stdin through docker/podman -i, which presents a pipe.
     // Build the same fd shape here instead of testing a Node-only artifact.
-    const r = spawnSync("/bin/sh", [
-      "-c",
-      'bin=$1; shift; printf "%s\\n" ping | exec "$bin" "$@"',
-      "grok-headless-probe",
+    return runHostPipeProbe(
       target.bin,
-      ...HEADLESS_PRINT_ARGS,
-    ], {
-      encoding: "utf8",
+      HEADLESS_PRINT_ARGS,
       env,
-      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-      killSignal: "SIGKILL",
-    });
-    const timedOut =
-      r.error?.message?.includes("TIMEDOUT") === true ||
-      r.signal === "SIGTERM" ||
-      r.signal === "SIGKILL";
-    return {
-      status: r.status,
-      signal: r.signal,
-      timedOut,
-      combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
-      elapsedMs: Date.now() - t0,
-    };
+      HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+    );
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
@@ -399,7 +465,7 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
 
   it(
     "live headless empty-auth fails fast before timeout (no device-auth hang)",
-    () => {
+    async () => {
       // #964 AC: real worker print shape + empty credentials must not enter
       // interactive device-code wait. Pin 0.2.102 is the production hang fix;
       // this probe exercises a real binary (host pin or baked image pin).
@@ -415,7 +481,7 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
         return;
       }
 
-      const result = runHeadlessEmptyAuthProbe(target);
+      const result = await runHeadlessEmptyAuthProbe(target);
       // Must exit on its own (non-zero fail-fast), not be killed by our wall clock.
       expect(
         result.timedOut,
@@ -429,6 +495,29 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
       // Well under the wall — hang regression would burn the full timeout.
       expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
+
+      const pidDir = mkDir("964-timeout-child-");
+      const pidFile = join(pidDir, "pid");
+      const hang = await runHostPipeProbe(
+        "/bin/sh",
+        ["-c", 'echo $$ > "$PID_FILE"; exec sleep 60'],
+        { ...process.env, PID_FILE: pidFile },
+        250,
+      );
+      expect(hang.timedOut).toBe(true);
+      const childPid = Number(readFileSync(pidFile, "utf8").trim());
+      let childAlive = true;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        } catch (error: any) {
+          if (error?.code !== "ESRCH") throw error;
+          childAlive = false;
+          break;
+        }
+      }
+      expect(childAlive, `timed-out probe child ${childPid} must be reaped`).toBe(false);
     },
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
