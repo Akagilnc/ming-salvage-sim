@@ -603,7 +603,7 @@ def test_issue_path_still_strict_for_historically_fatal(read_game):
     """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)。"""
     import ming_sim.issues as I
 
-    db, state, content = read_game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "army_delta": {"查无此军xyz": {"morale": 2}},
@@ -613,7 +613,7 @@ def test_issue_path_still_strict_for_historically_fatal(read_game):
 def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
     历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
-    db, state, content = read_game
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
     rej = [c for c in created if c.get("rejected")]
     assert len(rej) == 1
@@ -701,7 +701,7 @@ def test_float_bool_army_delta_tolerated_on_issue_path(read_game):
     (cmr S2 r3,2/2:「仅限历史上本就 raise 的类别」当真)。"""
     import ming_sim.issues as I
 
-    db, state, content = read_game
+    db, state, _ = read_game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
 
     # float/bool:容忍(不抛,拒收留痕,不套用)
