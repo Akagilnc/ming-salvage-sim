@@ -16,6 +16,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
     "lucide-react": "^0.561.0",
+    "markdown-it": "^14.3.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "steamworks.js": "^0.4.0",
@@ -23,6 +24,7 @@
     "vite": "^7.2.7"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "electron": "^42.3.2",

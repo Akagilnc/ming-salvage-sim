@@ -8,33 +8,43 @@
  *   - step-output schema ({@link CoderOutput} / {@link ReviewerOutput}) —
  *     the agent↔runner contract that {@link route} consumes.
  *
- * Slice #247 only wires the happy path; field VALUES and most step kinds are
- * present in shape but exercised minimally. Keep shapes stable — later slices
- * fill behaviour in, not re-shape these.
+ * Keep these shared shapes stable: current runner, backends, and family flow all
+ * depend on them.
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
+import type { PublicFailedCause } from "./publicResult.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+// Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
+import type {
+  JudgeFindingDisposition,
+  JudgeVerdictStatus,
+} from "./stationReceiptContracts.js";
+// Single source for findings-store status tokens (#952 / ADR 0129).
+import type { FindingStoreStatus } from "./findingsStateStore.js";
+
+export type { JudgeFindingDisposition, JudgeVerdictStatus };
+export type { FindingStoreStatus };
+export type { PublicFailedCause };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The single-slice step sequence (ADR 0030): the runner owns the visible
+ * The child-slice step sequence (ADR 0030 / #925): the runner owns the visible
  * per-slice review/fix loop.
  *
- *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
- *     → S7 ship when clean
- *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
- *     → S8 handoff
+ *   S0 gate → S1 context → S2 implement → S3 judge establish
+ *     converged → S7 local handoff → S8 handoff
+ *     continue  → S5 fix → S6 judge resume → (verdict again)
+ *     escalate  → decision park
  *
- * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
- * S4 is the runner-owned ENVELOPE boundary (信封宪法, ADR 0062): it reads only the
- * blocking findings COUNT (0 → pass, non-0 → fix loop), never the finding content,
- * making per-round verdicts visible in the ledger instead of hiding the loop inside
- * one coder session.
+ * S2 and S5 are coder workers. S3 and S6 are the persistent verify judge.
+ * S4 mechanical open-count classification is dissolved (legacy resume residual).
  */
-export type StepId =
+/** Executable child-slice topology. The runner routes only these steps. */
+export type SliceStepId =
   | "S0"
   | "S1"
   | "S2"
@@ -43,23 +53,65 @@ export type StepId =
   | "S5"
   | "S6"
   | "S7"
-  | "S8"
+  | "S8";
+
+/** Family endgame worker labels; these are not child-runner route steps. */
+export type FamilyEndgameWorkerId =
   | "S9"
   | "S10"
   | "S11"
   | "S12";
 
-/** Which role a single-slice worker runs under. */
+/** Any durable worker/ledger label across the child and family machines. */
+export type StepId = SliceStepId | FamilyEndgameWorkerId;
+
+/**
+ * Durable ledger rows normally identify a canonical orchestrator step.  Retry
+ * bookkeeping deliberately occupies its own namespace so step-result readers
+ * cannot mistake a pre-dispatch marker for that step's result (#824 r6).
+ */
+export type LedgerStepId = SliceStepId | "mechanical_redispatch_attempt";
+
+export function isStepId(step: unknown): step is SliceStepId {
+  return (
+    step === "S0" ||
+    step === "S1" ||
+    step === "S2" ||
+    step === "S3" ||
+    step === "S4" ||
+    step === "S5" ||
+    step === "S6" ||
+    step === "S7" ||
+    step === "S8"
+  );
+}
+
+/**
+ * Full child + family-endgame worker step id (S0–S12).
+ * Family barrier walls must use this — {@link isStepId} alone coerces S9/S10/S12
+ * off the wall map and onto a wrong default (correctness C1).
+ */
+export function isAnyStepId(step: unknown): step is StepId {
+  return (
+    isStepId(step) ||
+    step === "S9" ||
+    step === "S10" ||
+    step === "S11" ||
+    step === "S12"
+  );
+}
+
+/** Worker roles shared by child and family dispatch. */
 export type StepRole =
   | "coder"
   | "reviewer"
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
-/** Terminal handoff status (ADR 0018 / PRD #244 route table). */
-export type HandoffStatus = "success" | "escalate" | "error";
+/** Public handoff: completed | parked | failed (#942 / ID-001). */
+export type HandoffStatus = "completed" | "parked" | "failed";
 
 // ───────────────────────────── step spec ─────────────────────────────
 
@@ -84,7 +136,7 @@ export type StepSoul =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -98,8 +150,9 @@ export type ToolchainEntry = string;
  * runner. `role` selects which soul to inject (v0.1 one image, two roles);
  * `promptFile` is a versioned file — prompts are never assembled inline.
  *
- * #247 wired `id`, `role`, `promptFile`. #253 fills the remaining fields:
- * `model`, `completionSignal`, `maxIter`, `soul`, `toolchain`.
+ * #247 wired `id`, `role`, `promptFile`. #253 filled `model` / `maxIter` /
+ * `soul` / `toolchain`. #928 retired `completionSignal` — completion is clean
+ * exit + legal sidecar / typed envelope (ADR 0131 / ADR 0132).
  */
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
@@ -116,27 +169,19 @@ export interface StepSpec {
    */
   readonly model: string;
   /**
-   * Signal the agent emits to mark the step complete (Sandcastle `run()` API).
-   * Required so the sandbox knows when to stop and collect structured output.
-   */
-  readonly completionSignal: string;
-  /**
-   * Per-step iteration cap = the WITHIN-STEP agent (Ralph) retry budget for a
-   * single `sandbox.run()`. NOT the fix-loop convergence round limit.
+   * Per-seat Sandcastle iteration budget for a single `sandbox.run()`.
+   * NOT the fix-loop convergence round limit (runner topology owns that).
    *
-   * - coder / fix steps: > 1 (the agent iterates within the one step until the
-   *   step's work is done or it escalates).
-   * - reviewer steps: exactly 1 (single pass — reviewer never self-edits).
+   * #899 / ADR 0128 / #928: every selected seat is a single-iteration run
+   * (`maxIter: 1`). The skill finishes inside that one invocation; native
+   * structured-output re-asks (`Output.object` maxRetries) happen in-session
+   * and are not extra outer iterations. There is no outer Ralph multi-iter
+   * budget and no completion-signal early-stop chain on worker seats.
    *
    * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
    * the outer `route()` loop then continues as usual. It is NEVER "the
    * orchestrator gives up": the orchestrator only stops when the MODEL emits an
    * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
-   *
-   * v0.1: the runner does NOT enforce maxIter (lazy field on worker specs).
-   * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
-   * semantics (within-step retry budget) and MUST NOT degrade into a
-   * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.
    */
   readonly maxIter: number;
   /**
@@ -189,10 +234,15 @@ export interface Finding {
  * The only disposition kind a reviewer/CMR soul may emit (#604 slice 4, ADR
  * 0062). The purely-routing kinds (`same_module` / `cross_module` /
  * `spec_conflict` / `infra_failure` / `owning_issue_still_red`) were removed:
- * the runner no longer reads a route field to decide a finding's fate — every
- * non-accepted-suppressed finding is blocking (see {@link classifyFindings}).
+ * the runner no longer reads a route field to decide a finding's fate.
  * `accepted_suppressed` remains as the governance carrier for accepted
  * suppression (source/scope/bounded reopen).
+ *
+ * Vocabulary boundary (#952 4b): this is the **CMR reviewer governance seam**
+ * (`FindingDispositionKind` / priorFindingDispositions). It is **not** the
+ * judge disposition `action: "suppress"` nor the findings-store terminal
+ * `suppressed` (see `stationReceiptContracts.ts` + `findingsStateStore.ts`).
+ * Two seams, two vocabularies — do not alias or invent a third silent token.
  */
 export type FindingDispositionKind = "accepted_suppressed";
 
@@ -210,19 +260,29 @@ export interface FindingDispositionEvidence {
   readonly boundedReopen?: string;
 }
 
+/**
+ * Ledger findings-store row (sole row shape for store write-point flips).
+ * Status tokens single-sourced in {@link FindingStoreStatus}
+ * (`findingsStateStore.ts`); constructed via `recordFindingStoreFlip` —
+ * do not redeclare a parallel store-record type.
+ */
 export interface FindingDisposition {
   readonly identityKey: string;
-  readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
+  /**
+   * Terminal / open ledger statuses (ADR 0129). Single source:
+   * `FINDING_STORE_STATUSES` in findingsStateStore.ts.
+   * - `#925` judge kill → `refuted`
+   * - `#952` judge suppress → `suppressed` (internal terminal; not public ABI)
+   * - CMR governance carrier status `accepted_suppressed` remains a different
+   *   seam from judge `suppress` / store `suppressed` (#952 4b).
+   */
+  readonly status: FindingStoreStatus;
   readonly reason: string;
   readonly severity: Finding["severity"];
-  readonly reopenAttempts: number;
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
-  /** One same-severity fresh-review dispute is allowed before suppression resumes. */
-  readonly disputeAttempts?: number;
 }
-
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
@@ -246,16 +306,27 @@ export interface PriorFindingDisposition {
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
 /**
- * One finding the coder-fix worker legally refused (#677).
+ * One finding the coder-fix worker legally refused (#677 / #927).
  * Prefer another repair; when a finding cannot be fixed without overturning a
- * ratified AC/assertion, refuse that identity, fix the others, commit, and
- * continue to fresh re-review — never a global escalate / decision-gate park.
+ * ratified AC/assertion — or under one of the four legal refuse reasons —
+ * refuse that identity, fix the others, commit, and continue to judge
+ * re-adjudication — never a global escalate / decision-gate park.
+ *
+ * #927: optional `reason` + `evidence` are opaque cargo for the judge
+ * (tokens from LEGAL_REFUSE_REASONS). Runner never routes on these fields.
  */
 export interface ReviewFixRefuseRecord {
   readonly identityKey: string;
   readonly finding: string;
   readonly acceptanceCriterion: string;
   readonly conflictReason: string;
+  /**
+   * #927 four-reason token (`unconstitutional` / `over_defense` /
+   * `not_established` / `scope_creep`) — opaque cargo; judge re-adjudicates.
+   */
+  readonly reason?: string;
+  /** #927 evidence prose for the judge — opaque cargo. */
+  readonly evidence?: string;
 }
 
 export interface CoderOutput {
@@ -263,45 +334,94 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
-   * Optional scoped proof that the fix worker changed implementation, tests, or
-   * fixtures for an active finding. Generic "I tried" is not progress.
-   */
-  readonly repairEvidence?: RepairEvidence;
-  /**
-   * #677 legal refuse: identity keys the coder-fix worker declined to adopt
-   * (AC/assertion conflict). Valid with a commit that fixes the other findings;
-   * runner threads these to S6 fresh re-review — not escalate/park.
+   * #677 / #927 legal refuse: identity keys the coder-fix worker declined
+   * (envelope traffic). Runner threads these to S6 judge re-adjudicate —
+   * not escalate/park; never burns multi-iter waiting for a completion signal.
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
+  /**
+   * Opaque refuse cargo (#677 AC-conflict detail + #927 four-reason/evidence).
+   * Paired with {@link refusedFindingIdentityKeys}; runner transports only.
+   */
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
+/**
+ * Residual open-count review envelope (legacy / non-judge seats). Not the
+ * S3/S6 main path: single-slice topology routes on judge status
+ * `converged|continue|escalate` (ADR 0131 channel (b) / #925).
+ * `findingsCount` is the self-reported open count on this residual paper;
+ * positive count may project to judge continue, zero/missing → unusable
+ * (not silent converged). `findings` rows are cargo for the fixer.
+ * Count is required on this envelope — missing/invalid counts never become
+ * `kind: "reviewer"` (typed boundary maps them to unusable cargo).
+ */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
+  /** Residual declared open count; validated at the typed worker boundary. */
+  readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
+  /**
+   * Optional authored coder-fix packet body already on residual paper.
+   * ADR 0138: residual projection may pass this through **verbatim** only;
+   * runner never invents a placeholder body from open-count / findings.
+   */
+  readonly fixPacketBody?: string;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
 
-/** Stuck signal (ADR 0018 §5): model-judged, runner-routed — not agent-driven. */
+/** Worker-authored stuck signal. Transport metadata is not part of this contract. */
 export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
+}
+
+/**
+ * #925 S3/S6 judge station output. Topology reads only `status` (+ escalate
+ * fields on the escalate branch). Dispositions / advanceCoder / findings are
+ * fixed-schema or cargo — never prose-parsed for routing.
+ *
+ * Family integrated-CMR may ride optional opaque cargo siblings via
+ * `withFamilyJudgeCargo` (#919 / #930). Topology must not close a court by
+ * reading these fields — traffic is the status tri-state only.
+ */
+export interface JudgeResult {
+  readonly kind: "judge";
+  readonly status: JudgeVerdictStatus;
+  /** Present on continue: kill + live rows (schema-fixed). */
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   /**
-   * #604 correctness r1 (P1-a) / ADR 0062: TRUE marks an escalate the RUNNER
-   * SYNTHESIZED from a protocol/infra failure (malformed reviewer output
-   * exhausted its bounded reruns, retries exhausted), NOT a worker-proactive
-   * "需人类拍板" decision signal. The decision gate (B-class park) fires ONLY for
-   * a worker-emitted decision escalate; a synthesized-failure escalate maps to
-   * the A-class `escalationKind:"failure"` bucket. Absent/false ⇒ a genuine
-   * worker-emitted escalate (decision).
+   * ADR 0138 / #978: judge-authored coder-fix packet body (判词正文).
+   * Required on continue for the sole fixer-packet content path; runner
+   * transports verbatim and never packs bare finding rows as a substitute.
    */
-  readonly synthesizedFailure?: boolean;
+  readonly fixPacketBody?: string;
+  /** Optional continue suggestion to switch coder roster entry (#926 executes). */
+  readonly advanceCoder?: string;
+  /**
+   * Opaque findings cargo (identity / telemetry). Not the coder-fix packet
+   * content path after ADR 0138 — that is {@link fixPacketBody} only.
+   */
+  readonly findings?: ReadonlyArray<Finding>;
+  /** Escalate doorbell cargo (also mirrored on {@link escalate}). */
+  readonly reason?: string;
+  readonly diagnosis?: string;
+  /** Any agent step may signal it is stuck (route() reads this first). */
+  readonly escalate?: Escalation;
+  /**
+   * Opaque family cargo siblings (telemetry / residual / fixture width).
+   * Topology never routes on these — attach only, never invent a second closer.
+   */
+  readonly cmrPass?: "completeness" | "correctness";
+  readonly successfulLegs?: readonly string[];
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+  readonly evidencePaths?: readonly string[];
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
@@ -313,15 +433,18 @@ export type EscalationKind = "decision" | "failure";
  * Minimal JSONL shape for recording the answer:
  * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
  * If the answer means "continue fixing" after an S4 no-progress decision, it is
- * executable only when it also carries `findingIdentityKey` or a `findingScope`
- * that matches the active finding; unscoped continue answers stay paused rather
- * than guessing which finding to reopen.
+ * executable only when it also carries an explicit `findingIdentityKey` or a
+ * non-empty `findingScope` (opaque transport to the fixer). Runner does not
+ * match scope against findings cargo (#899 / ADR 0131); unscoped continue
+ * answers stay paused rather than guessing which finding to reopen.
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */
 export interface EscalationAnswerPayload {
   readonly event: "escalation_answered";
-  readonly forStep?: StepId;
+  readonly forStep?: SliceStepId;
+  /** Original parked worker session, when the answer reopens a decision gate. */
+  readonly sessionId?: string;
   readonly answer: string;
   readonly note?: string;
   /** Source of the answer row when known; omitted on legacy rows. */
@@ -333,16 +456,22 @@ export interface EscalationAnswerPayload {
 }
 
 export interface EscalationAnswerEvent extends EscalationAnswerPayload {
-  readonly forStep: StepId;
+  readonly forStep: SliceStepId;
 }
 
 /** Scope carried by runner bookkeeping events that target active findings. */
 export interface FindingRepairScope {
-  /** Exact runner identity keys for the finding lineage, when available. */
+  /** Exact identity keys for the finding lineage, when available. */
   readonly identityKeys?: ReadonlyArray<string>;
-  /** Broader path/location scope; only used when it maps to one active finding. */
+  /**
+   * Broader path/location scope. Opaque transport for the fixer — runner does
+   * not match this against findings cargo (#899 / ADR 0131).
+   */
   readonly locations?: ReadonlyArray<string>;
-  /** Broader category scope; only used when it maps to one active finding. */
+  /**
+   * Broader category scope. Opaque transport for the fixer — runner does not
+   * match this against findings cargo (#899 / ADR 0131).
+   */
   readonly categories?: ReadonlyArray<string>;
   /** Optional durable grouping label from a review thread / finding group. */
   readonly findingGroup?: string;
@@ -350,24 +479,6 @@ export interface FindingRepairScope {
   readonly reviewContext?: string;
   /** Optional feature/module area label from the coordinator. */
   readonly featureArea?: string;
-}
-
-/** Observable implementation/test movement a coder claims for a specific finding scope. */
-export interface RepairEvidence {
-  /** The active finding scope this movement is meant to close. */
-  readonly findingScope: FindingRepairScope;
-  /** Files whose implementation diff changed for this finding. */
-  readonly changedFiles?: ReadonlyArray<string>;
-  /** Test commands or test files added/changed for this finding. */
-  readonly tests?: ReadonlyArray<string>;
-  /** Fixtures/transcripts added or changed for this finding. */
-  readonly fixtures?: ReadonlyArray<string>;
-  /** Same-class bug scan performed after the fix, as a command/log pointer. */
-  readonly sameClassBugScan?: string;
-  /** Regression check performed after the fix, as a command/log pointer. */
-  readonly introducedRegressionCheck?: string;
-  /** Human-readable patch summary; accepted only with another concrete signal. */
-  readonly patchSummary?: string;
 }
 
 /**
@@ -384,68 +495,6 @@ export interface ContinueFixingEvent {
   readonly reason?: string;
 }
 
-/** Phase-level marker: online bot review loop converged for a PR head (#600). */
-export interface OnlineReviewConvergedEvent {
-  readonly event: "online_review_converged";
-  readonly prUrl: string;
-  readonly prHead: string;
-  readonly onlineReviewRound: number;
-}
-
-/** Phase-level marker: PR auto-merged after review loop + doc-release (#602). */
-export interface PrMergedEvent {
-  readonly event: "pr_merged";
-  readonly prUrl: string;
-  readonly prNumber: number;
-  readonly remoteBranchName: string;
-  readonly mergedHeadOid: string;
-  readonly prHead: string;
-}
-
-/** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
-export interface OnlineReviewRoundRetriggerEvent {
-  readonly event: "online_review_round_retrigger";
-  readonly roundTriggerHeadOid: string;
-  readonly roundTriggerAt: string;
-  readonly onlineReviewRound: number;
-}
-
-/** Fixer commit marker persisted after retrigger (#600 r27 crash-safe ordering). */
-export interface OnlineReviewFixCommittedEvent {
-  readonly event: "online_review_fix_committed";
-  readonly fixCommitSha: string;
-  readonly onlineReviewRound: number;
-  /** Fix-marked identity keys from the verify that drove this fix (#743). */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** Original thread binding for each fix-marked identity (#743 resume authority). */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
-}
-
-/**
- * Bots clean + CI red, no fix-marked findings (#600 R18). Resume re-enters S9
- * (re-poll CI), not S10 empty fixer.
- */
-export interface OnlineReviewCiFailedEvent {
-  readonly event: "online_review_ci_failed";
-  readonly prUrl?: string;
-  readonly prHead?: string;
-  readonly onlineReviewRound: number;
-}
-
-/**
- * Bots green but CI still pending past overdue window (#600 R20). Park
- * resumable at S9 — not S8(error) terminal.
- */
-export interface OnlineReviewCiPendingEvent {
-  readonly event: "online_review_ci_pending";
-  readonly prUrl?: string;
-  readonly prHead?: string;
-  readonly onlineReviewRound: number;
-}
-
 /**
  * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
  * quota reset (runner status escalate, not S8(error)). #686 forks this
@@ -460,19 +509,24 @@ export interface QuotaWaitForResetEvent {
   /** ISO-8601 reset instant when the 429 body carried one. */
   readonly resetAt?: string;
   readonly reason: string;
-  readonly step?: StepId;
+  readonly step?: SliceStepId;
   readonly workerPid?: number;
   readonly ts: string;
 }
 
 /**
- * #686 — baton handoff on a resource failure (quota wall / hang-with-live-pool /
- * self-reported blocked). `state_summary` is forwarded as the next baton's
- * parameter file (`.relay-focus.md`). Worktree drift is preserved (no reset).
- * Shape mirrors {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
+ * #686 / #937 — baton handoff on a resource failure (quota wall / capacity
+ * only; free-log self-report deleted with #937). `state_summary` is rendered as
+ * an ephemeral dispatch brief from ledger memory (no `.relay-focus.md` file).
+ * Worktree drift is preserved (no reset). Shape mirrors
+ * {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
  */
 export interface RelayBatonHandoffEvent {
   readonly event: "relay_baton_handoff";
+  /**
+   * Live writes: `quota_wall` | `capacity`. Historical ledger rows may carry
+   * retired tags (see `LegacyRelayHandoffTrigger` in relayDispatch).
+   */
   readonly trigger: string;
   readonly state_summary: string;
   readonly remaining?: string;
@@ -481,7 +535,7 @@ export interface RelayBatonHandoffEvent {
   readonly fromPool: string;
   readonly toModelId: string;
   readonly toPool: string;
-  readonly step?: StepId;
+  readonly step?: SliceStepId;
   readonly ts: string;
 }
 
@@ -493,18 +547,87 @@ export interface WorkerMonitorSpawnedEvent {
   readonly event: "worker_monitor_spawned";
 }
 
+/**
+ * #824 — durable mechanical-dispatch budget.  Written immediately before a
+ * worker dispatch so a process crash cannot reset the bounded retry lifecycle
+ * when the resident worktree is re-fed.
+ */
+export interface MechanicalRedispatchAttemptEvent {
+  readonly event: "mechanical_redispatch_attempt";
+  /** Canonical worker step whose current invocation owns this attempt. */
+  readonly forStep: SliceStepId;
+  readonly mechanicalRedispatchAttempt: number;
+}
+
+export interface RouteDegradedEvent {
+  readonly event: "route_degraded";
+  readonly droppedLeg: string;
+  readonly reason: string;
+}
+
+/**
+ * #926 / #1002 — judge `advanceCoder` executed: repair seat switched (coderFix /
+ * fixer); prior repair session retired when the model changed.
+ * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
+ */
+export interface CoderAdvanceEvent {
+  readonly event: "coder_advance";
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  /** Original judge suggestion token (id / alias / slug). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
+/**
+ * #926 / #1002 — judge `advanceCoder` target unusable: stay on the current repair seat
+ * (coderFix / fixer). Never a terminal — result returns to the judge desk on the
+ * normal continue path.
+ */
+export interface CoderAdvanceStayPutEvent {
+  readonly event: "coder_advance_stay_put";
+  /** Why the advance was refused (`unknown_target`, …). */
+  readonly reason: string;
+  /** Current repair seat (coderFix / fixer; unchanged). */
+  readonly fromModelId: string;
+  /** Same as from — stay-put does not move. */
+  readonly toModelId: string;
+  /** Original judge suggestion (audit). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
+/**
+ * #955 — crash/escalate resume dropped the stored session id rather than
+ * hand a foreign or resume-incapable session to the provider.
+ *
+ * Loud mark (ledger + log): identity mismatch vs seat, or seat cannot resume.
+ * Escalation answer still lands; only session continuity is abandoned.
+ */
+export interface SessionContinuityLostEvent {
+  readonly event: "session_continuity_lost";
+  /** Human-readable cause (model_mismatch / provider_incapable / …). */
+  readonly reason: string;
+  /** Model slug that created the stored session, when known from ledger. */
+  readonly fromModelId?: string;
+  /** Seat model slug that would have received the id. */
+  readonly toModelId?: string;
+  /** The dropped session id (never forwarded to the provider). */
+  readonly sessionId?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
-  | OnlineReviewConvergedEvent
-  | PrMergedEvent
-  | OnlineReviewRoundRetriggerEvent
-  | OnlineReviewFixCommittedEvent
-  | OnlineReviewCiFailedEvent
-  | OnlineReviewCiPendingEvent
   | QuotaWaitForResetEvent
   | RelayBatonHandoffEvent
-  | WorkerMonitorSpawnedEvent;
+  | WorkerMonitorSpawnedEvent
+  | MechanicalRedispatchAttemptEvent
+  | RouteDegradedEvent
+  | CoderAdvanceEvent
+  | CoderAdvanceStayPutEvent
+  | SessionContinuityLostEvent;
 
 /**
  * The structured output of any worker step.
@@ -515,9 +638,7 @@ export type LedgerBookkeepingEvent =
  * output can flow through the ledger ({@link LedgerEntry.output}) without a tsc
  * error. `StepOutput` is kept as the historical name (consumed by route/validate)
  * and is now an ALIAS of `WorkerOutput` — ONE union, no drift. Every consumer
- * discriminates on `.kind` behind `isValidStepOutput`, so the widening is safe:
- * route() acts only on the validated `coder`/`reviewer` cases, and an unknown
- * kind is rejected by the guard, never silently routed.
+ * narrows on `.kind`; route() acts only on coder/reviewer cases.
  */
 export type StepOutput = WorkerOutput;
 
@@ -557,20 +678,17 @@ export interface StepResult {
 
 // ─────────────────────── unified worker-dispatch seam ───────────────────────
 // ADR 0026 / PRD #330: every step that produces or changes the worked artifact
-// is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. #331 is a
-// PURE PREFACTOR: these shapes are defined and the call sites route through the
-// seam, but `dispatchWorker` is a LEGACY WRAPPER forwarding to the existing
-// methods (runStep / resumeSession / push / runIntegratedCmr / openFamilyPr), so
-// external behaviour is unchanged. Per-worker output VALUES land in later slices
-// (#334 coder/reviewer, #335 cmr, #336 ship); #331 only fixes the field shapes.
+// is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. All call
+// sites now route through it; the narrow legacy wrapper only supports older
+// integrated-CMR review backends.
 
 /**
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
- * discriminant and (later slices) which skill is invoked:
+ * discriminant and the skill invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
  *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
- *   - `ship`     → invoke `gstack-ship` (S7 / family PR).
+ *   - `ship`     → invoke `gstack-ship` for the family PR. Child S7 is a local handoff.
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
  *                  consumer (shape only).
  */
@@ -583,25 +701,24 @@ export type WorkerKind =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "docRelease";
+  | "landing";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
-export type WorkerHost = "claude" | "codex";
+export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
 
 /**
  * The DISPATCH MODE for this worker invocation:
- *   - `fresh`  — a brand-new `sandbox.run()`. THE NORMAL CASE for every worker,
- *     including S2 implement and a normal S5 fix round.
+ *   - `fresh`  — a brand-new `sandbox.run()` (S2 establish, every reviewer
+ *     round, or coder when no prior session / model mismatch).
  *   - `resume` — continue a PRIOR agent session via the Sandcastle-native
  *     `resumeSession` path (carrying {@link DispatchContext.resumeSessionId}).
  *
- * ADR 0026 INVARIANT (do not conflate with context retention): `resume` is the
- * CRASH/ESCALATE-resume path ONLY — it skips git-truthing (trusts the model's
- * self-report) and pins maxIter to 1. A normal coder/fix round must NOT use it
- * (it must keep git-truthing + within-step maxIter). So a worker is `resume`
- * ONLY when the runner is actually threading a `resumeSessionId`; otherwise
- * `fresh`. "Retain context across fix rounds" is a SEPARATE concern — see
- * {@link WorkerSpec.contextRetention} — NOT expressed via `resume`.
+ * #924 / ADR 0132: single-slice coder seats use `resume` for normal S5 fix
+ * rounds that continue the S2-established session (same model). Crash/escalate
+ * resume still threads `resumeSessionId` the same way. Reviewer seats stay
+ * `fresh` every round. A worker is `resume` ONLY when the runner threads a
+ * real `resumeSessionId`; otherwise `fresh`. maxIter remains 1 on every seat
+ * (Ralph outer multi-iter retired).
  */
 export type WorkerSessionMode = "fresh" | "resume";
 
@@ -613,7 +730,7 @@ export type WorkerSessionMode = "fresh" | "resume";
  *     rounds so a fix接得住 findings without re-exploring from scratch. ADR 0026:
  *     the MECHANISM (e.g. fresh run + prior findings/output fed in, vs a
  *     fix-loop-capable resume) is left to the worker implementation (#334) — the
- *     INVARIANT is that a normal fix keeps git-truthing + maxIter, so it is NOT
+ *     INVARIANT is that a normal fix keeps maxIter, so it is NOT
  *     the `resume` (crash/escalate) dispatch path.
  *   - `clean`  — review workers (reviewer/cmr) start each round with clean eyes
  *     (cross-model independence; never re-checking their own prior findings).
@@ -623,6 +740,7 @@ export type WorkerContextRetention = "retain" | "clean";
 export interface WorkerCmrReviewLeg {
   readonly family: string;
   readonly slug: string;
+  readonly optional?: true;
 }
 
 /**
@@ -645,11 +763,10 @@ export interface WorkerSpec {
   /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
   readonly host: WorkerHost;
   /**
-   * The dispatch path for THIS invocation: `fresh` (a new `sandbox.run()`, the
-   * normal case) or `resume` (the crash/escalate-resume path, set ONLY when the
-   * runner threads a {@link DispatchContext.resumeSessionId}). NOT a proxy for
-   * "coder retains context" — see {@link contextRetention} (ADR 0026 invariant:
-   * a normal fix round is `fresh`, never `resume`).
+   * The dispatch path for THIS invocation: `fresh` or `resume` (set ONLY when
+   * the runner threads a {@link DispatchContext.resumeSessionId}). #924: normal
+   * S5 continuity resumes the S2 coder session; crash/escalate resume is the
+   * same channel. See {@link contextRetention} for the retain/clean axis.
    */
   readonly session: WorkerSessionMode;
   /**
@@ -667,9 +784,12 @@ export interface WorkerSpec {
   readonly promptFile: string;
   /** Versioned prompt arguments substituted into the promptFile (still hashed). */
   readonly promptArgs?: Readonly<Record<string, string>>;
-  /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
-  readonly completionSignal: string;
-  /** Within-step Ralph retry budget (NOT the fix-loop round cap — see {@link StepSpec.maxIter}). */
+  /**
+   * Per-seat Sandcastle iteration budget (NOT the fix-loop round cap).
+   * #899 / ADR 0128 / #928: production seats use `1`; SO re-asks are in-session.
+   * Completion is clean exit + legal sidecar / typed envelope — no signal field.
+   * See {@link StepSpec.maxIter}.
+   */
   readonly maxIter: number;
   /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
   readonly model: string;
@@ -689,14 +809,6 @@ export interface WorkerSpec {
  * for a fate decision — it only搬运s them into the landing file the coder-fix
  * worker reads. DispatchContext keeps ONLY the identity keys + count.
  */
-/** Cross-round finding family synthesis (#711). */
-export interface FindingFamily {
-  readonly family: string;
-  readonly members: ReadonlyArray<string>;
-  readonly recurringFromRounds: ReadonlyArray<number>;
-  readonly brief: string;
-}
-
 /** Prior-round finding snapshot forwarded to judge workers (#711). */
 export interface PriorRoundFindingSnapshot {
   readonly round: number;
@@ -722,13 +834,16 @@ export interface OnlineReviewThreadReply {
   readonly body: string;
 }
 
-/** Terminal states a verify worker may self-declare (#600 wire schema). */
+/**
+ * Terminal states a verify worker may self-declare (#600 wire schema / #940).
+ * Mechanical `round_budget_exhausted` deleted — continue vs escalate is the
+ * persistent verify judge's three-state (#934 ID-012).
+ */
 export type VerifyWorkerTerminalState =
   | "mergeable"
-  | "round_budget_exhausted"
   | "decision_gate_raised";
 
-/** Runner-internal online review terminals (adds contract_drift from HEAD drift). */
+/** Runner-internal online review terminals (contract_drift retained for non-git protocol failures). */
 export type OnlineReviewTerminalState =
   | VerifyWorkerTerminalState
   | "contract_drift";
@@ -777,33 +892,63 @@ export interface OnlineReviewLandingSnapshot {
 
 export interface WorkerLandingPayload {
   /**
-   * S5 / family coder-fix worker only: the blocking reviewer findings (full
-   * content) selected from the current full-diff review. The dispatch seam writes
-   * them to the landing file; the runner does not read them.
+   * ADR 0138 / #978: sole coder-fix packet body — judge continue
+   * `fixPacketBody` transported verbatim. Missing/empty is fail-loud at the
+   * continue edge; runner never synthesises this from bare finding rows.
+   */
+  readonly fixPacketBody?: string;
+  /**
+   * @deprecated ADR 0138 — bare finding packing path deleted. Residual
+   * fixtures may still set this; production coder-fix landing does not
+   * write it. Prefer {@link fixPacketBody}.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * S5 only: opaque human/coordinator finding scope from continue_fixing /
+   * repair intent. Runner transports only — never filters by content
+   * (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
+   */
+  readonly findingScope?: FindingRepairScope;
+  /**
+   * S5 only: opaque pointers to the preceding reviewer's raw products. Attached
+   * on every positive open-count → S5 edge (and on unusable review shapes),
+   * independently of whether structured findings cargo is present. The runner
+   * transports these facts; the fixer reads the artifacts and decides what
+   * they mean (ADR 0131 / #899 — no empty no-op fix landing).
+   */
+  readonly rawReviewerArtifacts?: {
+    readonly stdoutPath?: string;
+    readonly sidecarPath?: string;
+    readonly reviewerSessionId?: string;
+    readonly statement: "the previous reviewer raw artifacts are here";
+  };
   /** #677 mechanical signal; reviewer must trace the assertion to authority. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from the prior S5 coder-fix commit — still-active
-   * findings the fixer declined; fresh re-review must adjudicate them.
+   * #927 opaque refuse cargo (four reasons + evidence / #677 AC detail) for
+   * the judge. Runner transports only — never validates reason tokens.
+   *
+   * #919 M7: refuse *traffic keys* live only on thin {@link DispatchContext}
+   * (`refusedFindingIdentityKeys`); landing never dual-writes keys (信封宪法).
+   * On-disk fix-findings JSON may still mirror ctx keys via dispatchWorker.
    */
-  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
+  /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
-  /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
+  /** Family PR delivery metadata threaded into the review loop. */
   readonly shipDelivery?: {
     readonly branch: string;
     readonly pr?: string;
     readonly prHead?: string;
-    readonly status: string;
+    /** Opaque cargo when present; never required for process success (#899). */
+    readonly status?: string;
   };
-  /** S9/S10: 1-based online review round (runner-enforced cap). */
+  /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
-  /** S10 fixer only: fix-marked finding identity keys from verify worker. */
+  /** Family fixer: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
-   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * Original review thread bound to each fixer-approved identity.
    * A key alone is not authority to close another thread that happens to claim
    * the same identity.
    */
@@ -811,11 +956,9 @@ export interface WorkerLandingPayload {
     readonly identityKey: string;
     readonly threadId: string;
   }>;
-  /** S9 verify: prior online-review rounds from ledger (#711). */
+  /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
-  /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
-  /** S11 cleanup (#603): host-computed close set + durable pr_merged record. */
+  /** Family cleanup: host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
     readonly parentIssue?: number;
@@ -835,11 +978,17 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /**
+   * Ephemeral identity for one invocation of the orchestrator runner. Unlike
+   * `stateDir`, this is freshly minted on every run, including a same-issue
+   * resume against the same durable ledger.
+   */
+  readonly runId?: string;
   /** The immutable route selected for this run, including its smoke records. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
-   * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
-   * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
+   * The resident child worktree (ADR 0017 commit truth). MANDATORY for
+   * child coder/reviewer workers; OPTIONAL for family-level
    * workers (cmr / family ship) whose caller only has `familyBase: string` and
    * lets the backend infer the working repo (PRD #330 R2). When present, asserts
    * the worker's commits only land on this one worktree.
@@ -854,20 +1003,31 @@ export interface DispatchContext {
   readonly familyBase?: string;
   /** The sibling state directory holding the persisted ledger (ADR 0018 §3). */
   readonly stateDir?: string;
+  /** Durable telemetry/log directory, outside Sandcastle's ephemeral worktrees. */
+  readonly telemetryDir?: string;
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
-   * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
-   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
-   * work must not take the resume path, which skips git-truthing).
+   * dispatch. #924 / ADR 0132: single-slice coder seats thread this for normal
+   * S5 continuity of the S2-established session (same model), as well as the
+   * crash/escalate reopen path. #925: S3 establishes the judge session; S6
+   * rounds resume it (same model). A worker is `resume` only when the runner
+   * supplies a real id.
    */
   readonly resumeSessionId?: string;
   /**
-   * Host-written issue snapshot for audit/resume compatibility. Current workers
-   * live-fetch issue truth via gh using runner-injected issue/repo env; this is
-   * not the execution source of truth.
+   * #925 — prior judge verdict ledger rows for a new judge after session loss
+   * (or any S6 opening). Runner transports rows as-is into the fix-findings
+   * landing file (`priorJudgeVerdicts` field) so the worker can read them;
+   * never synthesises a narrative summary. Trajectory is reconstructed by the
+   * judge from those structured rows only.
    */
-  readonly issueSnapshot?: IssueSnapshot;
+  readonly priorJudgeVerdicts?: ReadonlyArray<{
+    readonly step: string;
+    readonly status: JudgeVerdictStatus;
+    readonly advanceCoder?: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly sessionId?: string;
+  }>;
   /**
    * S5 / family coder-fix worker only: the stable identity keys of the blocking
    * findings selected from the current full-diff review. This THIN identity list —
@@ -887,8 +1047,10 @@ export interface DispatchContext {
   /** #677 runner fact only, never a content verdict. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from S5 — thin identity list for S6 re-review
-   * (runner does not park; fresh reviewer adjudicates still-active refuses).
+   * #677 / #927 legal refuse keys from S5 — thin identity list for S6
+   * judge re-adjudicate (runner does not park or read refuse cargo prose).
+   * Opaque refuseRecords prose rides only on {@link WorkerLandingPayload}
+   * (信封宪法 — thin ctx is traffic keys only).
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
@@ -903,7 +1065,7 @@ export interface DispatchContext {
     readonly familyHeadAfter?: string;
   }>;
   /**
-   * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
+   * S5 coder-fix or family-level CMR/ship worker: the human answer that
    * reopened a prior decision-escalate pause (#439). The runner passes it to the
    * re-dispatched worker so the resume instruction is visible without deleting or
    * rewriting the terminal ledger row that paused the run.
@@ -920,7 +1082,7 @@ export interface DispatchContext {
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
    * focuses on the merges a machine touched (PRD #330 / #291 缺口 1). Undefined for
-   * single-slice workers and for a conflict-free family run.
+   * child workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
   /**
@@ -937,13 +1099,13 @@ export interface DispatchContext {
    * closure keys outside this protected set.
    */
   readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
-  /** S9/S10 online review: opened PR URL from S7 ship (undefined when pushed-only). */
+  /** Family online review: opened PR URL. */
   readonly prUrl?: string;
-  /** S9/S10 online review: verified PR head OID/SHA. */
+  /** Family online review: verified PR head OID/SHA. */
   readonly prHead?: string;
   /** GitHub `owner/repo` for gh api polling. */
   readonly repo?: string;
-  /** 1-based online review round — runner enforces MAX_ONLINE_REVIEW_ROUNDS (#600). */
+  /** 1-based online review round (ledger / landing cargo; #940 no host round cap). */
   readonly onlineReviewRound?: number;
   /**
    * Judge workers only: prior-round finding snapshots extracted from ledger (#711).
@@ -956,51 +1118,61 @@ export interface DispatchContext {
    */
   readonly billingPool?: string;
   /**
-   * #686 — absolute path to `.relay-focus.md` when a baton handoff is in force.
-   * Mirrors `.cmr-focus.md` / `.ship-focus.md`: runner writes the parameter file;
-   * the worker prompt reads it when present.
+   * #937 / #934 ID-007 — ephemeral relay brief rendered once from ledger memory
+   * at dispatch. Not a worktree file; injected via env into the worker.
    */
-  readonly relayFocusPath?: string;
+  readonly relayBrief?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
 export type CoderResult = CoderOutput;
 
 /**
- * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
- * runner-visible: reviewer workers return structured findings so the S4 envelope
- * boundary can count blocking findings (信封宪法, ADR 0062) rather than a bare verdict.
+ * Residual historical open-count paper (legacy / rebuild / non-judge seats).
+ * Alias of {@link ReviewerOutput} — not the main single-slice S3/S6 path.
+ * S3/S6 routes on {@link JudgeResult} status tri-state; S4 mechanical
+ * open-count classification is dissolved (#925 / ADR 0131 channel (b)).
  */
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335/#449). The consumer
- * `verifyCmr.ts` reads `converged`, and when the worker supplies structured
- * findings the GATE derives the blocking envelope + accepted-suppression governance
- * against the declared family module context before deciding whether the pass can
- * proceed (信封宪法, ADR 0062: typed governance derivation, never free-text fate分叉).
+ * Residual family integrated-cmr cargo envelope (#335/#449).
+ * #930: family court **traffic** is {@link JudgeResult} tri-state only;
+ * this shape is residual cargo / legacy fixtures. Topology must not close
+ * a court by reading findingsCount (second open-count closer deleted).
+ *
+ * @deprecated #919 CR N3 — production residual fail-loud is
+ * {@link unusableResidualOpenCountPaper} (`kind:"reviewer"+findingsCount:0`);
+ * live court traffic is {@link JudgeResult}. Prefer those over minting
+ * `kind:"cmr"`. Retained only for residual fixture / ledger width.
  */
 export interface CmrResult {
   readonly kind: "cmr";
   /** Which integrated CMR pass produced this verdict, when known. */
   readonly cmrPass?: "completeness" | "correctness";
-  /** Converged (all reviewers agreed) ⇒ true; else the gate is red. */
-  readonly converged: boolean;
+  /** Residual cargo flag; not a family closer after #930. */
+  readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
-  /** CMR leg slugs that actually produced a usable review this pass. */
+  /**
+   * CMR leg slugs present this pass (ADR 0141: transport success = exit 0 +
+   * non-empty raw stdout). Soft cargo only — content shape is never a gate.
+   */
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly CmrSkippedLeg[];
-  /** Prior claimed-fixed findings the integrated CMR worker asks the runner to adjudicate. */
+  /** Prior claimed-fixed finding cargo reported by the integrated CMR worker. */
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-  /** Structured CMR findings for family-level suppression classification. */
+  /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: readonly FindingFamily[];
-  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  /**
+   * Residual open-count cargo only. Not a family closer (#930 / #919 E) —
+   * family never mints continue from findingsCount; court fail-louds residual.
+   */
+  readonly findingsCount?: number;
+  /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a
@@ -1014,7 +1186,7 @@ export interface CmrSkippedLeg {
 }
 
 /**
- * A ship worker's output (S7 / family PR, #336). `gstack-ship` does more than
+ * A family ship worker's output (#336). `gstack-ship` does more than
  * push+PR (merge-base / tests / review gate / VERSION / CHANGELOG + STOP/HITL);
  * the non-success routing is a #336 concern — the SHAPE is fixed here.
  */
@@ -1026,15 +1198,20 @@ export interface ShipResult {
   readonly pr?: string;
   /** The PR head commit SHA/OID verified by the host, when available. */
   readonly prHead?: string;
-  /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
-  readonly status: string;
+  /**
+   * Opaque delivery status token from worker cargo when present
+   * (e.g. "pushed" | "pr_opened"). Optional — missing cargo status must not
+   * be synthesized into process fate (#899 / ADR 0131). Clean exit alone is
+   * success; status is presentation cargo only.
+   */
+  readonly status?: string;
   /** Nonblocking ship-side review degradation metadata, if gstack-ship reports it. */
   readonly degradedReviews?: ReadonlyArray<ProviderDegradationSummary>;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the
   // WorkerResult-level `{kind:"escalated"}` case (PRD #330 R2), NOT an `escalate`
   // field on this `completed` payload — a `completed ShipResult` means a PR opened
   // / push landed. (codex cmr R3b: a payload-level escalate would be ignored by
-  // the S7 / family-ship consumers, which route a completed ship to success.)
+  // the family-ship consumer, which routes a completed ship to success.)
 }
 
 /**
@@ -1052,20 +1229,30 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review verify worker output (#600). The verify worker owns per-finding
- * fix / reject / defer judgment; the runner applies GitHub side effects and only
- * counts findings (0 / non-0) for routing — it does not interpret finding content.
+ * Online review verify worker output (#600 / #940).
+ *
+ * The worker owns per-finding judgment and should execute GitHub side effects
+ * (reply / resolve / deferred) before self-reporting. The host still applies
+ * cargo plan fields as a fail-safe applicator ({@link threadReplies} /
+ * {@link threadsToResolve} / {@link deferredIssueUrls}) before accepting a
+ * disposition as mergeable — effects must land even when the worker only emits
+ * the plan. Host routes on three-state disposition + CI, never on findings
+ * counts (#934 ID-012).
  */
 export interface VerifyResult {
   readonly kind: "verify";
-  /** Bot/online review converged (green) ⇒ the fix loop can stop. */
+  /**
+   * Judge green (converged). Combined with host CI check-runs for mergeability;
+   * `false` is the continue disposition unless {@link terminalState} escalates.
+   * Worker must not set this until reply/resolve/deferred side effects succeed
+   * (or the host fail-safe applicator will apply remaining plan cargo).
+   */
   readonly converged: boolean;
-  /** Per-finding dispositions judged by the verify worker. */
+  /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
-   * Identity keys the fixer may act on (fix-marked only). On a post-fixer
-   * recheck, this is the verifier's explicit confirmation set and must echo the
-   * keys supplied by the runner before convergence is accepted (#743).
+   * Identity keys carried through as data for the verify worker to use when
+   * reporting which fix-marked findings it evaluated (fixer landing).
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
@@ -1074,17 +1261,21 @@ export interface VerifyResult {
   readonly threadsToResolve?: ReadonlyArray<string>;
   /** Tracked issue URLs created for deferred findings (runner-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
-  /** Documented terminal state when the loop ends (#600 AC1/AC5). */
+  /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
-  /** Cross-round grouped findings + recurring-class markers (#711). */
-  readonly findingFamilies?: ReadonlyArray<FindingFamily>;
+  /**
+   * #1002 — optional roster suggestion on continue: runner rewrites the online
+   * review **fixer** repair seat via executeAdvanceCoderSuggestion (same
+   * advanced/stay_put/noop topology as single-slice/family coderFix). Never a
+   * terminal fate signal.
+   */
+  readonly advanceCoder?: string;
 }
 
 /**
- * Post-review fixer worker output (#596 skeleton). The skeleton stubs a
- * deterministic `committed:true` verdict so the S10 step seam is exercisable.
+ * Family post-review fixer worker output (#596).
  */
 export interface FixerResult {
   readonly kind: "fixer";
@@ -1130,16 +1321,16 @@ export interface CleanupResult {
 }
 
 /**
- * 文档发布 worker output (#735 / S12). Thin schema only: skill success
+ * Landing worker output (#735 / S12 / #941). Thin schema only: skill success
  * (including 文档发布空跑) → `released:true`; crash / hang / skill fail /
  * required push fail → `released:false`. Tip continues via ledger `branchHEAD`.
- * Offline/test may still synthesize a green stub under the offline hatch only.
+ * Landing Action owns merge only after released:true; no offline green stub.
  */
-export interface DocReleaseResult {
-  readonly kind: "docRelease";
+export interface LandingResult {
+  readonly kind: "landing";
   /**
    * Whether 文档发布 finished successfully (true includes empty-run; false
-   * blocks auto-merge).
+   * fails the landing Action before merge).
    */
   readonly released: boolean;
 }
@@ -1148,13 +1339,14 @@ export interface DocReleaseResult {
 export type WorkerOutput =
   | CoderResult
   | ReviewerResult
+  | JudgeResult
   | CmrResult
   | ShipResult
   | MergeWorkerResult
   | VerifyResult
   | FixerResult
   | CleanupResult
-  | DocReleaseResult;
+  | LandingResult;
 
 /**
  * The result of dispatching ONE worker — a discriminated union so the runner can
@@ -1165,39 +1357,17 @@ export type WorkerOutput =
  *     R2): `red` is a normal review outcome the runner routes on.
  *   - `failed`    — the worker crashed / its command or tests hard-failed
  *     (no usable output).
- *   - `malformed` — the worker produced output the seam could not parse into the
- *     declared schema (no completion signal / unparseable).
- *   - `outcome_protocol_failure` — a malformed/missing/schema-incompatible outcome
- *     reached the runner and either remained malformed after the bounded same-worker
- *     rewrite path, or the rewrite produced git-truth movement (HEAD/commits/tracked
- *     status) while only repairing the control envelope. This is infrastructure
- *     failure, not a semantic review verdict.
  *   - `escalated` — the worker (model-judged) signalled it is stuck and a human
  *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
- *     `failed`/`malformed`; only a MODEL escalate is `escalated`.
+ *     `failed`; only a MODEL escalate is `escalated`.
  *
- * #331 prefactor: the legacy wrapper always yields `completed` (forwarding the
- * existing methods' returns); `failed`/`malformed`/`escalated` are wired into the
- * shape now and exercised by later slices.
+ * The legacy wrapper yields `completed` by forwarding the older methods' returns;
+ * unified real workers additionally mint process `failed` and worker-declared
+ * `escalated` results.
  */
 export type WorkerResult =
   | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
   | { readonly kind: "failed"; readonly reason: string; readonly sessionId?: string }
-  | {
-      readonly kind: "malformed";
-      readonly reason: string;
-      readonly sessionId?: string;
-      readonly cmrLegAccountingPayload?: {
-        readonly successfulLegs?: readonly string[];
-        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-      };
-    }
-  | {
-      readonly kind: "outcome_protocol_failure";
-      readonly reason: string;
-      readonly attempts: number;
-      readonly sessionId?: string;
-    }
   | {
       readonly kind: "escalated";
       readonly escalation: Escalation;
@@ -1226,46 +1396,6 @@ export interface IssueMeta {
   readonly body?: string;
 }
 
-/**
- * The native metadata #244 S1 names as part of the full snapshot ("body +
- * comments + 最新 Agent Brief 正文 + native metadata"). S0 reads these via `gh`;
- * S1 writes them into the clean-room snapshot so the audit/resume artifact carries
- * the issue's title/state/labels + the native sub-issue + blocked_by summaries —
- * not just the body. Execution truth is still the live issue the worker reads via
- * in-container `gh`.
- */
-export interface IssueSnapshotMeta {
-  readonly title: string;
-  /** "open" | "closed" (whatever `gh` reports; kept as a free string). */
-  readonly state: string;
-  readonly labels: ReadonlyArray<string>;
-  /** Native sub-issue count (`gh issue view --json subIssues` → totalCount). */
-  readonly subIssueCount: number;
-  /** Native blocked_by dependency summary (number + state per dependency). */
-  readonly blockedBy: ReadonlyArray<{ readonly number: number; readonly state: string }>;
-}
-
-/**
- * Full issue snapshot written by S1 (body + comments + Agent Brief + native
- * metadata). `nativeMeta` carries the #244-named native metadata; the REAL
- * Backend always populates it (`buildIssueSnapshot`), so the host audit/resume
- * artifact is contract-complete. Current workers execute from live issue reads,
- * not this snapshot.
- */
-export interface IssueSnapshot {
-  readonly number: number;
-  readonly body: string;
-  /** Login of the issue-body author, when the host snapshot carried it. */
-  readonly bodyAuthorLogin?: string;
-  readonly comments: ReadonlyArray<string>;
-  /** Author login aligned by index with `comments`, when available. */
-  readonly commentAuthorLogins?: ReadonlyArray<string>;
-  /** Repo owner login used to authenticate executable issue instructions. */
-  readonly trustedOwnerLogin?: string;
-  readonly agentBrief: string;
-  readonly nativeMeta?: IssueSnapshotMeta;
-}
-
 /** Handle to the resident slice worktree (ADR 0017). */
 export interface WorktreeHandle {
   readonly branch: string;
@@ -1281,7 +1411,7 @@ export interface WorktreeHandle {
  * persisted ledger (sessionId, prompt_hash, branchHEAD, ts, sibling state dir).
  */
 export interface LedgerEntry {
-  readonly step: StepId;
+  readonly step: LedgerStepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
   /**
@@ -1296,8 +1426,19 @@ export interface LedgerEntry {
    * provider actually surfaced one.
    */
   readonly sessionId?: string;
+  /**
+   * Model slug that owned this agent-step session (#955).
+   *
+   * Resume truth for the invariant: a stored session id may only re-enter the
+   * same model binding that created it. Written on agent-step ledger rows at
+   * dispatch time (not guessed from the current seat on re-feed). Absent on
+   * runner-action / legacy rows that predate the field.
+   */
+  readonly modelSlug?: string;
   /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
+  /** #824 — absolute per-step mechanical dispatch attempt number. */
+  readonly mechanicalRedispatchAttempt?: number;
   /**
    * #683 — quota pool id on `quota_wait_for_reset` rows (ledger-visible).
    * Typed as string so JSONL round-trips stay schema-light; see
@@ -1320,7 +1461,7 @@ export interface LedgerEntry {
   /** #686 — relay handoff trigger discriminant. */
   readonly trigger?: string;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
-  readonly forStep?: StepId;
+  readonly forStep?: SliceStepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Optional human note attached to an escalation answer (#439). */
@@ -1337,58 +1478,30 @@ export interface LedgerEntry {
   readonly ts?: string;
   /** Optional reason for a bookkeeping event. */
   readonly reason?: string;
+  /** Optional CMR route leg removed after smoke failure. */
+  readonly droppedLeg?: string;
   /**
-   * ADR0030 finding dispositions persisted at the S4 review/fix boundary.
+   * Finding dispositions persisted at the judge verdict boundary (#925 / #952).
    *
-   * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay accepted suppressions and bounded severity reopens instead
-   * of re-deriving them from only the last reviewer payload. Governance data
-   * (accepted suppression), not a runner content-classification (信封宪法, ADR 0062).
+   * Formerly the S4 review/fix boundary (open-count mechanical station). S4 is
+   * dissolved: S3/S6 judge ledger rows now carry store terminal flips
+   * (`refute`→`refuted`, `suppress`→`suppressed`) and governance data. Not a
+   * runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /**
-   * Runner-observed implementation/test paths that actually moved during a coder
-   * step. Persisted so resume replay can evaluate repairEvidence with the same
-   * evidence live S4 used.
-   */
-  readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
-  /** Online review converged marker (#600): PR URL covered by this convergence. */
-  readonly prUrl?: string;
-  /** Online review converged marker (#600): reviewed PR head SHA. */
-  readonly prHead?: string;
-  /** Online review converged marker (#600): final round number. */
-  readonly onlineReviewRound?: number;
-  /** Online review round re-trigger marker (#600 r25): anchored PR head OID. */
-  readonly roundTriggerHeadOid?: string;
-  /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
-  readonly roundTriggerAt?: string;
-  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
-  readonly fixCommitSha?: string;
   /**
-   * Online review fix_committed marker (#743): fix-marked identity keys from the
-   * verify that drove this fix — durable resume authority (family-parity).
-   */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
-   * Online review fix_committed marker (#743): original thread binding for each
-   * fix-marked identity — resume must not depend on last-S9 shape alone.
-   */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
-  /**
-   * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
-   * resumed run can rebuild alive/idle/kill judgment without global pgrep.
+   * Monitor handle for an in-flight external CLI worker (#684 / #937). Persisted
+   * so a resumed run can rebuild log last-activity observation without global pgrep.
    */
   readonly monitorHandle?: WorkerMonitorHandle;
 }
 
 /**
- * Structured monitor handle produced atomically at CLI worker dispatch (#684).
- * Alive/idle/kill operations must use this handle — never global process-name matching.
+ * Structured monitor handle produced atomically at CLI worker dispatch
+ * (#684 / #937). Process ownership is the exact ChildProcess / process-group
+ * handle; silence is observational only — no idle kill / PID-tree walk.
  */
 export interface WorkerMonitorHandle {
   readonly pid: number;
@@ -1397,13 +1510,11 @@ export interface WorkerMonitorHandle {
   readonly logStartOffset?: number;
   /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly dispatchedAt: string;
   /**
    * OS-level process start identity (e.g. `ps -o lstart=`) captured at spawn.
-   * Resume/kill must verify the live PID still matches this identity before any
-   * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
+   * Adoption-failure termination uses the ChildProcess handle, not global name match.
    */
   readonly instanceId: string;
   /** Dispatch-scoped result sidecar; absent only on legacy persisted handles. */
@@ -1421,7 +1532,6 @@ export interface CliMonitorSpawnSpec {
   readonly args: readonly string[];
   readonly logDir: string;
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -1431,12 +1541,6 @@ export interface CliMonitorSpawnSpec {
   /** Injectable process identity reader for restricted/test environments. */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
-
-/** #683: the monitor asks the backend to probe before it owns hang-kill. */
-export type MonitoredWorkerIdleDisposition =
-  | "hang"
-  | "hang_with_live_pool"
-  | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
@@ -1455,14 +1559,16 @@ export type MonitoredWorkerIdleDisposition =
  *                     unavailable (fake path / runner-action step) the runner
  *                     falls back to hashing the promptFile NAME (or step id).
  *   - `branchHEAD`  — Real (#256): the git commit SHA (`git rev-parse HEAD`) at
- *                     the worktree HEAD, read via the Backend. Fallback (no
- *                     Backend SHA available): the branch NAME, as in v0.1.
+ *                     the worktree HEAD, read via the Backend. Omitted when the
+ *                     optional Git read is unavailable.
  *   - `ts`          — ISO-8601 timestamp when this entry was written (real).
  *
  * The runner hands this to {@link Backend.writeLedger}, which persists it to the
  * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
  */
 export interface PersistentLedgerEntry extends LedgerEntry {
+  /** Runner invocation identity; shared by this run's ledger rows. */
+  readonly runId?: string;
   /**
    * Sandbox session identifier (resume truth).
    *
@@ -1488,26 +1594,26 @@ export interface PersistentLedgerEntry extends LedgerEntry {
    *
    * #256 (DONE): the real Backend exposes the worktree HEAD SHA
    * (`git rev-parse HEAD`); the runner records that real commit SHA here. When
-   * no Backend SHA is available (the zero-container fake path) the runner falls
-   * back to the branch NAME (e.g. "feat/244-s249-ledger"), as in v0.1.
+   * no Backend SHA is available, the optional audit value is omitted.
    */
-  readonly branchHEAD: string;
+  /** Optional audit truth: absent when the best-effort Git read fails. */
+  readonly branchHEAD?: string;
   /** ISO-8601 timestamp when this entry was persisted. */
   readonly ts: string;
   /**
-   * Terminal handoff status — set ONLY on the S8 entry (#255).
+   * Terminal handoff status — set ONLY on the S8 entry (#255 / #942).
    *
-   * Both success and error handoffs previously wrote an identical `{step:"S8"}`
-   * entry, making them indistinguishable to a resuming run reading the ledger.
-   * Recording the status here lets {@link ResumeState} recovery report the TRUE
-   * terminal outcome (success / escalate / error) instead of inferring it — and
-   * lets a re-fed run tell a prior SUCCESS apart from a prior ERROR.
+   * Public tokens are completed | parked | failed (ID-001). Recording the
+   * status here lets {@link ResumeState} recovery report the TRUE terminal
+   * outcome instead of inferring it — and lets a re-fed run tell a prior
+   * completed apart from a prior failed/parked. #929 tokens (success / error /
+   * escalate / …) fail closed as public failed (ID-005, no dual-read).
    * Undefined for every non-S8 (in-flight) entry.
    */
   readonly handoffStatus?: HandoffStatus;
   /**
    * Distinguishes answerable decision pauses from true terminal failure
-   * escalations (#439). Set only with `handoffStatus:"escalate"` on S8.
+   * escalations (#439). Set only with handoffStatus parked|failed on S8.
    */
   readonly escalationKind?: EscalationKind;
 }
@@ -1547,17 +1653,25 @@ export interface ResumeState {
 
 /**
  * THE seam (PRD #244): the runner reaches the outside world only through this
- * injected interface — read issue, prepare worktree, run an agent step, push.
+ * injected interface — read issue, prepare worktree, run an agent step.
  * #247 injects a fake; the real Backend (Sandcastle + gh + git) is verified
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /** Resolve the durable sidecar directory for a worker dispatch, when available. */
+  resolveTelemetryDir?(ctx: DispatchContext): string | undefined;
   /** Run the real model×pipe bash smoke and return the route with fresh records. */
   smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions?: Readonly<Record<string, string | undefined>>,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute>;
-  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
+  currentCliVersions?(
+    route: ResolvedModelRoute,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
+  ): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *
@@ -1569,17 +1683,6 @@ export interface Backend {
    * on its first pass, so it must not re-gate/re-cut.
    */
   findResumeState(issueNumber: number): Promise<ResumeState | undefined>;
-  /**
-   * #661 compatibility seam for a former residue-clean operation.
-   *
-   * Real implementation is a no-op: a resident scene is work product, including
-   * uncommitted files and relay focus. Resume preserves it AS-IS; callers must
-   * never reintroduce reset/clean behavior here.
-   *
-   * The only removal authority is explicit terminal-success GC; it may reap the
-   * resident worktree after the run can no longer need resume.
-   */
-  cleanResidue(worktree: WorktreeHandle): Promise<void>;
   /**
    * #255: resume the prior agent session for a step (Sandcastle-native).
    *
@@ -1608,15 +1711,8 @@ export interface Backend {
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
-  /** S1: full host-side snapshot (body + comments + Agent Brief) for audit/resume. */
-  fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot>;
   /** S1: resident slice worktree from `base` (native createWorktree). */
   prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle>;
-  /** S1: write the issue snapshot into the worktree (clean-room). */
-  writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void>;
   /**
    * S2/S3/S5/S6: one `sandbox.run()` per runner-visible agent worker.
    *
@@ -1638,34 +1734,38 @@ export interface Backend {
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every productive single-slice worker step (S2/S3/S5/S6 agent workers + S7
-   * ship; legacy compatibility may still map reviewer specs) is
+   * Every productive child-slice worker step (S2/S3/S5/S6) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
    * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets
    * back a discriminated {@link WorkerResult}, then routes by case. This replaces
-   * the per-method seam (`runStep` / `resumeSession` / `push`) as the runner's
+   * the per-method seam (`runStep` / `resumeSession`) as the runner's
    * dispatch entry point.
    *
-   * #331 PREFACTOR: this is a thin LEGACY WRAPPER. The runner ALWAYS dispatches
-   * through the free function `dispatchWorker(backend, spec, ctx)` (runner.ts),
-   * which calls THIS method when a backend implements it, else falls back to
-   * `legacyDispatchWorker` — forwarding to the existing methods
-   * (`runStep`/`resumeSession` for agent workers, `push` for the S7 ship worker),
-   * so external behaviour is unchanged (regression green) and every existing fake
-   * Backend keeps working without change. The real worker dispatch (invoke
-   * `/tdd` / `/code-review` / `gstack-ship`) lands in #334/#336. The legacy methods
-   * stay on the seam during the transition.
+   * The runner dispatches through the free function
+   * `dispatchWorker(backend, spec, ctx)` (runner.ts), which calls THIS method when
+   * implemented and otherwise falls back to `legacyDispatchWorker`. The fallback
+   * only forwards older child coder/reviewer methods (`runStep`/`resumeSession`);
+   * production backends invoke the routed worker skills through this unified seam.
    *
-   * OPTIONAL on the interface during the prefactor so the existing zero-container
-   * fakes need no change; new tests inject a fake implementing it to assert the
-   * dispatch SEQUENCE + each {@link WorkerSpec} (the #331 acceptance criterion).
+   * The method remains optional so zero-container and older fake Backends can use
+   * the forwarding fallback unchanged.
    */
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * #786 optional: reinstall this backend's image / souls / prompts fingerprints
+   * into the process-level telemetry run environment immediately before a
+   * dispatch stamps its once-per-ledger environment row. Required when more than
+   * one backend is constructed in-process (familyDriver: RealBackend then
+   * RealFamilyBackend) so child legs do not inherit the later family promptHash.
+   *
+   * Fail-open at the call site — must not throw into dispatch control flow.
+   */
+  installTelemetryRunEnvironment?(): void | Promise<void>;
   /**
    * #684 optional: when a worker runs as a host-side CLI process (opencode /
    * grok / …), return the spawn input. The production
@@ -1692,18 +1792,6 @@ export interface Backend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
-   * #683: called while the monitored worker is still alive at the idle threshold.
-   * A backend may throw its quota-park error; returning `hang` leaves verified
-   * pid-tree kill exclusively to the monitor.
-   */
-  handleMonitoredWorkerIdle?(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<MonitoredWorkerIdleDisposition>;
-  /** S7: push the resident slice branch (no PR, no merge). */
-  push(worktree: WorktreeHandle): Promise<void>;
-  /**
    * #256 (optional, ledger true-value): resolve a step's promptFile to its raw
    * CONTENT so the runner can hash the content (real anti-tampering audit)
    * instead of the file name. Returns `undefined` when the prompt cannot be
@@ -1717,27 +1805,10 @@ export interface Backend {
   /**
    * #256 (optional, ledger true-value): the worktree HEAD commit SHA
    * (`git rev-parse HEAD`) so the ledger's `branchHEAD` records the real SHA
-   * instead of the branch name. Returns `undefined` when unavailable (the runner
-   * then falls back to the branch name).
-   *
-   * OPTIONAL so the zero-container fake Backends need no change: when absent the
-   * runner keeps the v0.1 branch-name value.
+   * instead of a branch-name surrogate. Returns `undefined` when unavailable;
+   * the runner warns and omits this optional audit value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
-  /**
-   * Optional git-truth helper for resume recovery.
-   *
-   * When a legacy coder worker landed commits but failed the old stdout outcome
-   * protocol, the runner can only recover the step if it can reconstruct the
-   * true commit count from two persisted HEADs. Backends that cannot provide
-   * this must leave the method absent; the runner will then report the original
-   * terminal error instead of synthesising a misleading success.
-   */
-  countCommitsBetween?(
-    worktree: WorktreeHandle,
-    fromHead: string,
-    toHead: string,
-  ): Promise<number>;
   /**
    * Write one persisted ledger entry to the sibling state directory (#249).
    *
@@ -1750,24 +1821,7 @@ export interface Backend {
    * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
    * the S8 handoff entry, BEFORE returning the final result.
    */
-  /**
-   * Optional (#600): inject bot-poll results for the online review loop in explicit
-   * offline/test handles only (`pr://…` + `ORCHESTRATOR_OFFLINE_REVIEW_POLL`). When
-   * absent the runner uses live `gh` polling or `offlinePrReviewSnapshot` under the
-   * same central admissibility gate — never for live GitHub PR URLs outside test mode.
-   */
-  pollOnlineReviewState?(input: {
-    readonly repo: string;
-    readonly prUrl: string;
-    readonly pollCount: number;
-  }): Promise<OnlineReviewLandingSnapshot>;
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
-  /**
-   * Optional (#603): reclaim the resident slice worktree at terminal success
-   * (ADR 0024 explicit GC). Must only be called when the host ledger shows a
-   * terminal cleanup row — never on park/retry/failure.
-   */
-  reapResidentWorktree?(worktree: WorktreeHandle): Promise<void>;
 }
 
 /** Runner-owned S5 findings file made visible inside the worker sandbox. */
@@ -1789,49 +1843,45 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
-  readonly onlineReviewLanding?: FixFindingsLandingFile;
-  readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
   /**
    * #686 / ADR 0124 — billing pool for this dispatch. Selects the real
    * provider/CLI channel when the same model lives on multiple pools.
    */
   readonly billingPool?: string;
-  /** Durable relay brief for any baton role (coder, ship, or review). */
-  readonly relayFocusPath?: string;
+  /**
+   * #937 ephemeral relay brief for any baton role (coder, ship, or review).
+   * Rendered from ledger memory at dispatch — never a worktree focus file.
+   */
+  readonly relayBrief?: string;
 }
 
 // ──────────────────────────── run result ────────────────────────────
 
 /**
- * Family-run context carried into a CHILD slice's single-slice runner (ADR 0022
+ * Family-run context carried into a CHILD slice's runner (ADR 0022
  * decision 2: the RunnerOptions seam through which the family layer passes its
- * context down to the reused single-slice runner).
+ * context down to the reused child runner).
  *
- * When present, the child slice runs in FAMILY MODE — three differences from a
- * standalone single-slice run (ADR 0022 decision 2/6/7):
+ * Every child slice runs in FAMILY MODE. The family layer supplies the local
+ * base and parent key through this context:
  *   - `familyBase` replaces "main" as the cut base (children cut from the LOCAL
  *     family base the merger accumulates onto — decision 7);
- *   - `noPush` makes S7 a LOCAL NO-OP (decision 2: a shared-clone concurrent
- *     remote push would clash on `.git/refs/remotes`; only the family base PRs
- *     once at the end);
  *   - `parentIssue` is the family run key (ADR 0024) the child reuses for its
  *     clone + the ledger口径 (decision 6③) — carried for #294/#298 to read.
  *
- * Absent ⇒ a normal standalone single-slice run (base=main, S7 pushes) — the
- * existing single-slice tests pass `RunInput` without this field, unchanged.
+ * S7 always hands the local child commit back to the family merger. Only the
+ * family base is shipped after integrated verification.
  */
 export interface FamilyContext {
   /** The parent epic issue number (the family run key, ADR 0024). */
   readonly parentIssue: number;
   /** The local family base branch the child cuts from (ADR 0022 decision 7). */
   readonly familyBase: string;
-  /** When true, S7 push is a LOCAL no-op (ADR 0022 decision 2). */
-  readonly noPush: boolean;
   /**
    * #294 (ADR 0022 decision 6③): the child's `blocked_by` issue numbers the
    * family commander has confirmed MERGED into the family base (the ledger-merged
-   *口径). In family mode the child's own single-slice S0 `blocked_by` gate treats
+   *口径). The child's own S0 `blocked_by` gate treats
    * a still-open-on-GitHub blocker as SATISFIED iff it is in this set — because
    * the commander only fans a child out once every blocker is ledger-merged, but
    * the blocker's GitHub issue need not be `closed`. Without this, a child the
@@ -1844,7 +1894,7 @@ export interface FamilyContext {
   readonly mergedBlockers?: ReadonlyArray<number>;
 }
 
-/** Input to the orchestrator: an issue number + the Backend seam (+ optional family context). */
+/** Internal child-runner input. Production family calls always supply family context. */
 export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
@@ -1854,17 +1904,18 @@ export interface RunInput {
    */
   readonly repairIntent?: ContinueFixingEvent;
   /**
-   * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
-   * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
-   * run (the v0.1 behaviour — base=main, S7 pushes).
+   * Family-run context (ADR 0022 decision 2). Production supplies it for every
+   * child. Absence is retained only for focused S0–S8 skeleton tests; S7 still
+   * performs a local handoff and never ships.
    */
   readonly family?: FamilyContext;
   /**
-   * #686 — optional route pool table override for park-vs-relay at the #683
-   * disposition point. When absent, the runner builds a default table where the
-   * wall-hit pool is `limited` and every other pool is **not-live** until probed
-   * (unknown state must not fabricate live batons). Tests that need a live
-   * alternate baton pass an explicit probed table via this field.
+   * #686 / #909 — optional route pool table override for park-vs-relay at the
+   * #683 disposition point. When present, the table is authoritative. When
+   * absent, wall-hit pool is `limited` and other pools stay not-live unless
+   * route-smoke proves them live ({@link knownLiveBillingPoolsFromRoute}) —
+   * production path without test-only injection. Unknown/unprobed state still
+   * must not fabricate live batons.
    */
   readonly relayPools?: ReadonlyArray<{
     readonly id: string;
@@ -1897,24 +1948,25 @@ export interface ErrorPackage {
   readonly branchHead?: string;
 }
 
-/** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
-export interface RunResult {
-  readonly status: HandoffStatus;
-  /** The reviewed, pushed slice branch (set on success). */
+/** Shared fields on every public single-slice handoff. */
+interface RunResultBase {
   readonly branch?: string;
-  /**
-   * Diagnostic error payload — set when status=error (#252).
-   * Undefined for success and escalate outcomes.
-   */
+  /** Diagnostic package (failed terminals; optional on park for transport). */
   readonly errorPackage?: ErrorPackage;
   /** The step ledger — anti-skip + resume truth. */
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
-  /**
-   * Formerly carried reviewer findings with action:'defer'. #617 removed the
-   * `defer` action from the contract, so this array is always empty; it is
-   * retained on the handoff shape for backward compatibility with resume state.
-   */
-  readonly deferredFindings: ReadonlyArray<Finding>;
 }
+
+/**
+ * Final handoff (S8); public completed|parked|failed.
+ * Discriminated: `status:"failed"` requires ID-001 `cause` (#942 CR R2 S3).
+ */
+export type RunResult =
+  | (RunResultBase & { readonly status: "completed" })
+  | (RunResultBase & { readonly status: "parked" })
+  | (RunResultBase & {
+      readonly status: "failed";
+      readonly cause: PublicFailedCause;
+    });

@@ -1,0 +1,3723 @@
+/**
+ * #335 — the family integrated cmr step is a CONTAINER cmr WORKER that invokes
+ * the real `ak-cross-m-review`, replacing the runner-internal 3-CLI 手搓
+ * (`DriverFamilyBackend.runCmr`'s direct codex/claude/agy fan-out).
+ *
+ * The cmr worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
+ * `ak-cross-m-review` (which itself fans out 1 Agent + 2 CLI legs inside the
+ * container — proven in #333), FRESH each round (cross-model independence). The
+ * worker returns a `{converged, reason?, findings?, successfulLegs, skippedLegs?}`
+ * verdict (PRD #330 R2: a `red` review outcome is still
+ * `WorkerResult.completed`, and `verifyCmr.ts` decides whether to abort or dispatch
+ * a separate coder-fix worker). A `red` verdict is NOT `failed`.
+ *
+ * Tested WITHOUT a real container:
+ *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / sparse cargo;
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion is
+ *     clean exit + legal sidecar / typed envelope (no password gate);
+ *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
+ *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
+ *     into a WorkerResult (converged → completed; red → completed; escalate →
+ *     escalated; sparse cargo remains completed cargo);
+ *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
+ *     auth + the claude token (the #333 gotcha: agy needs its file token mounted,
+ *     else the cmr leg degrades to codex-only);
+ *   - the deleted-fanout regression: the 手搓 symbols no longer exist on the
+ *     familyDriver module.
+ */
+
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as sc from "@ai-hero/sandcastle";
+import type { RunResult } from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import {
+  CMR_ROUTE_FILENAME,
+  CMR_FOCUS_FILENAME,
+  cmrOutcomeFromResult,
+  parseCmrOutcome,
+  RealFamilyBackend,
+  SANDBOX_AGY_DIR,
+  type CmrAuth,
+  type CmrWorkerOutcome,
+  type ShipAuth,
+} from "../../../src/family/realFamilyBackend.js";
+import {
+  DECISION_GATE_TAG,
+  decisionGateSignalSchema,
+  isReceiptRecoveryFailure,
+  RECEIPT_MAX_RETRIES,
+  workerReceiptSchema,
+} from "../../../src/receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+} from "../../../src/stationReceiptContracts.js";
+import {
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../../../src/dispatchRetry.js";
+import {
+  runScriptedStructuredOutput,
+  type ScriptedAgent,
+} from "../../helpers/scripted-sandcastle-run.js";
+import {
+  SANDBOX_CODEX_DIR,
+  SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
+  SANDBOX_REPO_ENV,
+  SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
+} from "../../../src/realBackend.js";
+import {
+  cmrWorkerSpec,
+  familyCoderFixWorkerSpec,
+  familyShipWorkerSpec,
+} from "../../../src/family/dispatchFamilyWorker.js";
+import { shipOutcomeFromResult } from "../../../src/shipOutcome.js";
+import { isRunnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
+import type {
+
+  DispatchContext,
+  WorkerLandingPayload,
+  WorkerResult,
+  WorkerSpec,
+} from "../../../src/types.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const realPromptsDir = join(here, "..", "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
+const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
+  { family: "codex", slug: "gpt-5.6-sol" },
+  { family: "claude", slug: "opus" },
+  { family: "agy", slug: "agy" },
+] as const;
+const STRONG_LEGS = ["opus", "gpt-5.6-sol"] as const;
+const EMPTY_CMR_CLOSURE = {
+  claimedFixedFindingIdentityKeys: [],
+  priorFindingDispositions: [],
+} as const;
+const CMR_EVIDENCE_PATHS = ["cmr/review-summary.json"] as const;
+const CMR_EVIDENCE = {
+  evidencePaths: CMR_EVIDENCE_PATHS,
+} as const;
+const VALID_CMR_VERDICT_FIELDS = {
+  ...EMPTY_CMR_CLOSURE,
+  ...CMR_EVIDENCE,
+} as const;
+/** Expected on successful parse/verdict output (derived; not a wire field). */
+const DERIVED_EMPTY_FINDINGS_COUNT = { findingsCount: 0 } as const;
+
+/** A Sandcastle result fixture with the public result shape, not a partial cast. */
+function sandboxRunResult({
+  branch = "fb",
+  stdout = "",
+  commits = [],
+  sessionId,
+}: {
+  readonly branch?: string;
+  readonly stdout?: string;
+  readonly commits?: ReadonlyArray<{ readonly sha: string }>;
+  readonly sessionId?: string;
+} = {}): RunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
+  return {
+    branch,
+    stdout,
+    commits: [...commits],
+    iterations: sessionId === undefined ? [] : [{ sessionId }],
+  };
+}
+
+function typedSandboxRunResult<T>(
+  output: T,
+  fields: Parameters<typeof sandboxRunResult>[0] = {},
+): RunResult & { readonly output: T } {
+  return { ...sandboxRunResult(fields), output };
+}
+
+const cleanups: string[] = [];
+afterEach(() => {
+  vi.unstubAllEnvs();
+  while (cleanups.length > 0) {
+    const p = cleanups.pop();
+    if (p !== undefined) rmSync(p, { recursive: true, force: true });
+  }
+});
+function mkDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(d);
+  return d;
+}
+
+function makeBackend(over?: {
+  home?: string;
+  ledgerDir?: string;
+}): RealFamilyBackend {
+  return new RealFamilyBackend({
+    workingRepo: mkDir("cmr-repo-"),
+    familyBase: "feat/330-pure-scheduler",
+    ledgerDir: over?.ledgerDir ?? mkDir("cmr-ledger-"),
+    repo: "Akagilnc/ming-salvage-sim",
+    base: "main",
+    promptsDir: realPromptsDir,
+    soulsDir: realSoulsDir,
+    imageName: "ming-orchestrator-coder:latest",
+    home: over?.home,
+  });
+}
+
+// ═══════════════════════ 1. parseCmrOutcome (pure tag parse) ═══════════════════════
+
+describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
+  it("converged:true ⇒ a converged outcome", () => {
+    const o = parseCmrOutcome(
+      `noise\n<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      })}</cmr>\n`,
+    );
+    expect(o.kind).toBe("verdict");
+    if (o.kind === "verdict") {
+      expect(o.converged).toBe(true);
+      expect(o.successfulLegs).toEqual(DEFAULT_CMR_LEGS);
+    }
+  });
+
+  it("converged:false + reason ⇒ a red outcome carrying the reason", () => {
+    const o = parseCmrOutcome(
+      `<cmr>${JSON.stringify({
+        converged: false,
+        reason: "cross-slice field-name mismatch",
+        successfulLegs: ["gpt-5.6-sol"],
+        ...VALID_CMR_VERDICT_FIELDS,
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ],
+      })}</cmr>`,
+    );
+    expect(o.kind).toBe("verdict");
+    if (o.kind === "verdict") {
+      expect(o.converged).toBe(false);
+      expect(o.reason).toBe("cross-slice field-name mismatch");
+      expect(o.successfulLegs).toEqual(["gpt-5.6-sol"]);
+    }
+  });
+
+  it("an escalate object ⇒ an escalate outcome (the worker is model-stuck)", () => {
+    const o = parseCmrOutcome(
+      '<cmr>{"escalate": {"reason": "skill missing", "diagnosis": "ak-cross-m-review not on PATH"}}</cmr>',
+    );
+    expect(o.kind).toBe("escalate");
+    if (o.kind === "escalate") {
+      expect(o.reason).toContain("skill missing");
+      expect(o.diagnosis).toContain("not on PATH");
+    }
+  });
+
+  it("rings the CMR decision bell before judging the rest of the reviewer receipt", () => {
+    const o = parseCmrOutcome(
+      '<cmr>{"converged": "garbage", "extra": [1,2,3], "escalate": {"reason": "design fork", "diagnosis": "owner choice required"}}</cmr>',
+    );
+    expect(o).toMatchObject({
+      kind: "escalate",
+      reason: "design fork",
+      diagnosis: "owner choice required",
+    });
+  });
+
+  it("only the LAST <cmr> tag is read (the worker may iterate)", () => {
+    const o = parseCmrOutcome(
+      `<cmr>{"converged": false}</cmr>\nlater…\n<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      })}</cmr>`,
+    );
+    expect(o.kind).toBe("verdict");
+    if (o.kind === "verdict") expect(o.converged).toBe(true);
+  });
+
+  it("no <cmr> tag ⇒ sparse cargo with no self-declared count", () => {
+    const o = parseCmrOutcome("I reviewed everything, looks fine.");
+    expect(o).toMatchObject({ kind: "verdict", successfulLegs: [], evidencePaths: [] });
+    expect(o).not.toHaveProperty("converged");
+  });
+
+  it("a non-JSON / non-object <cmr> body only reduces cargo richness", () => {
+    expect(parseCmrOutcome("<cmr>not json</cmr>").kind).toBe("verdict");
+    expect(parseCmrOutcome("<cmr>null</cmr>").kind).toBe("verdict");
+    expect(parseCmrOutcome("<cmr>true</cmr>").kind).toBe("verdict");
+  });
+
+  it("a <cmr> object with no boolean converged remains sparse cargo", () => {
+    expect(parseCmrOutcome('<cmr>{"foo": 1}</cmr>').kind).toBe("verdict");
+  });
+
+  describe("ADR 0131 — decision bell independent; remaining fields are cargo", () => {
+    it("a mixed converged+escalate payload rings the decision bell first", () => {
+      // A success key carried ALONGSIDE an escalate verdict is off-contract — it
+      // must NOT slip through to a converged pass.
+      expect(
+        parseCmrOutcome(
+          '<cmr>{"converged": true, "escalate": {"reason": "r", "diagnosis": "d"}}</cmr>',
+        ).kind,
+      ).toBe("escalate");
+    });
+
+    it("converged:true tolerates unknown cargo keys", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+            junk: 1,
+          })}</cmr>`,
+        ).kind,
+      ).toBe(
+        "verdict",
+      );
+    });
+
+    it("converged:true may carry explicit prior-finding closure dispositions", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
+          claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|closed"],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|closed",
+              status: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.claimedFixedFindingIdentityKeys).toEqual([
+          "correctness|src/x.ts:1|closed",
+        ]);
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/x.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("normalizes the known priorFindingDispositions[].disposition alias to status", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/family/verifyCmr.ts:1|closed",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+              disposition: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("normalizes mixed priorFindingDispositions status plus legacy disposition", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...CMR_EVIDENCE,
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/family/verifyCmr.ts:1|closed",
+          ],
+          priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+              status: "verified-closed",
+              disposition: "verified-closed",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.priorFindingDispositions).toEqual([
+          {
+            identityKey: "correctness|src/family/verifyCmr.ts:1|closed",
+            status: "verified-closed",
+          },
+        ]);
+      }
+    });
+
+    it("converged:true requires explicit empty closure arrays when no claimed-fixed findings occurred", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.claimedFixedFindingIdentityKeys).toEqual([]);
+        expect(o.priorFindingDispositions).toEqual([]);
+      }
+    });
+
+    it("does not let finding content override the reviewer-declared verdict channel", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+          findings: [
+            {
+              severity: "medium",
+              category: "correctness",
+              claim_quote: "green CMR cannot carry unresolved fix_now blockers",
+              location: "orchestrator/src/family/verifyCmr.ts",
+              suggested_fix: "emit converged false while the blocker remains",
+              action: "fix_now",
+            },
+          ],
+        })}</cmr>`,
+      );
+
+      expect(o.kind).toBe("verdict");
+    });
+
+    it("converged:true without closure arrays remains readable cargo", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+    });
+
+    it("converged:false without a reason remains readable cargo", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("verdict");
+    });
+
+    it("a blank optional reason is dropped without rejecting the receipt", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "  ",
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
+        ).kind,
+      ).toBe(
+        "verdict",
+      );
+    });
+
+    it("an incomplete escalate block fails the Action instead of inventing a park", () => {
+      // #899: present-but-malformed escalate fails closed for #598 (typed seats
+      // re-ask first via schema; cargo parsers must not swallow empty bells).
+      expect(() =>
+        parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>'),
+      ).toThrow(/malformed decision gate/);
+      expect(() => parseCmrOutcome('<cmr>{"escalate": {}}</cmr>')).toThrow(
+        /malformed decision gate/,
+      );
+    });
+
+    it("a non-boolean converged cargo field is dropped", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("verdict");
+    });
+
+    it("bare converged:true does not require sibling cargo", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("verdict");
+    });
+
+    it("leg lists stay optional cargo", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
+        "verdict",
+      );
+    });
+
+    it("accounts against the active route's declared cmr legs, not the default route", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.6-sol", "agy"],
+          ...VALID_CMR_VERDICT_FIELDS,
+        })}</cmr>`,
+      );
+
+      expect(o).toEqual({
+        kind: "verdict",
+        converged: true,
+        successfulLegs: ["gpt-5.6-sol", "agy"],
+        ...EMPTY_CMR_CLOSURE,
+        ...CMR_EVIDENCE,
+      });
+    });
+
+    it("#875: undeclared successful legs parse as a normal verdict (parse-time accounting court demolished)", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["agy", "opus"],
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual(["agy", "opus"]);
+      }
+    });
+
+    it("#875: undeclared skipped legs parse as a normal verdict (parse-time accounting court demolished)", () => {
+      vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.6-sol", "agy"],
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.skippedLegs).toEqual([
+          { slug: "opus", reason: "auth unavailable" },
+        ]);
+      }
+    });
+
+    it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["opus"],
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [
+            { slug: "gpt-5.6-sol", reason: "auth unavailable" },
+            { slug: "agy", reason: "quota exhausted" },
+          ],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual(["opus"]);
+        expect(o.skippedLegs).toEqual([
+          { slug: "gpt-5.6-sol", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
+        ]);
+      }
+    });
+
+    it("#875: a leg listed as both successful and skipped still parses as a verdict (accounting court demolished)", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual([...DEFAULT_CMR_LEGS]);
+        expect(o.skippedLegs).toEqual([
+          { slug: "agy", reason: "quota exhausted" },
+        ]);
+      }
+    });
+
+    it("still accepts the two LEGAL verdict shapes (regression)", () => {
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+      expect(
+        parseCmrOutcome(
+          `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "seam mismatch",
+            successfulLegs: ["gpt-5.6-sol"],
+            ...VALID_CMR_VERDICT_FIELDS,
+            skippedLegs: [
+              { slug: "opus", reason: "auth unavailable" },
+              { slug: "agy", reason: "quota exhausted" },
+            ],
+          })}</cmr>`,
+        ).kind,
+      ).toBe("verdict");
+    });
+  });
+});
+
+describe("integrated CMR pass prompt closure contract", () => {
+  for (const promptName of [
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} makes missing review-leg coverage the worker's positive verdict duty`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+
+      expect(prompt).toMatch(
+        /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*=\s*x[\s\S]*x\s*>=\s*1/i,
+      );
+    });
+
+    it(`${promptName} requires closure arrays on converged output`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+
+      expect(prompt).toContain("claimedFixedFindingIdentityKeys");
+      expect(prompt).toContain("priorFindingDispositions");
+      expect(prompt).toMatch(/empty arrays/i);
+    });
+
+  }
+
+  for (const promptName of [
+    "integrated_cmr_completeness.md",
+    "integrated_cmr_correctness.md",
+  ]) {
+    it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+      // #930: family court examples use <judge> continue envelopes (not <cmr>).
+      const examples = [
+        ...prompt.matchAll(/<judge>(\{[^\n]*"status"\s*:\s*"continue"[^\n]*\})<\/judge>/g),
+      ];
+
+      expect(examples.length).toBeGreaterThan(0);
+      for (const [, rawJson] of examples) {
+        const output = JSON.parse(rawJson) as {
+          readonly status?: string;
+          readonly findings?: readonly {
+            readonly action: string;
+            readonly disposition?: { readonly kind?: string };
+          }[];
+        };
+        expect(output.status).toBe("continue");
+        for (const finding of output.findings ?? []) {
+          if (finding.disposition?.kind === "same_module") {
+            expect(finding.action).toBe("fix_now");
+          }
+        }
+      }
+    });
+  }
+
+  it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
+    const prompt = readFileSync(
+      join(realPromptsDir, "integrated_cmr_completeness.md"),
+      "utf8",
+    );
+
+    expect(prompt).toContain("module_scope");
+    expect(prompt).toContain("runner-supplied metadata");
+    expect(prompt).toContain("not issue-body prose or extra YAML");
+    expect(prompt).toContain("Do not infer");
+  });
+});
+
+// ═══════════════════════ 2. cmrOutcomeFromResult (structured outcome) ═══════════════════════
+
+describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
+  it("a clean-exit typed/stdout verdict parses without any STEP_COMPLETE password", () => {
+    const o = cmrOutcomeFromResult({
+      stdout: `<cmr>${JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      })}</cmr>\nfindings = 0\n`,
+    });
+    expect(o.kind).toBe("verdict");
+    if (o.kind === "verdict") expect(o.converged).toBe(true);
+  });
+
+  it("typed Output.object is the fate channel when present (#928 no signal gate)", () => {
+    const o = cmrOutcomeFromResult({
+      output: {
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      },
+      stdout: "noise without password",
+    });
+    expect(o.kind).toBe("verdict");
+  });
+
+  it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const result = {
+      cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
+      // #899: findingsCount lives on the typed Output.object receipt only.
+      output: {
+        converged: true,
+        findingsCount: 0,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      },
+      stdout: "findings = 99\n",
+    };
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+
+    const o = cmrOutcomeFromResult(result);
+
+    expect(o).toEqual({
+      kind: "verdict",
+      converged: true,
+      findingsCount: 0,
+      successfulLegs: DEFAULT_CMR_LEGS,
+      ...VALID_CMR_VERDICT_FIELDS,
+    });
+  });
+});
+
+// ═══════════════════ 3. dispatchWorker(cmr) — routes the skill + wraps verdict ═══════════════════
+
+describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
+  /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
+  class FixturedCmrBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
+    runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
+    runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
+    // #919 M1/M2 / #930: default Fixtured happy path is live T2 judge green.
+    // Residual kind:verdict without open-count is unusable (never silent clean).
+    outcome: CmrWorkerOutcome = {
+      kind: "judge",
+      status: "converged",
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+    protected override async runCmrWorker(
+      spec: ReturnType<typeof cmrWorkerSpec>,
+      ctx: DispatchContext,
+    ): Promise<CmrWorkerOutcome> {
+      this.runCmrCalls.push({ spec, ctx });
+      return this.outcome;
+    }
+    // #336: a ship spec routes to the ship worker seam (NOT the cmr seam). Fixture it
+    // so this test asserts the routing without a real container / host claude token
+    // (the pre-#336 version relied on a host-side `git push` throwing,
+    // which is now both stale and host-fragile — cmr S336 r9).
+    protected override async runShipWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
+      this.runShipCalls.push({ spec, ctx });
+      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
+    }
+    protected override async runFamilyCoderFixWorker(
+      spec: WorkerSpec,
+      ctx: DispatchContext,
+    ): Promise<WorkerResult> {
+      this.runCoderFixCalls.push({ spec, ctx });
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+  }
+
+  function fixtured(): FixturedCmrBackend {
+    return new FixturedCmrBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+    });
+  }
+
+  it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH clean reviewer cmr soul", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
+    expect(be.runCmrCalls.length).toBe(1);
+    const spec = be.runCmrCalls[0]!.spec;
+    expect(spec.kind).toBe("cmr");
+    expect(spec.skill).toBe("ak-cross-m-review");
+    // FRESH session = a new pass-worker session, not a crash/escalate resume.
+    expect(spec.session).toBe("fresh");
+    // The pass worker is a clean reviewer boundary; blocking findings return to the
+    // runner, which dispatches a separate coder-fix worker.
+    expect(spec.contextRetention).toBe("clean");
+    // #919 S2: family CMR pass seat identity is verify (kind stays cmr).
+    expect(spec.role).toBe("verify");
+    expect(spec.maxIter).toBe(1);
+    expect(spec.soul).toBe("verify");
+  });
+
+  it("lets Sandcastle validate the CMR receipt with its native retry budget", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    const runs: Parameters<typeof sc.run>[0][] = [];
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runs.push(options);
+        const verdict = {
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        };
+        return typedSandboxRunResult(verdict, {
+          stdout: `<cmr>${JSON.stringify(verdict)}</cmr>`,
+        });
+      }
+    }
+    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+    await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
+    expect(runs[0]).toMatchObject({
+      output: expect.objectContaining({ tag: "judge", maxRetries: 2 }),
+    });
+  });
+
+  it("accepts initial-good open-count via real sc.run (no same-session resume)", async () => {
+    // #899 four-case matrix: first emission already valid → one agent call.
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "judge",
+      schema: workerReceiptSchema(),
+      emissions: [{ body: JSON.stringify(good) }],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "sess-cmr-initial-good",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({ findingsCount: 0 });
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
+  });
+
+  it("accepts initial-good decision-gate via real sc.run (no same-session resume)", async () => {
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: DECISION_GATE_TAG,
+      schema: decisionGateSignalSchema,
+      emissions: [{ body: JSON.stringify(good) }],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "sess-decision-initial-good",
+      cleanups,
+    });
+    expect(result.output).toEqual(good);
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
+  });
+
+  it("classifies Sandcastle's real non-resumable maxRetries error as recovery failure", async () => {
+    // #899: real sc.run rejects maxRetries>0 on providers without sessionStorage.
+    await expect(
+      runScriptedStructuredOutput({
+        tag: "judge",
+        schema: workerReceiptSchema(),
+        emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        resumable: false,
+        name: "grok",
+        cleanups,
+      }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    // String-shape contract remains stable for #598 classification.
+    expect(isReceiptRecoveryFailure(new Error(
+      'output.maxRetries requires an agent provider that supports session resumption. The "grok" provider does not. Use claudeCode, codex, or pi, or set maxRetries to 0.',
+    ))).toBe(true);
+  });
+
+  it("classifies non-resumable maxRetries as recovery failure for decision-gate too", async () => {
+    // #899 four-case matrix: both typed signals share non-resumable fail-closed.
+    await expect(
+      runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [{ body: JSON.stringify({ escalate: { reason: "r", diagnosis: "d" } }) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        resumable: false,
+        name: "grok",
+        cleanups,
+      }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+  });
+
+  it("propagates StructuredOutputError when native CMR receipt retries are exhausted", async () => {
+    // #899: real sc.run exhaust (initial + maxRetries) throws StructuredOutputError;
+    // the production seam surfaces that single throw → #598 (no fixer).
+    const agentOut: { agent?: ScriptedAgent } = {};
+    try {
+      await runScriptedStructuredOutput({
+        tag: "judge",
+        schema: workerReceiptSchema(),
+        emissions: [
+          { body: JSON.stringify({ findingsCount: -1 }) },
+          { body: JSON.stringify({ findingsCount: -2 }) },
+          { body: JSON.stringify({ findingsCount: -3 }) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-cmr-exhausted",
+        cleanups,
+        agentOut,
+      });
+      expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
+    } catch (err) {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      const soe = err as sc.StructuredOutputError;
+      expect(soe.tag).toBe("judge");
+      expect(soe.sessionId).toBe("sess-cmr-exhausted");
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      // initial attempt + RECEIPT_MAX_RETRIES same-session resumes
+      expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+      expect(agentOut.agent?.resumedSessions).toEqual([
+        undefined,
+        "sess-cmr-exhausted",
+        "sess-cmr-exhausted",
+      ]);
+    }
+
+    // Production boundary: after Sandcastle exhausts, the Action sees one throw.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    const exhausted = new sc.StructuredOutputError("bad output", {
+      tag: "judge",
+      rawMatched: JSON.stringify({
+        converged: false,
+        reason: "review finding survives malformed receipt",
+        findingsCount: 1,
+        successfulLegs: [...DEFAULT_CMR_LEGS],
+        ...VALID_CMR_VERDICT_FIELDS,
+        findings: [{
+          severity: "high",
+          category: "correctness",
+          claim_quote: "reviewer cargo survives",
+          location: "orchestrator/src/family/realFamilyBackend.ts:1606",
+          suggested_fix: "preserve the landing cargo",
+          action: "fix_now",
+        }],
+      }),
+      commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
+    });
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "judge",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        throw exhausted;
+      }
+    }
+    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-exhausted-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).rejects.toBe(exhausted);
+    expect(sandcastleCalls).toBe(1);
+  });
+
+  it("recovers open-count via real Sandcastle same-session maxRetries (bad→good)", async () => {
+    // #899 Testing Decisions: inject recovery sequence at the real sc.run
+    // boundary — first emission fails production schema; same session re-asks
+    // and the second emission succeeds. Intermediate receipts never re-enter
+    // the runner (one sc.run invocation from production's POV).
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "judge",
+      schema: workerReceiptSchema(),
+      emissions: [
+        { body: JSON.stringify({ findingsCount: undefined }) },
+        { body: JSON.stringify(good) },
+      ],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-cmr-reviewer-session",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({ findingsCount: 0 });
+    // initial attempt + one same-session resume
+    expect(agent.callCount).toBe(2);
+    expect(agent.resumedSessions).toEqual([undefined, "same-cmr-reviewer-session"]);
+  });
+
+  it("recovers decision-gate via real Sandcastle same-session maxRetries (bad→good)", async () => {
+    // #899: both typed traffic signals share Output.object maxRetries.
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: DECISION_GATE_TAG,
+      schema: decisionGateSignalSchema,
+      emissions: [
+        { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+        { body: JSON.stringify(good) },
+      ],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-decision-session",
+      cleanups,
+    });
+    expect(result.output).toEqual(good);
+    expect(agent.callCount).toBe(2);
+    expect(agent.resumedSessions).toEqual([undefined, "same-decision-session"]);
+  });
+
+  it("treats misspelled escalate key on open-count as opaque cargo (no re-ask)", async () => {
+    // #899: only the exact `escalate` key is a gate. Near-miss spellings ride
+    // as opaque cargo — no approximate key inference that could false-positive
+    // legitimate cargo keys into a misspelled-gate failure.
+    const payload = {
+      findingsCount: 1,
+      findings: [],
+      escalte: { reason: "typo", diagnosis: "opaque cargo" },
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "judge",
+      schema: workerReceiptSchema(),
+      emissions: [{ body: JSON.stringify(payload) }],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-cmr-combined-misspell-session",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({ findingsCount: 1 });
+    expect(
+      (result.output as { escalate?: unknown }).escalate,
+    ).toBeUndefined();
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
+  });
+
+  it("exhausts decision-gate maxRetries via real sc.run without inventing a gate", async () => {
+    const agentOut: { agent?: ScriptedAgent } = {};
+    try {
+      await runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [
+          { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
+          { body: JSON.stringify({ escalate: { reason: "r" } }) },
+          { body: JSON.stringify({ escalte: { reason: "typo", diagnosis: "key" } }) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-decision-exhausted",
+        cleanups,
+        agentOut,
+      });
+      expect.unreachable("expected StructuredOutputError after decision-gate exhaust");
+    } catch (err) {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect((err as sc.StructuredOutputError).tag).toBe(DECISION_GATE_TAG);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+    }
+  });
+
+  it("recovers open-count via production CMR worker + real sc.run (bad→good)", async () => {
+    // #899: four-case matrix must cross the production worker boundary AND real
+    // sc.run native maxRetries — not only a post-recovery fixture.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        // Production seat must bind open-count SO + maxRetries.
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "judge",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: "judge",
+          schema: workerReceiptSchema(),
+          emissions: [
+            { body: JSON.stringify({ findingsCount: -1 }) },
+            { body: JSON.stringify(good) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-cmr-recover-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-prod-recover-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).resolves.toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+    });
+    // One production sc.run invocation; native same-session resume is inside it.
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(2);
+    expect(agentOut.agent?.resumedSessions).toEqual([
+      undefined,
+      "prod-cmr-recover-session",
+    ]);
+  });
+
+  it("fails open-count non-resumable provider via production CMR worker + real sc.run", async () => {
+    // #899 four-case: unrecoverable provider must surface through production seat.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "judge",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        return (
+          await runScriptedStructuredOutput({
+            tag: "judge",
+            schema: workerReceiptSchema(),
+            emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            resumable: false,
+            name: "grok",
+            cleanups,
+          })
+        ).result;
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run on non-resumable SO failure");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-prod-nonresumable-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(coderFixCalls).toBe(0);
+  });
+
+  it("accepts initial-good open-count at the family CMR production seam", async () => {
+    // #899 four-case matrix (production): first-good typed open-count through
+    // production worker + real sc.run (not a post-hoc fixture).
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "judge",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: "judge",
+          schema: workerReceiptSchema(),
+          emissions: [{ body: JSON.stringify(good) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-cmr-initial-good-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run on initial-good open-count");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-initial-good-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(1);
+    expect(coderFixCalls).toBe(0);
+  });
+
+  it("#598 same-position redispatch on open-count SOE exhaust; zero fixer/next-gate", async () => {
+    // #899: production seat + real sc.run exhaust (initial + maxRetries) →
+    // Action throw → #598 mechanical redispatch at the same fixed position;
+    // never feed empty cargo to fixer / next gate.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    let lastExhaustError: unknown;
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "judge",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        try {
+          await runScriptedStructuredOutput({
+            tag: "judge",
+            schema: workerReceiptSchema(),
+            emissions: [
+              { body: JSON.stringify({ findingsCount: -1 }) },
+              { body: JSON.stringify({ findingsCount: -2 }) },
+              { body: JSON.stringify({ findingsCount: -3 }) },
+            ],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            sessionId: `sess-cmr-soe-598-${sandcastleCalls}`,
+            cleanups,
+          });
+          throw new Error("expected StructuredOutputError after open-count exhaust");
+        } catch (err) {
+          lastExhaustError = err;
+          throw err;
+        }
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run after open-count SOE");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-soe-598-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    const spec = cmrWorkerSpec();
+    await expect(
+      withMechanicalRetry(
+        spec,
+        { familyBase: "fb", cmrPass: "completeness" },
+        async (s, c) => {
+          // Mirror dispatchOrAbort: rethrow Action failure for #598.
+          await be.run(s as ReturnType<typeof cmrWorkerSpec>, c);
+          throw new Error("expected SOE throw");
+        },
+        { rethrowOnExhaustion: true, sleepMs: async () => {} },
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(coderFixCalls).toBe(0);
+    expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
+  }, 20_000);
+
+  it("#598 same-position redispatch on T2 coder SOE exhaust; zero next-gate", async () => {
+    // #899 / #919 M1: T2 coder station receipt SO on the family coder-fix seat
+    // exhausts via real sc.run → Action throw → #598 mechanical redispatch at the
+    // same fixed position. No human-loop park; no next-gate.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    let lastExhaustError: unknown;
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      /** Expose the production coder-fix seat that binds T2 coder receipt SO. */
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: CODER_RECEIPT_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        try {
+          await runScriptedStructuredOutput({
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
+            emissions: [
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "x",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "r",
+                  diagnosis: "",
+                }),
+              },
+            ],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            sessionId: `sess-coder-soe-598-${sandcastleCalls}`,
+            cleanups,
+          });
+          throw new Error("expected StructuredOutputError after T2 coder SO exhaust");
+        } catch (err) {
+          lastExhaustError = err;
+          throw err;
+        }
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run after coder T2 SOE");
+      }
+      protected override async runShipWorker(): Promise<ReturnType<typeof shipOutcomeFromResult>> {
+        nextGateCalls += 1;
+        throw new Error("ship gate must not run after coder T2 SOE");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-soe-598-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    const fixSpec = familyCoderFixWorkerSpec();
+    await expect(
+      withMechanicalRetry(
+        fixSpec,
+        { familyBase: "fb", cmrPass: "completeness" },
+        async (s, c) => be.runFix(s, c),
+        { rethrowOnExhaustion: true, sleepMs: async () => {} },
+      ),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(nextGateCalls).toBe(0);
+    expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
+  }, 20_000);
+
+  it("accepts initial-good T2 coder receipt at the family coder-fix production seam", async () => {
+    // #899 / #919 M1: first-good T2 coder station receipt through production
+    // seat + real sc.run — one agent emission, no repair.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
+    };
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: CODER_RECEIPT_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
+          emissions: [{ body: JSON.stringify(good) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-coder-initial-good-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run on initial-good T2 coder receipt");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-initial-good-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      output: {
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      },
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(1);
+    expect(nextGateCalls).toBe(0);
+  });
+
+  it("recovers T2 coder receipt via production coder-fix + real sc.run (bad→good)", async () => {
+    // #899 / #919 M1: T2 coder receipt re-ask through production seat + real sc.run.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
+    };
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: CODER_RECEIPT_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
+          emissions: [
+            {
+              body: JSON.stringify({
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "",
+                diagnosis: "",
+              }),
+            },
+            { body: JSON.stringify(good) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-coder-recover-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-recover-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      output: {
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      },
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(2);
+    expect(agentOut.agent?.resumedSessions).toEqual([
+      undefined,
+      "prod-coder-recover-session",
+    ]);
+  });
+
+  it("fails T2 coder receipt non-resumable provider via production coder-fix + real sc.run", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    class Backend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: CODER_RECEIPT_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        return (
+          await runScriptedStructuredOutput({
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
+            emissions: [{
+              body: JSON.stringify({
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "r",
+                diagnosis: "d",
+              }),
+            }],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            resumable: false,
+            name: "grok",
+            cleanups,
+          })
+        ).result;
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run on non-resumable SO failure");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-nonresumable-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(nextGateCalls).toBe(0);
+  });
+
+  it("rejects malformed decision-gate and open-count receipts at the Sandcastle schema seam", () => {
+    // #899 Testing Decisions: recovery/exhaust sequences are SO schema + maxRetries.
+    // These safeParse cases are the exact validation Sandcastle runs on each emission.
+    const openCount = workerReceiptSchema();
+    const decision = decisionGateSignalSchema;
+    // First (malformed) emission would force a same-session re-ask.
+    expect(openCount.safeParse({ findings: [] }).success).toBe(false);
+    expect(openCount.safeParse({ findingsCount: -1 }).success).toBe(false);
+    expect(decision.safeParse({ escalate: { reason: "", diagnosis: "" } }).success).toBe(false);
+    expect(decision.safeParse({ escalate: { reason: "r" } }).success).toBe(false);
+    // Recovered second emission succeeds.
+    expect(openCount.safeParse({ findingsCount: 0, findings: [] }).success).toBe(true);
+    expect(
+      decision.safeParse({
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      }).success,
+    ).toBe(true);
+    expect(decision.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects malformed decision gates so Sandcastle re-asks the CMR author", () => {
+    // #899: empty/missing reason+diagnosis must fail the typed boundary.
+    expect(workerReceiptSchema().safeParse({ escalate: {} }).success).toBe(false);
+    expect(workerReceiptSchema().safeParse({
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
+    // Legal findingsCount must not mask a present-but-malformed decision gate.
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 2,
+      escalate: { reason: "", diagnosis: "x" },
+    }).success).toBe(false);
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 2,
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
+    // Near-miss spellings of escalate are opaque cargo — no approximate match.
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 0,
+      escalte: { reason: "typo", diagnosis: "key" },
+    }).success).toBe(true);
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 1,
+      escalatee: { reason: "near-miss", diagnosis: "not a gate" },
+    }).success).toBe(true);
+  });
+
+  it("keeps opaque evidence cargo on an otherwise typed CMR verdict", () => {
+    // #899: only findingsCount is typed; legs/evidence are cargo passthrough.
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 0,
+      evidencePaths: ["cmr/review.json"],
+    }).success).toBe(true);
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 0,
+    }).success).toBe(true);
+    expect(workerReceiptSchema().safeParse({
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+    }).success).toBe(false);
+  });
+
+  it("does not let sidecar bells override a schema-validated typed verdict", () => {
+    // #899: decision gates and open-count come only from Output.object; sidecar
+    // cargo (including malformed escalate) must not enter the human loop.
+    const dir = mkdtempSync(join(tmpdir(), "cmr-recovered-bell-"));
+    const outcomePath = join(dir, ".orchestrator-outcome.json");
+    writeFileSync(outcomePath, JSON.stringify({
+      escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+    }));
+
+    expect(cmrOutcomeFromResult({
+      output: {
+        converged: true,
+        findingsCount: 0,
+        successfulLegs: [...DEFAULT_CMR_LEGS],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+      outcomePath,
+    })).toMatchObject({ kind: "verdict", findingsCount: 0, converged: true });
+  });
+
+  it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(familyCoderFixWorkerSpec(), {
+      familyBase: "feat/330-pure-scheduler",
+      familyIssue: 533,
+      blockingFindingIdentityKeys: ["cmr-key-1"],
+    });
+    expect(be.runCoderFixCalls.length).toBe(1);
+    const { spec, ctx } = be.runCoderFixCalls[0]!;
+    expect(spec.kind).toBe("coder");
+    expect(spec.skill).toBe("/tdd");
+    expect(spec.promptFile).toBe("coder_fix.md");
+    expect(spec.session).toBe("fresh");
+    expect(spec.contextRetention).toBe("retain");
+    expect(ctx.familyIssue).toBe(533);
+    expect(ctx.blockingFindingIdentityKeys).toEqual(["cmr-key-1"]);
+  });
+
+  it("cleans up family coder-fix findings if outcome landing fails", async () => {
+    const repo = realRepo335();
+
+    class FailingOutcomeLandingBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+
+      protected override prepareFamilyCoderOutcomeLanding(): {
+        path: string;
+        sandboxPath: string;
+      } {
+        throw new Error("outcome landing failed");
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "git" && args[0] === "checkout") return "";
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+          return "family-head-before-coder-fix";
+        }
+        return super.sh(file, args, cwd);
+      }
+    }
+
+    const be = new FailingOutcomeLandingBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-landing-fail-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      be.dispatchWorker(
+        familyCoderFixWorkerSpec(),
+        {
+          familyBase: "fb",
+          blockingFindingIdentityKeys: ["cmr-key-1"],
+        },
+        { fixPacketBody: "live: cmr-key-1 (ADR 0138 explicit body)" },
+      ),
+    ).rejects.toThrow("outcome landing failed");
+    expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
+  });
+
+  it.each([
+    [
+      "malformed reviewer",
+      "cmr-reviewer-malformed",
+      "sidecar" as const,
+    ],
+    [
+      "reviewer-declared positive count with empty findings",
+      "cmr-reviewer-empty-findings",
+      "stdout" as const,
+    ],
+  ] as const)(
+    "transports raw reviewer artifacts into family coder-fix findings for %s",
+    (_label, reviewerSessionId, hostKind) => {
+      const repo = realRepo335();
+      // Host-only paths must be materialised into the sandbox cwd so the fixer
+      // container can read them (#899) — write real host files then assert
+      // sandbox-relative names land in the findings JSON.
+      const hostDir = mkDir("raw-reviewer-host-");
+      const hostStdout = join(hostDir, "reviewer.stdout");
+      const hostSidecar = join(hostDir, "reviewer.sidecar");
+      writeFileSync(hostStdout, "reviewer stdout body\n", "utf8");
+      writeFileSync(hostSidecar, JSON.stringify({ findingsCount: 1 }), "utf8");
+      const rawReviewerArtifacts =
+        hostKind === "sidecar"
+          ? {
+              reviewerSessionId,
+              sidecarPath: hostSidecar,
+              statement: "the previous reviewer raw artifacts are here" as const,
+            }
+          : {
+              reviewerSessionId,
+              stdoutPath: hostStdout,
+              statement: "the previous reviewer raw artifacts are here" as const,
+            };
+
+      class FixFindingsBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+        public writeFixFindings(
+          ctx: DispatchContext,
+          landing: WorkerLandingPayload,
+        ): { path: string; sandboxPath: string } {
+          return this.writeFamilyFixFindingsFile(ctx, landing);
+        }
+      }
+
+      const be = new FixFindingsBackend({
+        workingRepo: repo,
+        familyBase: "fb",
+        ledgerDir: mkDir("family-coder-raw-artifacts-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+      });
+
+      const landing = be.writeFixFindings(
+        { familyBase: "fb", blockingFindingIdentityKeys: [] },
+        { blockingFindings: [], rawReviewerArtifacts },
+      );
+
+      const written = JSON.parse(readFileSync(landing.path, "utf8")) as {
+        rawReviewerArtifacts: {
+          reviewerSessionId?: string;
+          stdoutPath?: string;
+          sidecarPath?: string;
+          statement: string;
+        };
+      };
+      expect(written.rawReviewerArtifacts.reviewerSessionId).toBe(reviewerSessionId);
+      expect(written.rawReviewerArtifacts.statement).toBe(
+        "the previous reviewer raw artifacts are here",
+      );
+      if (hostKind === "sidecar") {
+        expect(written.rawReviewerArtifacts.sidecarPath).toBe(
+          ".orchestrator-raw-reviewer.sidecar",
+        );
+        expect(readFileSync(join(repo, ".orchestrator-raw-reviewer.sidecar"), "utf8")).toBe(
+          JSON.stringify({ findingsCount: 1 }),
+        );
+        // Host absolute path must not leak into the findings file.
+        expect(JSON.stringify(written)).not.toContain(hostSidecar);
+      } else {
+        expect(written.rawReviewerArtifacts.stdoutPath).toBe(
+          ".orchestrator-raw-reviewer.stdout",
+        );
+        expect(readFileSync(join(repo, ".orchestrator-raw-reviewer.stdout"), "utf8")).toBe(
+          "reviewer stdout body\n",
+        );
+        expect(JSON.stringify(written)).not.toContain(hostStdout);
+      }
+    },
+  );
+
+  it("a converged verdict ⇒ WorkerResult.completed with T2 judge converged (#930)", async () => {
+    const be = fixtured();
+    // Live seat green is kind:judge status:converged (not residual boolean paper).
+    be.outcome = {
+      kind: "judge",
+      status: "converged",
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("converged");
+    } else {
+      throw new Error("expected completed judge payload");
+    }
+  });
+
+  it("a live red judge verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
+    // Live seat continue is typed kind:judge — residual open-count is not a closer.
+    const be = fixtured();
+    be.outcome = {
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [{ identityKey: "__open_1", action: "live" as const }],
+      // ADR 0138: continue requires authored body (no empty invent at projection).
+      fixPacketBody: "live: __open_1 (fixture continue packet)",
+      findings: [],
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("completed");
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("continue");
+    } else {
+      throw new Error("expected completed judge payload");
+    }
+  });
+
+  it("residual kind:verdict never mints continue — shared unusable paper only (#919 CR S1)", async () => {
+    const be = fixtured();
+    be.outcome = {
+      kind: "verdict",
+      converged: false,
+      reason: "blocking findings remain",
+      findingsCount: 1,
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+
+    // One shared fail-loud paper (kind:reviewer+findingsCount:0) — never
+    // kind:cmr+findingsCount dual and never count-minted judge continue.
+    expect(res).toEqual({
+      kind: "completed",
+      output: {
+        kind: "reviewer",
+        findingsCount: 0,
+        findings: [],
+      },
+    });
+  });
+
+  it("an escalate outcome ⇒ WorkerResult.escalated (model-stuck, not a verdict)", async () => {
+    const be = fixtured();
+    be.outcome = { kind: "escalate", reason: "skill missing", diagnosis: "not on PATH" };
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toContain("skill missing");
+    }
+  });
+
+  it("forwards llmResolvedChildren on the DispatchContext to the cmr worker", async () => {
+    const be = fixtured();
+    await be.dispatchWorker(cmrWorkerSpec(), {
+      familyBase: "fb",
+      llmResolvedChildren: [42, 43],
+    });
+    expect(be.runCmrCalls[0]!.ctx.llmResolvedChildren).toEqual([42, 43]);
+  });
+
+  it("a family worker without familyBase throws (the worker reviews the base diff)", async () => {
+    const be = fixtured();
+    await expect(be.dispatchWorker(cmrWorkerSpec(), {})).rejects.toThrow(/familyBase/);
+  });
+
+  it("the ship worker is NOT handled by the cmr path — routed to the ship worker seam (#336)", async () => {
+    // This slice (#335) owns cmr only. A ship spec routes to the ship worker seam
+    // (dispatchShipWorker → runShipWorker, #336), NOT through runCmrWorker. (The full
+    // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
+    // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
+    const be = fixtured();
+    // Outcome unused for ship routing — keep live-green default (no residual paper).
+    be.outcome = {
+      kind: "judge",
+      status: "converged",
+      successfulLegs: STRONG_LEGS,
+      ...CMR_EVIDENCE,
+    };
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
+    expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
+    expect(be.runCmrCalls.length).toBe(0); // the cmr worker seam was NOT touched
+  });
+});
+
+describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () => {
+  class AuthDispatchBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    config?: {
+      env: Record<string, string>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    };
+    outcomePath?: string;
+
+    constructor(private readonly auth: CmrAuth, workingRepo: string) {
+      super({
+        workingRepo,
+        familyBase: "fb",
+        ledgerDir: mkDir("cmr-auth-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc123",
+      });
+    }
+
+    protected override mountCmrAuth(): CmrAuth {
+      return this.auth;
+    }
+
+    protected override cmrSandbox(
+      auth: CmrAuth,
+      reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+      outcomeLanding?: { path: string; sandboxPath: string },
+      ctx?: Pick<DispatchContext, "billingPool">,
+    ): sc.SandboxProvider {
+      this.config = this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx);
+      return docker(this.config);
+    }
+
+    protected override prepareCmrOutcomeLanding(
+      ctx: DispatchContext,
+    ): { path: string; sandboxPath: string } {
+      const landing = super.prepareCmrOutcomeLanding(ctx);
+      this.outcomePath = landing.path;
+      return landing;
+    }
+
+    protected override async runAgentSandbox(
+      _options: Parameters<typeof sc.run>[0],
+    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      if (this.outcomePath === undefined) throw new Error("missing outcome path");
+      writeFileSync(this.outcomePath, JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...CMR_EVIDENCE,
+      }));
+      return typedSandboxRunResult({
+        converged: true,
+        findingsCount: 0,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      });
+    }
+  }
+
+  async function dispatch(pool: DispatchContext["billingPool"]) {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    const backend = new AuthDispatchBackend({}, repo);
+    await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
+    return { backend };
+  }
+
+  it("#905: production CMR dispatch does not inject GLM_KEY or mount opencode auth", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend } = await dispatch("zai");
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
+  });
+
+  it("#905: non-zai production dispatch also has no opencode transport", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend } = await dispatch(undefined);
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
+  });
+
+  it("#905: codex-pool production CMR dispatch has no opencode mount", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend } = await dispatch("codex-5h");
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
+  });
+});
+
+// ═══════════════════ 4. cmrSandboxConfig — agy auth runtime-mount + codex + claude ═══════════════════
+
+describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
+  /** Expose the protected pure config seam + a canned-auth path. */
+  class ConfigBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    public config(
+      auth: CmrAuth,
+      spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+    ): {
+      imageName: string;
+      env: Record<string, string>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    } {
+      return this.cmrSandboxConfig(auth, spec.cmrReviewLegs!);
+    }
+  }
+
+  function cfgBackend(): ConfigBackend {
+    return new ConfigBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+    });
+  }
+
+  const auth = {
+    codexAuthDir: "/tmp/cmr-codex-auth",
+    agyDir: "/tmp/cmr-agy",
+    claudeToken: "tok-xyz",
+  };
+
+  it("mounts the agy writable dir onto the antigravity token path (the #333 gotcha)", () => {
+    const cfg = cfgBackend().config(auth);
+    const agyMount = cfg.mounts.find((m) => m.sandboxPath === SANDBOX_AGY_DIR);
+    expect(agyMount).toBeDefined();
+    expect(agyMount!.hostPath).toBe("/tmp/cmr-agy");
+    // The agy leg WRITES into its config dir → it must NOT be read-only.
+    expect(agyMount!.readonly).not.toBe(true);
+  });
+
+  it("still mounts codex auth + injects the claude token + cmr soul (all three legs)", () => {
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
+    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("verify");
+    // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
+    // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
+    // (codex #384).
+    expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("mounts isolated grok auth when the CMR route can dispatch grok", () => {
+    const cfg = cfgBackend().config({ ...auth, grokAuthDir: "/tmp/cmr-grok-auth" });
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/tmp/cmr-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
+  });
+
+  it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
+    // The completeness gate grounds against the live issue body via `gh issue view`;
+    // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
+    const cfg = cfgBackend().config({
+      codexAuthDir: "/tmp/cmr-codex-auth",
+      agyDir: "/tmp/cmr-agy",
+      claudeToken: "tok-xyz",
+      ghToken: "gho_cmr",
+    });
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_cmr");
+  });
+
+  it("omits GH_TOKEN when no gh token is present (NOT a hard blocker for cmr — the gate degrades but still runs)", () => {
+    // Unlike ship (which fail-closes on missing gh because it must `gh pr create`),
+    // the cmr worker injects gh only when present and still runs without it.
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
+  });
+
+  it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
+    expect(SANDBOX_AGY_DIR).toBe("/home/agent/.gemini/antigravity-cli");
+  });
+
+  it("a leg whose auth is ABSENT degrades — no mount/env, never a crash (codex cmr R1)", () => {
+    // agy token absent ⇒ no agy mount, but the rest still mount (the 降级链).
+    const noAgy = cfgBackend().config({
+      codexAuthDir: "/tmp/cmr-codex-auth",
+      claudeToken: "tok",
+    });
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(noAgy.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+
+    // claude token absent ⇒ no env var (the Claude Agent leg degrades).
+    const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
+    expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("verify");
+
+    // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
+    // no credential mounts, only the soul env — still no throw (the skill runs and
+    // will degrade/escalate in-container, never a host crash).
+    const none = cfgBackend().config({});
+    expect(none.mounts.length).toBe(2);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("verify");
+  });
+
+  it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env.OPENCLAW_SESSION).toBe("1");
+    expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
+  });
+
+  it("exports the route-selected CMR leg collection to the worker", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const cfg = cfgBackend().config(auth);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.6-sol" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy", optional: true },
+    ]);
+  });
+
+  it("exports frozen CMR legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const cfg = cfgBackend().config(auth, spec);
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
+
+    expect(legs).toEqual([
+      { family: "codex", slug: "gpt-5.6-sol" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy", optional: true },
+    ]);
+  });
+
+  // #768: baked skill `codex-review.sh` reads CMR_CODEX_MODEL (default gpt-5.5)
+  // and CMR_CODEX_EFFORT (default medium). Route labels alone are soft — sandbox
+  // must pin model + effort from the frozen cmrReview codex leg so leg
+  // execution ≡ registry/route authority.
+  it("#768 pins CMR_CODEX_MODEL from the route's cmrReview codex leg (sol)", () => {
+    const solLegs = [
+      { family: "codex", slug: "gpt-5.6-sol" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ] as const;
+    const spec = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: solLegs,
+    };
+    const cfg = cfgBackend().config(auth, spec);
+    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
+    // Plain sol registry row effort is medium — must pin so baked default cannot
+    // silently diverge if the script default ever changes.
+    expect(cfg.env.CMR_CODEX_EFFORT).toBe("medium");
+  });
+
+  // Effort-variant registry slugs must pin CLI model id (gpt-5.6-sol) AND the
+  // registry row's effort — collapsing to model alone drops effort authority.
+  it("#768 pins CMR_CODEX_MODEL + CMR_CODEX_EFFORT for effort-variant codex legs", () => {
+    const lowLegs = [
+      { family: "codex", slug: "gpt-5.6-sol-low" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ] as const;
+    const spec = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: lowLegs,
+    };
+    const cfg = cfgBackend().config(auth, spec);
+    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
+    expect(cfg.env.CMR_CODEX_EFFORT).toBe("low");
+  });
+
+  it("#768 omits CMR_CODEX_MODEL when the frozen legs have no codex review leg", () => {
+    const noCodex = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: [
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
+      ],
+    };
+    const cfg = cfgBackend().config(auth, noCodex);
+    expect(cfg.env.CMR_CODEX_MODEL).toBeUndefined();
+    expect(cfg.env.CMR_CODEX_EFFORT).toBeUndefined();
+  });
+
+  it("#768 drift guard: cmrSandboxConfig source must assign CMR_CODEX_MODEL from the review legs", () => {
+    // Behavioral pin above goes green only while injection works; this source
+    // guard REDS if the env key is deleted or replaced with a hardcoded slug.
+    const source = readFileSync(
+      join(here, "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
+      "utf8",
+    );
+    const fnStart = source.indexOf("protected cmrSandboxConfig(");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    // Extract the ENTIRE method via brace matching — no arbitrary char window
+    // (a fixed slice can spuriously miss the assignment if the function grows).
+    // Signature shape: cmrSandboxConfig(...): { returnType } { body }
+    let i = source.indexOf("(", fnStart);
+    let depth = 0;
+    for (; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    while (i < source.length && /\s/.test(source[i]!)) i++;
+    if (source[i] === ":") {
+      // Skip return-type annotation; the next `{` at nest 0 after type content
+      // is the function body opener.
+      i++;
+      let nest = 0;
+      let started = false;
+      while (i < source.length) {
+        const c = source[i]!;
+        if (c === "{" && nest === 0 && started) break;
+        if (c === "{" || c === "(" || c === "[") {
+          nest++;
+          started = true;
+          i++;
+        } else if (c === "}" || c === ")" || c === "]") {
+          nest--;
+          i++;
+        } else if (/\s/.test(c)) {
+          i++;
+        } else {
+          started = true;
+          i++;
+        }
+      }
+    } else {
+      while (i < source.length && source[i] !== "{") i++;
+    }
+    const bodyOpen = i;
+    expect(source[bodyOpen]).toBe("{");
+    depth = 0;
+    let fnEnd = -1;
+    for (i = bodyOpen; i < source.length; i++) {
+      if (source[i] === "{") depth++;
+      else if (source[i] === "}") {
+        depth--;
+        if (depth === 0) {
+          fnEnd = i + 1;
+          break;
+        }
+      }
+    }
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const fnBody = source.slice(fnStart, fnEnd);
+    // Must match the real assignment/derivation line, not a comment mention alone.
+    // Effort-variant slugs resolve via modelIdForSlug → CLI model id.
+    expect(fnBody).toMatch(
+      /env\.CMR_CODEX_MODEL\s*=\s*modelIdForSlug\(\s*codexReviewLeg\.slug\s*\)/,
+    );
+    // Effort must come from registry row for the slug (not hardcoded).
+    expect(fnBody).toMatch(/CMR_CODEX_EFFORT/);
+    expect(fnBody).toMatch(/resolveModelSlug\s*\(\s*codexReviewLeg\.slug\s*\)/);
+  });
+});
+
+// ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
+
+describe("#335 mountCmrAuth — a missing host credential degrades, never throws", () => {
+  /**
+   * Expose the protected auth-mount seam, with $HOME pointed at an EMPTY dir.
+   * `readGhToken` is stubbed to undefined so the empty-$HOME case is deterministic:
+   * the real `gh auth token` reads the HOST OS keyring (not $HOME), so it would
+   * otherwise leak the host's gh token into a "no creds" assertion.
+   */
+  class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    public auth(): CmrAuth {
+      return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
+    }
+  }
+
+  it("an empty $HOME (no codex/agy/claude creds) ⇒ all-undefined auth, no throw", () => {
+    const emptyHome = mkDir("cmr-empty-home-");
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: emptyHome,
+    });
+    let auth: CmrAuth | undefined;
+    expect(() => {
+      auth = be.auth();
+    }).not.toThrow();
+    expect(auth).toEqual({
+      codexAuthDir: undefined,
+      agyDir: undefined,
+      grokAuthDir: undefined,
+      claudeToken: undefined,
+      ghToken: undefined,
+      providerAuth: { claude: false, grok: false, agy: false },
+    });
+  });
+
+  it("threads the host gh token (readGhToken) into ghToken — the completeness gate's `gh issue view` authority", () => {
+    // A separate backend whose readGhToken yields a present token: mountCmrAuth must
+    // wire it onto CmrAuth.ghToken (cmrSandboxConfig then exports it as GH_TOKEN).
+    class GhAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public auth(): CmrAuth {
+        return this.mountCmrAuth();
+      }
+      protected override readGhToken(): string | undefined {
+        return "gho_host";
+      }
+    }
+    const be = new GhAuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: mkDir("cmr-gh-home-"),
+    });
+    expect(be.auth().ghToken).toBe("gho_host");
+  });
+
+  it("a missing codex/agy source reclaims the mkdtemp dir — no leak on degrade (online review r2, gemini)", () => {
+    // The degrade path leaks pre-fix: mountCmrAuth's mkdtempSync creates the per-run
+    // codex/agy dir, THEN copyFileSync throws ENOENT because the source cred is
+    // absent (the expected degradation, e.g. agy quota-out). codexAuthDir/agyDir
+    // stay undefined, so the caller's finally cleanup never sees the dir — it leaks
+    // under ~/.sc-orchestrator. The catch must rmSync the temp dir it created.
+    const emptyHome = mkDir("cmr-degrade-home-");
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: emptyHome,
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeUndefined();
+    expect(auth.agyDir).toBeUndefined();
+    // The mkdtemp dirs created before the copy threw were reclaimed: no residue.
+    const root = join(emptyHome, ".sc-orchestrator");
+    const residue = existsSync(root) ? readdirSync(root) : [];
+    expect(
+      residue.filter((n) => n.startsWith("cmr-codex-auth-") || n.startsWith("cmr-agy-")),
+    ).toEqual([]);
+  });
+});
+
+// ═══════════════════ 4b-bis. mountCmrAuth — container codex config is minimal, NOT host copy ═══════════════════
+
+describe("#378 mountCmrAuth — writes a minimal danger-full-access config, never copies the host config.toml", () => {
+  class AuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    public auth(): CmrAuth {
+      return this.mountCmrAuth();
+    }
+    protected override readGhToken(): string | undefined {
+      return undefined;
+    }
+  }
+
+  /**
+   * A populated host $HOME with BOTH codex creds AND a host config.toml carrying
+   * host-personal keys (the real bug source: `sandbox_mode = "workspace-write"`
+   * makes the in-container codex try to self-sandbox → nested bwrap fails → cmr
+   * legs degrade to static-only).
+   */
+  function hostHomeWithCodexConfig(): string {
+    const home = mkDir("cmr-host-home-");
+    const codexDir = join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(join(codexDir, "auth.json"), '{"OPENAI_API_KEY":"sk-host"}');
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      [
+        'model = "gpt-5.6-sol"',
+        'sandbox_mode = "workspace-write"',
+        'notify = ["/Users/host/notify.app"]',
+        '[plugins."github@openai-curated"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return home;
+  }
+
+  it("copies auth.json but WRITES a minimal config.toml (danger-full-access, never the host copy)", () => {
+    const be = new AuthBackend({
+      workingRepo: mkDir("cmr-repo-"),
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      home: hostHomeWithCodexConfig(),
+    });
+    const auth = be.auth();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const dir = auth.codexAuthDir as string;
+
+    // Credentials still mirrored.
+    expect(readFileSync(join(dir, "auth.json"), "utf8")).toContain("sk-host");
+
+    // A config.toml was written, and it is the minimal container one.
+    const config = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+
+    // The host config.toml was NOT copied verbatim: host-only keys + the
+    // self-sandbox `workspace-write` mode are absent.
+    expect(config).not.toContain("workspace-write");
+    expect(config).not.toContain("notify");
+    expect(config).not.toContain("plugins");
+  });
+});
+
+// ═══════════════════ 4c. writeCmrFocusFile — exact scope + focus (codex cmr R1 F2/F3) ═══════════════════
+
+describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-resolved focus", () => {
+  /** Expose the focus-file seam over a REAL temp git repo (so the exclude path resolves). */
+  class FocusBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    public focus(ctx: {
+      familyBase: string;
+      llmResolvedChildren?: readonly number[];
+      escalationAnswer?: DispatchContext["escalationAnswer"];
+    }): void {
+      this.writeCmrFocusFile(ctx as never);
+    }
+    public routeFile(pass: "completeness" | "correctness" | undefined): void {
+      const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
+    }
+    public routeFileFromNull(): void {
+      const spec = cmrWorkerSpec("fresh", "correctness");
+      this.writeCmrRouteFile(null as never, spec.cmrReviewLegs!);
+    }
+    public routeFileFromSpec(
+      pass: "completeness" | "correctness",
+      spec: ReturnType<typeof cmrWorkerSpec>,
+    ): void {
+      this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
+    }
+    public onlineLanding(
+      ctx: DispatchContext,
+      landing: NonNullable<Parameters<FocusBackend["writeFamilyOnlineReviewLandingFile"]>[1]>,
+    ): string {
+      return this.writeFamilyOnlineReviewLandingFile(ctx, landing).path;
+    }
+  }
+
+  function realRepo(): string {
+    const repo = mkDir("cmr-focus-repo-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    return repo;
+  }
+
+  it("pins the cut-SHA scope command + names the machine-resolved children", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42, 43] });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    // F3: the exact scope diff is on the recorded cut SHA, NOT main...HEAD.
+    expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
+    // F2: the machine-resolved children are named.
+    expect(body).toContain("#42");
+    expect(body).toContain("#43");
+    // It is git-ignored (info/exclude), so the review never accidentally commits it.
+    const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it("serializes an answered gate into the real online-review landing", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const path = be.onlineLanding(
+      {
+        familyBase: "feat/330-pure-scheduler",
+        escalationAnswer: {
+          event: "escalation_answered",
+          answer: "defer this finding",
+          source: "human",
+        },
+      },
+      {
+        onlineReviewSnapshot: { kind: "offline", findings: [] } as never,
+      },
+    );
+    const payload = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(payload.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      answer: "defer this finding",
+      source: "human",
+    });
+  });
+
+  it("writes the route file pass from dispatch context, not the prompt filename", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.routeFile("correctness");
+    const body = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+    };
+    expect(body.pass).toBe("correctness");
+  });
+
+  it("no recorded cut SHA ⇒ FAIL-CLOSED throw, never a stale-base fallback scope (codex R3)", () => {
+    // The focus file pins the EXACT cut-SHA review-scope diff (prompt contract:
+    // do NOT guess main...HEAD). Emitting a
+    // `main...familyBase` fallback when no cut SHA was recorded would silently
+    // disable that load-bearing scope — the same fail-open the reconcile
+    // `familyBaseStartHead()` predicate refuses (realFamilyBackend.ts:887-895). So
+    // a missing cut SHA must THROW (the gate converts it to not-passed / escalate),
+    // never write a stale-base diff command.
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    expect(() => be.focus({ familyBase: "fb" })).toThrow(/familyBaseStartHead|cut SHA/i);
+    // And it did NOT write a stale-base fallback file.
+    expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
+  });
+
+  it("keeps prior finding state out of the transient focus file", () => {
+    // The focus file is pass-scoped runtime input. It pins ONLY the review scope +
+    // the machine-resolved-child focus; pass/closure accounting travels via the
+    // worker verdict and durable ledger, never a "prior round's findings" prompt
+    // block in this file.
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42] });
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    // The full review-scope diff + the machine-resolved focus are present...
+    expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
+    expect(body).toContain("#42");
+    // ...but NO prior-findings block (the worker remembers within its own session).
+    expect(body).not.toMatch(/Prior round's findings/i);
+    expect(body).not.toMatch(/confirm-resolved/i);
+  });
+
+  it("writes the route-selected CMR review legs beside the focus file", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFile("correctness");
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as unknown;
+    expect(route).toEqual({
+      pass: "correctness",
+      reviewLegs: [
+        { family: "codex", slug: "gpt-5.6-sol" },
+        { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy", optional: true },
+      ],
+    });
+    const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude.split("\n")).toContain(CMR_ROUTE_FILENAME);
+  });
+
+  it("freezes CMR review legs from the worker spec, not later route env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const spec = cmrWorkerSpec("fresh", "correctness");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.routeFileFromSpec("correctness", spec);
+
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      reviewLegs: unknown;
+    };
+    expect(route.reviewLegs).toEqual([
+      { family: "codex", slug: "gpt-5.6-sol" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy", optional: true },
+    ]);
+  });
+
+  it("treats null CMR route context as a legacy route-file write instead of crashing", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    expect(() => be.routeFileFromNull()).not.toThrow();
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
+      pass: string;
+      reviewLegs: unknown;
+    };
+    expect(route.pass).toBe("legacy");
+    expect(route.reviewLegs).toEqual(cmrWorkerSpec("fresh", "correctness").cmrReviewLegs);
+  });
+
+  it("threads a human escalation answer into the CMR focus file", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    be.focus({
+      familyBase: "feat/330-pure-scheduler",
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "continue-same-class",
+        note: "Human says continue the same-class CMR fix loop.",
+      },
+    });
+
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain("Human escalation answer");
+    expect(body).toContain("continue-same-class");
+    expect(body).toContain("Human says continue the same-class CMR fix loop.");
+  });
+});
+
+// ═══════════════════ 4d. runCmrWorker fail-closed on a missing cut SHA (codex R3) ═══════════════════
+
+describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () => {
+  /** Exposes runCmrWorker and traps sc.run so we can prove it is NEVER reached. */
+  class GuardBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    scRunReached = false;
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    protected override writeCmrFocusFile(): void {
+      // If the guard is correct this is never reached; flag it if it is.
+      this.scRunReached = true;
+      throw new Error("writeCmrFocusFile should not run when fail-closed");
+    }
+  }
+
+  it("a cmr worker with NO familyBaseStartHead ⇒ escalate, never spins the container", async () => {
+    const repo = realRepo335();
+    const be = new GuardBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/familyBaseStartHead|cut SHA/i);
+    }
+    // The fail-closed guard returns BEFORE any container / focus-file work.
+    expect(be.scRunReached).toBe(false);
+  });
+
+  it("dispatchWorker routes that fail-closed escalate to a not-passed WorkerResult", async () => {
+    const repo = realRepo335();
+    const be = new GuardBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      // no familyBaseStartHead
+    });
+    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(res.escalation.reason).toMatch(/familyBaseStartHead|cut SHA/i);
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
+    }
+  });
+});
+
+// ═══════ 4e. runCmrWorker fail-closed on a missing Claude WORKER auth (codex R4) ═══════
+
+describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has no auth", () => {
+  /**
+   * The CMR worker is the container's TOP-LEVEL claude (`agent: sc.claudeCode`), so
+   * the Claude OAuth token is not a mere reviewer leg — it is the worker's OWN auth.
+   * A missing token means the worker cannot start and never emits a `<cmr>` verdict;
+   * letting it through would crash out of `sc.run` (NOT a structured escalate),
+   * bypassing verifyCmr's escalate routing. So `runCmrWorker` must escalate BEFORE
+   * spinning the container when `mountCmrAuth().claudeToken` is absent.
+   */
+  class NoClaudeAuthBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    scRunReached = false;
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    // The cut SHA IS recorded (we isolate the Claude-auth guard from the R3 guard).
+    protected override mountCmrAuth(): CmrAuth {
+      // codex/agy present, claude token ABSENT (the worker's own auth missing).
+      return { codexAuthDir: "/x/codex", agyDir: "/x/agy" };
+    }
+    protected override writeCmrFocusFile(): void {
+      this.scRunReached = true;
+      throw new Error("writeCmrFocusFile should not run when the worker has no auth");
+    }
+  }
+
+  it("no Claude worker token ⇒ escalate, never spins the container", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    const be = new NoClaudeAuthBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    if (outcome.kind === "escalate") {
+      expect(outcome.reason).toMatch(/claude|token|auth/i);
+    }
+    expect(be.scRunReached).toBe(false);
+  });
+
+  it("dispatchWorker routes the no-auth escalate to a not-passed WorkerResult", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    const be = new NoClaudeAuthBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const res = await be.dispatchWorker(legacyClaudeCmrSpec(), { familyBase: "fb" });
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
+    }
+  });
+});
+
+function realRepo335(): string {
+  const repo = mkDir("cmr-guard-repo-");
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  return repo;
+}
+
+// The live CMR worker is now Codex. Keep this direct legacy spec only to cover
+// the conditional Claude-auth guard for replayed historical worker records.
+function legacyClaudeCmrSpec(): ReturnType<typeof cmrWorkerSpec> {
+  return { ...cmrWorkerSpec(), model: "opus" };
+}
+
+// ═══════ 4f. runCmrWorker reclaims its per-run temp auth dirs (online review r1) ═══════
+
+describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", () => {
+  /**
+   * `mountCmrAuth` creates per-run codex/agy temp dirs that are only needed for the
+   * lifetime of the mounted container run. They must be reclaimed on EVERY exit —
+   * including the early claude-token escalate (which never reaches sc.run). 3 bots
+   * flagged the leak; the try/finally in runCmrWorker is the fix.
+   */
+  class ReclaimBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+    constructor(opts: ConstructorParameters<typeof RealFamilyBackend>[0], private readonly dirs: CmrAuth) {
+      super(opts);
+    }
+    public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+      return this.runCmrWorker(spec, ctx);
+    }
+    // Real on-disk dirs but NO claude token ⇒ the early escalate fires; the finally
+    // must still reclaim the two dirs.
+    protected override mountCmrAuth(): CmrAuth {
+      return this.dirs;
+    }
+  }
+
+  it("the early no-claude-auth escalate removes codex, agy, and grok temp dirs", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const codexDir = mkDir("reclaim-codex-");
+    const agyDir = mkDir("reclaim-agy-");
+    const grokDir = mkDir("reclaim-grok-");
+    expect(existsSync(codexDir)).toBe(true);
+    expect(existsSync(agyDir)).toBe(true);
+    expect(existsSync(grokDir)).toBe(true);
+
+    const be = new ReclaimBackend(
+      {
+        workingRepo: realRepo335(),
+        familyBase: "fb",
+        ledgerDir: mkDir("cmr-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc123",
+      },
+      { codexAuthDir: codexDir, agyDir, grokAuthDir: grokDir }, // no claudeToken ⇒ early escalate
+    );
+
+    const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
+    expect(outcome.kind).toBe("escalate");
+    // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
+    expect(existsSync(codexDir)).toBe(false);
+    expect(existsSync(agyDir)).toBe(false);
+    expect(existsSync(grokDir)).toBe(false);
+  });
+
+  it("uses Sandcastle's typed CMR receipt when the sidecar cargo is malformed, then removes it", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+    class OutcomeCleanupBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public calls = 0;
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.calls += 1;
+        expect(options.output).toEqual(expect.objectContaining({ tag: "judge", maxRetries: 2 }));
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(
+          outcomePathAtRun,
+          JSON.stringify({ converged: "not-a-verdict" }),
+          "utf8",
+        );
+        return typedSandboxRunResult({
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        }, {
+          stdout: "compatibility tag intentionally absent",
+        });
+      }
+    }
+    const be = new OutcomeCleanupBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-outcome-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+      successfulLegs: DEFAULT_CMR_LEGS,
+    });
+    expect(be.calls).toBe(1);
+    expect(outcomePathAtRun).toBeDefined();
+    expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+
+  it("attaches T2 coder station receipt SO for family coder; cargo stays opaque", async () => {
+    // #899 / #919 M1: T2 coderStationReceiptSchema is attached; malformed
+    // committed cargo siblings stay opaque and do not invent refuse traffic.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+
+    class FamilyCoderReceiptBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public calls: Parameters<typeof sc.run>[0][] = [];
+      public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
+      protected override prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
+        const landing = super.prepareFamilyCoderOutcomeLanding();
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.calls.push(options);
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
+        return {
+          branch: "fb",
+          stdout: "family coder finished with opaque sidecar cargo",
+          commits: [],
+          iterations: [{ sessionId: "family-coder-malformed" }],
+          // Valid T2 completed traffic; committed cargo remains opaque/tolerant.
+          output: { station: "familyCoderFix", status: "completed" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const be = new FamilyCoderReceiptBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-receipt-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).resolves.toMatchObject({
+      kind: "completed",
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+    expect(be.calls).toHaveLength(1);
+    expect(be.calls[0]!.output).toMatchObject({
+      tag: CODER_RECEIPT_TAG,
+      maxRetries: 2,
+    });
+    expect(be.calls[0]!.resumeSession).toBeUndefined();
+  });
+
+  it("keeps a single family coder invocation when sidecar cargo is absent", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    class NoSessionBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public calls = 0;
+      public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.calls += 1;
+        // Legal T2 completed traffic; cargo sidecar may still be empty.
+        return typedSandboxRunResult({
+          station: "familyCoderFix",
+          status: "completed",
+        });
+      }
+    }
+    const be = new NoSessionBackend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("family-coder-no-session-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+
+    await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).resolves.toMatchObject({
+      kind: "completed", output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+    expect(be.calls).toBe(1);
+  });
+
+  it("fails family coder-fix when typed decision Output.object is absent", async () => {
+    // #899: SO seat without result.output must not become cargo/no-gate success.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    class MissingTypedBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        return sandboxRunResult();
+      }
+    }
+    const be = new MissingTypedBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-missing-typed-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).rejects.toThrow(
+      /typed traffic signal missing/,
+    );
+  });
+
+  it("fails family CMR when typed open-count Output.object is absent", async () => {
+    // #899: cargo/sidecar must not substitute for a missing typed receipt.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+
+    class MissingTypedCmrBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(
+          outcomePathAtRun,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        // Sidecar cargo present but typed SO missing → fail for #598.
+        return sandboxRunResult({
+          stdout: `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
+        });
+      }
+    }
+
+    const be = new MissingTypedCmrBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-missing-typed-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).rejects.toThrow(/typed traffic signal missing/);
+  });
+
+  it("a prepared but blank CMR outcome sidecar still uses the typed receipt", async () => {
+    // #899: blank sidecar is cargo-only; fate comes from typed Output.object.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+
+    class BlankSidecarBackend extends RealFamilyBackend {
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        expect(readFileSync(outcomePathAtRun, "utf8")).toBe("");
+        const verdict = {
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        };
+        return typedSandboxRunResult(verdict, {
+          stdout: `<cmr>${JSON.stringify(verdict)}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
+        });
+      }
+    }
+
+    const be = new BlankSidecarBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-blank-sidecar-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      findingsCount: 0,
+      successfulLegs: DEFAULT_CMR_LEGS,
+    });
+  });
+});
+
+// ═══════════════════ 5. deleted-fanout regression ═══════════════════
+
+describe("#335 the runner-internal 3-CLI 手搓 is DELETED", () => {
+  it("familyDriver no longer exports the 3-leg reviewer fan-out symbols", async () => {
+    const mod = await import("../../../src/familyDriver.js");
+    const m = mod as Record<string, unknown>;
+    expect(m.DriverFamilyBackend).toBeUndefined();
+    expect(m.reviewerPrompt).toBeUndefined();
+    expect(m.parseReviewerVerdict).toBeUndefined();
+    expect(m.aggregateCmr).toBeUndefined();
+    expect(m.reviewerLegFromOutput).toBeUndefined();
+  });
+});

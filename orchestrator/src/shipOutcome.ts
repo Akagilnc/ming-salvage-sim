@@ -2,230 +2,147 @@
  * shipOutcome.ts — classify the ship WORKER's `<ship>` tag (#336).
  *
  * The ship step is a WORKER invoking `gstack-ship` (ADR 0026 / PRD #330 R2),
- * replacing the inline `RealBackend.push` (single slice) + family `openFamilyPr`.
+ * replacing the family backend's former inline PR delivery.
  * `gstack-ship` does more than push+PR (base merge / tests / diff review / VERSION
- * / CHANGELOG + STOP/HITL), so the worker's outcome is a discriminated union the
- * full {@link WorkerResult} mapping needs — NOT just success/error.
+ * / CHANGELOG + STOP/HITL), so the worker's outcome transports delivery cargo or
+ * the worker's decision bell.
  *
  * The worker reruns rerun-able failures itself (per the user's note: gstack-ship
  * offers rerun on internal review/test flakes → "有 rerun 自己 rerun" = autonomy);
  * only a GENUINE block (a merge conflict it cannot resolve, a review ASK, a hard
- * defect needing a human decision) is `escalate`. A hard, non-rerun ship/test
- * failure is `failed`. Mirrors #335's `parseCmrOutcome` / `cmrOutcomeFromResult`.
+ * defect needing a human decision) is `escalate`. All other clean-exit text is
+ * cargo and cannot alter process fate.
  *
- * Both the single-slice ship worker (RealBackend) and the family ship worker
- * (RealFamilyBackend) emit the SAME `<ship>` tag and reuse this parser.
+ * The family ship worker (RealFamilyBackend) emits this `<ship>` tag.
  */
 
-import { z } from "zod";
-import { readRequiredWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
+import { decodeShipEnvelope } from "./stationReceiptContracts.js";
+import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
+import type { Escalation } from "./types.js";
 
 /**
- * The classified outcome of a ship WORKER's run (#336). One of:
+ * The transported outcome of a cleanly exited ship WORKER (#336). One of:
  *   - `shipped`   — a PR opened (`status:"pr_opened"`, `pr` set) or a push landed
- *     (`status:"pushed"`) — the normal success the consumer routes to S8(success);
+ *     (`status:"pushed"`) — the normal success the consumer routes to S8(completed);
  *   - `escalate`  — a genuine block (merge conflict the skill cannot resolve / a
  *     review ASK / a hard defect a human must decide) → the runner's escalate续跑
  *     fork (NOT a rerun-able flake — the worker reruns those itself);
- *   - `failed`    — a ship command / the tests hard-failed and no rerun cleared it
- *     (the delivery could not complete);
- *   - `malformed` — no parseable `<ship>` tag / no completion signal — the gate must
- *     never read it as a success (fail-closed).
+ *   - `completed` — no decision bell and no useful delivery cargo.
  */
 export type ShipWorkerOutcome =
+  | { readonly kind: "completed" }
   | {
       readonly kind: "shipped";
-      readonly branch: string;
-      readonly status: string;
+      readonly branch?: string;
+      /**
+       * Opaque delivery status token from cargo when present — free-form
+       * string, never synthesized. Fate is exit code + typed decision gate
+       * only (#899 / ADR 0131).
+       */
+      readonly status?: string;
+      /** Optional delivery cargo — never gates clean exit (#899). */
       readonly pr?: string;
     }
-  | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
-  | { readonly kind: "failed"; readonly reason: string; readonly diagnosis: string }
-  | { readonly kind: "malformed"; readonly reason: string };
-
-/** The ship worker's completion signal (matches prompts/ship.md + family_ship.md). */
-export const SHIP_COMPLETION_SIGNAL = "SHIP_STEP_COMPLETE";
+  | {
+      readonly kind: "escalate";
+      readonly reason: string;
+      readonly diagnosis: string;
+      readonly escalation?: Escalation;
+    };
 
 /**
  * A genuinely non-empty string (rejects `""` and whitespace-only). Mirrors
- * validate.ts `isFilledString` — the escalate/failed contract (both prompts) is
- * `{reason: non-empty string, diagnosis: non-empty string}`, so a garbage
- * escalate/failed (`{}`, wrong types, blank strings) is NOT a real verdict and
- * must NOT be coerced into a structured escalate/failed (cmr S336 r2, F2). Also
- * the family consumer's defense-in-depth `pr` belt (realFamilyBackend).
+ * validate.ts `isFilledString`. Used by the downstream delivery-cargo consumer.
  */
 export function isFilledString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
 /**
- * A genuinely non-empty string at the SCHEMA layer (cmr S336 r3): trimmed,
- * min-length 1 — rejects `""` and whitespace-only `branch` / `pr` / `reason` /
- * `diagnosis`. Centralizes the `isFilledString` rule into the zod shapes below so
- * the success path can no longer leak a blank branch/pr (the r3 F2 fail-open).
- */
-const nonEmpty = z.string().trim().min(1);
-
-/**
- * The four — and ONLY four — `<ship>` shapes (cmr S336 r3 architecture
- * centralization). Each is `.strict()` so any EXTRA key (a mixed success+verdict
- * payload, an off-contract field) is rejected → malformed. This collapses the
- * three previously hand-written guard families (success / escalate / failed) into
- * one declarative discriminated union, closing the whole "too-lax shape leaks the
- * success branch" fail-open class the per-slice cmr kept re-surfacing (r1/r2/r3).
- *
- * Mirrors prompts/ship.md + family_ship.md (the union of the two contracts):
- *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
- *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
- *   3. `{escalate:{reason, diagnosis}}`          — a genuine block;
- *   4. `{failed:{reason, diagnosis}}`            — a hard ship/test failure.
- * All string fields are non-empty (trimmed). `.strict()` is the F3 belt: a
- * `{status:"pr_opened", branch, pr, failed:"…"}` (a success carrying a verdict key)
- * or a `{status:"pushed", branch, pr}` (pushed must not carry pr) no longer slips
- * through to a fabricated success.
- */
-const pushedSchema = z.object({ status: z.literal("pushed"), branch: nonEmpty }).strict();
-const prOpenedSchema = z
-  .object({ status: z.literal("pr_opened"), branch: nonEmpty, pr: nonEmpty })
-  .strict();
-const escalateSchema = z
-  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
-  .strict();
-const failedSchema = z
-  .object({ failed: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
-  .strict();
-
-/**
- * Decide the ship worker outcome from a Sandcastle run result: gate on the
- * completion signal FIRST (mirrors the cmr / merger gate), then parse the `<ship>`
- * tag. Pure (a check on the run-result shape) so the gate is unit-tested without a
- * container. A complete-but-UNSIGNALED run (e.g. `maxIterations` hit mid-ship) is
- * ESCALATE (the safe direction — the worker did not declare it finished, so its
- * verdict is not trusted as a delivery success).
+ * Prefer Sandcastle typed T2 ship envelope for completion/escalate (#919 D /
+ * ADR 0132). Machine sidecar is the opaque delivery-cargo channel only — never
+ * promotes escalation into fate when typed output is absent (#899). Stdout is
+ * telemetry only. Ordinary status/pr cargo uses tolerant field reads only — no
+ * Zod/schema gate and no SO re-ask on cargo shape (PRD #899 / ADR 0131).
  */
 export function shipOutcomeFromResult(result: {
-  completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
+  output?: unknown;
 }): ShipWorkerOutcome {
-  const signal = result.completionSignal;
-  const signaled = Array.isArray(signal)
-    ? signal.includes(SHIP_COMPLETION_SIGNAL)
-    : signal === SHIP_COMPLETION_SIGNAL;
-  if (!signaled) {
-    const actual =
-      signal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${String(signal)}"`;
-    return {
-      kind: "escalate",
-      reason: "ship worker did not fire its completion signal",
-      diagnosis:
-        `expected "${SHIP_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-        `ship run is not trusted as a delivery — escalate, never a fabricated PR)`,
-    };
-  }
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
+  // Typed Output.object is the sole fate channel for completion / escalate.
+  if (result.output !== undefined) {
+    // #919 D / CR N1: T2 ship envelope only — no decision-gate dual fallthrough.
+    // Production decode miss fails closed for #598 (illegal after SO attach).
+    const decoded = decodeShipEnvelope(result.output);
+    if (!decoded.ok) {
+      throw new Error(
+        `ship: illegal ship station receipt: ${decoded.reason}`,
+      );
     }
-  } catch (err) {
-    return {
-      kind: "malformed",
-      reason:
-        `ship worker outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
+    if (decoded.value.status === "escalate") {
+      return {
+        kind: "escalate",
+        reason: decoded.value.reason,
+        diagnosis: decoded.value.diagnosis,
+      };
+    }
+    // completed / shipped traffic: delivery cargo still enriches from sidecar.
+    const cargo = shipCargoFromSidecar(result.outcomePath);
+    if (decoded.value.status === "shipped") {
+      if (cargo.kind === "shipped") return cargo;
+      return { kind: "shipped" };
+    }
+    return cargo;
   }
-  return parseShipOutcome(result.stdout);
+  // No typed signal: exit code is enough for process success. Sidecar may still
+  // enrich delivery cargo (status/pr) but MUST NOT supply escalate (#899).
+  // Production ship attaches SO + requireTypedTrafficSignal before this path.
+  return shipCargoFromSidecar(result.outcomePath);
+}
+
+function shipCargoFromSidecar(outcomePath: string | undefined): ShipWorkerOutcome {
+  try {
+    if (outcomePath !== undefined) {
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
+      if (sidecar !== undefined) {
+        return classifyShipCargoPayload(sidecar);
+      }
+    }
+  } catch {
+    // Unreadable sidecar: do not promote stdout delivery or bells into fate.
+    return { kind: "completed" };
+  }
+  return { kind: "completed" };
 }
 
 /**
- * Parse the ship worker's `<ship>{…}</ship>` outcome from its stdout (#336). Pure so
- * it is unit-tested without a container. The shape mirrors prompts/ship.md +
- * family_ship.md (the union of the two contracts):
- *   - `{"status": "pushed",    "branch": string}`              → shipped (no pr);
- *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);
- *   - `{"escalate": {"reason": string, "diagnosis": string}}`  → escalate;
- *   - `{"failed":   {"reason": string, "diagnosis": string}}`  → failed.
- * Classification is centralized into four `.strict()` zod schemas (cmr S336 r3):
- * each shape is matched by `safeParse`, every string field is non-empty (trimmed),
- * and `.strict()` rejects any extra key. Anything that matches no schema (no tag /
- * invalid JSON / non-object / blank branch or pr / an UNKNOWN status / `pr_opened`
- * missing its `pr` URL / a mixed success+verdict payload / a garbage
- * escalate/failed) → malformed (fail-CLOSED: the gate must never read an ambiguous
- * or off-contract run as a delivery). This one declarative union replaces the
- * earlier hand-written guard families and closes the recurring "too-lax shape leaks
- * the success branch" fail-open class (r1 bare-string status, r2 garbage
- * escalate/failed, r3 blank branch/pr + mixed payloads). Only the LAST `<ship>` tag
- * is read (the worker may iterate / self-rerun).
+ * Delivery-cargo only: opaque sidecar transport. No status enum court, no
+ * trim-based discard, no required-sibling gate, no synthesized status —
+ * process fate is exit code + typed T2 ship envelope only (#899 / ADR 0131 /
+ * #919 CR N1). Known delivery fields are copied as-is when present; missing
+ * fields stay missing so off-shape cargo never becomes a fourth channel.
+ *
+ * #919 CR N1: DELETE parseShipOutcome dual (stdout classifyDecisionGate).
+ * Production fate is {@link shipOutcomeFromResult} + decodeShipEnvelope only.
  */
-export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
-  const re = /<ship>([\s\S]*?)<\/ship>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { kind: "malformed", reason: "ship worker emitted no <ship> tag" };
+function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { kind: "completed" };
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "ship worker <ship> tag was not valid JSON" };
+  const cargo = parsed as Record<string, unknown>;
+  // Opaque transport: no closed status whitelist, no default status. Any
+  // string status + optional branch/pr ride through when present.
+  const status = typeof cargo.status === "string" ? cargo.status : undefined;
+  const branch = typeof cargo.branch === "string" ? cargo.branch : undefined;
+  const pr = typeof cargo.pr === "string" ? cargo.pr : undefined;
+  if (status === undefined && branch === undefined && pr === undefined) {
+    return { kind: "completed" };
   }
-  return classifyShipOutcomePayload(parsed, "ship worker <ship> tag");
-}
-
-function classifyShipOutcomePayload(
-  parsed: unknown,
-  source: string,
-): ShipWorkerOutcome {
-  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
-  // object schemas below reject every non-object, but guard explicitly so the
-  // malformed message stays specific (mirrors parseCmrOutcome / parseMergerOutcome).
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: `${source} was not a JSON object` };
-  }
-  // Centralized classification (cmr S336 r3): try each of the four — and only four —
-  // strict schemas. A `.strict()` match rejects any extra key (a mixed
-  // success+verdict payload, the r3 F3 fail-open) and any blank string field (the
-  // r3 F2 fail-open); a non-object escalate/failed (a string) simply fails to match
-  // and falls through to malformed (never leaking the success branch). Escalate /
-  // failed are tried FIRST — a stuck/failed ship never carries a usable status.
-  const escalate = escalateSchema.safeParse(parsed);
-  if (escalate.success) {
-    return {
-      kind: "escalate",
-      reason: escalate.data.escalate.reason,
-      diagnosis: escalate.data.escalate.diagnosis,
-    };
-  }
-  const failed = failedSchema.safeParse(parsed);
-  if (failed.success) {
-    return { kind: "failed", reason: failed.data.failed.reason, diagnosis: failed.data.failed.diagnosis };
-  }
-  const pushed = pushedSchema.safeParse(parsed);
-  if (pushed.success) {
-    return { kind: "shipped", branch: pushed.data.branch, status: "pushed" };
-  }
-  const prOpened = prOpenedSchema.safeParse(parsed);
-  if (prOpened.success) {
-    return {
-      kind: "shipped",
-      branch: prOpened.data.branch,
-      status: "pr_opened",
-      pr: prOpened.data.pr,
-    };
-  }
-  // No strict schema matched → off-contract (unknown status, blank branch/pr, a
-  // mixed payload, a garbage escalate/failed, …). Fail-CLOSED: the gate must never
-  // read an ambiguous run as a delivery (#336 cmr S336 r1/r2/r3).
   return {
-    kind: "malformed",
-    reason:
-      `${source} matched no valid shape (expected one of: {status:"pushed",branch}, ` +
-      '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis}}, {failed:{reason,diagnosis}} — ' +
-      "non-empty strings, no extra keys)",
+    kind: "shipped",
+    ...(status !== undefined ? { status } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(pr !== undefined ? { pr } : {}),
   };
 }

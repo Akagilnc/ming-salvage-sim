@@ -103,9 +103,9 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
-def test_no_draft_pending_when_no_intent(game, monkeypatch):
+def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
     """LLM 判出「无」拟旨意图 → 不 stage；闲谈不应触发草案。"""
-    db, state, content = game
+    db, state, content = read_game
     _run_conversational_draft(
         db, state, content, monkeypatch,
         player_message="今日天气如何",
@@ -479,9 +479,9 @@ def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeyp
     assert db.list_pending_actions(state.turn) == []
 
 
-def test_secret_order_progress_query_does_not_stage_new_hidden_order(game, monkeypatch):
+def test_secret_order_progress_query_does_not_stage_new_hidden_order(read_game, monkeypatch):
     """“这道密令查到哪了”是查询进展，不是新下密令。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -506,9 +506,9 @@ def test_secret_order_progress_query_does_not_stage_new_hidden_order(game, monke
     assert db.list_pending_actions(state.turn) == []
 
 
-def test_secret_order_chaban_query_does_not_stage_new_hidden_order(game, monkeypatch):
+def test_secret_order_chaban_query_does_not_stage_new_hidden_order(read_game, monkeypatch):
     """“这道密令查办得如何”是查询，不是新建密令。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -939,10 +939,10 @@ def test_pending_directive_count_zero_after_commit(game):
     assert directive_pending == [], "commit 后 pending_directive_count 应为 0"
 
 
-def test_pending_directive_count_zero_without_any_draft(game):
+def test_pending_directive_count_zero_without_any_draft(read_game):
     """无对话式草案时 pending_directive_count 为 0，
     state_payload 不误触发「拟诏」按钮。"""
-    db, state, content = game
+    db, state, content = read_game
     directive_pending = [
         a for a in db.list_pending_actions(state.turn)
         if a["kind"] == "directive"
@@ -1185,9 +1185,9 @@ def test_draft_keyword_overrides_preclassified_appointment(game, monkeypatch):
     assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
 
 
-def test_none_player_message_does_not_crash_draft_probe(game, monkeypatch):
+def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
     """系统生成/空消息路径可能传 player_message=None；拟旨关键词探针必须兜底为无请求。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
@@ -2276,9 +2276,9 @@ def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeyp
     )
 
 
-def test_normal_undo_keeps_valid_decree(game, monkeypatch):
+def test_normal_undo_keeps_valid_decree(read_game, monkeypatch):
     """P1-2 反面：普通撤回（没删 committed draft）不得无谓清空一份有效生成稿。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _active_minister_name(db, content)
     sess = _decree_session(db, state, content)
     sess.last_decree = "诏书：保留有效稿"

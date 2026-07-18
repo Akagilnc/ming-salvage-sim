@@ -165,11 +165,11 @@ def test_simulator_payload_never_contains_secret_orders(game):
     assert "密令" not in payload["data_note"]
 
 
-def test_build_simulator_payload_omits_secret_orders_when_none_are_present(game):
+def test_build_simulator_payload_omits_secret_orders_when_none_are_present(read_game):
     """契约钉 #883：空盘面也不保留公共密令字段这个旁路。"""
     from ming_sim.simulation import build_simulator_payload
 
-    db, state, _ = game
+    db, state, _ = read_game
     payload = build_simulator_payload(state, db, "", "")
     assert "secret_orders" not in payload
 

@@ -1,4 +1,8 @@
+import "./sandcastleCancelSeam.js"; // #1010 choke-point: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
+import { agyAgent, type AgyAgentOptions } from "./agyAgent.js";
+import { grokAgent, type GrokAgentOptions } from "./grokAgent.js";
+import type { BillingPoolId } from "./quotaPoolTable.js";
 
 /**
  * The codex coder slug + its effort. The model id is the bare CLI model string
@@ -7,63 +11,79 @@ import * as sc from "@ai-hero/sandcastle";
 export const CODER_CODEX_SLUG = "gpt-5.6-terra";
 const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
 export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
-export const VERIFY_CODEX_SLUG = "gpt-5.6-terra";
+export const VERIFY_CODEX_SLUG = "gpt-5.6-sol";
+const CLAUDE_HEADLESS_OPTIONS = {
+  permissionMode: "bypassPermissions",
+} as const satisfies sc.ClaudeCodeOptions;
 
-/**
- * Live-officer reasoning effort for verify / CMR workers on the verify Codex
- * slug. Shared by single-slice (`realBackend`) and family (`realFamilyBackend`)
- * so the two paths cannot drift.
- *
- * Returns `"xhigh"` when the slug is {@link VERIFY_CODEX_SLUG} and the context
- * is a verify role, a CMR soul, or a route-smoke key prefixed `verify`/`cmr`.
- */
-export function effortForLiveOfficer(
-  slug: string,
-  context: { readonly role?: string; readonly soul?: string; readonly smokeKey?: string },
-): "xhigh" | undefined {
-  if (
-    slug === VERIFY_CODEX_SLUG &&
-    (context.role === "verify" || context.soul === "cmr" || /^(verify|cmr)/.test(context.smokeKey ?? ""))
-  ) {
-    return "xhigh";
-  }
-  return undefined;
-}
+// Reasoning effort authority = registry row (and route-preset slug selection)
+// only. Never force effort from role/soul/smokeKey at dispatch time — if a seat
+// needs a different effort, give it a registry slug that declares that effort
+// (e.g. gpt-5.6-sol-low / gpt-5.6-sol-high). Owner constitutional ruling
+// 2026-07-16 (#916): deleted effortForLiveOfficer xhigh hard override.
 
-export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
+export type ModelFamily = "claude" | "codex" | "agy" | "other";
 
 export type ModelProviderFactory =
   | "claudeCode"
   | "codex"
-  | "opencode"
+  /** #905: real agy (Antigravity / Gemini) CLI via custom AgentProvider. */
+  | "agy"
   | "copilot"
   | "cursor"
-  | "pi";
+  | "pi"
+  /** #807: real SuperGrok CLI via custom AgentProvider (not sc.pi). */
+  | "grok";
+
+/** Typed host credential availability consumed before a provider is launched. */
+export interface ProviderAuthAvailability {
+  readonly claude: boolean;
+  readonly grok: boolean;
+  /** #905: agy OAuth token presence (container mount required for real agy). */
+  readonly agy: boolean;
+}
+
+/**
+ * Returns the provider-owned missing credential, if any.  This is deliberately
+ * derived from the selected provider, never from worker prose or a model slug.
+ */
+export function unavailableProviderAuth(
+  provider: ModelProviderFactory,
+  availability: ProviderAuthAvailability,
+): "claude" | "grok" | "agy" | undefined {
+  if (provider === "claudeCode" && !availability.claude) return "claude";
+  if (provider === "grok" && !availability.grok) return "grok";
+  if (provider === "agy" && !availability.agy) return "agy";
+  return undefined;
+}
 
 export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "claudeCode",
   "codex",
-  "opencode",
+  "agy",
   "copilot",
   "cursor",
   "pi",
+  "grok",
 ] as const satisfies ReadonlyArray<ModelProviderFactory>;
 
 type ModelProviderOptions =
   | sc.ClaudeCodeOptions
   | sc.CodexOptions
-  | sc.OpenCodeOptions
   | sc.CopilotOptions
   | sc.CursorOptions
-  | sc.PiOptions;
+  | sc.PiOptions
+  | AgyAgentOptions
+  | GrokAgentOptions;
 
 export type ModelSlugRegistryEntry =
   | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
   | { readonly provider: "codex"; readonly model: string; readonly options?: sc.CodexOptions }
-  | { readonly provider: "opencode"; readonly model: string; readonly options?: sc.OpenCodeOptions }
+  | { readonly provider: "agy"; readonly model: string; readonly options?: AgyAgentOptions }
   | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
   | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
-  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions };
+  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions }
+  | { readonly provider: "grok"; readonly model: string; readonly options?: GrokAgentOptions };
 
 type ModelSlugRegistryRow = ModelSlugRegistryEntry & {
   readonly family: ModelFamily;
@@ -74,11 +94,23 @@ type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.Age
 
 const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
   claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
+  // #957: restore Sandcastle-native codex capture + resume. #883 forced
+  // captureSessions:false after capture threw "session not found"; that was a
+  // symptom fix. Host-side CMR legs still use --ephemeral (parallel host
+  // processes share ~/.codex — real collision risk, codex#11435). Inside a
+  // container there is one codex process per worker, so Sandcastle's sc.codex
+  // (no --ephemeral; default captureSessions:true) is correct: sessions land
+  // on disk, capture succeeds, S3→S6 / SO same-session resume works.
   codex: (model, options) => sc.codex(model, options as sc.CodexOptions | undefined),
-  opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
+  // #905: real Antigravity/Gemini CLI — optional-leg degrade when dead; never
+  // substitute opencode/grok under the agy name.
+  agy: (model, options) => agyAgent(model, options as AgyAgentOptions | undefined),
   copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
   cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
+  // Kept for sandcastle-native `pi` CLI (distinct product). grok-build pool does
+  // NOT use this — see POOL_DISPATCH_BINDINGS + grokAgent (#807 owner ruling).
   pi: (model, options) => sc.pi(model, options as sc.PiOptions | undefined),
+  grok: (model, options) => grokAgent(model, options as GrokAgentOptions | undefined),
 };
 
 const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
@@ -102,36 +134,60 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     options: { effort: "medium" },
     family: "codex",
   },
-  // #767 Coder-Rec roster: SuperGrok pool primary coder.
+  // #861 owner order (2026-07-12): a high-effort sol row so the family CMR
+  // coder-fix routes can run sol@high without touching the medium default the
+  // reviewer/verify slots pin.
+  "gpt-5.6-sol-high": {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    options: { effort: "high" },
+    family: "codex",
+    strongLeg: true,
+  },
+  // #916: low-effort sol row for ship/merger/fixer/cleanup/landing seats on
+  // claude-tight (same model string as sol, options.effort:"low").
+  "gpt-5.6-sol-low": {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    options: { effort: "low" },
+    family: "codex",
+    strongLeg: true,
+  },
+  // #905: grok-4.5 always runs the real SuperGrok CLI (provider `grok`).
+  // Never cursor / opencode transit — pool rewrite cannot re-route it.
   "grok-4.5": {
-    provider: "cursor",
+    provider: "grok",
     model: "grok-4.5",
     family: "other",
     strongLeg: true,
   },
   sonnet: {
     provider: "claudeCode",
-    model: "claude-sonnet-4-6",
+    // #789: roster coder id `sonnet-5` → slug `sonnet` must resolve to Sonnet 5
+    // (claude-sonnet-5), matching docs/CODER_ROSTER.md — not the prior 4.6 pin.
+    model: "claude-sonnet-5",
+    options: CLAUDE_HEADLESS_OPTIONS,
+    family: "claude",
+  },
+  // #789 Coder-Rec roster: Claude-pool small-fix backup (same claudeCode pipe).
+  haiku: {
+    provider: "claudeCode",
+    model: "claude-haiku-4-5",
+    options: CLAUDE_HEADLESS_OPTIONS,
     family: "claude",
   },
   opus: {
     provider: "claudeCode",
     model: "claude-opus-4-8",
+    options: CLAUDE_HEADLESS_OPTIONS,
     family: "claude",
     strongLeg: true,
   },
-  "opencode-grok": {
-    provider: "opencode",
-    model: "grok-4.3",
-    family: "opencode",
-    strongLeg: true,
-  },
-  // `agy` is retained as the route-facing family/slug for compatibility, but
-  // it is now backed by the real OpenCode executor instead of a non-runnable
-  // CMR-only label.
+  // #905: real agy CLI. Empty model → agy default (Gemini 3.5 Flash). When the
+  // Gemini consumer leg is dead, optional-leg degrade only — never substitute.
   agy: {
-    provider: "opencode",
-    model: "grok-4.3",
+    provider: "agy",
+    model: "",
     family: "agy",
   },
 };
@@ -169,7 +225,7 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "codex":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "opencode":
+    case "agy":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "copilot":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
@@ -177,29 +233,53 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "pi":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "grok":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
   }
 }
 
-/** #686 / ADR 0124 — billing pool → executable provider channel. */
-export type BillingPoolDispatchId =
-  | "grok-build"
-  | "cursor"
-  | "zai"
-  | "codex-5h";
+/**
+ * Non-throwing registry peek: provider for a known slug, else undefined.
+ * Used by billing-pool inference for effort-variant / non-roster registry rows
+ * that still identify a billing boundary via provider (codex → codex-5h, …).
+ */
+export function providerForModelSlug(
+  slug: string,
+): ModelProviderFactory | undefined {
+  if (typeof slug !== "string" || slug.length === 0) return undefined;
+  return MODEL_SLUG_REGISTRY[slug]?.provider;
+}
 
+/** #686 / ADR 0124 — billing pool → executable provider channel. */
+export type BillingPoolDispatchId = BillingPoolId;
+
+/**
+ * Billing pool → executable provider rewrite. **Partial on purpose (#905 r2):**
+ * empty/retired pools (e.g. `zai` after opencode eviction) MUST omit a binding
+ * so {@link resolveModelSlugForPool} cannot silently rewrite onto another CLI.
+ */
 export const POOL_DISPATCH_BINDINGS: Readonly<
-  Record<BillingPoolDispatchId, ModelProviderFactory>
+  Partial<Record<BillingPoolDispatchId, ModelProviderFactory>>
 > = {
-  "grok-build": "pi",
+  // #807: SuperGrok pool runs the real `grok` CLI (custom AgentProvider), not
+  // sandcastle's `sc.pi()` (different product / flag contract / auth home).
+  "grok-build": "grok",
   cursor: "cursor",
-  zai: "opencode",
+  // zai intentionally absent — no live registry slug after #905; no rewrite.
   "codex-5h": "codex",
+  claude: "claudeCode",
 };
 
 export function isBillingPoolDispatchId(
   value: string | undefined,
 ): value is BillingPoolDispatchId {
-  return value === "grok-build" || value === "cursor" || value === "zai" || value === "codex-5h";
+  return (
+    value === "grok-build" ||
+    value === "cursor" ||
+    value === "zai" ||
+    value === "codex-5h" ||
+    value === "claude"
+  );
 }
 
 /** Resolve a pool-specific provider without changing the roster model id. */
@@ -208,8 +288,14 @@ export function resolveModelSlugForPool(
   pool?: BillingPoolDispatchId,
 ): ModelSlugRegistryEntry {
   const base = resolveModelSlug(slug);
-  if (pool === undefined || POOL_DISPATCH_BINDINGS[pool] === base.provider) return base;
-  return { provider: POOL_DISPATCH_BINDINGS[pool], model: base.model } as ModelSlugRegistryEntry;
+  // #905: grok-4.5 always stays on the SuperGrok CLI — never cursor/opencode transit.
+  if (slug === "grok-4.5") {
+    return { provider: "grok", model: base.model } as ModelSlugRegistryEntry;
+  }
+  // Absent binding (retired/empty pool) → fail-closed: keep registry provider.
+  const binding = pool === undefined ? undefined : POOL_DISPATCH_BINDINGS[pool];
+  if (binding === undefined || binding === base.provider) return base;
+  return { provider: binding, model: base.model } as ModelSlugRegistryEntry;
 }
 
 export function modelFamilyForSlug(slug: string): ModelFamily {
@@ -235,7 +321,7 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   throw new Error(
     `unknown cmr review leg slug "${slug}". Add a runnable worker model to ` +
       `MODEL_SLUG_REGISTRY, or explicitly register a non-worker CMR leg before ` +
-      `using it in ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS.`,
+      `selecting it in a route preset.`,
   );
 }
 
@@ -247,15 +333,33 @@ export function modelIdForSlug(slug: string): string {
   return resolveModelSlug(slug).model;
 }
 
+/**
+ * Sandcastle `Output.object` with maxRetries > 0 requires an agent provider
+ * that supports session resumption (claudeCode / codex / pi). Capability
+ * knowledge lives with the registry row's provider — owner B ruling
+ * 2026-07-16 (#934 W1 first flight): incapable providers attach maxRetries 0.
+ */
+const RESUME_CAPABLE_PROVIDERS: ReadonlySet<string> = new Set([
+  "claudeCode",
+  "codex",
+  "pi",
+  // #955: grokAgent implements the sandcastle sessionStorage contract.
+  "grok",
+]);
+
+export function resumeCapableForSlug(
+  slug: string,
+  pool?: BillingPoolDispatchId,
+): boolean {
+  return RESUME_CAPABLE_PROVIDERS.has(resolveModelSlugForPool(slug, pool).provider);
+}
+
 export function agentForSlug(
   slug: string,
-  codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
   pool?: BillingPoolDispatchId,
 ): sc.AgentProvider {
+  // Effort comes from the registry row for `slug` only — no call-site overlay
+  // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  const options =
-    entry.provider === "codex" && codexEffort !== undefined
-      ? { ...(entry.options ?? {}), effort: codexEffort }
-      : entry.options;
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
 }

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 // Derive paths from the script location + $HOME (gemini #384 R4: no hard-coded
 // absolute home path, so it runs on any machine / for any user).
@@ -19,15 +20,26 @@ const REPO = dirname(ORCH); // the repo root this orchestrator lives in
 // familyDriver) and pin the exact same tag for build.sh (env) + dispatch (imageName).
 // Single source of truth prevents tag mismatch breaking the freshness guarantee.
 console.log("[launcher] #372 unconditional: npx tsc + image build (before dispatch)");
-// Minimal dist clean before tsc: prevents orphaned dist/*.js (from deleted/renamed
-// sources) from being resolved by the later dynamic import. Fresh-dist guarantee.
-execFileSync("rm", ["-rf", "dist"], { cwd: ORCH, stdio: "inherit" });
-execFileSync("npx", ["tsc"], { cwd: ORCH, stdio: "inherit" });
+// #859: build BESIDE the serving dist, then swap. The old "rm -rf dist" +
+// rebuild left dist DELETED whenever any later step threw (missing npx, tsc
+// error) — the serving copy every host worker resolves per-dispatch died with
+// it. Building into dist.new keeps the serving dist intact until the fresh
+// build fully exists; the same fresh-dist guarantee (no orphaned dist/*.js:
+// the swap replaces the whole directory).
+execFileSync("rm", ["-rf", "dist.new", "dist.old"], { cwd: ORCH, stdio: "inherit" });
+execFileSync("npx", ["tsc", "--outDir", "dist.new"], { cwd: ORCH, stdio: "inherit" });
+if (existsSync(join(ORCH, "dist"))) {
+  execFileSync("mv", ["dist", "dist.old"], { cwd: ORCH, stdio: "inherit" });
+}
+execFileSync("mv", ["dist.new", "dist"], { cwd: ORCH, stdio: "inherit" });
+execFileSync("rm", ["-rf", "dist.old"], { cwd: ORCH, stdio: "inherit" });
 
 // Dynamic import AFTER recompile so this process gets fresh dist (static top
 // import would have loaded stale compiled code even after disk rebuild).
 // Import resolver too so launcher + driver share the exact same tag resolution.
-const { runFamilyDriver, resolveImageTag } = await import("./dist/familyDriver.js");
+const { runFamilyDriver, resolveImageTag, familyDriverExitCode } = await import(
+  "./dist/familyDriver.js"
+);
 const imageTag = resolveImageTag(process.env.IMAGE_TAG);
 
 execFileSync("bash", [join(ORCH, "image", "build.sh")], {
@@ -50,9 +62,12 @@ const result = await runFamilyDriver({
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: join(homedir(), ".sc-orchestrator", "dogfood-362-ledger"),
   imageName: imageTag,
-  skillsMount: join(homedir(), ".claude", "skills"),
   // 无 sh override、无 backend factory override = 真编排器 vanilla 跑
 });
 
 console.log("\n===== FAMILY RUN RESULT =====");
 console.log(JSON.stringify(result, null, 2));
+// #942 — public result OS map only: completed→0, parked→2, failed→1.
+const exitCode = familyDriverExitCode(result);
+console.log(`[launcher] exit ${exitCode} (status=${result.status})`);
+process.exit(exitCode);

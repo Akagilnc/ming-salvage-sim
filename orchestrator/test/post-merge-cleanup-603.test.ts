@@ -7,6 +7,7 @@ import {
   assessBranchDeletePrecondition,
   branchTipMatchesMergedHead,
   cleanupResultFromActs,
+  dispatchPostMergeCleanup,
   fetchPaginatedSubIssues,
   runPostMergeCleanup,
   shouldCloseParentIssue,
@@ -16,12 +17,10 @@ import {
 import {
   cleanupResultReclaimEligible,
   shouldReclaimFamilyHost,
-  shouldReclaimSliceHost,
-  sliceCleanupTerminalForReclaim,
 } from "../src/hostReclaim.js";
 import type { FamilyLedgerEntry } from "../src/family/types.js";
 import { isValidCleanupResult } from "../src/reviewLoopOutcome.js";
-import type { CleanupResult, LedgerEntry } from "../src/types.js";
+import type { CleanupResult } from "../src/types.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/603";
@@ -35,6 +34,46 @@ const PR_MERGED = {
   mergedHeadOid: MERGED_HEAD,
   convergedHeadOid: MERGED_HEAD,
 };
+
+describe("#891 offline cleanup dispatch is hermetic", () => {
+  it("does not execute gh when an offline test handle carries cleanup landing", () => {
+    // #941: fake-PR offline hatch deleted from dispatchPostMergeCleanup.
+    // Landing Action injects liveState; unit callers must do the same.
+    const sh = vi.fn<Sh>(() => {
+      throw new Error("injected liveState must not execute host CLI");
+    });
+
+    const result = runPostMergeCleanup({
+      sh,
+      repo: REPO,
+      coveredIssues: [603],
+      prMerged: {
+        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+        prNumber: 603,
+        remoteBranchName: "feat/issue-603",
+        mergedHeadOid: MERGED_HEAD,
+        convergedHeadOid: MERGED_HEAD,
+      },
+      liveState: {
+        state: "MERGED",
+        headOid: MERGED_HEAD,
+        prNumber: 603,
+        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+        headRefName: "feat/issue-603",
+      },
+      fetchIssueState: () => "CLOSED",
+      branchExists: () => false,
+    });
+
+    expect(result).toEqual({
+      kind: "cleanup",
+      terminal: true,
+      ok: true,
+      branchOutcome: "already_gone",
+    });
+    expect(sh).not.toHaveBeenCalled();
+  });
+});
 
 function fakeSh(handlers: Record<string, (args: string[]) => string>): Sh {
   return (file, args) => {
@@ -126,6 +165,25 @@ describe("#603 assessBranchDeletePrecondition", () => {
         mergedHeadOid: MERGED_HEAD,
       }),
     ).toBe("skip_pr_not_merged");
+  });
+
+  it("treats MERGED case/whitespace-insensitively (landing/cleanup shared predicate)", () => {
+    expect(
+      assessBranchDeletePrecondition({
+        prState: "merged",
+        branchExists: true,
+        branchTip: MERGED_HEAD,
+        mergedHeadOid: MERGED_HEAD,
+      }),
+    ).toBe("may_delete");
+    expect(
+      assessBranchDeletePrecondition({
+        prState: "  Merged  ",
+        branchExists: true,
+        branchTip: MERGED_HEAD,
+        mergedHeadOid: MERGED_HEAD,
+      }),
+    ).toBe("may_delete");
   });
 });
 
@@ -234,20 +292,27 @@ describe("#603 runPostMergeCleanup — live verify before act (AC1)", () => {
     expect(result.branchOutcome).toBe("skipped_precondition");
   });
 
-  it("allows offline synthetic MERGED only with explicit ORCHESTRATOR_OFFLINE_REVIEW_POLL=1", () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+  it("#941: liveState injection completes cleanup without gh (no offline env hatch)", () => {
     const closed: number[] = [];
+    const sh = fakeSh({
+      "gh pr view": () => {
+        throw new Error("liveState injection must not call live gh pr view");
+      },
+    });
     const result = runPostMergeCleanup({
-      sh: fakeSh({
-        "gh pr view": () => {
-          throw new Error("offline hatch must not call live gh pr view");
-        },
-      }),
+      sh,
       repo: REPO,
       coveredIssues: [603],
       prMerged: {
         ...PR_MERGED,
         prUrl: "pr://family/offline-cleanup",
+      },
+      liveState: {
+        state: "MERGED",
+        headOid: MERGED_HEAD,
+        prNumber: 603,
+        prUrl: "pr://family/offline-cleanup",
+        headRefName: "feat/issue-603",
       },
       fetchIssueState: () => "OPEN",
       closeIssue: (n) => closed.push(n),
@@ -537,6 +602,56 @@ describe("#603 fetchPaginatedSubIssues", () => {
     expect(calls.some((c) => c.includes("per_page=100"))).toBe(true);
     expect(calls.some((c) => c.includes("page=2"))).toBe(true);
   });
+
+  it("fails closed on missing/non-finite number entries (same class as admission)", () => {
+    const sh = fakeSh({
+      "gh api repos": () =>
+        JSON.stringify([
+          { number: 1, state: "OPEN" },
+          { state: "OPEN" },
+        ]),
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issues entry schema error|missing or non-finite number/i,
+    );
+  });
+
+  it("error indices are contiguous within a multi-entry page (pageOffset + i)", () => {
+    const sh = fakeSh({
+      "gh api repos": () =>
+        JSON.stringify([
+          { number: 1, state: "OPEN" },
+          { number: 2, state: "OPEN" },
+          { state: "OPEN" }, // third entry — index must be 2, not 4
+        ]),
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issue\[2\]: missing or non-finite number/,
+    );
+  });
+
+  it("error indices continue across pages from absolute pageOffset", () => {
+    const sh = fakeSh({
+      "gh api repos": (args) => {
+        if (args.some((a) => /(?:^|[&?])page=1(?:&|$)/.test(a))) {
+          return JSON.stringify(
+            Array.from({ length: 100 }, (_, i) => ({
+              number: i + 1,
+              state: "OPEN",
+            })),
+          );
+        }
+        // First entry of page 2 is bad → absolute index 100
+        return JSON.stringify([
+          { state: "OPEN" },
+          { number: 102, state: "OPEN" },
+        ]);
+      },
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issue\[100\]: missing or non-finite number/,
+    );
+  });
 });
 
 describe("#603 CleanupResult terminal vs non-terminal (AC6)", () => {
@@ -567,66 +682,6 @@ describe("#603 CleanupResult terminal vs non-terminal (AC6)", () => {
         ok: true,
       }),
     ).toBe(false);
-  });
-});
-
-describe("#603 host reclaim gate — ledger precondition only (AC5)", () => {
-  const terminalCleanup: CleanupResult = {
-    kind: "cleanup",
-    terminal: true,
-    ok: true,
-    branchOutcome: "deleted",
-  };
-
-  it("reclaims only on success handoff with terminal cleanup ledger row", () => {
-    const ledger: LedgerEntry[] = [
-      { step: "S11", output: terminalCleanup },
-      { step: "S8" },
-    ];
-    expect(sliceCleanupTerminalForReclaim(ledger)).toBe(true);
-    expect(shouldReclaimSliceHost(ledger, "success")).toBe(true);
-  });
-
-  it("does not reclaim on park / failed / malformed cleanup (negative)", () => {
-    const parked: LedgerEntry[] = [
-      {
-        step: "S11",
-        output: { kind: "cleanup", terminal: false, ok: false },
-      },
-    ];
-    expect(sliceCleanupTerminalForReclaim(parked)).toBe(false);
-    expect(shouldReclaimSliceHost(parked, "escalate")).toBe(false);
-
-    const failed: LedgerEntry[] = [
-      {
-        step: "S11",
-        output: { kind: "cleanup", terminal: true, ok: false },
-      },
-    ];
-    expect(sliceCleanupTerminalForReclaim(failed)).toBe(false);
-    expect(shouldReclaimSliceHost(failed, "error")).toBe(false);
-  });
-
-  it("never trusts a worker report without a persisted S11 ledger row", () => {
-    expect(
-      shouldReclaimSliceHost(
-        [{ step: "S8" }],
-        "success",
-      ),
-    ).toBe(false);
-  });
-
-  it("does not reclaim when last cleanup skipped branch delete with residue (tip drift)", () => {
-    const driftCleanup: CleanupResult = {
-      kind: "cleanup",
-      terminal: false,
-      ok: false,
-      branchOutcome: "skipped_tip_drift",
-    };
-    const ledger: LedgerEntry[] = [{ step: "S11", output: driftCleanup }];
-    expect(sliceCleanupTerminalForReclaim(ledger)).toBe(false);
-    expect(shouldReclaimSliceHost(ledger, "success")).toBe(false);
-    expect(cleanupResultReclaimEligible(driftCleanup)).toBe(false);
   });
 });
 

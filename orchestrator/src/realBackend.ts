@@ -20,7 +20,7 @@
  * The container / real-LLM paths (createSandbox/run/resumeSession) are #256's
  * MANUAL smoke (a real container + a real model + a real `gh` is required), NOT
  * the zero-container automated suite. So this file is split:
- *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
+ *   - PURE host-side logic — gh metadata parsing, the auth-mount path
  *     construction, the prompt-content hash, the failedStep attribution, the
  *     resume error fallback decision — is
  *     factored into exported, dependency-light functions
@@ -32,12 +32,6 @@
  * importable and testable without ever starting Docker.
  *
  * ── Manual-smoke checklist additions (integ-cmr 256 r2) ─────────────────────
- *   - F3 clean-room snapshot leak: after S1 `writeSnapshot`, assert the snapshot
- *     is git-ignored in the resident worktree — run, inside the worktree:
- *       `git check-ignore .orchestrator-snapshot.json`  → must print the path
- *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
- *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
- *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  *   - r3 worktree_base_stale: with the local `main` deliberately behind
  *     `origin/main` (e.g. `git reset --hard origin/main~1` on the working clone's
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
@@ -45,8 +39,7 @@
  *     proving the cut derives from the just-fetched remote ref (cutRefFor).
  */
 
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -54,82 +47,197 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  renameSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import "./sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
-import { z } from "zod";
-
+import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import {
-  hasBoundedReopenCondition,
-  hasExplicitAcceptedSuppressionSource,
-} from "./acceptedSuppression.js";
+  extractLastTagBody,
+} from "./lastTaggedJson.js";
+import {
+  classifyDecisionGate,
+  coderReceiptOutput,
+  decodeReviewerOpenCountReceipt,
+  isReceiptRecoveryFailure,
+  logAndRethrowReceiptFailure,
+  requireTypedTrafficSignal,
+  workerReceiptOutput,
+  workerReceiptSchema,
+} from "./receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  JUDGE_RECEIPT_TAG,
+  coderStationReceiptSchema,
+  decodeCoderEnvelope,
+  decodeJudgeVerdict,
+  judgeStationReceiptSchema,
+} from "./stationReceiptContracts.js";
+import {
+  isJudgeSeat,
+  judgeResultFromVerdict,
+  mintJudgeEscalate,
+  projectResidualReviewerToJudge,
+  unusableResidualOpenCountPaper,
+} from "./judgeStation.js";
+
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
+import {
+  execFileAsyncWithTimeout,
+  shWithClock,
+} from "./externalCall.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
-import { findingIdentityKey } from "./findings.js";
+import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
 import {
-  attachSanitizedFindingFamilies,
-  normalizeFindingFamiliesWireAliases,
-} from "./findingFamilies.js";
-import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
+  resumeCapableForSlug,
   CODER_CODEX_SLUG,
-  effortForLiveOfficer,
   isBillingPoolDispatchId,
   modelFamilyForSlug,
   modelIdForSlug,
   modelIsStrongLeg,
   resolveModelSlug,
+  resolveModelSlugForPool,
+  unavailableProviderAuth,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type BillingPoolDispatchId,
   type ModelFamily,
   type ModelProviderFactory,
+  type ProviderAuthAvailability,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
-  modelRouteFingerprint,
   routeSmokeEntries,
-  routeSmokeFailure,
   smokeRouteModels,
-  withRouteSmoke,
   type ResolvedModelRoute,
-  type RouteSmokeStatus,
 } from "./modelRoutes.js";
+import { readMetadataWithRetry } from "./admissionPreflight.js";
 
-export function routeSmokeCacheKey(
-  route: ResolvedModelRoute,
-  sandboxFingerprint: string,
+// ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
+
+/** Fill `prompts/route-smoke.md` `{{NONCE}}` (or a one-line default). */
+export function buildBarePingPrompt(
+  nonce: string,
+  template: string = "Reply with exactly: {{NONCE}}",
 ): string {
-  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+  if (!template.includes("{{NONCE}}")) {
+    throw new Error(
+      "bare-ping prompt template must contain {{NONCE}} placeholder",
+    );
+  }
+  return template.split("{{NONCE}}").join(nonce);
 }
 
-export function routeSmokeToolCallIsEchoOk(event: {
-  readonly type?: unknown;
-  readonly name?: unknown;
-  readonly formattedArgs?: unknown;
-}): boolean {
-  return (
-    event.type === "toolCall" &&
-    typeof event.name === "string" &&
-    /^(bash|shell)$/i.test(event.name) &&
-    typeof event.formattedArgs === "string" &&
-    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
-  );
+export function loadBarePingPromptTemplate(promptsDir: string): string {
+  return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
+}
+
+/**
+ * Credential oracle: stdout is exactly the nonce, or any full line is.
+ * Substring embedding (nonce mid-token) does not count.
+ */
+export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
+  if (nonce.length === 0) return false;
+  const trimmed = stdout.trim();
+  if (trimmed === nonce) return true;
+  return stdout.split(/\r?\n/).some((line) => line.trim() === nonce);
+}
+
+export interface BarePingArgv {
+  readonly file: string;
+  readonly args: readonly string[];
+  /** When set, fed on stdin (codex `exec … -` pattern). */
+  readonly input?: string;
+}
+
+/**
+ * One-shot host CLI argv per provider. Empty-cwd / no docker / no tool loop —
+ * ignition only answers "is this credential alive?".
+ */
+export function barePingArgv(
+  provider: ModelProviderFactory,
+  model: string,
+  prompt: string,
+): BarePingArgv {
+  switch (provider) {
+    case "codex":
+      // README auth probe: `echo "…" | codex exec --skip-git-repo-check -m <model> -`
+      return {
+        file: "codex",
+        args: ["exec", "--skip-git-repo-check", "--ephemeral", "-m", model, "-"],
+        input: prompt,
+      };
+    case "claudeCode":
+      return {
+        file: "claude",
+        args: [
+          "-p",
+          prompt,
+          "--model",
+          model,
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+      };
+    case "agy": {
+      // #905 / #915: shared helper with agyAgent — prompt is the --print value
+      // only (agy 1.1.2 rejects empty --print; no stdin delivery channel).
+      return {
+        file: "agy",
+        args: agyPrintInvocation(model, prompt),
+      };
+    }
+    case "grok":
+      // Align with grokAgent headless: prompt on stdin (not -p argv).
+      // Plain text (no streaming-json) so barePingNonceSatisfied still sees the nonce line.
+      return {
+        file: "grok",
+        args: [
+          "--prompt-file",
+          "/dev/stdin",
+          "-m",
+          model,
+          "--always-approve",
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+        input: prompt,
+      };
+    case "cursor":
+      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
+      return {
+        file: "agent",
+        args: ["-p", prompt, "--model", model, "--print"],
+      };
+    case "copilot":
+      return {
+        file: "copilot",
+        args: ["-p", prompt, "--model", model],
+      };
+    case "pi":
+      return {
+        file: "pi",
+        args: ["-p", prompt, "--mode", "json", "--model", model],
+      };
+  }
 }
 export {
   agentForSlug,
@@ -147,52 +255,31 @@ import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
-import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
-import {
-  handleIdleThreshold,
-  isAgentIdleTimeoutError,
-  QuotaWaitForResetError,
-  runPoolProbe,
-  type HandleIdleThresholdResult,
-  type QuotaPoolId,
-  type QuotaProbeResult,
-  type QuotaWaitForResetLedgerEvent,
-} from "./quotaProbe.js";
+import { legacyDispatchWorker } from "./dispatchWorker.js";
+import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "./shipOutcome.js";
-import {
-  WORKER_OUTCOME_REPO_FILE,
-  WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
+
 import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
+  CoderOutput,
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   StepId,
   StepOutput,
   StepResult,
   StepSoul,
   StepSpec,
-  RepairEvidence,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -200,27 +287,14 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
-import type {
-  CleanupResult,
-  DocReleaseResult,
-  FixerResult,
-  VerifyResult,
-} from "./types.js";
-
+  configureTelemetryFromWorkerImage,
+  durableTelemetryDirForSingleSlice,
+} from "./telemetry.js";
 // ════════════════════════════════════════════════════════════════════════════
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
-
-/** The heading that marks an (optional) `## Agent Brief` section — the
- *  most-authoritative part of the spec when present, but not required. */
-const AGENT_BRIEF_HEADING = "## Agent Brief";
+// ── gh issue → IssueMeta parsing ────────────────────────────────────────────
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
 
@@ -276,13 +350,35 @@ export function isClosedIssue(json: GhIssueJson): boolean {
  * `openBlockedBy` = the numbers of blocked_by dependencies whose state is not
  * "closed" (an open upstream the slice would otherwise be cut from a stale base
  * against — PRD #244 S0).
+ *
+ * #934 / trust boundary: when `trustedAuthor` is supplied, issue body is only
+ * exposed for Coder-Rec when the issue author matches repo owner (same
+ * executable-instruction seam as family `readIssueBody`).
  */
 export function buildIssueMeta(
   issueNumber: number,
   json: GhIssueJson,
   blockedBy: ReadonlyArray<GhBlockedBy>,
   subIssueCount: number,
+  opts?: { readonly trustedAuthor?: string },
 ): IssueMeta {
+  const rawBody = typeof json.body === "string" ? json.body : undefined;
+  let body = rawBody;
+  if (body !== undefined && opts?.trustedAuthor !== undefined) {
+    const authorLogin =
+      (typeof json.author?.login === "string" ? json.author.login : undefined) ??
+      (typeof json.user?.login === "string" ? json.user.login : undefined) ??
+      "";
+    const auth = checkExecutableInstructionSource({
+      sourceKind: "issue body",
+      instructionKind: "Coder-Rec",
+      trustedAuthor: opts.trustedAuthor,
+      candidateAuthor: authorLogin,
+    });
+    if (!auth.accepted) {
+      body = undefined;
+    }
+  }
   return {
     number: json.number ?? issueNumber,
     isReadyForAgent: isReadyForAgent(json),
@@ -292,57 +388,12 @@ export function buildIssueMeta(
       .filter((d) => d.state !== "closed")
       .map((d) => d.number),
     // #767: body is cheap (unlike comments) and lets S0 parse Coder-Rec.
-    ...(typeof json.body === "string" ? { body: json.body } : {}),
+    ...(body !== undefined ? { body } : {}),
   };
-}
-
-function actorLogin(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-): string {
-  return carrier?.author?.login ?? carrier?.user?.login ?? "";
 }
 
 function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
-}
-
-/**
- * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
- * repo-owner-authored carriers count; among those, later comments supersede
- * earlier comments and the body. Returns "" when no trusted brief is present —
- * that is a valid slice, not an S0 gate.
- */
-export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
-  // Priority order, LOWEST first: the issue body is the fallback, then comments
-  // in order (newest last). A later carrier overwrites an earlier one, so the
-  // LAST brief-bearing COMMENT wins over both earlier comments and the body
-  // (a re-issued brief supersedes the original) — the body only stands when no
-  // comment carries a brief.
-  const carriers = [
-    { text: json.body ?? "", author: json, sourceKind: "issue body" },
-    ...(json.comments ?? []).map((c) => ({
-      text: c.body ?? "",
-      author: c,
-      sourceKind: "issue comment",
-    })),
-  ];
-  let brief = "";
-  for (const carrier of carriers) {
-    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
-    const sourceCheck = checkExecutableInstructionSource({
-      sourceKind: carrier.sourceKind,
-      instructionKind: "Agent Brief",
-      trustedAuthor: ownerLogin,
-      candidateAuthor: actorLogin(carrier.author),
-    });
-    if (sourceCheck.accepted) {
-      brief = carrier.text;
-    }
-  }
-  return brief;
 }
 
 export interface ExecutableInstructionSourceCheck {
@@ -418,126 +469,51 @@ export function parseSubIssueCount(parsed: { subIssues?: unknown }): number {
 
 /**
  * Parse the native `blocked_by` dependency list from a CONFIRMED API response
- * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array). Keeps only
- * entries with a numeric `number` + string `state`; tolerates a non-array /
- * malformed value by returning `[]` (a future/odd shape must not crash the gate).
+ * (`gh api repos/.../issues/N/dependencies/blocked_by`, a JSON array).
  *
- * IMPORTANT (integ-cmr 256 r2, F2): this is the CONFIRMED-empty path only. The
- * caller does NOT swallow a thrown `gh`/transport error into `[]` — a failed
- * query fails CLOSED (routes to S0 backend error → S8(error)), because returning
- * `[]` on a transient failure would let a blocked-by-open issue slip past the S0
- * gate and run from a stale base missing upstream changes.
+ * Fail-closed (#934 ID-003 / #936): a non-array body or any malformed entry
+ * throws a deterministic schema error — never soft-decodes to "no blockers"
+ * (would admit a child as unblocked). Transport/`gh`/JSON-parse failures stay
+ * on the caller. Only a confirmed empty array is the legal no-dependency result.
  */
 export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .filter(
-      (d): d is { number: number; state: string } =>
-        typeof d?.number === "number" && typeof d?.state === "string",
-    )
-    .map((d) => ({ number: d.number, state: d.state }));
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `blocked_by schema error: expected array, got ${
+        parsed === null ? "null" : typeof parsed
+      }`,
+    );
+  }
+  const out: GhBlockedBy[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const d = parsed[i];
+    if (
+      d !== null &&
+      typeof d === "object" &&
+      typeof (d as { number?: unknown }).number === "number" &&
+      typeof (d as { state?: unknown }).state === "string"
+    ) {
+      out.push({
+        number: (d as { number: number }).number,
+        state: (d as { state: string }).state,
+      });
+      continue;
+    }
+    throw new Error(
+      `blocked_by schema error: malformed entry at index ${i}`,
+    );
+  }
+  return out;
 }
 
 /**
- * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
- * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
- * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the host-written snapshot keeps the audit/resume artifact contract-complete.
- * The worker's execution context is still the live issue it fetches in-container
- * via gh using the runner-injected issue/repo env.
- */
-export function buildIssueSnapshotMeta(
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-): IssueSnapshotMeta {
-  return {
-    title: json.title ?? "",
-    state: json.state ?? "",
-    labels: (json.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
-    subIssueCount,
-    blockedBy: blockedBy.map((d) => ({ number: d.number, state: d.state })),
-  };
-}
-
-/**
- * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
- * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the host-side snapshot is
- * contract-complete (#244 S1 names native metadata as a snapshot element).
- */
-export function buildIssueSnapshot(
-  issueNumber: number,
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-  ownerLogin: string,
-): IssueSnapshot {
-  return {
-    number: json.number ?? issueNumber,
-    body: json.body ?? "",
-    bodyAuthorLogin: actorLogin(json),
-    comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
-    trustedOwnerLogin: ownerLogin,
-    agentBrief: extractAgentBrief(json, ownerLogin),
-    nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
-  };
-}
-
-// ── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-/**
- * The host-fetched clean-room snapshot file, written into the resident worktree
- * as read-only context for the agent. It must NEVER be committed: with
- * `branchStrategy:{type:'head'}` a coder's `git add -A` would otherwise stage it
- * into the reviewed/pushed branch (polluting the shipped artifact). The Backend
- * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
- */
-export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
-
-/**
- * Idempotently ensure `pattern` is present as its own line in a git
- * `info/exclude` file's content. Returns the new content (existing + the pattern
- * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
- * is already an exact line (so repeated S1 resume writes never duplicate it).
+ * Git ref to cut a fresh worktree from (integ-cmr 256 r3 + #936 / #934 ID-009).
  *
- * Pure (string assembly) so the leak-guard decision is unit-tested without git.
- */
-export function ensureExcluded(existing: string, pattern: string): string {
-  const lines = existing.split("\n").map((l) => l.trim());
-  if (lines.includes(pattern)) return existing;
-  // Append on its own line; preserve a trailing newline so the file stays
-  // newline-terminated regardless of the prior content's shape.
-  const base = existing.length === 0 || existing.endsWith("\n")
-    ? existing
-    : existing + "\n";
-  return `${base}${pattern}\n`;
-}
-
-/**
- * The git ref to cut a fresh slice worktree FROM (integ-cmr 256 r3,
- * worktree_base_stale).
- *
- * `ensureBaseRef` runs `git fetch origin <base>`, which updates
- * `refs/remotes/origin/<base>` (and FETCH_HEAD) but does NOT move the local
- * `refs/heads/<base>`. So deriving with the bare local `<base>` could cut from a
- * stale local branch behind upstream — violating #244's "从 main 派生 =
- * up-to-date" invariant and diverging from the spike's explicit
- * `git worktree add … origin/main`. When the fetch succeeded, cut from
- * `origin/<base>` (the just-refreshed remote-tracking ref); only when the fetch
- * failed (offline / a local-only base with no remote) fall back to the local
- * `<base>` so the cut is never blocked.
- *
- * #291 family base: a family base is a LOCAL branch on the dedicated clone (ADR
- * 0022 decision 7) — the merger accumulates each wave's merges onto it, and the
- * next wave's children cut from THAT local branch, NOT `origin/<family-base>`.
- * `localOnly` forces the bare local ref REGARDLESS of `fetchedOk`, so a stale
- * `origin/<family-base>` (e.g. a prior PR's remote branch that still exists, or
- * a `fetch` that happened to resolve it) can never shadow the local family base
- * carrying this run's accumulated waves (agy R1). A standalone single-slice run
- * leaves `localOnly` false, so its `main` cut is byte-identical to before
- * (`origin/main` when fetched, local fallback otherwise).
+ * - `localOnly` (family base): always the bare local ref.
+ * - fetch succeeded: `origin/<base>` (just-refreshed remote-tracking).
+ * - fetch failed with a configured remote: throw — never fall back to a
+ *   stale local base.
+ * - fetch failed with no remote (local-only source): bare local ref.
  *
  * Pure (string assembly) so the ref-selection decision is unit-tested without git.
  */
@@ -545,9 +521,17 @@ export function cutRefFor(
   base: string,
   fetchedOk: boolean,
   localOnly = false,
+  opts: { readonly hasRemote?: boolean } = {},
 ): string {
   if (localOnly) return base;
-  return fetchedOk ? `origin/${base}` : base;
+  if (fetchedOk) return `origin/${base}`;
+  if (opts.hasRemote === true) {
+    throw new Error(
+      `git fetch origin ${base} failed; refusing stale local base fallback ` +
+        `(#936 / #934 ID-009). Repair network/remote and retry.`,
+    );
+  }
+  return base;
 }
 
 /**
@@ -666,6 +650,24 @@ export function issueNumberFromBranch(branch: string): number {
 
 /** Where Sandcastle mounts the codex auth dir inside the container. */
 export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
+/**
+ * Where Sandcastle mounts the grok auth dir inside the container (#807).
+ * Grok CLI reads credentials from `~/.grok/auth.json` under this tree.
+ * The worker image installs a real `/usr/local/bin/grok` binary (not a
+ * symlink into this tree) so the bind-mount does not hide PATH.
+ */
+export const SANDBOX_GROK_DIR = "/home/agent/.grok";
+/**
+ * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
+ * runtime config INSIDE the worker container (#335 / #905). Host file
+ * `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
+ * `antigravity-oauth-token`. Writable (NOT read-only): the agy CLI writes
+ * cache/log/state under its config dir. Host-mirrored auth-mount pattern
+ * matches codex (`SANDBOX_CODEX_DIR`) / grok (`SANDBOX_GROK_DIR`).
+ */
+export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
+/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
+export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -684,14 +686,11 @@ export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
-export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
-/** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
-export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
+/** #937 ephemeral relay brief rendered at dispatch (not a worktree file). */
+export const SANDBOX_RELAY_BRIEF_ENV = "ORCHESTRATOR_RELAY_BRIEF";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
-export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
  * The 2b image BAKES the gh CLI but NO gh auth (a live OAuth secret). gstack-ship
@@ -719,45 +718,13 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  *
- * #683: when this timer DOES fire (or an external monitor hits idle first),
- * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
- * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
+ * #937 / #934 ID-007: when this Sandcastle timer DOES fire it is a hard-clock
+ * failure only — host silence never probes quota, parks, kills, or relays.
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
-/**
- * #683 context threaded beside Sandcastle run options for the internal-timeout
- * fallback. The live CLI monitor owns the normal idle disposition.
- * (Sandcastle does not know this field).
- *
- * `workerPid` is optional at the call site — production dispatch paths leave it
- * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
- * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
- * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
- *
- * 429 fallback semantic: by the time Sandcastle surfaces
- * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
- * fallback may park a quota wall, but never owns hang-kill; live worker kills
- * belong exclusively to the #684 monitor handle.
- */
-export interface QuotaProbeRunContext {
-  /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
-  readonly modelRef: string;
-  readonly step?: StepId;
-  /**
-   * OS pid of the worker process when known. Prefer leaving unset — production
-   * captures it from the sandbox handle mid-run (#684 monitor handle companion).
-   */
-  readonly workerPid?: number;
-  /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
-  readonly worktreePath?: string;
-  readonly issueNumber?: number;
-}
-
-/** Sandcastle run options + optional #683 idle quota-probe context. */
-export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0] & {
-  readonly quotaProbe?: QuotaProbeRunContext;
-};
+/** Sandcastle run options used by production agent-sandbox entry. */
+export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0];
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.
@@ -785,45 +752,290 @@ export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: s
 }
 
 /**
- * Host paths for the per-issue codex auth copy + the claude token (spike
- * contract). codex auth MUST live under $HOME (colima shares $HOME into the
- * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
- * "Permission denied"). The claude leg uses a durable OAuth token env var, not
- * a mount.
+ * #911 — container home environment file (worker-facing CLAUDE.md).
+ * Live-mounted at Claude's user config path; same freshness discipline as souls
+ * (not baked into the image).
+ */
+export const SANDBOX_HOME_CLAUDE_MD = "/home/agent/.claude/CLAUDE.md";
+/** Filename written into the per-issue codex auth dir (replaces host AGENTS.md). */
+export const CODEX_HOME_AGENTS_FILENAME = "AGENTS.md";
+
+/** Default: `image/home/CLAUDE.md` sibling of `image/souls/`. */
+export function homeEnvFileFromSoulsDir(soulsDir: string): string {
+  return join(dirname(soulsDir), "home", "CLAUDE.md");
+}
+
+/** Pure mount spec for the container home CLAUDE.md (#911). */
+export function homeClaudeMount(
+  homeEnvFile: string,
+): { hostPath: string; sandboxPath: string; readonly: true } {
+  return {
+    hostPath: homeEnvFile,
+    sandboxPath: SANDBOX_HOME_CLAUDE_MD,
+    readonly: true,
+  };
+}
+
+/**
+ * Write/replace `AGENTS.md` inside a per-issue codex auth dir with the container
+ * home body so host owner global AGENTS.md never reaches the worker (#911).
+ */
+export function provisionCodexHomeAgents(authDir: string, homeEnvFile: string): void {
+  const dest = join(authDir, CODEX_HOME_AGENTS_FILENAME);
+  copyFileSync(homeEnvFile, dest);
+  chmodSync(dest, 0o644);
+}
+
+/** Append the live home CLAUDE.md mount (idempotent push; caller owns array). */
+export function appendHomeEnvMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  homeEnvFile: string,
+): void {
+  mounts.push(homeClaudeMount(homeEnvFile));
+}
+
+/**
+ * #905 / #335 — single seam for the agy OAuth dir mount.
+ * Best-effort: missing host token ⇒ undefined (caller degrades or fail-closes
+ * when the selected provider is agy). Per-invocation unique dir under `root`
+ * so concurrent workers never share runtime state.
+ */
+export function provisionAgyAuthDir(
+  home: string,
+  root: string,
+  prefix: string,
+): string | undefined {
+  let tempAgyDir: string | undefined;
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    tempAgyDir = mkdtempSync(join(root, prefix));
+    const src = join(home, ".sc-agy-oauth-token");
+    // C8: blank/whitespace-only token must NOT yield a defined agyDir that
+    // skips fail-closed preflight — copy then reject empty bodies.
+    const body = readFileSync(src, "utf8");
+    if (body.trim().length === 0) {
+      rmSync(tempAgyDir, { recursive: true, force: true });
+      return undefined;
+    }
+    copyFileSync(src, join(tempAgyDir, AGY_TOKEN_FILENAME));
+    chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
+    return tempAgyDir;
+  } catch {
+    if (tempAgyDir !== undefined) {
+      rmSync(tempAgyDir, { recursive: true, force: true });
+    }
+    return undefined;
+  }
+}
+
+/** Append agy auth mount when present (writable — agy writes runtime state). */
+export function appendAgyAuthMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  agyDir: string | undefined,
+): void {
+  if (agyDir === undefined) return;
+  mounts.push({ hostPath: agyDir, sandboxPath: SANDBOX_AGY_DIR });
+}
+
+/**
+ * #913 — core credential set shared by family merger / cmr / ship mount*Auth.
+ * Each field is BEST-EFFORT: missing host source ⇒ undefined (caller degrades
+ * or fail-closes per worker policy).
+ */
+export interface FamilyWorkerAuthCore {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
+  /** Per-run agy OAuth dir, or undefined if absent. */
+  readonly agyDir?: string;
+  /** Claude OAuth token body, or undefined if absent/blank. */
+  readonly claudeToken?: string;
+}
+
+/**
+ * #913 — map core credential presence → typed providerAuth (cmr / ship wrappers).
+ * Single derivation; callers must not re-list the claude/grok/agy checks.
+ */
+export function providerAuthFromCore(
+  core: FamilyWorkerAuthCore,
+): ProviderAuthAvailability {
+  return {
+    claude: core.claudeToken !== undefined,
+    grok: core.grokAuthDir !== undefined,
+    agy: core.agyDir !== undefined,
+  };
+}
+
+/**
+ * #945 — path identity for worker credential provision.
  *
- * Pure: builds the paths only — no file I/O. `mountAuth()` does the copy.
+ * - `family`: per-run `mkdtemp` under `~/.sc-orchestrator` + `rolePrefix`;
+ *   missing host codex ⇒ `codexAuthDir` undefined (no always-mount).
+ * - `slice`: stable per-issue dirs via {@link buildAuthPaths}; missing host
+ *   codex still leaves the codex dir with container config + AGENTS (always-mount).
+ */
+export type WorkerAuthPathPolicy =
+  | { readonly kind: "family"; readonly rolePrefix: string }
+  | { readonly kind: "slice"; readonly issueNumber: number };
+
+/**
+ * #945 — single worker-auth provision seam (family ×3 + single-slice mountAuth).
+ *
+ * Credential steps (codex copy / container config / AGENTS / grok / agy / claude)
+ * live here once. Callers inject path-policy only — no twin bodies.
+ */
+export function provisionWorkerAuth(input: {
+  readonly home: string;
+  readonly homeEnvFile: string;
+  readonly pathPolicy: WorkerAuthPathPolicy;
+  readonly codexFast?: boolean;
+}): FamilyWorkerAuthCore {
+  const { home, homeEnvFile, pathPolicy, codexFast = false } = input;
+  const root = join(home, ".sc-orchestrator");
+  // Family fail-soft: unwritable/blocked root must not abort whole provision —
+  // dir-based legs (codex/grok/agy) degrade below; claude token still reads.
+  // Slice always-mount still needs a creatable root and fails in its own leg.
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+  } catch {
+    // continue — per-leg try/catch or slice always-mount mkdir handles the rest
+  }
+
+  const codexAuthDir = provisionCodexAuthDir({
+    home,
+    root,
+    homeEnvFile,
+    codexFast,
+    pathPolicy,
+  });
+
+  let grokAuthDir: string | undefined;
+  let tempGrokDir: string | undefined;
+  try {
+    const grokPrefix =
+      pathPolicy.kind === "family"
+        ? `${pathPolicy.rolePrefix}-grok-auth-`
+        : `grok-auth-${pathPolicy.issueNumber}-`;
+    tempGrokDir = mkdtempSync(join(root, grokPrefix));
+    chmodSync(tempGrokDir, 0o700);
+    copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+    chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+    grokAuthDir = tempGrokDir;
+  } catch {
+    if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+      rmSync(tempGrokDir, { recursive: true, force: true });
+    }
+  }
+
+  const agyPrefix =
+    pathPolicy.kind === "family"
+      ? `${pathPolicy.rolePrefix}-agy-`
+      : `slice-agy-${pathPolicy.issueNumber}-`;
+  const agyDir = provisionAgyAuthDir(home, root, agyPrefix);
+
+  let claudeToken: string | undefined;
+  try {
+    const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    // Present-but-blank ⇒ undefined (preflight escalates); never inject "".
+    claudeToken = tok === "" ? undefined : tok;
+  } catch {
+    claudeToken = undefined;
+  }
+
+  return { codexAuthDir, grokAuthDir, agyDir, claudeToken };
+}
+
+/**
+ * Codex auth dir under path-policy:
+ * - family: mkdtemp; host auth / config / AGENTS fail ⇒ undefined (reclaim half-built dir)
+ * - slice: stable `auth-${issue}`; always return dir (config + AGENTS even without auth.json)
+ */
+function provisionCodexAuthDir(input: {
+  readonly home: string;
+  readonly root: string;
+  readonly homeEnvFile: string;
+  readonly codexFast: boolean;
+  readonly pathPolicy: WorkerAuthPathPolicy;
+}): string | undefined {
+  const { home, root, homeEnvFile, codexFast, pathPolicy } = input;
+
+  // Single write site for config + AGENTS (family + slice share this path).
+  const writeCodexSidecars = (dir: string): void => {
+    // Container is the sandbox boundary — never host config.toml (#378).
+    writeContainerCodexConfig(join(dir, "config.toml"), codexFast);
+    provisionCodexHomeAgents(dir, homeEnvFile);
+  };
+
+  if (pathPolicy.kind === "slice") {
+    const paths = buildAuthPaths(pathPolicy.issueNumber, home);
+    rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
+    // Owner-only dir: holds copied credential material.
+    mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
+    const codexDir = paths.hostCodexAuthDir;
+    try {
+      copyFileSync(paths.srcCodexAuth, join(codexDir, "auth.json"));
+      chmodSync(join(codexDir, "auth.json"), 0o600);
+    } catch {
+      // No host codex auth → still always-mount (config + AGENTS below).
+    }
+    // Slice always-mount: keep dir even if later steps partially succeed.
+    writeCodexSidecars(codexDir);
+    return codexDir;
+  }
+
+  // Family: best-effort fail-soft. Any failure after mkdtemp (auth copy OR
+  // config/AGENTS sidecars) reclaims the temp dir so FamilyWorkerAuthCore can
+  // return codexAuthDir: undefined without leaking `${rolePrefix}-codex-auth-*`.
+  let codexDir: string | undefined;
+  try {
+    codexDir = mkdtempSync(join(root, `${pathPolicy.rolePrefix}-codex-auth-`));
+    copyFileSync(join(home, ".codex", "auth.json"), join(codexDir, "auth.json"));
+    chmodSync(join(codexDir, "auth.json"), 0o600);
+    writeCodexSidecars(codexDir);
+    return codexDir;
+  } catch {
+    if (codexDir !== undefined) {
+      rmSync(codexDir, { recursive: true, force: true });
+    }
+    return undefined;
+  }
+}
+
+/**
+ * #913 — family thin wrapper over {@link provisionWorkerAuth} (merger / cmr / ship).
+ * Role-specific extras (gh token, providerAuth) stay on the mount wrappers.
+ */
+export function provisionFamilyWorkerAuth(input: {
+  readonly home: string;
+  /** mkdtemp name stem — yields `${rolePrefix}-codex-auth-` / `-grok-auth-` / `-agy-`. */
+  readonly rolePrefix: string;
+  readonly homeEnvFile: string;
+  readonly codexFast?: boolean;
+}): FamilyWorkerAuthCore {
+  return provisionWorkerAuth({
+    home: input.home,
+    homeEnvFile: input.homeEnvFile,
+    codexFast: input.codexFast,
+    pathPolicy: { kind: "family", rolePrefix: input.rolePrefix },
+  });
+}
+
+/**
+ * Host paths for the per-issue **stable** codex auth dir (#945 slice path-policy).
+ *
+ * codex auth MUST live under $HOME (colima shares $HOME into the Docker VM;
+ * $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty → "Permission denied").
+ *
+ * Pure: builds the paths only — no file I/O. Materialization (copy + container
+ * config + AGENTS always-mount) lives in {@link provisionWorkerAuth}. Grok /
+ * agy / claude legs use other path builders inside that seam — not this type.
  */
 export interface AuthPaths {
   /** Per-issue host dir holding the codex auth.json copy (under $HOME). */
   readonly hostCodexAuthDir: string;
   /** Source codex auth.json on the host. */
   readonly srcCodexAuth: string;
-  /** Source codex config.toml on the host (best-effort copy). */
-  readonly srcCodexConfig: string;
-  /** Host file holding the durable claude OAuth token. */
-  readonly claudeTokenFile: string;
-}
-
-/**
- * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
- * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
- * + `gh pr create` (needs codex/gh creds) and may run on a Claude-family model
- * (needs its own claude token then) — but each source is OPTIONAL here: a missing
- * source degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
- * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
- */
-export interface ShipAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /**
-   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
-   * env), or undefined if absent. Unlike the codex leg this is NOT best-effort: the
-   * ship worker's happy path pushes + `gh pr create`, both of which need it — so
-   * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
-   */
-  readonly ghToken?: string;
 }
 
 export function buildAuthPaths(
@@ -833,8 +1045,6 @@ export function buildAuthPaths(
   return {
     hostCodexAuthDir: join(home, ".sc-orchestrator", `auth-${issueNumber}`),
     srcCodexAuth: join(home, ".codex", "auth.json"),
-    srcCodexConfig: join(home, ".codex", "config.toml"),
-    claudeTokenFile: join(home, ".sc-claude-token"),
   };
 }
 
@@ -975,9 +1185,9 @@ export function checkOwnGitDir(
  * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
  * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
  * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug
- * and {@link assertCompletionSignal} throws on a missing signal). The mismatch
- * throws → the runner's S8(error) edge, never a silently-mis-souled run.
+ * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
+ * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
+ * run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
  * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
@@ -987,7 +1197,17 @@ export function checkOwnGitDir(
  *
  * Pure (a check on the role/soul pair): unit-tested without a container.
  */
-export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
+export function soulForStep(
+  spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
+): StepSoul {
+  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
+  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
+  if (
+    spec.soul === "verify" &&
+    isJudgeSeat({ id: spec.id })
+  ) {
+    return "verify";
+  }
   const expected: StepSoul =
     spec.role === "reviewer"
       ? "READ-ONLY"
@@ -997,8 +1217,8 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
           ? "fixer"
           : spec.role === "cleanup"
             ? "cleanup"
-            : spec.role === "docRelease"
-              ? "docRelease"
+            : spec.role === "landing"
+              ? "landing"
               : "coder";
   if (spec.soul !== expected) {
     throw new Error(
@@ -1018,12 +1238,6 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /**
-   * The matched completion signal, or `undefined` if no signal fired before the
-   * iteration limit (Sandcastle d.ts). The step-advance gate keys off this — see
-   * {@link assertCompletionSignal}.
-   */
-  readonly completionSignal?: string;
 }
 
 /**
@@ -1046,117 +1260,31 @@ export function lastSessionId(
   return undefined;
 }
 
-/**
- * The number of commits Sandcastle observed on the resident branch during a run
- * = `result.commits.length` (#256 commit-truth). This is the SINGLE SOURCE OF
- * TRUTH the coder path reconciles its self-reported `commitsAdded` against (see
- * {@link reconcileCoderCommits}), reading the {@link RunResultLike.commits} field
- * the Backend previously declared but never consumed. Mirrors
- * {@link lastSessionId}: a tiny accessor so the wiring is unit-tested without a
- * container.
- */
-export function realCommitCount(
-  result: Pick<RunResultLike, "commits">,
-): number {
-  return result.commits.length;
-}
-
-// ── completion-signal gate (ship-pre 256 r1) ────────────────────────────────
-
-/**
- * Assert a step's run fired the EXACT completion signal its {@link StepSpec}
- * declared, BEFORE the caller decodes the output and advances the step.
- *
- * WHY (ship-pre 256 r1, design-compliance / real-Backend wiring): Sandcastle's
- * `RunResult.completionSignal` is "`undefined` if no signal fired before the
- * iteration limit" (sandcastle d.ts). Passing `completionSignal: spec.…` into
- * `run()` only tells the sandbox WHICH string ends the step early — it does NOT
- * make the run fail when the signal never fires. So an agent that emits a
- * complete, schema-valid `<coder>`/`<review>` tag but hits `maxIter` mid-work
- * WITHOUT firing `CODER_STEP_COMPLETE` / `REVIEWER_STEP_COMPLETE` would have its
- * output decoded and the step advanced — violating #244's gate "agent emit
- * completionSignal 才进下一步" (issue body; StepSpec.completionSignal doc
- * "Required so the sandbox knows when to stop"). A totally-missing output
- * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
- * complete-but-UNSIGNALED leak the missing-output throw does not cover.
- *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
- * propagate to the runner's error edge = S8(error) + error package, never a
- * silently-trusted advance. `stepName` is woven into the message so the runner
- * attributes the failure to the right step.
- *
- * Pure (a check on the RunResultLike shape): unit-tested without a container.
- */
-export function assertCompletionSignal(
-  result: Pick<RunResultLike, "completionSignal">,
-  expected: string,
-  stepName: string,
-): void {
-  if (result.completionSignal !== expected) {
-    const actual =
-      result.completionSignal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${result.completionSignal}"`;
-    throw new Error(
-      `realBackend: step ${stepName} did not fire its required completion ` +
-        `signal — expected "${expected}", got ${actual}. The agent must emit ` +
-        `the completion signal to advance the step (#244 "agent emit ` +
-        `completionSignal 才进下一步"); a complete-but-unsignaled run (e.g. ` +
-        `maxIter hit mid-work) does NOT advance.`,
-    );
-  }
-}
-
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
- * Extract + JSON-parse the LAST `<coder>…</coder>` tag from a coder step's
- * stdout.
+ * Extract + JSON-parse the LAST `<tag>…</tag>` from a worker step's stdout.
  *
- * WHY a stdout tag (not Sandcastle's typed `output`): a coder step runs with
- * `maxIterations = StepSpec.maxIter > 1` (the within-step Ralph retry budget),
- * but Sandcastle's `output` definition REQUIRES `maxIterations === 1`
- * (d.ts: "maxIterations must be 1"). So the coder step cannot use the typed
- * `output` path — `result.output` is `undefined` and `coderOutputSchema.parse`
- * would throw a ZodError on every coder step (the wiring bug this fixes). The
- * coder instead emits its structured result in a `<coder>` tag in stdout, mirroring
- * Sandcastle's own tag-in-stdout extraction (fence-aware JSON unwrapping).
+ * #899 / ADR 0131: production single-slice seats attach Sandcastle
+ * `Output.object` (maxRetries:2) for typed traffic signals — S3/S6 judge
+ * tri-state (channel (b) / #925), residual reviewer open-count, coder
+ * decision gate. Ordinary cargo stays opaque inside those schemas. This
+ * stdout extractor is the **compatibility cargo channel** when typed output
+ * is absent (legacy prompts, telemetry, non-typed seats); it is never a
+ * second fate-signal parser and never triggers cargo-shape re-ask.
  *
- * The LAST tag wins so a multi-iteration coder reports its FINAL state.
- *
- * Pure: parses a string only — unit-tested without a container. Returns the raw
- * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
- * validate; throws a clear error when the tag is missing (the caller turns that
- * into the runner's S8(error) edge, same as a malformed structured output).
+ * The LAST tag wins so a worker that emits multiple tags reports its FINAL
+ * payload. Pure: parses a string only — unit-tested without a container.
+ * Missing tags are advisory compatibility misses; malformed present tags still
+ * throw rather than being mistaken for a valid machine outcome.
  */
 function extractTaggedJson(
   stdout: string,
-  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
-  missingMessage: string,
-): unknown {
-  const open = `<${tag}>`;
-  const close = `</${tag}>`;
-  const starts: number[] = [];
-  for (
-    let idx = stdout.indexOf(open);
-    idx !== -1;
-    idx = stdout.indexOf(open, idx + open.length)
-  ) {
-    starts.push(idx);
-  }
-  if (starts.length === 0) {
-    throw new Error(missingMessage);
-  }
-
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const bodyStart = starts[i] + open.length;
-    const end = stdout.indexOf(close, bodyStart);
-    if (end === -1) continue;
-    const body = stdout.slice(bodyStart, end).trim();
-    return parseTaggedJsonBody(body);
-  }
-
-  throw new Error(missingMessage);
+  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "landing" | "judge",
+): unknown | undefined {
+  const body = extractLastTagBody(stdout, tag);
+  if (body === undefined) return undefined;
+  return parseTaggedJsonBody(body.trim());
 }
 
 function parseTaggedJsonBody(body: string): unknown {
@@ -1209,59 +1337,47 @@ function balancedJsonPrefix(s: string): string | undefined {
   return undefined;
 }
 
-export function extractCoderTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "coder",
-    "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
-      "coder must emit its structured result in a <coder> tag (maxIter>1 " +
-      "steps cannot use Sandcastle's typed output, which requires " +
-      "maxIterations:1).",
-  );
+export function extractCoderTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "coder");
 }
 
-function extractReviewerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "review",
-    "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
-      "the reviewer must emit its structured result in a <review> tag.",
-  );
+function extractReviewerTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "review");
 }
 
-// #596 F2: tag extractors for the 4 review-loop kinds (untyped maxIter>1 path + raw decode tests).
-// Mirror reviewer/coder error wording exactly for fail-closed on missing tag.
-export function extractVerifyTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "verify",
-    "realBackend: verify step stdout carried no <verify>…</verify> tag — " +
-      "the verify worker must emit its structured result in a <verify> tag.",
-  );
+function extractJudgeTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
 }
-export function extractFixerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "fixer",
-    "realBackend: fixer step stdout carried no <fixer>…</fixer> tag — " +
-      "the fixer worker must emit its structured result in a <fixer> tag.",
-  );
+
+function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
 }
-export function extractCleanupTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "cleanup",
-    "realBackend: cleanup step stdout carried no <cleanup>…</cleanup> tag — " +
-      "the cleanup worker must emit its structured result in a <cleanup> tag.",
-  );
-}
-export function extractDocReleaseTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "docRelease",
-    "realBackend: docRelease step stdout carried no <docRelease>…</docRelease> tag — " +
-      "the docRelease worker must emit its structured result in a <docRelease> tag.",
-  );
+
+/**
+ * Cargo/stdout tag extract for a seat. Judge seats (#919 S2/R7: S3/S6 only)
+ * always take the judge tag — never the residual open-count `<review>` dual
+ * channel, even when a fixture still spells role as `"reviewer"`. Non-judge
+ * role `"verify"` (family S9 online-review) keeps the verify receipt tag —
+ * never {@link JUDGE_RECEIPT_TAG}.
+ */
+function extractRoleReceipt(
+  stdout: string,
+  spec: Pick<StepSpec, "role" | "id" | "soul">,
+): unknown | undefined {
+  try {
+    if (isJudgeSeat({ id: spec.id })) {
+      return extractJudgeTag(stdout);
+    }
+    return spec.role === "coder"
+      ? extractCoderTag(stdout)
+      : spec.role === "reviewer"
+        ? extractReviewerTag(stdout)
+        : spec.role === "verify"
+          ? extractVerifyTag(stdout)
+          : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -1285,140 +1401,108 @@ export function stripJsonFence(s: string): string {
   return stripOutcomeJsonFence(s);
 }
 
-// ── coder commit truth from git (#256 truthification) ───────────────────────
-
-/** The self-reported coder JSON a step emits (already shape-validated). */
-export interface SelfReportedCoder {
+/**
+ * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
+ * values default to the no-commit report — never invent escalate from cargo,
+ * never schema-reject ordinary cargo (#899 / ADR 0131).
+ */
+export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
-  readonly repairEvidence?: RepairEvidence;
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { committed: false, commitsAdded: 0 };
+  }
+  const receipt = body as Record<string, unknown>;
+  return {
+    committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
+    commitsAdded:
+      typeof receipt.commitsAdded === "number" &&
+      Number.isInteger(receipt.commitsAdded) &&
+      receipt.commitsAdded >= 0
+        ? receipt.commitsAdded
+        : 0,
+  };
 }
 
 /**
- * Reconcile a coder step's SELF-REPORTED `{committed, commitsAdded}` against the
- * REAL number of commits Sandcastle observed on the resident branch
- * (`result.commits.length`), and return a git-TRUTHED coder output.
- *
- * WHY (integ-cmr 256 r4, real-backend-wiring / commit-truth): the coder reports
- * `committed` / `commitsAdded` in its `<coder>` tag, but a model can claim a
- * commit it never made (`{committed:true, commitsAdded:1}` with ZERO real
- * commits). Trusting the self-report routes that step to S2/S5 SUCCESS, slipping
- * the #252 0-commit edge and defeating the very truthification this slice was
- * assigned (the in-tree `validate.ts` note: "deriving the real count from git is
- * #256"). The single source of truth is git — `result.commits.length` — so:
- *
- *   - committed   ← realCommitCount > 0
- *   - commitsAdded ← realCommitCount
- *
- * The self-report is kept only as a CROSS-CHECK: a self-report that contradicts
- * git (claims a commit git did not see, or miscounts) is a contract violation →
- * THROW. The caller (runStep / resumeSession) lets that propagate to the runner's
- * error edge = S8(error) + error package, never a silently-trusted success.
- *
- * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim — but it does NOT suppress a commit-count
- * contradiction (an escalating coder that miscounts its commits still throws).
- *
- * Pure (no I/O): the caller supplies the real commit count from `result.commits`,
- * so the reconciliation is unit-tested without a container.
+ * Opaque refuse cargo siblings (#677 / #924 / #919 R5).
+ * Traffic `refusedFindingIdentityKeys` live only on the T2 envelope
+ * ({@link projectCoderStationReceipt} reads them via decode, never from cargo).
+ * This helper extracts cargo-only `refuseRecords` — never invents traffic keys.
  */
-export function reconcileCoderCommits(
-  selfReported: SelfReportedCoder,
-  gitCommitCount: number,
-): SelfReportedCoder {
-  const committed = gitCommitCount > 0;
-  // Cross-check the self-report against git truth; a contradiction is a contract
-  // violation (the model claimed a commit count git does not back).
-  if (
-    selfReported.committed !== committed ||
-    selfReported.commitsAdded !== gitCommitCount
-  ) {
-    throw new Error(
-      `realBackend: coder self-report {committed:${selfReported.committed}, ` +
-        `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
-        `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
-        `the resident branch). The commit count is derived from git, not the ` +
-        `model's claim (#256 truthification); a divergent self-report is a ` +
-        `contract violation → S8(error).`,
-    );
+export function coderRefuseCargoFields(body: unknown): {
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return {};
   }
-  const base = {
-    committed,
-    commitsAdded: gitCommitCount,
-    ...(selfReported.repairEvidence !== undefined
-      ? { repairEvidence: selfReported.repairEvidence }
+  const receipt = body as Record<string, unknown>;
+  const records = Array.isArray(receipt.refuseRecords)
+    ? (receipt.refuseRecords as ReviewFixRefuseRecord[])
+    : undefined;
+  return {
+    ...(records !== undefined && records.length > 0
+      ? { refuseRecords: records }
       : {}),
   };
-  return selfReported.escalate !== undefined
-    ? { ...base, escalate: selfReported.escalate }
-    : base;
-}
-
-export interface ResumeCoderCommitBasis {
-  readonly baselineHead?: string;
-  readonly priorCommitsAdded?: number;
 }
 
 /**
- * Locate the git truth basis for a resumed coder step.
+ * #924 / #919 post-R8 M1 — pure T2 coder station receipt → {@link CoderOutput}.
  *
- * On escalate-resume, the runner re-opens the agent entry that escalated and
- * truncates it from the in-memory ledger, but the persisted ledger still has the
- * superseded coder entry plus the branch HEADs around it. The cumulative commit
- * truth for the resumed output is therefore:
- *
- *   commits from the ledger entry immediately BEFORE the resumed coder step
- *   through the current resident HEAD.
- *
- * If an older ledger has no usable SHA, the previous coder output's truthified
- * `commitsAdded` is retained as a fallback basis; the caller adds any commits
- * created during the resume iteration via a before/after HEAD diff.
+ * Shared by single-slice {@link RealBackend} and family coder-fix
+ * ({@link RealFamilyBackend.familyCoderResultFromRun}). Traffic (status /
+ * refuse keys / escalate) comes from the envelope only; committed /
+ * commitsAdded / refuseRecords are cargo siblings. Cargo never invents or
+ * overrides traffic refuse keys.
  */
-export function resumeCoderCommitBasis(
-  ledger: ReadonlyArray<{
-    readonly sessionId?: string;
-    readonly branchHEAD?: string;
-    readonly output?: StepOutput;
-  }>,
-  sessionId: string,
-): ResumeCoderCommitBasis {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.sessionId !== sessionId || entry.output?.kind !== "coder") {
-      continue;
-    }
-    let baselineHead: string | undefined;
-    for (let j = i - 1; j >= 0; j--) {
-      const head = ledger[j]?.branchHEAD;
-      if (typeof head === "string" && isLikelySha(head)) {
-        baselineHead = head;
-        break;
-      }
-    }
+export function projectCoderStationReceipt(
+  raw: unknown,
+  cargo?: unknown,
+): CoderOutput {
+  const body = cargo !== undefined ? cargo : raw;
+  const fields = coderCargoFields(body);
+  // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
+  const refuseRecords =
+    coderRefuseCargoFields(body).refuseRecords ??
+    coderRefuseCargoFields(raw).refuseRecords;
+  const refuseRecordsExtra =
+    refuseRecords !== undefined ? { refuseRecords } : {};
+
+  const envelope = decodeCoderEnvelope(raw);
+  if (!envelope.ok) {
+    throw new Error(`illegal coder station receipt: ${envelope.reason}`);
+  }
+  if (envelope.value.status === "escalate") {
+    // Escalate is orthogonal to commit cargo; refuse traffic is a different
+    // status — do not smuggle refusedFindingIdentityKeys onto a bell.
     return {
-      ...(baselineHead !== undefined ? { baselineHead } : {}),
-      priorCommitsAdded: entry.output.commitsAdded,
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      escalate: {
+        reason: envelope.value.reason,
+        diagnosis: envelope.value.diagnosis,
+      },
     };
   }
-  return {};
-}
-
-export function reconcileResumeCoderCommits(
-  selfReported: SelfReportedCoder,
-  cumulativeGitCommitCount: number,
-): SelfReportedCoder {
-  try {
-    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`resume coder commit truth mismatch: ${reason}`);
+  if (envelope.value.status === "refused") {
+    // Envelope keys are the sole traffic source (never overwritten by cargo).
+    return {
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
+      ...refuseRecordsExtra,
+    };
   }
-}
-
-/** A git SHA / abbreviation: only lower-case hex, length 7–40. */
-export function isLikelySha(s: string): boolean {
-  return /^[0-9a-f]{7,40}$/.test(s);
+  // completed — refuse keys are traffic for status:"refused" only.
+  return {
+    kind: "coder",
+    committed: fields.committed,
+    commitsAdded: fields.commitsAdded,
+  };
 }
 
 /**
@@ -1448,9 +1532,10 @@ export function isLikelySha(s: string): boolean {
  * filesystem.
  */
 /**
- * Valid step ids (S0–S12). A persisted ledger record must carry one of these in
- * `step`: {@link planResume} dereferences `lastEntry.step` to route the resume,
- * so a record whose `step` is missing / non-string / out-of-range is unusable.
+ * Valid child step ids (S0–S8). A persisted ledger record must carry one of these in
+ * `step`: {@link planResume} dereferences canonical steps to route the resume;
+ * a retry marker has its own validated shape and is retained as durable retry
+ * accounting rather than treated as a route target.
  */
 const STEP_IDS: ReadonlySet<string> = new Set([
   "S0",
@@ -1462,16 +1547,15 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S6",
   "S7",
   "S8",
-  "S9",
-  "S10",
-  "S11",
-  "S12",
 ]);
+
+const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
 
 /**
  * A parsed JSONL record is a usable ledger entry only if it is a non-null object
- * whose `step` is a valid {@link StepId}. (`output` / `handoffStatus` are
- * optional, so the minimal valid entry is `{step}`.)
+ * whose `step` is a valid {@link StepId}, or a well-formed #824 mechanical
+ * redispatch marker. (`output` / `handoffStatus` are optional, so the minimal
+ * canonical entry is `{step}`.)
  *
  * sessionId (when present) must be string — explicit null / non-string is
  * corrupt. This is the parse-boundary guard that prevents raw JSON null from
@@ -1485,7 +1569,7 @@ const STEP_IDS: ReadonlySet<string> = new Set([
  * enforces it (intent-verified is not boundary-enforced until now; symmetric
  * to the sessionId fix).
  *
- * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
+ * A line such as `null`, `{}`, `42`, or `{"step":"S99"}`
  * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
  * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
  * OUTSIDE any catch — a `null`/`{}` last entry crashes raw (TypeError /
@@ -1499,7 +1583,26 @@ function isLedgerEntryShape(
     return false;
   }
   const step = (value as { step?: unknown }).step;
-  if (typeof step !== "string" || !STEP_IDS.has(step)) return false;
+  if (typeof step !== "string") return false;
+  if (step === MECHANICAL_REDISPATCH_ATTEMPT) {
+    const marker = value as {
+      event?: unknown;
+      forStep?: unknown;
+      mechanicalRedispatchAttempt?: unknown;
+    };
+    if (
+      marker.event !== MECHANICAL_REDISPATCH_ATTEMPT ||
+      typeof marker.forStep !== "string" ||
+      !STEP_IDS.has(marker.forStep) ||
+      typeof marker.mechanicalRedispatchAttempt !== "number" ||
+      !Number.isSafeInteger(marker.mechanicalRedispatchAttempt) ||
+      marker.mechanicalRedispatchAttempt < 1
+    ) {
+      return false;
+    }
+  } else if (!STEP_IDS.has(step)) {
+    return false;
+  }
   const sid = (value as { sessionId?: unknown }).sessionId;
   if (sid !== undefined && typeof sid !== "string") return false;
   const ek = (value as { escalationKind?: unknown }).escalationKind;
@@ -1536,7 +1639,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
     if (!isLedgerEntryShape(parsed)) {
       throw new Error(
         "corrupt ledger: a steps.jsonl line parsed but is not a valid ledger " +
-          "entry (must be an object with a valid step S0–S12) — refusing to " +
+          "entry (must be an object with a valid child step S0–S8) — refusing to " +
           "resume on a malformed ledger (fail closed). Accepting it could crash " +
           "the resume route or re-report the wrong terminal state; bailing to " +
           "S8(error) instead.",
@@ -1558,7 +1661,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
  *   gone → fall back to a FRESH `run()` (lose in-session memory, keep the
  *   committed worktree progress — the resident branch survives).
  * - Every other error (completion-signal mismatch, schema/structured-output
- *   parse failure, auth/model failure, commit-truth contradiction) propagates to
+ *   parse failure, auth/model failure) propagates to
  *   S8(error). It must not be masked by a fresh run.
  *
  * Pure: classifies the error only; the caller performs the chosen recovery.
@@ -1612,27 +1715,18 @@ export function attributeFailure(
 // ── promptsDir validation (integ-cmr 256 r2, F4) ─────────────────────────────
 
 /**
- * Every versioned promptFile a single-slice WORKER the runner dispatches resolves
+ * Every versioned promptFile a child WORKER dispatches resolves
  * at run time. The real Backend resolves each as `join(promptsDir, promptFile)`,
  * so all must exist under `promptsDir` or the real path cannot run end-to-end
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * Route-independent prompt inventory: prompt validation must not import a
  * route-bearing StepSpec snapshot, because model routes are resolved per run.
- * Keep this derived from the worker prompt-file constants plus the S7 ship
- * spec and real review-loop agent prompts (verify/fixer/docRelease — #739).
- * cleanup stays out: it is not a runStep agent path and has no checked-in prompt.
+ * Keep this derived from the S2/S3/S5/S6 prompt table. Family endgame prompts
+ * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set([
-    ...Object.values(WORKER_PROMPT_FILES),
-    SHIP_PROMPT_FILE,
-    VERIFY_PROMPT_FILE,
-    FIXER_PROMPT_FILE,
-    DOCRELEASE_PROMPT_FILE,
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]),
+  ...new Set(Object.values(WORKER_PROMPT_FILES)),
 ];
 
 /**
@@ -1669,7 +1763,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (S2 coder, S3/S6 reviewer, S5 coder-fix, and S7 ship reference them).`
+      `must be present (S2 coder, S3/S6 reviewer, and S5 coder-fix reference them).`
     );
   }
   return undefined;
@@ -1680,7 +1774,8 @@ export function promptsDirError(
  * Source of truth = every file under orchestrator/image/souls (no longer baked
  * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
- * mirroring promptsDir validation. Includes S12 docRelease + verify/fixer (#739).
+ * mirroring promptsDir validation. Family workers share this image inventory,
+ * so landing/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
@@ -1688,10 +1783,9 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "cmr_completeness.md",
   "cmr_correctness.md",
   "coder.md",
-  "docRelease.md",
+  "landing.md",
   "fixer.md",
   "merger.md",
-  "output_protocol.md",
   "reviewer.md",
   "ship.md",
   "verify.md",
@@ -1728,7 +1822,8 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. output_protocol.md and docRelease.md).`
+      `must be present (every file under image/souls, incl. landing.md; ` +
+      `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
     );
   }
   return undefined;
@@ -1786,18 +1881,9 @@ export interface RealBackendOptions {
   /** The profile image (#253): toolchain + skills + model CLIs baked in. Souls mounted live (#372). */
   readonly imageName: string;
   /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount. The 2b worker image
-   * (#333) BAKES the dev-skill closure, so `box()` no longer mounts host skills at
-   * runtime (a runtime mount would SHADOW the baked skills — the ADR 0026
-   * reproducibility regression). Kept OPTIONAL only for back-compat with callers
-   * still passing it; it is no longer read. Remove the field entirely once all
-   * callers drop it (#336/#337 cleanup).
-   */
-  readonly skillsMount?: string;
-  /**
-   * Dir holding the versioned promptFiles (`coder_implement.md` for S2,
-   * `reviewer_review.md` for S3/S6, `coder_fix.md` for S5, and `ship.md` for
-   * S7). ADR 0030 keeps the single-slice review/fix loop runner-visible: S3/S6
+   * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
+   * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
+   * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
    * are reviewer workers, and S5 is the coder-fix worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
@@ -1808,13 +1894,21 @@ export interface RealBackendOptions {
    */
   readonly promptsDir: string;
   /**
-   * Host dir containing souls (coder.md etc + output_protocol.md) to bind-mount
-   * into the container at /home/agent/.orchestrator/souls . #372: souls are
-   * mounted live (rather than baked) so source edits take effect on next dispatch
-   * without a full image layer change for data files.
-   * REQUIRED: souls are no longer baked into the image.
+   * Host dir containing souls (coder.md etc) to bind-mount into the container at
+   * /home/agent/.orchestrator/souls . #372: souls are mounted live (rather than
+   * baked) so source edits take effect on next dispatch without a full image
+   * layer change for data files. REQUIRED: souls are no longer baked into the image.
+   * #911: output_protocol.md removed (home env + dispatch prompts cover it);
+   * cmr_completeness/cmr_correctness are relative symlinks to verify.md.
    */
   readonly soulsDir: string;
+  /**
+   * #911 — host path to the container home environment file (default:
+   * sibling `image/home/CLAUDE.md` next to soulsDir). Live-mounted for Claude at
+   * {@link SANDBOX_HOME_CLAUDE_MD}; content also replaces AGENTS.md in the
+   * per-issue codex auth dir.
+   */
+  readonly homeEnvFile?: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
   /**
@@ -1824,324 +1918,45 @@ export interface RealBackendOptions {
    * base (no `git fetch origin`, no `origin/` prefix) — because the family base
    * is a local branch the merger accumulates onto, with no remote counterpart;
    * deriving it as `origin/<family-base>` would cut from a stale/absent remote ref
-   * missing the prior waves (agy R1). Absent ⇒ a standalone single-slice run: the
-   * cut base is "main", fetched + cut as `origin/main` exactly as before.
+   * missing the prior waves (agy R1). Absent is retained only for the child-machine
+   * harness and focused single-slice tests: the cut base is "main", fetched + cut
+   * as `origin/main`.
    */
   readonly familyBase?: string;
 }
 
 /**
- * zod schema for the reviewer step's structured output (route() consumes it).
+ * #884 bare-ping wall budget (seconds). Owner target is ~5–10s total across
+ * parallel legs; per-leg ceiling defaults to 60s so a single hung provider
+ * still fails closed rather than sleeping the driver for minutes.
  *
- * #604 slice 4 (ADR 0062): the reviewer contract no longer carries routing
- * disposition kinds — the only disposition a reviewer may emit is the
- * accepted-suppression governance carrier.
+ * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (positive integer). Name kept
+ * for env-compat with the pre-#884 sandcastle idle knob.
  */
-const findingDispositionSchema = z
-  .object({
-    kind: z.literal("accepted_suppressed"),
-    source: z.string().min(1),
-    scope: z.string().min(1),
-    reason: z.string().min(1),
-    findingIdentity: z.string().min(1).optional(),
-    boundedReopen: z.string().min(1),
-  })
-  // #604 correctness r2 (C3): `.strict()` so a reviewer disposition carrying an
-  // unknown field (e.g. the deleted `targetModule`) is REJECTED here rather than
-  // silently stripped — parity with the family-side `cmrDispositionEvidenceSchema`
-  // which is already `.strict()`. Without this, this standalone reviewer entrance
-  // would quietly swallow a deleted field the other entrances now reject.
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["source"],
-        message: "accepted_suppressed requires explicit user/ADR/issue source",
-      });
-    }
-    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["boundedReopen"],
-        message: "accepted_suppressed requires bounded reopen condition",
-      });
-    }
-  });
-export const findingSchema = z.object({
-  severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
-  category: z.string(),
-  claim_quote: z.string(),
-  location: z.string(),
-  suggested_fix: z.string(),
-  action: z.enum(["fix_now", "wont_fix", "rejected"]),
-  disposition_reason: z.string().optional(),
-  disposition: findingDispositionSchema.optional(),
-}).superRefine((finding, ctx) => {
-  if (
-    (finding.severity === "critical" || finding.severity === "high") &&
-    finding.action !== "fix_now"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["action"],
-      message: "critical/high findings must be fix_now",
-    });
-  }
-  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
-  // only valid on a wont_fix/rejected finding — never on fix_now (classifyFindings
-  // would turn the governance suppression into a silent blocker).
-  if (
-    finding.action !== "wont_fix" &&
-    finding.action !== "rejected" &&
-    finding.disposition?.kind === "accepted_suppressed"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message:
-        "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
-    });
-  }
-  if (
-    (finding.action === "wont_fix" || finding.action === "rejected") &&
-    ((!finding.disposition_reason && !finding.disposition?.reason) ||
-      finding.disposition?.kind !== "accepted_suppressed")
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message: "suppressed findings require accepted_suppressed disposition",
-    });
-  }
-});
-function normalizeReviewerFinding(finding: Finding): Finding {
-  if (
-    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
-    finding.disposition?.kind !== "accepted_suppressed"
-  ) {
-    return finding;
-  }
-  return {
-    ...finding,
-    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
-    disposition: {
-      ...finding.disposition,
-      findingIdentity:
-        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
-    },
-  };
-}
-// #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
-// unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
-// here rather than silently STRIPPED by zod — parity with the family-side
-// `cmrFindingDispositionSchema` (already `.strict()`) and the standalone
-// `findingDispositionSchema` (r2/C3). Exported so the strict contract is directly
-// exercisable. `.strict()` must go on the `.object()` before `.superRefine()`,
-// since `.superRefine()` returns a `ZodEffects` with no `.strict()`.
-export const priorFindingDispositionSchema = z.object({
-  identityKey: z.string().min(1),
-  status: z.enum([
-    "still-active",
-    "verified-closed",
-    "unable-to-assess",
-    "accepted_suppressed",
-  ]),
-  reason: z.string().optional(),
-  source: z.string().optional(),
-  scope: z.string().optional(),
-  boundedReopen: z.string().optional(),
-}).strict().superRefine((disposition, ctx) => {
-  if (disposition.status !== "accepted_suppressed") return;
-  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-    if (disposition[field] === undefined || disposition[field].trim() === "") {
-      ctx.addIssue({
-        code: "custom",
-        path: [field],
-        message: `accepted_suppressed prior finding disposition requires ${field}`,
-      });
-    }
-  }
-  if (
-    disposition.source !== undefined &&
-    !hasExplicitAcceptedSuppressionSource(disposition.source)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["source"],
-      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-    });
-  }
-  if (
-    disposition.boundedReopen !== undefined &&
-    !hasBoundedReopenCondition(disposition.boundedReopen)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["boundedReopen"],
-      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-    });
-  }
-});
-const reviewerOutputSchema = z.object({
-  findings: z.array(findingSchema),
-  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
-  escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
-    .optional(),
-});
-const findingRepairScopeSchema = z
-  .object({
-    identityKeys: z.array(z.string()).optional(),
-    locations: z.array(z.string()).optional(),
-    categories: z.array(z.string()).optional(),
-    findingGroup: z.string().optional(),
-    reviewContext: z.string().optional(),
-    featureArea: z.string().optional(),
-  })
-  .strict();
-const repairEvidenceSchema = z
-  .object({
-    findingScope: findingRepairScopeSchema,
-    changedFiles: z.array(z.string().min(1)).optional(),
-    tests: z.array(z.string().min(1)).optional(),
-    fixtures: z.array(z.string().min(1)).optional(),
-    sameClassBugScan: z.string().min(1).optional(),
-    introducedRegressionCheck: z.string().min(1).optional(),
-    patchSummary: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (
-      (value.changedFiles?.length ?? 0) === 0 &&
-      (value.tests?.length ?? 0) === 0 &&
-      (value.fixtures?.length ?? 0) === 0
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "repairEvidence requires changedFiles, tests, or fixtures; patchSummary alone is not concrete repair evidence",
-      });
-    }
-  })
-  .strict();
-const coderOutputSchema = z.object({
-  committed: z.boolean(),
-  commitsAdded: z.number().int().nonnegative(),
-  repairEvidence: repairEvidenceSchema.optional(),
-  escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
-    .optional(),
-});
+const DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 60;
 
-// #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
-// and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
-// from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
-const onlineReviewFindingDispositionSchema = z
-  .object({
-    identityKey: z.string().min(1),
-    threadId: z.string().min(1),
-    action: z.enum(["fix", "reject", "defer"]),
-    reason: z.string().optional(),
-  })
-  .strict();
+/** Hard upper bound the resolver enforces (same 32-bit-safe ceiling as before). */
+const MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 2_147_483;
 
-const onlineReviewThreadReplySchema = z
-  .object({
-    threadId: z.string().min(1),
-    body: z.string().min(1),
-  })
-  .strict();
-
-/** Verify wire schema — normalizes `finding_families` before strict key check. */
-export const verifyOutputSchema = z.preprocess(
-  normalizeFindingFamiliesWireAliases,
-  z
-    .object({
-      converged: z.boolean(),
-      findingDispositions: z
-        .array(onlineReviewFindingDispositionSchema)
-        .optional(),
-      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-      threadsToResolve: z.array(z.string()).optional(),
-      deferredIssueUrls: z.array(z.string()).optional(),
-      terminalState: z
-        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-        .optional(),
-      isRecheck: z.boolean().optional(),
-      // #711: malformed families degrade to no brief — never block the verify gate.
-      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
-      findingFamilies: z.unknown().optional(),
-    })
-    .strict(),
-);
-export const fixerOutputSchema = z
-  .object({
-    committed: z.boolean(),
-    alreadySatisfied: z.boolean().optional(),
-    fixCommitSha: z.string().min(1).optional(),
-  })
-  .strict()
-  .superRefine((data, ctx) => {
-    if (data.committed && data.alreadySatisfied === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "alreadySatisfied is incompatible with committed:true",
-      });
-    }
-    if (
-      data.committed === true &&
-      (data.fixCommitSha === undefined || data.fixCommitSha.length === 0)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when committed is true",
-      });
-    }
-    if (
-      data.committed === false &&
-      data.alreadySatisfied === true &&
-      data.fixCommitSha === undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when alreadySatisfied is true",
-      });
-    }
-  });
-export const cleanupOutputSchema = z
-  .object({
-    terminal: z.boolean(),
-    ok: z.boolean(),
-    issuesClosed: z.array(z.number().int().positive()).optional(),
-    parentIssueClosed: z.boolean().optional(),
-    branchOutcome: z
-      .enum([
-        "deleted",
-        "already_gone",
-        "skipped_tip_drift",
-        "skipped_pr_not_merged",
-        "skipped_precondition",
-      ])
-      .optional(),
-    skippedReasons: z.array(z.string()).optional(),
-  })
-  .strict()
-  .superRefine((val, ctx) => {
-    if (val.terminal === false && val.ok === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "non-terminal cleanup must not report ok:true",
-      });
-    }
-  });
-export const docReleaseOutputSchema = z
-  .object({ released: z.boolean() })
-  .strict();
-
-/** Parse a coder worker self-report with the same schema the single-slice path uses. */
-export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
-  return coderOutputSchema.parse(raw);
+/**
+ * Resolve the bare-ping per-leg wall budget (seconds). Illegal / missing values
+ * fall back to the default.
+ */
+export function resolveRouteSmokeIdleTimeoutSeconds(
+  envValue: string | undefined,
+): number {
+  if (envValue === undefined) return DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS;
+  const trimmed = envValue.trim();
+  if (trimmed === "") return DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS;
+  const parsed = Number(trimmed);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1 ||
+    parsed > MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS
+  ) {
+    return DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS;
+  }
+  return parsed;
 }
 
 export class RealBackend implements Backend {
@@ -2157,14 +1972,30 @@ export class RealBackend implements Backend {
    * disk, and guarded to be an independent `.git` before construction succeeds.
    */
   private readonly workingRepo: string;
+  private workingRepoReady = false;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.validateSoulsDir();
-    this.workingRepo = this.buildOrReuseClone();
-    this.assertIndependentClone();
+    const home = this.opts.home ?? homedir();
+    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
+    this.workingRepo = clonePathFor(home, slug, this.opts.runKey);
+  }
+
+  /**
+   * #786: install this backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
+   */
+  async installTelemetryRunEnvironment(): Promise<void> {
+    await configureTelemetryFromWorkerImage({
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
+    });
   }
 
   /**
@@ -2173,167 +2004,257 @@ export class RealBackend implements Backend {
    * every git op anchors on it instead of the driver-supplied source.
    */
   workingRepoPath(): string {
+    this.ensureWorkingRepo();
     return this.workingRepo;
   }
 
+  private ensureWorkingRepo(): void {
+    if (this.workingRepoReady) return;
+    this.buildOrReuseClone();
+    this.assertIndependentClone();
+    // #1014: exclude runner-owned iso sidecars so family final CMR dirty-pin
+    // (status --untracked-files=all) does not hard-stop on live .ledger-* /
+    // .sandcastle/ droppings. append* (throw-through) when a real .git is on
+    // disk (AC1: excludes must be present; failure leaves workingRepoReady=
+    // false). Unit fixtures that stub independence without a filesystem .git
+    // skip the write; production clones always have .git after buildOrReuseClone.
+    if (existsSync(join(this.workingRepo, ".git"))) {
+      appendIsoOperationalExcludes(this.workingRepo);
+    }
+    this.workingRepoReady = true;
+  }
+
   /**
-   * #685: prove every selected model×pipe can actually invoke bash before the
-   * runner spends a productive dispatch on it. This deliberately uses the
-   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   * #685/#884: report host CLI versions for smoke TTL invalidation. Cheap
+   * `--version` only — not a live model call.
    */
   async currentCliVersions(
     route: ResolvedModelRoute,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<Readonly<Record<string, string | undefined>>> {
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
-      if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+      // #884: key by entry.key so pool-rewritten pipes don't share a slug bucket
+      // with the default-provider entry (same class of aliasing as smoke uniqueness).
+      if (versions[entry.key] === undefined) {
+        versions[entry.key] = this.cliVersionForSlug(
+          entry.slug,
+          entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
+        );
       }
     }
     return versions;
   }
 
+  /**
+   * #884 bare-ping route smoke: one-shot host CLI per unique model×pipe, empty
+   * cwd, no docker/repo/tool loop. Nonce echo in stdout is the credential
+   * oracle. Unique legs run in parallel via {@link smokeRouteModels}.
+   * Tool-capability verification is intentionally out of the ignition path.
+   */
   async smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
-    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
-    if (persisted !== undefined) {
-      const hydrated = withRouteSmoke(route, persisted);
-      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
-        return hydrated;
-      }
-    }
-    const smoked = await smokeRouteModels(route, async (entry) => {
-      let sawBash = false;
-      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+    void currentCliVersions;
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
+    const timeoutMs =
+      resolveRouteSmokeIdleTimeoutSeconds(
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
+      ) * 1000;
+    const providerAuth = this.hostProviderAuthAvailability();
+    // #879 / #861 D: each model×pipe smoke is the orchestrator-owned
+    // encapsulation of a CMR/route *leg*. Transient transport blips
+    // (reset/5xx) retry ×2 before the smoke is recorded failed (optional
+    // legs then degrade; required anchors can still abort the run); 429 /
+    // quota never retries — via withLegTransientRetry (production wire of
+    // legTransientRetry.ts). Worker-process crashes stay on #598; in-container
+    // ak-cross-m-review skill legs keep their own backend degrade chain.
+    const pingOne = async (
+      entry: { readonly key: string; readonly slug: string },
+      entryPool: BillingPoolDispatchId | undefined,
+    ): Promise<{ readonly cliVersion: string }> => {
+      const resolved = resolveModelSlugForPool(entry.slug, entryPool);
+      this.assertProviderAuth(entry.slug, entryPool, providerAuth);
+      const nonce = randomUUID();
+      const prompt = buildBarePingPrompt(
+        nonce,
+        loadBarePingPromptTemplate(this.opts.promptsDir),
+      );
+      const built = barePingArgv(resolved.provider, resolved.model, prompt);
+      const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
-        const result = await sc.run({
-          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key })),
-          sandbox: this.routeSmokeSandbox(),
-          cwd: this.workingRepo,
-          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
-          maxIterations: 1,
-          idleTimeoutSeconds: 10,
-          completionSignal: "ROUTE_SMOKE_COMPLETE",
-          logging: {
-            type: "file",
-            path: join(logDir, "run.log"),
-            onAgentStreamEvent: (event) => {
-              if (
-                routeSmokeToolCallIsEchoOk(event)
-              ) {
-                sawBash = true;
-              }
-            },
-          },
-        });
-        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+        const stage = `smoke-k:${entry.slug}`;
+        const stdout = await withLegTransientRetry(async () =>
+          this.execBarePing({
+            slug: entry.slug,
+            cwd: emptyDir,
+            prompt,
+            nonce,
+            file: built.file,
+            args: built.args,
+            stdin: built.input,
+            timeoutMs,
+          }),
+        );
+        if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(
-            `model did not complete an observable bash smoke for ${entry.slug}`,
+            `bare ping nonce missing for ${entry.slug} at stage ${stage}`,
           );
         }
-        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+        return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
       } finally {
-        rmSync(logDir, { recursive: true, force: true });
+        rmSync(emptyDir, { recursive: true, force: true });
       }
+    };
+
+    // Pool-rewritten pipe: dedicated ping for the relay entry so a same-slug
+    // default-provider result is never alias-passed as pool-smoked. Launch IN
+    // PARALLEL with unique-slug legs (P5 / #884 cmr r7) — never serialize after
+    // the full smoke wave (adds a whole timeout/retry budget before dispatch).
+    const relayEntry =
+      relaySmokeEntryKey !== undefined && dispatchPool !== undefined
+        ? routeSmokeEntries(route).find((e) => e.key === relaySmokeEntryKey)
+        : undefined;
+    const relayPingPromise =
+      relayEntry !== undefined
+        ? pingOne(relayEntry, dispatchPool).then(
+            (result) =>
+              ({ ok: true as const, result, at: new Date().toISOString() }),
+            (error: unknown) =>
+              ({ ok: false as const, error, at: new Date().toISOString() }),
+          )
+        : undefined;
+
+    // Unique-by-slug parallel legs (owner "六路") — always default pipe.
+    // Pool credentials for relaySmokeEntryKey are covered ONLY by the dedicated
+    // parallel relayPingPromise below (cmr r8: never let unique-wave pool ping
+    // fan out as "default pipe passed").
+    let smoked = await smokeRouteModels(route, async (entry) => {
+      void entry;
+      return pingOne(entry, undefined);
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+
+    if (relayEntry !== undefined && relayPingPromise !== undefined) {
+      const relayOutcome = await relayPingPromise;
+      if (relayOutcome.ok) {
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "passed",
+              at: relayOutcome.at,
+              cliVersion: relayOutcome.result.cliVersion,
+            },
+          },
+        };
+      } else {
+        const err = relayOutcome.error;
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "failed",
+              at: relayOutcome.at,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          },
+        };
+      }
+    }
     return smoked;
   }
 
-  private routeSmokeStatePath(): string {
-    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
+  /**
+   * Host-side bare-ping exec seam. `protected` so tests inject a scripted
+   * responder without launching real model CLIs. Production uses
+   * {@link execFileAsyncWithTimeout} so parallel smoke actually overlaps.
+   */
+  protected async execBarePing(input: {
+    readonly slug: string;
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly nonce: string;
+    readonly file: string;
+    readonly args: readonly string[];
+    readonly stdin?: string;
+    readonly timeoutMs: number;
+  }): Promise<string> {
+    return execFileAsyncWithTimeout(input.file, input.args, {
+      stage: `smoke-k:${input.slug}`,
+      timeoutMs: input.timeoutMs,
+      cwd: input.cwd,
+      input: input.stdin,
+      env: this.barePingEnvironment(),
+    });
   }
 
-  private readRouteSmokeState(
-    route: ResolvedModelRoute,
-    sandboxFingerprint: string,
-  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
+  /** Host auth view used by bare-ping CLIs, aligned with worker auth sources. */
+  private barePingEnvironment(): NodeJS.ProcessEnv {
+    const home = this.opts.home ?? homedir();
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
     try {
-      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
-      if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
-      if (state === null || typeof state !== "object") return undefined;
-      return state as Readonly<Record<string, RouteSmokeStatus>>;
+      const claudeToken = readFileSync(
+        join(home, ".sc-claude-token"),
+        "utf8",
+      ).trim();
+      if (claudeToken !== "") {
+        env.CLAUDE_CODE_OAUTH_TOKEN = claudeToken;
+      }
     } catch {
-      return undefined;
+      // Missing Claude auth is rejected by assertProviderAuth before its ping.
     }
+    return env;
   }
 
-  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
-    const path = this.routeSmokeStatePath();
-    let all: Record<string, unknown> = {};
+  /**
+   * Lightweight host credential presence for bare-ping auth gates — no
+   * per-issue temp copy (those are for container mounts only).
+   */
+  protected hostProviderAuthAvailability(): ProviderAuthAvailability {
+    const home = this.opts.home ?? homedir();
+    let claude = false;
     try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
+      const token = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      claude = token.length > 0;
     } catch {
-      // Missing or malformed state is treated as empty; the fresh smoke result
-      // below becomes the new durable source of truth.
+      claude = false;
     }
-    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
-    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
-    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    const grok = existsSync(join(home, ".grok", "auth.json"));
+    let agy = false;
     try {
-      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
-      renameSync(tempPath, path);
-    } finally {
-      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+      const tok = readFileSync(join(home, ".sc-agy-oauth-token"), "utf8").trim();
+      agy = tok.length > 0;
+    } catch {
+      agy = false;
     }
+    return { claude, grok, agy };
   }
 
-  private cliVersionForSlug(slug: string): string {
-    const provider = resolveModelSlug(slug).provider;
-    const command = provider === "claudeCode" ? "claude" : provider;
+  private cliVersionForSlug(slug: string, billingPool?: string): string {
+    const provider = resolveModelSlugForPool(
+      slug,
+      isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
+    ).provider;
+    // Keep CLI binary identity aligned with barePingArgv / Sandcastle.
+    const command =
+      provider === "claudeCode"
+        ? "claude"
+        : provider === "cursor"
+          ? "agent"
+          : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {
       return "unknown";
     }
-  }
-
-  private routeSmokeSandboxFingerprint(): string {
-    const hash = createHash("sha256");
-    hash.update(`image:${this.opts.imageName}\n`);
-    try {
-      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
-    } catch {
-      hash.update("image-id:unknown\n");
-    }
-    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
-    const files = [
-      join(this.opts.promptsDir, "route-smoke.md"),
-      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
-      auth.srcCodexAuth,
-      auth.srcCodexConfig,
-      auth.claudeTokenFile,
-    ];
-    for (const file of files) {
-      hash.update(`file:${file}\0`);
-      try {
-        hash.update(readFileSync(file));
-      } catch {
-        hash.update("missing");
-      }
-    }
-    try {
-      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
-    } catch {
-      hash.update("gh:missing\n");
-    }
-    return hash.digest("hex");
-  }
-
-  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(): sc.SandboxProvider {
-    const auth = this.mountAuth(this.opts.runKey);
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        { role: "reviewer", soul: "READ-ONLY" },
-      ),
-    );
   }
 
   /**
@@ -2346,9 +2267,7 @@ export class RealBackend implements Backend {
    * separately, AFTER the clone exists.
    */
   protected buildOrReuseClone(): string {
-    const home = this.opts.home ?? homedir();
-    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
-    const clonePath = clonePathFor(home, slug, this.opts.runKey);
+    const clonePath = this.workingRepo;
     if (!this.cloneDirExists(clonePath)) {
       // Multi-phase S1-adjacent: a clone failure must abort construction loudly
       // (不启动), not silently leave a half-built or missing working repo.
@@ -2371,7 +2290,7 @@ export class RealBackend implements Backend {
    * Fail-closed guard (ADR 0024 decision 1/3): after the clone exists, assert it
    * owns its `.git` — i.e. `git rev-parse --git-common-dir` resolves to the
    * clone's OWN `.git`, not a shared parent repo's `.git` (a linked worktree).
-   * If the working repo is a linked worktree, a Sandcastle/`cleanResidue` prune
+   * If the working repo is a linked worktree, a Sandcastle worktree prune
    * could reach across the shared `.git` into other sessions' admin namespace
    * (the #292 bug). So we refuse to start: throw at construction (不启动).
    */
@@ -2414,9 +2333,11 @@ export class RealBackend implements Backend {
   /**
    * Fail loudly at construction if soulsDir is missing or not a usable dir
    * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
-   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
-   * / output_protocol.md) would now sail through to runtime (no more baked copies).
+   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md)
+   * would now sail through to runtime (no more baked copies).
    * Delegates to the pure {@link soulsDirError} (single source of messages/checks).
+   * #911 also requires the container home env file (sibling image/home/CLAUDE.md
+   * by default) so dual-mount cannot silently skip.
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
@@ -2426,19 +2347,44 @@ export class RealBackend implements Backend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    // Fail-closed: path must be a regular file (directory would dual-mount as dir).
+    if (!existsSync(homeEnv) || !statSync(homeEnv).isFile()) {
+      throw new Error(
+        `RealBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
+  }
+
+  /** #911: resolve the container home CLAUDE.md path (live-mount + codex AGENTS). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /**
    * Run a host `gh`/`git` command, returning trimmed stdout. `protected` so a
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
+   *
+   * #884: every subprocess wait carries a clock (default 120s). Admission wraps
+   * GitHub metadata reads in the shared transient-only retry seam.
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+    });
+  }
+
+  /** Best-effort host GitHub token for worker sandboxes that call `gh`. */
+  protected readGhToken(): string | undefined {
+    try {
+      const token = this.sh("gh", ["auth", "token"]).trim();
+      return token === "" ? undefined : token;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
@@ -2451,27 +2397,48 @@ export class RealBackend implements Backend {
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
-    const json = this.phase("S0", "fetchIssueView", () => {
-      // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
-      // comments — that would trigger gh's paginated preloadIssueComments for
-      // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
-      // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
-      // before the first worker dispatch.
-      const raw = this.sh("gh", [
+    let json: GhIssueJson | undefined;
+    let subIssueCount: number | undefined;
+    let blockedBy: GhBlockedBy[] | undefined;
+    const errors: string[] = [];
+    try {
+      json = this.phase("S0", "fetchIssueView", () => {
+      // S0 reads the gate fields + body + author (#767 Coder-Rec, #934 trust
+      // boundary). It does NOT pull comments — that would trigger gh's
+      // paginated preloadIssueComments for no S0 consumer (#329 perf). Body
+      // alone is cheap; author gates executable Coder-Rec input.
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
         "--repo",
         this.opts.repo,
         "--json",
-        "number,labels,state,body",
-      ]);
+        "number,labels,state,body,author",
+      ]));
       return JSON.parse(raw) as GhIssueJson;
+      });
+    } catch (err) {
+      errors.push(`issue view: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      subIssueCount = this.fetchSubIssueCount(issueNumber);
+    } catch (err) {
+      errors.push(`sub-issues: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      blockedBy = this.fetchBlockedBy(issueNumber);
+    } catch (err) {
+      errors.push(`blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (errors.length > 0 || json === undefined || subIssueCount === undefined || blockedBy === undefined) {
+      throw new Error(
+        `S0 issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`,
+      );
+    }
+    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount, {
+      trustedAuthor: this.ownerLogin,
     });
-    // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber);
-    const blockedBy = this.fetchBlockedBy(issueNumber);
-    return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
   }
 
   /**
@@ -2511,7 +2478,7 @@ export class RealBackend implements Backend {
    */
   private fetchSubIssueCount(issueNumber: number, step: StepId = "S0"): number {
     return this.phase(step, "fetchSubIssueCount", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2519,7 +2486,7 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "subIssues",
-      ]);
+      ]));
       const parsed = JSON.parse(raw) as { subIssues?: unknown };
       // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
       // not an array — read the count off that shape (integ-cmr 256 r1, F1).
@@ -2528,62 +2495,29 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2). A thrown gh /
-   * transport / JSON-parse error propagates via `phase("S0", …)` → S8(error),
-   * NOT a no-blockers ([]) default — failing open is the riskier leak: it would
-   * let a blocked-by-OPEN issue (the pinned S0 three-way reject) run from a stale
-   * base missing upstream changes. `parseBlockedBy` still returns [] for a
-   * CONFIRMED empty/non-array response (the genuinely-empty case).
+   * Native blocked_by list, FAIL-CLOSED (integ-cmr 256 r2, F2 + #934 ID-003).
+   * A thrown gh / transport / JSON-parse / schema error propagates via
+   * `phase("S0", …)` → S8(error), NOT a no-blockers ([]) default — failing open
+   * is the riskier leak: it would let a blocked-by-OPEN issue run from a stale
+   * base missing upstream changes. Only a confirmed empty array is no-deps.
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
     return this.phase(step, "fetchBlockedBy", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]);
+      ]));
       return parseBlockedBy(JSON.parse(raw));
     });
   }
 
-  // ── S1: full snapshot (host gh) ────────────────────────────────────────────
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    // Widen the field list to carry the #244-named native metadata
-    // (title/state/labels) into the clean-room snapshot, not just the body. This
-    // preserves the host-side audit/resume artifact; the worker still live-fetches
-    // issue truth in-container via gh (#244 S1: "body + comments + 最新 Agent Brief
-    // 正文 + native metadata").
-    const json = this.phase("S1", "fetchIssueView", () => {
-      const raw = this.sh("gh", [
-        "issue",
-        "view",
-        String(issueNumber),
-        "--repo",
-        this.opts.repo,
-        "--json",
-        "number,title,state,author,body,labels,comments",
-      ]);
-      return JSON.parse(raw) as GhIssueJson;
-    });
-    // The native sub-issue + blocked_by summaries (the same ones S0 reads via the
-    // GraphQL/REST API) complete the snapshot's native metadata. A thrown
-    // gh/transport/parse error propagates → the runner's S1 error termination,
-    // attributed to S1 (not S0) for the US#30 error package.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber, "S1");
-    const blockedBy = this.fetchBlockedBy(issueNumber, "S1");
-    return buildIssueSnapshot(
-      issueNumber,
-      json,
-      blockedBy,
-      subIssueCount,
-      this.ownerLogin,
-    );
-  }
-
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
+  // #936 / #934 ID-002: snapshot dual court deleted; workers live-fetch truth.
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
+    this.ensureWorkingRepo();
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
     // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
@@ -2628,26 +2562,30 @@ export class RealBackend implements Backend {
     // slice from whatever the clone happened to be checked out on — the #244
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
-    // first (best-effort: a fetch failure must not block a local-only base).
+    // first. A configured origin must refresh successfully; only a source with
+    // no origin may use a local-only base.
     //
     // integ-cmr 256 r3 (worktree_base_stale): `git fetch origin <base>` updates
     // refs/remotes/origin/<base>, NOT the local refs/heads/<base>. Deriving with
     // the bare local `<base>` after a fetch could still cut from a stale local
     // branch behind upstream. So when the fetch refreshed the remote ref, cut
     // from `origin/<base>` (matching the spike's `git worktree add … origin/main`
-    // and the up-to-date invariant); fall back to the local `<base>` only when
-    // the fetch failed (offline / local-only base). The WorktreeHandle.base field
+    // and the up-to-date invariant); use local `<base>` only when no origin is
+    // configured. The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
     // base is a local branch the merger accumulates onto, with no remote
     // counterpart. So skip `git fetch origin <family-base>` (it would fail or, worse,
-    // resolve a stale remote branch) and force the bare local ref. A standalone
-    // single-slice run (base="main", no `familyBase` option) keeps the fetch +
-    // `origin/main` derivation byte-identical.
+    // resolve a stale remote branch) and force the bare local ref. The child-machine
+    // harness path (base="main", no `familyBase` option) keeps the fetch +
+    // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
+    const hasRemote =
+      typeof this.opts.remote === "string" && this.opts.remote.trim() !== "";
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
-    const cutRef = cutRefFor(base, fetchedOk, localOnly);
+    // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
+    const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
@@ -2709,154 +2647,127 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Refresh the base ref so the slice is cut from an up-to-date `base`, and
-   * REPORT whether the fetch succeeded so {@link cutRefFor} can choose the
-   * origin/<base> remote-tracking ref vs the local fallback (integ-cmr 256 r3,
-   * worktree_base_stale). Sandcastle notes the caller is responsible for the
-   * ref's currency (d.ts:211); a `git fetch` failure (offline / local-only base)
-   * must NOT block worktree creation, so this is best-effort and returns false
-   * on any fault (the caller then derives from the local `<base>`).
+   * Refresh the base ref so the slice is cut from an up-to-date `base`.
+   * Returns whether the fetch succeeded so {@link cutRefFor} can choose
+   * `origin/<base>` vs local-only / fail-closed (integ-cmr 256 r3 + #936 ID-009).
    */
   private ensureBaseRef(base: string): boolean {
     try {
       this.sh("git", ["fetch", "origin", base], this.workingRepo);
       return true;
     } catch {
-      // offline or a local-only base ⇒ proceed with the local ref.
       return false;
     }
   }
 
-  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
-    try {
-      const out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
-      return resolveExistingWorktreeFromPorcelain(out, issueNumber);
-    } catch {
-      // no worktrees / git error ⇒ none existing.
-      return undefined;
-    }
-  }
-
-  // ── S1: write the snapshot into the worktree (clean-room) ──────────────────
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    // F3 — git-ignore the snapshot BEFORE writing it, so a coder's `git add -A`
-    // can never stage the host-fetched clean-room snapshot into the reviewed /
-    // pushed branch (branchStrategy:{type:'head'} commits in place). The
-    // per-worktree info/exclude is the right scope: it is local to this resident
-    // worktree, needs no checked-in change to the target repo, and survives the
-    // agent run. Best-effort: an exclude failure must not block the (still
-    // useful) snapshot write — but it is attempted first so the common path is
-    // always covered.
-    this.excludeFromGit(worktree, SNAPSHOT_FILENAME);
-    const target = join(worktree.path, SNAPSHOT_FILENAME);
-    writeFileSync(target, JSON.stringify(snapshot, null, 2), "utf8");
-  }
-
   /**
-   * Add `pattern` to the repo's git `info/exclude` (idempotent via
-   * {@link ensureExcluded}), so a `git add -A`/`git add .` in the resident
-   * worktree never stages it (F3). `git rev-parse --git-path info/exclude` run
-   * inside a linked worktree resolves to the SHARED common-dir exclude
-   * (git keeps `info/exclude` in the common git dir, not per-worktree) — that is
-   * fine and intended here: every slice excludes the SAME snapshot filename, and
-   * {@link ensureExcluded} is idempotent, so concurrent slices appending the same
-   * pattern never duplicate or conflict. Best-effort: a git/fs fault here must
-   * not block the snapshot write itself (the checked-in root `.gitignore` belt
-   * still covers the common case).
+   * Resident worktree discovery (#936 / #934 ID-009).
+   * Discovery failure must NOT create a second worktree — propagate loud.
+   * Empty porcelain (no worktrees) is success → undefined (typed fresh).
    */
-  private excludeFromGit(worktree: WorktreeHandle, pattern: string): void {
+  private findExistingWorktree(issueNumber: number): { path: string; branch: string } | undefined {
+    let out: string;
     try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktree.path,
+      out = this.sh("git", ["worktree", "list", "--porcelain"], this.workingRepo);
+    } catch (err) {
+      throw new Error(
+        `worktree discovery failed for issue #${issueNumber}; refusing to create ` +
+          `a second worksite (#936 / #934 ID-009): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
       );
-      const abs = excludePath.startsWith("/")
-        ? excludePath
-        : join(worktree.path, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // No exclude file yet (or info/ missing) — start from empty + mkdir.
-      }
-      const next = ensureExcluded(existing, pattern);
-      if (next !== existing) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        writeFileSync(abs, next, "utf8");
-      }
-    } catch {
-      // Best-effort: a divergent git layout must not block the snapshot write.
-      // The root .gitignore (checked-in belt) still covers the common case.
     }
+    return resolveExistingWorktreeFromPorcelain(out, issueNumber);
   }
 
   // ── auth mount (spike contract) ────────────────────────────────────────────
   // `protected` (not private) so the auth-mount tests can drive it over a real
   // temp $HOME (assert auth.json copied + the minimal container config written).
+  // #945: thin slice wrapper over {@link provisionWorkerAuth} (shared core +
+  // path-policy). Always-mount codex semantics live in the `slice` policy.
   protected mountAuth(issueNumber: number): {
     authDir: string;
     claudeToken?: string;
+    /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
+    grokAuthDir?: string;
+    /** Per-run agy OAuth dir (host-mirrored antigravity config), or undefined. */
+    agyDir?: string;
+    providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
-    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
-    rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
-    // Owner-only dir: this holds copied credential material (auth.json /
-    // config.toml). 0o700 keeps it off world-readable multi-user hosts
-    // (coderabbit R2, major).
-    mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
-    // The Codex auth is BEST-EFFORT too (#384 R2 codex P2 — symmetric to the
-    // Claude token below). With ORCHESTRATOR_CODER_MODEL switched to a Claude coder
-    // (e.g. "sonnet"), a host with Claude auth but no `~/.codex/auth.json` must
-    // still start the worker — a missing codex auth degrades the codex leg, it does
-    // not throw and block the Claude coder. So the env-only model switch works both
-    // ways.
-    try {
-      copyFileSync(paths.srcCodexAuth, join(paths.hostCodexAuthDir, "auth.json"));
-      // Copied credential file → owner-only (was world-readable 0o644).
-      chmodSync(join(paths.hostCodexAuthDir, "auth.json"), 0o600);
-    } catch {
-      // No host codex auth → the codex leg degrades (no creds in the mounted dir).
+    const home = this.opts.home ?? homedir();
+    const core = provisionWorkerAuth({
+      home,
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+      pathPolicy: { kind: "slice", issueNumber },
+    });
+    // Slice policy always returns a codex dir (stable per-issue always-mount).
+    const authDir = core.codexAuthDir;
+    if (authDir === undefined) {
+      throw new Error(
+        `mountAuth(#${issueNumber}): slice path-policy must always return codexAuthDir`,
+      );
     }
-    // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-    // bwrap is impossible). The host config.toml is host-personal (notify/plugins/
-    // workspace-write) and irrelevant here — only auth.json crosses. Write the
-    // minimal container config instead of copying the host's (#378). Always written
-    // so the dir is a valid mount even when codex auth was absent.
-    writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
-    // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
-    // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
-    // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
-    // missing token degrades the Claude leg (undefined) rather than throwing and
-    // blocking the Codex coder before it can start (mirrors ShipAuth's optional
-    // claudeToken).
-    let claudeToken: string | undefined;
-    try {
-      claudeToken = readFileSync(paths.claudeTokenFile, "utf8").trim() || undefined;
-    } catch {
-      claudeToken = undefined;
+    return {
+      authDir,
+      claudeToken: core.claudeToken,
+      grokAuthDir: core.grokAuthDir,
+      agyDir: core.agyDir,
+      providerAuth: providerAuthFromCore(core),
+    };
+  }
+
+  /**
+   * Grok OAuth copies are invocation-unique and only needed while their mounted
+   * container runs. Reclaim them on every terminal path without masking the
+   * worker result; this mirrors the family backend's per-run auth lifecycle.
+   */
+  protected cleanupTempAuthDirs(dirs: ReadonlyArray<string | undefined>): void {
+    for (const dir of dirs) {
+      if (dir === undefined) continue;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup must not mask the worker's own outcome.
+      }
     }
-    return { authDir: paths.hostCodexAuthDir, claudeToken };
+  }
+
+  /** Fail before `sc.run`: a missing mount is not permission to launch unauthenticated. */
+  private assertProviderAuth(
+    slug: string,
+    pool: BillingPoolDispatchId | undefined,
+    availability: ProviderAuthAvailability,
+  ): void {
+    const resolved = resolveModelSlugForPool(slug, pool);
+    const missing = unavailableProviderAuth(resolved.provider, availability);
+    if (missing !== undefined) {
+      throw new Error(
+        `no ${missing} auth for selected ${resolved.provider} provider (${slug}) — refusing to launch`,
+      );
+    }
   }
 
   private box(
     issueNumber: number,
-    spec: Pick<StepSpec, "role" | "soul">,
+    spec: Pick<StepSpec, "role" | "soul" | "model">,
     options?: AgentStepRunOptions,
-  ): sc.SandboxProvider {
+  ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        spec,
-        issueNumber,
-        options,
+    return {
+      sandbox: docker(
+        this.boxConfig(
+          { ...auth, ghToken: this.readGhToken() },
+          spec,
+          issueNumber,
+          options,
+        ),
       ),
-    );
+      providerAuth: auth.providerAuth,
+      cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir, auth.agyDir]),
+    };
   }
 
   /**
@@ -2917,11 +2828,11 @@ export class RealBackend implements Backend {
    * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
    * container, no I/O: a unit test asserts the mounts + soul env without spinning
-   * a real sandbox (#334 — so the dropped-skillsMount behaviour is regression-
+   * a real sandbox (#334 — so the baked-skills behaviour is regression-
    * guarded the same way the family merger's mount is).
    *
    * #334 (ADR 0026 / cross-slice note from #332/#333): the runtime host
-   * `skillsMount` bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
+   * host-skills bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
    * worker image (#333) BAKES the full dev-skill closure at that exact path, so
    * mounting host skills there at runtime would SHADOW the baked skills — pulling
    * the worker back to host state (the ADR 0026 reproducibility regression). The
@@ -2935,8 +2846,16 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken?: string; ghToken?: string },
-    spec: Pick<StepSpec, "role" | "soul">,
+    auth: {
+      authDir: string;
+      claudeToken?: string;
+      ghToken?: string;
+      /** #807: optional per-issue grok auth dir (omit when host auth absent). */
+      grokAuthDir?: string;
+      /** #905: optional per-run agy OAuth dir (omit when host token absent). */
+      agyDir?: string;
+    },
+    spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
@@ -2968,41 +2887,36 @@ export class RealBackend implements Backend {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] =
         options.fixFindingsLanding.sandboxPath;
     }
-    if (options?.fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
-    }
-    if (options?.onlineReviewLanding !== undefined) {
-      env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
-        options.onlineReviewLanding.sandboxPath;
-    }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
+    }
+    if (options?.relayBrief !== undefined && options.relayBrief.length > 0) {
+      env[SANDBOX_RELAY_BRIEF_ENV] = options.relayBrief;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
+    // #807: mount grok auth only when host `~/.grok/auth.json` was present
+    // (fail-closed skip). Whole-dir mount at SANDBOX_GROK_DIR; image keeps
+    // `/usr/local/bin/grok` outside this tree so PATH survives the bind.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    // #905: agy OAuth — same CMR seam (writable antigravity config dir).
+    appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
+      // #1012: host file must exist as a regular file before docker bind-mount
+      // (missing path → docker creates a directory placeholder → host EISDIR).
+      ensureRegularFileForBindMount(options.fixFindingsLanding.path);
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (options?.fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: options.fixFocusLanding.path,
-        sandboxPath: options.fixFocusLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (options?.onlineReviewLanding !== undefined) {
-      mounts.push({
-        hostPath: options.onlineReviewLanding.path,
-        sandboxPath: options.onlineReviewLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -3021,301 +2935,275 @@ export class RealBackend implements Backend {
     };
   }
 
-  /** Build the output definition for a step's role. */
-  private outputFor(spec: StepSpec): sc.OutputDefinition {
+  /**
+   * Typed Sandcastle output for ADR 0131 / #924 / #925 traffic signals:
+   * - S3/S6 judge: T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
+   * - reviewer (legacy residual): open-count receipt on the `review` tag
+   * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
+   * - non-judge role verify (S9 online-review): not configured here — family
+   *   review-loop workers own the verify receipt channel on RealFamilyBackend
+   */
+  private outputFor(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+  ): sc.OutputDefinition | undefined {
+    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // S9 online-review must not take JUDGE_RECEIPT.
+    // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
+    // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
+    // a pool rewrite can move a resume-capable slug onto an incapable provider.
+    const pool = isBillingPoolDispatchId(options?.billingPool)
+      ? options.billingPool
+      : undefined;
+    const resumeCapable = resumeCapableForSlug(spec.model, pool);
+    if (isJudgeSeat({ id: spec.id })) {
+      return workerReceiptOutput(
+        JUDGE_RECEIPT_TAG,
+        judgeStationReceiptSchema(),
+        resumeCapable,
+      );
+    }
     if (spec.role === "reviewer") {
-      return sc.Output.object({ tag: "review", schema: reviewerOutputSchema });
+      return workerReceiptOutput("review", workerReceiptSchema(), resumeCapable);
     }
-    if (spec.role === "verify") {
-      return sc.Output.object({ tag: "verify", schema: verifyOutputSchema });
+    if (spec.role === "coder") {
+      return coderReceiptOutput(
+        coderStationReceiptSchema(),
+        CODER_RECEIPT_TAG,
+        resumeCapable,
+      );
     }
-    if (spec.role === "fixer") {
-      return sc.Output.object({ tag: "fixer", schema: fixerOutputSchema });
-    }
-    if (spec.role === "cleanup") {
-      return sc.Output.object({ tag: "cleanup", schema: cleanupOutputSchema });
-    }
-    if (spec.role === "docRelease") {
-      return sc.Output.object({ tag: "docRelease", schema: docReleaseOutputSchema });
-    }
-    // default (and legacy coder path)
-    return sc.Output.object({ tag: "coder", schema: coderOutputSchema });
+    return undefined;
   }
 
   /**
-   * Resolve the raw structured payload to decode for a step.
-   *
-   * - `typedOutputUsed` (reviewer single-pass, OR any resume — both run
-   *   maxIterations:1): Sandcastle parsed the tag into `result.output`, so read
-   *   it directly.
-   * - otherwise (a coder step with maxIter>1, where Sandcastle's typed `output`
-   *   is forbidden): extract the `<coder>` tag from `result.stdout` ourselves
-   *   (integ-cmr 256 r1, F2 — the coder path produced no `result.output`, so the
-   *   old `coderOutputSchema.parse(undefined)` threw on EVERY coder step).
+   * Opaque cargo channel (stdout role tag / sidecar). Never a fate source for
+   * decision gates or open-count (#899) — sidecar/stdout only enrich cargo fields.
    */
-  private rawOutputFor(
-    result: { output?: unknown; stdout: string },
+  /** Protected so test subclasses can probe the cargo channel without casts. */
+  protected cargoRawFor(
+    result: { stdout: string },
     spec: StepSpec,
-    typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
-  ): unknown {
+  ): unknown | undefined {
+    const compatibility = extractRoleReceipt(result.stdout, spec);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
         if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
-      if (spec.role === "reviewer") {
-        const wrapped = new Error(
-          `StructuredOutputError: reviewer outcome sidecar was not valid JSON: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
-        wrapped.name = "StructuredOutputError";
-        throw wrapped;
-      }
-      throw err;
+      console.warn(
+        `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return compatibility;
     }
-    if (typedOutputUsed) return result.output;
-    // Untyped compatibility path: structured result lives in the role tag.
-    // #596 F2: extended for the 4 review-loop roles (single-slice real decode seam).
-    if (spec.role === "coder") return extractCoderTag(result.stdout);
-    if (spec.role === "reviewer") return extractReviewerTag(result.stdout);
-    if (spec.role === "verify") return extractVerifyTag(result.stdout);
-    if (spec.role === "fixer") return extractFixerTag(result.stdout);
-    if (spec.role === "cleanup") return extractCleanupTag(result.stdout);
-    if (spec.role === "docRelease") return extractDocReleaseTag(result.stdout);
-    // Unknown role: fail closed (no silent misroute to wrong extractor).
+    return compatibility;
+  }
+
+  /**
+   * Resolve the raw structured payload to decode for a step.
+   *
+   * - S3/S6 judge: typed tri-state verdict is the sole fate channel (ADR 0131
+   *   channel (b) / #925).
+   * - Residual reviewer seats: typed open-count when present (not main path).
+   * - Coder: typed decision signal is the sole fate channel; cargo is separate.
+   * - When typed Output.object was configured, missing `result.output` fails
+   *   the Action for #598 — sidecar/stdout never supply escalate / findingsCount
+   *   as a fourth channel (#899).
+   */
+  /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
+  protected rawOutputFor(
+    result: { output?: unknown; stdout: string },
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+  ): unknown | undefined {
+    // Typed receipt owns fate signals. Missing typed output is not a cargo
+    // fallback — that would re-open escalate / findingsCount as a fourth channel.
+    if (typedOutputUsed) {
+      return requireTypedTrafficSignal(
+        result.output,
+        `${spec.id}-${spec.role}`,
+      );
+    }
+    return this.cargoRawFor(result, spec, options);
+  }
+
+  /**
+   * Shared typed-output attach policy for fresh and resumed agent seats (#899).
+   * Traffic-signal Output.object attaches whenever {@link outputFor} supplies a
+   * definition for a single-iter seat. Cargo sidecars (`outcomeLanding`) stay
+   * cargo-only and never suppress typed fate signals.
+   */
+  private typedOutputPolicy(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+    opts?: { readonly requireSingleIter?: boolean },
+  ): {
+    readonly typedOutput: sc.OutputDefinition | undefined;
+    readonly typedOutputUsed: boolean;
+  } {
+    // #955 r7: options.billingPool must reach resumeCapableForSlug (receipt
+    // maxRetries) — same dispatch pool agentForSlug uses for the real agent.
+    const typedOutput = this.outputFor(spec, options);
+    const singleIterOk =
+      opts?.requireSingleIter !== true || spec.maxIter === 1;
+    const typedOutputUsed = typedOutput !== undefined && singleIterOk;
+    return { typedOutput, typedOutputUsed };
+  }
+
+  /**
+   * Decode a finished Sandcastle run into StepResult (typed signal + cargo).
+   * Shared by fresh and resume so selection/decoding cannot drift.
+   */
+  private stepResultFromRun(
+    result: Awaited<ReturnType<typeof sc.run>>,
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+    sessionIdFallback?: string,
+  ): StepResult {
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
+    const cargo =
+      typedOutputUsed &&
+      (spec.role === "coder" ||
+        isJudgeSeat({ id: spec.id }))
+        ? this.cargoRawFor(result, spec, options)
+        : undefined;
+    const output = this.decodeOutput(spec, raw, cargo);
+    return {
+      output,
+      sessionId: lastSessionId(result) ?? sessionIdFallback,
+    };
+  }
+
+  /** Protected so test subclasses can probe receipt decode without casts. */
+  protected decodeOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    // Fate from typed signal only. Cargo may ride along for enrichment but
+    // never supplies escalate / findingsCount when typed was the seat policy.
+    if (spec.role === "coder") {
+      return this.decodeCoderStationOutput(spec, raw, cargo);
+    }
+    // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
+    // here on RealBackend (family review-loop owns verify decode).
+    if (isJudgeSeat({ id: spec.id })) {
+      return this.decodeJudgeStationOutput(spec, raw, cargo);
+    }
+    // #919 CR: decision_gate bell must not mint residual open-count paper
+    // (same dual-shape landmine runner R1 deleted). Prefer T2 judge escalate —
+    // same fields as runner isJudgeSeat path. S3/S6 never reach here (early
+    // return above); residual non-S3/S6 reviewer / legacy decode still must
+    // not re-open kind:"reviewer"+findingsCount:0 as a gate envelope.
+    const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
+    if (gate.kind === "bell") {
+      return mintJudgeEscalate({
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
+      });
+    }
+    if (spec.role === "reviewer") {
+      // Open-count fate only from the typed/raw channel — never from a separate
+      // cargo fallback that could reintroduce findingsCount as a fourth channel.
+      // Shape handling for findings cargo lives on the shared decode boundary
+      // (ADR 0131 / #899) — not a second court in the runner.
+      const decoded = decodeReviewerOpenCountReceipt(raw);
+      if (decoded === undefined) {
+        // Process-clean unusable open-count is not findingsCount=0 and not a
+        // #598 shape-lane throw (ADR 0131 / #899). Typed SO already fails closed
+        // at Sandcastle when the schema is the seat policy; remaining unusable
+        // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
+        //
+        // #919 AS4: honest residual unusable paper; never kind:fixer placeholder.
+        return unusableResidualOpenCountPaper();
+      }
+      return decoded;
+    }
+
+    // Family endgame roles are dispatched by RealFamilyBackend, never here.
+    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
+  }
+
+  /**
+   * #925 — decode a T2 judge station receipt into {@link JudgeResult}.
+   * Traffic status from the envelope only; findings cargo is opaque and may
+   * ride as SO siblings or a separate cargo channel.
+   */
+  private decodeJudgeStationOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    const envelope = decodeJudgeVerdict(raw);
+    if (envelope.ok) {
+      const body = cargo !== undefined ? cargo : raw;
+      let findings: Finding[] | undefined;
+      if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+        const rec = body as { findings?: unknown };
+        if (Array.isArray(rec.findings)) {
+          findings = rec.findings as Finding[];
+        }
+      }
+      return judgeResultFromVerdict(envelope.value, findings);
+    }
+
+    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay).
+    // #919 CR N4: single-slice historical residual only — positive count may
+    // project continue for resume compatibility. Live seats emit T2 kind:judge;
+    // family court never closes on residual open-count (unusable paper only).
+    // Never re-open a second open-count routing path (#919 CR U3).
+    const openCount = decodeReviewerOpenCountReceipt(raw);
+    if (openCount !== undefined) {
+      const projected = projectResidualReviewerToJudge(openCount);
+      if (projected !== undefined) {
+        return projected;
+      }
+      // Residual open-count present but not positive continue → honest residual
+      // unusable paper (#919 AS4). Never kind:fixer placeholder.
+      return unusableResidualOpenCountPaper();
+    }
+
+    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
+    // never silent converged / never kind:fixer placeholder.
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      return unusableResidualOpenCountPaper();
+    }
+
     throw new Error(
-      `realBackend: unknown role '${spec.role}' for raw tag extraction`,
+      `${spec.id}-judge: illegal judge station receipt: ${envelope.reason}`,
     );
   }
 
   /**
-   * Decode a Sandcastle structured output into a domain StepOutput.
+   * #924 — decode a T2 coder station receipt into {@link CoderOutput}.
+   * Shared pure projection: {@link projectCoderStationReceipt} (family M1 too).
    *
-   * `gitCommitCount` is `result.commits.length` (via {@link realCommitCount}) —
-   * the number of commits Sandcastle observed THIS run. For a coder step on the
-   * NORMAL completion path it is the SINGLE SOURCE OF TRUTH for `committed` /
-   * `commitsAdded` (#256 truthification): the self-reported `<coder>` tag is
-   * reconciled against git via {@link reconcileCoderCommits}, which derives the
-   * count from git and throws on a contradiction (a model claiming a commit it
-   * never made) — the caller propagates that to the runner's S8(error) edge.
-   *
-   * `gitCommitCount === undefined` is allowed only for roles where commit truth
-   * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
-   * count is cumulative from the persisted ledger baseline to the resident HEAD,
-   * not `result.commits.length`: resume may only re-emit corrected structured
-   * output while earlier commits already live on the branch.
-   *
-   * Ignored for the reviewer role (commits are not part of a review's contract).
+   * Production attaches coderStationReceiptSchema (SO). There is no legacy
+   * decision-gate / empty-`{}` second accept shape — illegal envelope after SO
+   * throws for #598 redispatch (fail closed).
    */
-  private decodeOutput(
+  private decodeCoderStationOutput(
     spec: StepSpec,
     raw: unknown,
-    gitCommitCount: number | undefined,
+    cargo?: unknown,
   ): StepOutput {
-    if (spec.role === "reviewer") {
-      const r = reviewerOutputSchema.parse(raw);
-      const findings: Finding[] = r.findings.map((f) =>
-        normalizeReviewerFinding({ ...f }),
-      );
-      return {
-        kind: "reviewer",
-        findings,
-        ...(r.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: r.priorFindingDispositions }
-          : {}),
-        ...(r.escalate ? { escalate: r.escalate } : {}),
-      };
-    }
-    // Coder: parse the self-report for shape, then TRUTH the commit count from
-    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
-    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
-    if (spec.role === "coder") {
-      const c = coderOutputSchema.parse(raw);
-      if (gitCommitCount === undefined) {
-        throw new Error(
-          "realBackend: coder output decoded without git commit truth. " +
-            "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
-            "against git; trusting the model self-report would bypass S8(error).",
-        );
-      }
-      const out = reconcileCoderCommits(c, gitCommitCount);
-      const repairEvidence =
-        out.repairEvidence !== undefined
-          ? { repairEvidence: out.repairEvidence }
-          : {};
-      return out.escalate
-        ? {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-            escalate: out.escalate,
-          }
-        : {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-          };
-    }
-
-    // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
-    // guards from reviewLoopOutcome.ts as the decode validation. Malformed raw fails closed
-    // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
-    // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
-    if (spec.role === "verify") {
-      const v = verifyOutputSchema.parse(raw);
-      const candidate: VerifyResult = {
-        kind: "verify",
-        ...attachSanitizedFindingFamilies(
-          {
-            converged: v.converged,
-            ...(v.findingDispositions !== undefined
-              ? { findingDispositions: v.findingDispositions }
-              : {}),
-            ...(v.fixMarkedFindingIdentityKeys !== undefined
-              ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-              : {}),
-            ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-            ...(v.threadsToResolve !== undefined
-              ? { threadsToResolve: v.threadsToResolve }
-              : {}),
-            ...(v.deferredIssueUrls !== undefined
-              ? { deferredIssueUrls: v.deferredIssueUrls }
-              : {}),
-            ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-            ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
-          },
-          v.findingFamilies,
-        ),
-      };
-      if (!isValidVerifyResult(candidate)) {
-        const err = new Error(
-          "realBackend: verify output did not satisfy isValidVerifyResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "fixer") {
-      const f = fixerOutputSchema.parse(raw);
-      const candidate: FixerResult = {
-        kind: "fixer",
-        committed: f.committed,
-        ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-        ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
-      };
-      if (!isValidFixerResult(candidate)) {
-        const err = new Error(
-          "realBackend: fixer output did not satisfy isValidFixerResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "cleanup") {
-      const c = cleanupOutputSchema.parse(raw);
-      const candidate: CleanupResult = {
-        kind: "cleanup",
-        terminal: c.terminal,
-        ok: c.ok,
-        ...(c.issuesClosed !== undefined ? { issuesClosed: c.issuesClosed } : {}),
-        ...(c.parentIssueClosed === true ? { parentIssueClosed: true } : {}),
-        ...(c.branchOutcome !== undefined
-          ? { branchOutcome: c.branchOutcome }
-          : {}),
-        ...(c.skippedReasons !== undefined
-          ? { skippedReasons: c.skippedReasons }
-          : {}),
-      };
-      if (!isValidCleanupResult(candidate)) {
-        const err = new Error(
-          "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "docRelease") {
-      const d = docReleaseOutputSchema.parse(raw);
-      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
-      if (!isValidDocReleaseResult(candidate)) {
-        const err = new Error(
-          "realBackend: docRelease output did not satisfy isValidDocReleaseResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-
-    // Unknown role after the ifs: fail closed (should not reach if outputFor is consistent).
-    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
-  }
-
-  private resumeCoderCommitCount(
-    worktree: WorktreeHandle,
-    sessionId: string,
-    beforeResumeHead: string | undefined,
-  ): number {
-    const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
-    const ledger = this.readLedger(stateDir);
-    const basis =
-      ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
-    if (basis.baselineHead !== undefined) {
-      return this.countCommitsSince(worktree, basis.baselineHead);
-    }
-    if (basis.priorCommitsAdded !== undefined) {
-      if (beforeResumeHead === undefined) {
-        throw new Error(
-          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-            "the persisted ledger only has a prior commit count fallback, but " +
-            "the before-resume HEAD could not be read. Refusing to count " +
-            "resume-only commits as zero.",
-        );
-      }
-      const resumeOnlyCommits =
-        this.countCommitsSince(worktree, beforeResumeHead);
-      return basis.priorCommitsAdded + resumeOnlyCommits;
-    }
-    throw new Error(
-      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-        "the persisted ledger has no matching coder entry with a baseline HEAD " +
-        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
-    );
-  }
-
-  async countCommitsBetween(
-    worktree: WorktreeHandle,
-    fromHead: string,
-    toHead: string,
-  ): Promise<number> {
-    return this.countCommitsInRange(worktree, `${fromHead}..${toHead}`);
-  }
-
-  private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
-    return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
-  }
-
-  private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
-    const raw = this.sh(
-      "git",
-      ["rev-list", "--count", range],
-      worktree.path,
-    );
-    const count = Number.parseInt(raw, 10);
-    if (!Number.isInteger(count) || count < 0) {
+    try {
+      return projectCoderStationReceipt(raw, cargo);
+    } catch (err) {
+      // Fail closed: no #899 dual-channel fallthrough to classifyDecisionGate / {}.
+      const reason = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `realBackend: git rev-list returned invalid commit count "${raw}" ` +
-          `for ${range} in ${worktree.path}`,
+        reason.startsWith("illegal coder station receipt")
+          ? `${spec.id}-coder: ${reason}`
+          : `${spec.id}-coder: illegal coder station receipt: ${reason}`,
       );
     }
-    return count;
   }
 
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
@@ -3326,63 +3214,56 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    const typedOutputUsed =
-      spec.maxIter === 1 && options?.outcomeLanding === undefined;
-    const result = await this.runAgentSandbox({
+    const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(
+      spec,
+      options,
+      { requireSingleIter: true },
+    );
+    const box = this.box(issueNumber, spec, options);
+    try {
+    const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+    this.assertProviderAuth(spec.model, pool, box.providerAuth);
+    let result: Awaited<ReturnType<typeof sc.run>>;
+    try {
+      result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber, spec, options),
+      sandbox: box.sandbox,
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable. #686: billing pool
       // overrides the channel when the same model lives on multiple pools.
-      agent: agentForSlug(
-        spec.model,
-        effortForLiveOfficer(spec.model, spec),
-        isBillingPoolDispatchId(options?.billingPool)
-          ? options.billingPool
-          : undefined,
-      ),
-      // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
-      // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
-      // normally — route() continues — it is NEVER the orchestrator giving up
-      // (StepSpec.maxIter semantics; the only give-up is a model escalate).
+      // Effort comes from the registry row for `spec.model` only (#916: no
+      // role/soul hard override of reasoning effort at dispatch).
+      agent: agentForSlug(spec.model, pool),
+      // #899 / ADR 0128 / #928: every selected seat is single-iteration
+      // (maxIter:1). Sandcastle completionSignal forced off at
+      // invokeSandcastleRun (`[]` — omit falls back to default password).
+      // Completion is clean exit + typed envelope / sidecar. Native SO re-asks
+      // stay in-session.
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // Structured output only when Sandcastle should own tag parsing. When the
-      // runner supplied an outcome sidecar, do not pass `output`: Sandcastle
-      // would throw on a bad/missing compatibility tag before the backend can
-      // read the sidecar machine protocol.
-      ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
-      // #683 fallback context for Sandcastle's own internal timeout only. The
-      // normal live-worker path is dispatched through the #684 monitor.
-      quotaProbe: {
-        modelRef: spec.model,
-        step: spec.id,
-        worktreePath: worktree.path,
-        issueNumber,
-      },
-    });
-    // #244 step-advance gate: the step only advances if the agent fired its
-    // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
-    // mid-work) throws here → S8(error), before any output is decoded.
-    assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
-    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    // #256 commit-truth: the coder's committed/commitsAdded is derived from the
-    // REAL commits Sandcastle observed (result.commits), not the self-report.
-    const gitCommitCount =
-      spec.role === "coder"
-        ? (coderCommitCount?.(result) ?? realCommitCount(result))
-        : undefined;
-    const output = this.decodeOutput(spec, raw, gitCommitCount);
-    return { output, sessionId: lastSessionId(result) };
+      // #899/#924/#925: traffic signals attach Output.object(+maxRetries).
+      // S3/S6 use T2 judge station-receipt; residual/legacy reviewer role uses
+      // open-count schema; coder uses T2 station-receipt (cargo siblings
+      // passthrough — no cargo-shape re-ask).
+      ...(typedOutputUsed ? { output: typedOutput } : {})
+      });
+    } catch (err) {
+      // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
+      // so #598 re-dispatches at this fixed position (#899). Never convert SOE
+      // into a success empty-cargo fallback that would feed the fixer.
+      logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}`);
+    }
+    return this.stepResultFromRun(result, spec, typedOutputUsed, options);
+    } finally {
+      box.cleanup();
+    }
   }
 
   async runStep(
@@ -3401,334 +3282,93 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    const beforeResumeHead =
-      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, options);
     try {
-      const typedOutputUsed = options?.outcomeLanding === undefined;
+      const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
+      // Resume is always maxIterations:1 (Sandcastle constraint); no extra
+      // single-iter gate beyond the shared attach policy.
+      const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(spec, options);
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber, spec, options),
+        sandbox: box.sandbox,
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
-        // channel must match the fresh dispatch.
-        agent: agentForSlug(
-          spec.model,
-          effortForLiveOfficer(spec.model, spec),
-          isBillingPoolDispatchId(options?.billingPool)
-            ? options.billingPool
-            : undefined,
-        ),
+        // channel must match the fresh dispatch. Effort = registry row only (#916).
+        agent: agentForSlug(spec.model, pool),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
-        completionSignal: spec.completionSignal,
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // A resume runs maxIterations:1, so typed output is valid unless the
-        // outcome sidecar is mounted. With a sidecar, keep Sandcastle from
-        // pre-parsing the compatibility tag before rawOutputFor can read the
-        // runner-owned file.
-        ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
-        // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-        quotaProbe: {
-          modelRef: spec.model,
-          step: spec.id,
-          worktreePath: worktree.path,
-          issueNumber,
-        },
+        // Resume is single-iter; attach the same traffic-signal Output.object policy.
+        ...(typedOutputUsed ? { output: typedOutput } : {})
       });
-      // #244 step-advance gate (resume path): a resumed step still only advances
-      // on its declared completionSignal — an unsignaled resume throws → S8(error).
-      assertCompletionSignal(
+      return this.stepResultFromRun(
         result,
-        spec.completionSignal,
-        `${spec.id}-${spec.role}-resume`,
-      );
-      // Resume path: git-truth against the cumulative resident-branch commit
-      // count, not this one-iteration result.commits.length. The resumed
-      // iteration may only re-emit the structured tag while prior commits already
-      // live on the branch.
-      const gitCommitCount =
-        spec.role === "coder"
-          ? this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-          : undefined;
-      const output = this.decodeOutput(
         spec,
-        this.rawOutputFor(result, spec, typedOutputUsed, options),
-        gitCommitCount,
+        typedOutputUsed,
+        options,
+        sessionId,
       );
-      return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
+      // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
+      // fresh-run typed seats). Nested / name-only SOE must not fall through to
+      // dead-session fresh-run — walk the cause chain like the fresh path.
+      if (isReceiptRecoveryFailure(err)) {
+        logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
+      }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,
       // lose in-session memory). Signal mismatches, schema parse failures, auth
-      // failures, model errors, and commit-truth contradictions propagate to the
+      // failures and model errors propagate to the
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
-        // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
-        // sandbox.run for the same step). Coder commit truth still uses the
-        // resume ledger baseline, because prior committed work may already live
-        // on the resident branch even though the old session is gone.
-        const coderCommitCount =
-          spec.role === "coder"
-            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-            : undefined;
-        return await this.runFreshAgentStep(
-          spec,
-          worktree,
-          options,
-          coderCommitCount,
-        );
+        return await this.runFreshAgentStep(spec, worktree, options);
       }
       throw err;
+    } finally {
+      box.cleanup();
     }
-  }
-
-  /**
-   * Live sandbox-handle worker pid captured during the current
-   * {@link runAgentSandbox} call. Cleared on entry/exit. Tests (and future
-   * #684 monitor wiring) call {@link noteActiveSandboxWorkerPid} while the
-   * sandbox handle is still live — before Sandcastle release.
-   */
-  private activeSandboxWorkerPid: number | undefined;
-
-  /**
-   * Record the OS pid from the live sandbox handle so hang kill after idle
-   * probe has a real target. No-op for non-positive / non-integer values.
-   */
-  protected noteActiveSandboxWorkerPid(pid: number): void {
-    if (Number.isInteger(pid) && pid > 0) {
-      this.activeSandboxWorkerPid = pid;
-    }
-  }
-
-  /** Resolve worker pid: explicit context → live sandbox handle → 0. */
-  protected resolveWorkerPid(ctx: QuotaProbeRunContext): number {
-    if (ctx.workerPid !== undefined && ctx.workerPid > 0) return ctx.workerPid;
-    if (
-      this.activeSandboxWorkerPid !== undefined &&
-      this.activeSandboxWorkerPid > 0
-    ) {
-      return this.activeSandboxWorkerPid;
-    }
-    return 0;
   }
 
   /**
    * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
-   * override THIS method (or {@link runAgentSandbox}). Production idle/quota
-   * disposition lives in {@link runAgentSandbox} so a full override of that
-   * method intentionally bypasses #683 only when the test owns the whole path.
-   *
-   * Implementations that own a live sandbox handle MUST call
-   * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
-   * while the handle is still alive (before teardown) so hang kill has a real
-   * target. Public Sandcastle types do not expose handle.pid — capture is the
-   * invoker's responsibility (#684 monitor handle is the durable companion).
+   * override THIS method (or {@link runAgentSandbox}). Host process ownership is
+   * the ChildProcess handle (#937 / ID-006); silence is observational only.
    */
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return await sc.run(options);
+    // #899 / #928 / #919 F2: shared wrap — completionSignal:[] + monitor heartbeat.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
 
   /**
-   * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
-   * probes the worker's quota pool BEFORE hang disposition:
-   *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
-   *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
-   *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
-   *     no-op here; live hang kill is owned by the #684 monitor handle path)
+   * Production agent-sandbox entry (#937 / #934 ID-007). Runs Sandcastle only.
+   * Host/provider silence must not trigger quota probe, park, kill, or relay —
+   * Sandcastle AgentIdleTimeout rethrows as a genuine hard-clock failure
+   * without idle→quota disposition. Explicit typed 429/capacity still enter
+   * park/relay via their live constructors elsewhere.
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe, ...scOptions } = options;
-    this.activeSandboxWorkerPid = undefined;
-    try {
-      return await this.invokeSandcastleRun(scOptions);
-    } catch (err) {
-      if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
-        throw err;
-      }
-      const result = await this.resolveIdleAfterQuotaProbe({
-        ...quotaProbe,
-      });
-      if (result.disposition.kind === "wait_for_reset") {
-        // 429: park for quota reset. Sandbox already released by Sandcastle;
-        // runner consumes this error via existing park machinery (not S8 error).
-        throw new QuotaWaitForResetError(result);
-      }
-      // Internal Sandcastle timeout fallback: the sandbox already owns its
-      // teardown. Do not kill via the old backend-local pid path.
-      throw err;
-    } finally {
-      this.activeSandboxWorkerPid = undefined;
-    }
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return await this.invokeSandcastleRun(options);
   }
 
-  /**
-   * #683 production idle disposition entry. Callable from runAgentSandbox (on
-   * Sandcastle idle timeout) and from any external monitor that owns the idle
-   * threshold. Overridable only for host I/O seams (probe / kill / ledger).
-   */
-  protected async resolveIdleAfterQuotaProbe(
-    ctx: QuotaProbeRunContext,
-  ): Promise<HandleIdleThresholdResult> {
-    const pid = this.resolveWorkerPid(ctx);
-    return handleIdleThreshold({
-      modelRef: ctx.modelRef,
-      worker: {
-        pid,
-        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      },
-      actions: {
-        // The live monitor owns verified pid-tree kill. This action is only a
-        // no-op for the post-Sandcastle internal-timeout fallback.
-        killPidTree: () => undefined,
-        // Durable park marker is written once by runner.parkQuotaWaitForReset
-        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
-        // with placeholder audit fields (#683 integration R1).
-        recordLedger: async () => undefined,
-        now: () => this.idleNow(),
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
-    });
-  }
-
-  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
-  protected idleNow(): Date {
-    return new Date();
-  }
-
-  /**
-   * Pool probe used after idle threshold (#683). Default = real
-   * {@link runPoolProbe}; tests stub three outcomes.
-   */
-  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
-    return runPoolProbe(pool);
-  }
-
-  /**
-   * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
-   * known. Tests may override to capture without touching disk.
-   *
-   * Production monitor / Sandcastle-fallback paths no longer call this for the
-   * durable write (#683 R1): runner.parkQuotaWaitForReset owns the single
-   * append-only row with real audit fields. Kept for test overrides / tooling.
-   */
-  protected async recordQuotaWaitLedger(
-    entry: QuotaWaitForResetLedgerEvent,
-    ctx: QuotaProbeRunContext,
-  ): Promise<void> {
-    if (ctx.worktreePath === undefined || ctx.issueNumber === undefined) {
-      // No durable landing spot — still surface via QuotaWaitForResetError.applied
-      return;
-    }
-    const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
-    const persistent: PersistentLedgerEntry = {
-      step: entry.step ?? ctx.step ?? "S2",
-      event: "quota_wait_for_reset",
-      pool: entry.pool,
-      ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),
-      reason: entry.reason,
-      ...(entry.workerPid !== undefined ? { workerPid: entry.workerPid } : {}),
-      ts: entry.ts,
-      sessionId: "quota-wait-for-reset",
-      prompt_hash: "quota-wait-for-reset",
-      branchHEAD: "quota-wait-for-reset",
-    };
-    await this.writeLedger(persistent, stateDir);
-  }
-
-  // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
-
-  /**
-   * THE single-slice worker-dispatch seam (ADR 0026 / #331 / #336). The S7 ship
-   * step is dispatched here as a CONTAINER ship WORKER that invokes `gstack-ship`
-   * (#336) — replacing the inline `push` (a bare `git push`). Every OTHER worker
-   * kind (coder / reviewer agent steps) is forwarded to {@link legacyDispatchWorker}
-   * (runStep / resumeSession), which #334 already routes to the real `/tdd` /
-   * `/code-review` workers — so THIS method takes over ONLY the ship leg.
-   *
-   * The ship worker (`shipWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
-   * `Skill`-invokes gstack-ship (base merge / tests / diff review / VERSION /
-   * CHANGELOG / commit / push / `gh pr create`). It returns the full
-   * {@link WorkerResult} mapping (PRD #330 R2): shipped → `completed` ShipResult;
-   * a genuine block (merge conflict / review ASK / hard defect) → `escalated`; a
-   * hard ship/test failure → `failed`; an unparseable run → `malformed`. A
-   * rerun-able flake is NOT escalated — the worker reruns it itself (用户 note).
-   */
+  /** Child worker dispatch. S7 is a local family handoff and has no worker. */
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
-    if (spec.kind !== "ship") {
-      // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review). The
-      // rich landing payload (blocking findings) travels straight to the landing
-      // file (信封宪法, ADR 0062).
-      return legacyDispatchWorker(this, spec, ctx, landing);
-    }
-    if (ctx.worktree === undefined) {
-      throw new Error(
-        "dispatchWorker(ship): a ship worker requires ctx.worktree (the resident " +
-          "slice branch gstack-ship delivers).",
-      );
-    }
-    const outcome = await this.runShipWorker(spec, ctx);
-    if (outcome.kind === "escalate") {
-      // A GENUINE block (merge conflict the skill can't resolve / a review ASK / a
-      // hard defect needing a human decision) — the WorkerResult-level escalate
-      // (续跑 path; runner.ts S7 takes the S8(escalate) handoff). NOT a rerun-able
-      // flake (the worker reruns those itself) and NOT a fabricated PR.
-      return {
-        kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
-      };
-    }
-    if (outcome.kind === "failed") {
-      // A hard ship command / test failure no rerun cleared → the delivery could
-      // not complete (runner.ts S7 maps non-completed to S8(error)).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict / no completion signal ⇒ a STRUCTURAL process-level
-      // failure (the worker emitted no valid `<ship>` output). #601: this retries via
-      // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
-      // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
-      return { kind: "malformed", reason: outcome.reason };
-    }
-    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
-    // a worker that ships some OTHER branch (e.g. the resident base `main`) but
-    // reports it as a success must NOT be read as a delivery. prompts/ship.md asks
-    // the worker to report THE shipped branch — the resident slice branch already
-    // checked out (`branchStrategy:{type:"head"}`), with no legitimate rename path —
-    // so an `outcome.branch` ≠ the worktree branch it was asked to deliver is
-    // off-contract. #601: this is a JUDGED off-contract delivery (the worker shipped
-    // something we can rule on), NOT a structural process failure → map to `failed`
-    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
-    // (never re-running a decided wrong-branch delivery).
-    if (outcome.branch !== ctx.worktree.branch) {
-      return {
-        kind: "failed",
-        reason: `ship worker reported branch "${outcome.branch}" but was asked to deliver "${ctx.worktree.branch}" (a ship of a different branch is not the slice delivery)`,
-      };
-    }
-    return {
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: outcome.branch,
-        status: outcome.status,
-        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
-      },
-    };
+    return legacyDispatchWorker(this, spec, ctx, landing);
   }
 
   /**
@@ -3754,6 +3394,10 @@ export class RealBackend implements Backend {
     });
   }
 
+  resolveTelemetryDir(ctx: DispatchContext): string | undefined {
+    return durableTelemetryDirForSingleSlice(this.workingRepo, ctx.stateDir);
+  }
+
   /**
    * #684: map a finished monitored CLI bridge child into a WorkerResult by
    * reading the result sidecar the child wrote.
@@ -3768,418 +3412,42 @@ export class RealBackend implements Backend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  /**
-   * #683: probe at the live #684 monitor threshold. The monitor owns the
-   * verified pid-tree kill; this backend only applies the quota state machine
-   * and records a wait row when the pool returns 429.
-   */
-  async handleMonitoredWorkerIdle(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
-    const result = await handleIdleThreshold({
-      // #686: a same-model relay may have changed provider/billing pool. Probe
-      // the active dispatch pool carried by the runner whenever it is present.
-      modelRef: ctx.billingPool ?? spec.model,
-      worker: { pid: handle.pid, step: spec.id },
-      actions: {
-        killPidTree: () => undefined,
-        // Runner parkQuotaWaitForReset writes the single durable marker with
-        // real audit fields — avoid a second placeholder write here.
-        recordLedger: async () => undefined,
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
-    });
-    if (result.disposition.kind === "wait_for_reset") {
-      throw new QuotaWaitForResetError(result);
-    }
-    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
-  }
-
-  /**
-   * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
-   * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
-   * a unit test fixtures the outcome without a real container (the real container
-   * only runs on the driver / manual-smoke / e2e path).
-   *
-   * The worker is the container's TOP-LEVEL agent (so gstack-ship's own pipeline +
-   * any rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
-   * commits the VERSION/CHANGELOG bump + pushes). `branchStrategy:{type:"head"}`
-   * keeps it on the resident branch (the ADR 0017 commit真源). Its `<ship>` tag is
-   * gated on the completion signal then classified by {@link shipOutcomeFromResult}.
-   */
-  protected async runShipWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
-    const worktree = ctx.worktree!;
-    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the family ship
-    // preflight + the cmr worker's claude-token guard): the ship worker is the
-    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
-    // OAuth token is NOT a degradable codex LEG — it is THIS worker's auth.
-    // Absent, the worker cannot start and never emits a `<ship>` verdict; that would
-    // throw out of `sc.run` (NOT a structured escalate). runner S7 DOES wrap this
-    // dispatch in a try/catch → errorTermination (so a thrown start would not
-    // crash the host outright), but an UNCAUGHT start-error is read as S8(error), not
-    // the cleaner escalate续跑 the missing-auth case deserves (a human must supply the
-    // token, not "the ship command failed"). So preflight and return a structured
-    // escalate BEFORE the container — symmetric with the family path. The gh token is
-    // ALSO preflighted below (cmr S336 r10): it is load-bearing for the push +
-    // `gh pr create`, NOT a degradable leg — the 2b image bakes the gh CLI but no gh
-    // auth, so a no-gh host must escalate, not fail late in-container. Only codex auth
-    // stays best-effort (it merely degrades the in-container diff review). Mount once
-    // and reuse for the sandbox (no double-mount).
-    // `mountShipAuth` creates a per-call temp codex auth dir (mkdtempSync — a unique
-    // name each call) BEFORE the early escalate gates below; the finally reclaims it
-    // on success, exception, AND those early returns (online review r1 — 3 bots:
-    // leaked temp dirs accumulating under the codex-auth root).
-    const auth = this.mountShipAuth(this.issueOf(worktree));
-    try {
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-          diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
-        };
-      }
-    // FAIL-CLOSED on gh auth (cmr S336 r10): UNLIKE the codex leg (best-effort — it
-    // only degrades the in-container diff review), gh auth is LOAD-BEARING for the
-    // ship itself — gstack-ship Step 17 pushes over https (gh credential helper) and
-    // Step 19 runs `gh pr create`. The 2b image bakes the gh CLI but no gh auth, so a
-    // no-gh host would run the whole pipeline only to fail at push / `gh pr create` —
-    // an opaque late failure, not the cleaner escalate续跑 (a human must supply gh
-    // creds). So preflight it like the claude token (r8) and escalate BEFORE the
-    // container. The host token is read via `gh auth token` (it lives in the OS
-    // keyring, not a portable file) and injected as GH_TOKEN by shipSandboxConfig.
-      if (auth.ghToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
-          diagnosis:
-            "the ship worker invokes gstack-ship, which pushes over https + runs " +
-            "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
-            "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
-            "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
-            "in-container `gh pr create` failure would surface as an opaque S8 error).",
-        };
-      }
-      this.syncShipFocusFile(ctx);
-      const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `${spec.id}-ship`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: worktree.path,
-          sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(
-            spec.model,
-            effortForLiveOfficer(spec.model, spec),
-            isBillingPoolDispatchId(ctx.billingPool)
-              ? ctx.billingPool
-              : undefined,
-          ),
-          // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-          // container (用户 note); maxIter is the within-worker budget. A genuine block
-          // is the worker's `<ship>` escalate verdict, not the iteration limit.
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-          quotaProbe: {
-            modelRef: spec.model,
-            step: spec.id,
-            worktreePath: worktree.path,
-            issueNumber: this.issueOf(worktree),
-          },
-        });
-        return shipOutcomeFromResult({
-          ...result,
-          ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
-        });
-      } finally {
-        if (outcomeLanding !== undefined) {
-          try {
-            rmSync(join(outcomeLanding.path, ".."), { recursive: true, force: true });
-          } catch {
-            // best-effort: the run already returned/threw.
-          }
-        }
-      }
-    } finally {
-      // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
-      // best-effort — a failed cleanup must never mask the worker's outcome.
-      if (auth.codexAuthDir !== undefined) {
-        try {
-          rmSync(auth.codexAuthDir, { recursive: true, force: true });
-        } catch {
-          // best-effort: the run already returned/threw.
-        }
-      }
-    }
-  }
-
-  /**
-   * Keep the single-slice ship focus file in sync with the current dispatch. S7
-   * normally ships with no focus file, but an answered decision escalation must be
-   * visible to the clean ship worker session that is retrying the blocked delivery.
-   */
-  protected syncShipFocusFile(ctx: DispatchContext): void {
-    const worktree = ctx.worktree;
-    if (worktree === undefined) return;
-    const target = join(worktree.path, SHIP_FOCUS_FILENAME);
-    const answer = ctx.escalationAnswer;
-    if (answer === undefined) {
-      rmSync(target, { force: true });
-      return;
-    }
-    this.excludeShipFocusFromGit(worktree.path);
-    const body =
-      `# Single-slice ship focus (machine-generated; #439)\n\n` +
-      `A human answered a prior S7 decision escalation. Retry the ship worker with\n` +
-      `this answer in force; do not repeat the same HITL stop unless a new blocker\n` +
-      `remains.\n\n` +
-      `\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\`\n`;
-    writeFileSync(target, body, "utf8");
-  }
-
-  protected prepareShipOutcomeLanding(
-    ctx: DispatchContext,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (ctx.stateDir === undefined || ctx.worktree === undefined) return undefined;
-    mkdirSync(ctx.stateDir, { recursive: true });
-    const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
-    const path = join(dir, "outcome.json");
-    writeFileSync(path, "", "utf8");
-    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
-    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
-  }
-
-  /** Add the generated ship focus file to local git excludes so it is never committed. */
-  protected excludeShipFocusFromGit(worktreePath: string): void {
-    this.excludeRuntimeFileFromGit(worktreePath, SHIP_FOCUS_FILENAME);
-  }
-
-  protected excludeRuntimeFileFromGit(worktreePath: string, filename: string): void {
-    try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktreePath,
+  // ── #255 / #936: detect resume residue ─────────────────────────────────────
+  // ID-005: typed fresh only when BOTH worksite and ledger are absent. A
+  // resident worksite without a readable ledger is corrupted residue — throw so
+  // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
+  // misclassify partial residue as fresh.
+  // #937: handleMonitoredWorkerIdle deleted — silence is observational only
+  // (ID-007); no monitored-dispatch idle probe/kill/relay caller remains.
+  async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
+    if (!this.cloneDirExists(this.workingRepo)) return undefined;
+    this.ensureWorkingRepo();
+    const existing = this.findExistingWorktree(issueNumber);
+    if (existing === undefined) {
+      const orphanStateDir = join(
+        this.workingRepo,
+        ".sandcastle",
+        "worktrees",
+        `.ledger-${issueNumber}`,
       );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : resolve(worktreePath, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
+      if (existsSync(orphanStateDir)) {
+        throw new Error(
+          `resident ledger exists without a worksite for #${issueNumber} ` +
+            `(ledger=${orphanStateDir}); refusing to treat partial residue as fresh ` +
+            `(#936 / #934 ID-005)`,
         );
       }
-    } catch {
-      // Non-git fixtures still get the focus file; real worktrees get the exclude.
-    }
-  }
-
-  /**
-   * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
-   * #333) under the WRITE (`coder`) soul, with the codex auth mounted + the claude
-   * and gh tokens injected as env (the ship worker pushes + `gh pr create`, so it
-   * needs the live credentials). Takes the ALREADY-gathered {@link ShipAuth} (mirrors
-   * the family `shipSandbox`) so `runShipWorker` gathers once: preflight the claude +
-   * gh tokens THEN build the sandbox from the same auth (no double-gather).
-   * `protected` so a unit test asserts the mounts + soul without a real container.
-   */
-  protected shipSandbox(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
-  }
-
-  /**
-   * Gather the ship worker's host credentials (#336 cmr S336 r1): the codex auth dir
-   * (mounted), the claude OAuth token (env), and the gh OAuth token (`gh auth token`
-   * → GH_TOKEN env, cmr S336 r10). Gathering is fail-soft per source (each in its OWN
-   * try/catch ⇒ a missing source is undefined, never a crash here).
-   *
-   * Unlike the agent-step `mountAuth` (which THROWS on any missing credential), the
-   * GATHER is tolerant; the REQUIRE gates (claude + gh — both load-bearing for the
-   * ship) live in `runShipWorker`'s preflight, the codex leg degrades silently. NOT
-   * keyed by issue here for the codex dir — a fresh temp dir per call keeps it
-   * self-contained; the claude token is read straight off the host, the gh token via
-   * the gh CLI (it lives in the OS keyring, not a portable file).
-   */
-  protected mountShipAuth(issueNumber: number): ShipAuth {
-    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
-    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      const root = join(paths.hostCodexAuthDir, "..");
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
-      copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible). The host config.toml is host-personal and irrelevant
-      // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
-      // here — it is the separate, preflighted ghToken (cmr S336 r10). Reclaim the
-      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
-      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
-      // invocation dir would otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the ship preflight
-      // escalates), NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats
-      // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
-      // route slots simply run without this env var.
-    }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
-  }
-
-  /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
-   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
-   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV} into the container.
-   * Returns undefined when gh is unauthenticated / not installed (the `runShipWorker`
-   * preflight then escalates — gh is a hard ship requirement). `protected` so a unit
-   * test stubs it without spawning gh.
-   */
-  protected readGhToken(): string | undefined {
-    try {
-      const tok = this.sh("gh", ["auth", "token"]).trim();
-      return tok === "" ? undefined : tok;
-    } catch {
-      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
       return undefined;
     }
-  }
-
-  /**
-   * The docker options the ship worker sandbox runs under — the pure
-   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `shipSandboxConfig`
-   * testability). No container, no I/O: a unit test asserts the mounts + soul env
-   * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
-   * (it commits the bump + pushes) with codex auth + the claude token + the gh token
-   * (GH_TOKEN — push over https + `gh pr create`, cmr S336 r10), each set only when
-   * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
-   * runtime mount would SHADOW it, #334).
-   */
-  protected shipSandboxConfig(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): {
-    imageName: string;
-    env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
-  } {
-    // The ship worker runs under the dedicated "ship" soul (delivery discipline:
-    // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
-    // both single-slice and family deliveries, so the single-slice ship is unified
-    // with the family ship rather than left on the coder soul (gemini #384 R3).
-    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
-    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the sandbox must export it
-    // or that tracker write fails on an unset var (codex #384). Mirrors boxConfig.
-    const env: Record<string, string> = {
-      ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: "ship",
-      [SANDBOX_REPO_ENV]: this.opts.repo,
-    };
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
-    // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
-    // authenticates from GH_TOKEN. Set only when present (the pure seam stays
-    // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
-    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    if (outcomeLanding !== undefined) {
-      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
-    }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    // #334: codex auth ONLY — baked skills win (no host skills mount).
-    if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
-    }
-    // #372: souls mount for ship worker too (live source, shadows baked if any).
-    // Shared helper forces readonly:true at all sites.
-    mounts.push(soulsMount(this.opts.soulsDir));
-    if (outcomeLanding !== undefined) {
-      mounts.push({
-        hostPath: outcomeLanding.path,
-        sandboxPath: outcomeLanding.sandboxPath,
-      });
-    }
-    return { imageName: this.opts.imageName, env, mounts };
-  }
-
-  /**
-   * The legacy inline push (#252 escalate-residue path). RETAINED as a `protected`
-   * fallback the seam no longer reaches on the production path: ADR 0026 / #336
-   * makes S7 a ship WORKER (gstack-ship via {@link dispatchWorker}). A direct
-   * caller (a test / a legacy back-compat path that bypasses the unified seam) may
-   * still reach it; the runner never does (it always goes through dispatchWorker).
-   */
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.sh(
-      "git",
-      ["push", "-u", "origin", worktree.branch],
-      worktree.path,
-    );
-  }
-
-  // #661: retained only as a compatibility seam. Scenes are never destroyed.
-  async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    void worktree;
-  }
-
-  /**
-   * Terminal-success GC (#603 / ADR 0024): remove the resident slice worktree.
-   * Scoped to the worktree path only — no repo-level prune.
-   */
-  async reapResidentWorktree(worktree: WorktreeHandle): Promise<void> {
-    return runExclusive(this.workingRepo, () => {
-      try {
-        this.sh(
-          "git",
-          ["worktree", "remove", "--force", worktree.path],
-          this.workingRepo,
-        );
-      } catch {
-        // Best-effort: a missing worktree is already reclaimed.
-      }
-    });
-  }
-
-  // ── #255: detect resume residue ────────────────────────────────────────────
-  async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
-    const existing = this.findExistingWorktree(issueNumber);
-    if (existing === undefined) return undefined;
     const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
-    if (ledger === undefined) return undefined;
+    if (ledger === undefined) {
+      throw new Error(
+        `resident worksite exists without readable ledger for #${issueNumber} ` +
+          `(worktree=${existing.path}, expected ledger=${stateDir}); ` +
+          `refusing to treat partial residue as fresh (#936 / #934 ID-005)`,
+      );
+    }
     const worktree = { branch: existing.branch, base: "main", path: existing.path };
     return { worktree, stateDir, ledger };
   }
@@ -4238,7 +3506,8 @@ export class RealBackend implements Backend {
 
   async worktreeHead(worktree: WorktreeHandle): Promise<string | undefined> {
     try {
-      return this.sh("git", ["rev-parse", "HEAD"], worktree.path);
+      const head = this.sh("git", ["rev-parse", "HEAD"], worktree.path).trim();
+      return head.length > 0 ? head : undefined;
     } catch {
       return undefined;
     }

@@ -397,8 +397,8 @@ class Character:
     reason_code: str = ""  # 机读缘由枚举（ADR 0009；人才池/起复派生用；DB characters.reason_code 真源）
     summary: str = ""  # 人物简介，后宫/大臣均有
     portrait_id: str = ""  # 头像文件标识：空=无专属；"minister_pool_3"=用第3号预设头像
+    seed_guilt: Dict[str, str] = field(default_factory=dict)  # 开局罪谱；引擎内部值，不进入人物呈现上下文
     identity: int = 50  # 党派认同度；引擎内部值，不进入人物呈现上下文
-    seed_guilt: str = ""  # 开局罪谱 JSON；引擎内部值，不进入人物呈现上下文
 
 
 VASSAL_PRINCE_OFFICE_TYPE = "宗藩"

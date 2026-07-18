@@ -80,16 +80,6 @@ export const BOT_REACTION_ACK_ONLY_CONTENT = new Set(["eyes"]);
  */
 export const BOT_REACTION_VERDICT_CONTENT = new Set(["+1"]);
 
-/**
- * @deprecated Prefer {@link BOT_REACTION_ACK_ONLY_CONTENT} /
- * {@link BOT_REACTION_VERDICT_CONTENT}. Kept as the union of non-finding
- * reaction contents for callers that only need "not a finding".
- */
-export const BOT_REACTION_ACK_CONTENT = new Set([
-  ...BOT_REACTION_ACK_ONLY_CONTENT,
-  ...BOT_REACTION_VERDICT_CONTENT,
-]);
-
 export type BotLegStatus =
   | { readonly state: "pending" }
   | { readonly state: "complete"; readonly findingCount: number }
@@ -151,7 +141,7 @@ export interface PollPrReviewInput {
   readonly pollCount: number;
   /** Round freshness anchor — required for admissible bot/check evidence (#600 r4). */
   readonly roundTrigger: RoundTrigger;
-  /** Per-bot poll counts without a completion signal — used to drop overdue bots. */
+  /** Per-bot poll counts without a finished bot verdict — used to drop overdue bots. */
   readonly botPendingPolls?: Readonly<Partial<Record<OnlineReviewBotId, number>>>;
   /**
    * Optional clock for fail-closed head-drift re-anchor (online R2 Codex P2).
@@ -364,7 +354,8 @@ export function paginateReviewThreadNodes(
       "reviewThreads(first:$first,after:$after){",
       "pageInfo{endCursor hasNextPage}",
       `nodes{${nodesFields}}`,
-      "}}}}}",
+      // Close query / repository / pullRequest / reviewThreads (pageInfo + nodes already closed).
+      "}}}}",
     ].join("");
     const ghArgs = [
       "api",

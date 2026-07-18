@@ -430,6 +430,7 @@
     "刑部": ["security"],
     "翰林院": ["personnel"],
     "都察院": ["personnel", "security"],
+    "六科": ["personnel", "security"],
     "督抚": ["regional"],
     "地方": ["regional"],
     "边镇": ["military", "regional"],

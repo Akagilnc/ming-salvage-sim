@@ -502,6 +502,12 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             personal_skills = []
         if not isinstance(personal_skills, list):
             personal_skills = []
+        try:
+            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
+        except (TypeError, ValueError):
+            seed_guilt = {}
+        if not isinstance(seed_guilt, dict):
+            seed_guilt = {}
         characters[name] = Character(
             name=name,
             office=row["office"],
@@ -528,7 +534,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             portrait_id=row["portrait_id"],
             summary=row["summary"],
             identity=int(row["identity"]),
-            seed_guilt=row["seed_guilt"] or "",
+            seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
         )
     content.characters = characters
 

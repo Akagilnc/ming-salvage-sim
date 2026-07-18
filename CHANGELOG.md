@@ -4,6 +4,199 @@
 
 ## [未发布]
 
+## [0.35.0.0] — 2026-07-18
+
+### Added
+- **#1009 编排器维护战役 III（八票并发）**：双舰实战修正合波。
+- **#1002** 在线评审环 fixer 席接 `advanceCoder` 粘性通道（只改修理席）。
+- **#1005 / ADR 0141** 腿散文合法：删 content-shape 拒收；transport 在场即开庭。
+- **#1006** family fan-out 前 baseline 健康闸（容器 full；红不扇出 + 台账）。
+- **#1007** 主动进度播报：`progress.jsonl` + 票号 stage/判词/处置 + `npm run status` + fail-open notify。
+- **#1010** Sandcastle 取消缝：abort/idle 杀容器内 shell + 清临时文件（本地 pin 0.12.0 patch）。
+- **#1012** fix-findings 挂载前 ensure 正规文件；EISDIR 不机械六连。
+- **#1014** provision/ensure 写入 `.ledger-*/` 与 `.sandcastle/` 到 `.git/info/exclude`。
+- **#1016** botPolling GraphQL reviewThreads 查询收尾括号修正（4 外层）。
+- **ADR 0140 落地**：`npm run test:fast` vs full `npm test`；coder/fixer 自检走 fast。
+
+### Fixed
+- Baseline 红出口 dual-write progress terminal（#1007×#1006）。
+- 生产 dist 可加载 cancel patch（TS emit，非仅 src .mjs）。
+- GraphQL errors 仍 fail-closed（#1016 负向钉）。
+
+### Changed
+- vitest 机械 heavy 池（path + harness nature）；义务面对齐 souls / coder_fix / README。
+
+
+## [0.34.0.0] — 2026-07-18
+
+### Added
+- **#985 pytest 套件瘦身（family/985）**：session 级只读 `read_game` fixture（真实 seed + SQLite `query_only`），纯读用例不再逐测重建整库。
+- **#998 拒收矩阵共享 section helper**：`tests/section_rejection_helpers.py` 合并 ~10+ 文件重复 setup。
+- **#995/#996 轻量盘面迁移账**：`tests/game_fixture_retained_inventory.tsv` + 选用约定 `tests/README.md`。
+
+### Fixed
+- **#994 settle_channel 全量离群**：隔离 chapter LLM / settle channel 共享态，根因后修而非标 slow。
+- **#997 scout_report_label 固定税**：缩扫描范围至消费者，契约面保留。
+
+### Changed
+- 写库路径仍走 function-scope `game`（真实 `GameDB → seed_static_data → load_state`），不 mock 被测系统。
+
+## [0.33.0.0] — 2026-07-17
+
+### Added
+- **#942 公共结果 ABI 切齐**：`completed` / `parked` / `failed` 与 OS exit 0/2/1 原子切换；失败必带 cause。
+- **#952 typed `suppress` disposition**：内部终态 `suppressed`；写入点校验合法状态跳转；terminal-only continue 关庭。
+- **#961 family Integrated Correctness 增量 checkpoint**（ADR 0139）：波次 verify 绿后全量 IC 并行子 coding；`lastCorrectnessConvergedHead` 庭记忆；Runner 不准入。
+- **#964 grok 运行中 auth 失效 → typed failure**：禁止 headless device-auth 挂起；fail-fast 探针。
+- **#977 拆除 pattern-brief 旁路信道**（ADR 0137）。
+- **#978 判词即包**（ADR 0138）：`fixPacketBody` 唯一送修正文路径；缺 body 响亮失败。
+- **#979 fixer 同链 resume**：同 findings 链复用 fixer session；`cmr_passed` 截断链界。
+- **#981 grok-cap 忽略 AppleDouble / `.DS_Store`**：侧车不炸会话 integrity。
+
+### Fixed
+- Family CMR completeness：suppress-only 收敛、residual 不合成 fixPacketBody、family close 穿真实 store `from`。
+- Family CMR correctness：IC hard-fail / quota-park 前 drain 本波 allSettled siblings，禁止假 `skipped`。
+- #978/#952/#961/#964/#979/#981 切片 CR 多轮与 family base 插队合入。
+
+### Changed
+- Judge/fixer souls 对齐 ADR 0138 与 #979 resume 证词；merge main 时保留 family 侧 ADR 正文。
+
+## [0.32.0.0] — 2026-07-17
+
+### Added
+- **#941 Landing Action**：`docRelease` 原子改名为 `landing`，承接 docs/push → readiness → merge → live MERGED → close/cleanup；删除 host auto-merge / familyAutoMerge 法庭。
+- **#959 grok 会话 atomic temp+swap**：capture 同卷 staging、完整性校验、rename 替换；失败保留旧会话；并发同 slug 不混写。
+- **#966 判官 session 台账派生**：`cmr_reviewed` ledger 为 sole truth；host session 缺失时 fresh + priorJudgeVerdicts。
+- **#970 家族/子级 escalation 分型**：仅 decision park + sessionId 才注入 runChild；响亮 `child_answer_without_parked_state`。
+- **#962 noSandbox `GIT_CONFIG_GLOBAL` 隔离**、**#957 Codex Sandcastle 原生 capture/resume**、**#938 wave 保留 sibling + 信任 merger**、**#940 typed-judge-only** online review。
+
+### Changed
+- **Online review dual-owner（K1）**：worker 应执行 reply/resolve/deferred；host `onlineReviewSideEffects` 作 fail-safe 直至 worker 真正拥有效果。
+- **Landing process-root**：共享 `dispatchFamilyWorkerOrAbort`（mechanical retry + monitor + 429 rethrow）；resume 路径进 family quota wall。
+- **Landing decision-park 账本统一**：fresh/resume 均 `recordFamilyEscalated(decision)`，可被 `familyEscalationState` 重入。
+
+### Fixed
+- Family CR R1–R3：landing park 双账本、poll/fetch 连续失败 decision_gate、hollow AC 降级、README 与 side-effect 真值对齐。
+- Correctness K2：ledger sessionId 在 host 不存在时不再强制 resume。
+
+
+## [0.31.0.0] — 2026-07-17
+
+### Added
+- **#934 family W1（#936 / #937 / #939）**：Runner 控制面切片合入 family base——ignition 准入先于 worksite 与 durable re-entry；统一 worker dispatch 终态并删除静默判刑；family verify 区分 operational error 与合法空命令。
+
+### Changed
+- **admission / Coder-Rec / tight**：`admitRouteFromEnv` 仅 preset；relay 改 route 后 `admitRelayBaton` 再过 tight；sticky re-hold 同 court。
+- **receipt maxRetries**：与 #955 对齐，按 `resumeCapableForSlug` 布尔门，非 provider 字符串硬表。
+- **family durable park/relay**：family 只写 family-ledger；禁用旁路 steps.jsonl 半双庭。
+
+### Fixed
+- **CR R1–R8 收口**：ledger shape / dual phrase / smoke dropped union / public silence proof / capacity relay persist 分类 / DRY adoption+baton / hashPrompt warn / branchExists fail-closed 等。
+- **与 main 合流**：#955 grok resume 与 #965/#55a5cbff soul 哨兵删除；测试接缝改 Coder-Rec 而非 env 单槽。
+
+## [0.30.1.1] — 2026-07-16
+
+### Changed
+- **#935 Runner 控制面 ADR**：以 #934 ID-001、ID-006、ID-016 为唯一契约，并前向取代 ADR 0131 / closed #929 中冲突的旧条款。
+
+## [0.30.1.0] — 2026-07-16
+
+### Added
+- **#945 worker auth path-policy 一缝**：`provisionWorkerAuth` 共享核；`WorkerAuthPathPolicy` 注入 family（per-run mkdtemp，无 codex 不挂）与 slice（稳定 `auth-N` always-mount config+AGENTS）。
+
+### Changed
+- **`AuthPaths` 收缩**为 slice 稳定 codex 路径（`hostCodexAuthDir` + `srcCodexAuth`）；materialize 全归 `provisionWorkerAuth`。
+- **`provisionFamilyWorkerAuth` / `mountAuth`** 改为薄包装，不再双份内联 credential 步骤。
+
+### Fixed
+- path-policy 边界测：always-mount AGENTS 断言；family 失败 mkdtemp 无泄漏。
+
+## [0.30.0.0] — 2026-07-16
+
+### Added
+- **#916 路线表出码入配**：route preset 迁入 `orchestrator/config/route-presets.json`；换模型改配置即可，不再改代码表。
+- **`gpt-5.6-sol-low` registry 词条**（`effort: low`），供 utility 席位使用。
+- **`claude-tight` 厂阵**：coder/coderFix=`grok-4.5`；verify/cmr*=`gpt-5.6-sol`@medium；ship/merger/fixer/cleanup/docRelease=`sol-low`；cmrReview=sol+grok+agy(optional)。
+
+### Changed
+- **推理强度权威只在路线/registry**：删除 `effortForLiveOfficer` 与 `agentForSlug` 的 call-site effort 覆盖；live 与票面一致。
+- **`billingPoolForModelRef`**：roster 未命中时按 registry provider 回落（`sol-low`/`sol-high` → `codex-5h`，不再误绑 SuperGrok）。
+
+### Fixed
+- **#913 family auth mount ×3 DRY**：`provisionFamilyWorkerAuth` 单缝；merger/cmr/ship 合流；`providerAuthFromCore` 统一投影。
+
+## [0.29.0.0] — 2026-07-16
+
+### Added
+- **编排器 #919 修复环判官化**：持久 verify 判官三态（converged/continue/escalate）统一单切 S3/S6 与 family CMR 关环；毙单四理由 + 活单送修。
+- **#924/#926/#927**：coder 持久会话 + 官方 typed 收据；advanceCoder 执行/留守同构（`executeAdvanceCoderSuggestion`）；coder 驳回信封盲路由回判官。
+- **#922/#929**：终态实名与非零退出码映射；终局必落盘。
+- **#930**：family 双闸共用判官机；open-count 第二关环删除。
+- **全工位 T2 收据**：judge/coder/ship/merger/onlineReview 官方 thin envelope。
+
+### Changed
+- 完成定义统一为单迭代 + 干净退出 + typed 信封；`completionSignal` 退役。
+- reviewer 模型槽并入 verify（#923）；池隔离拆除（#920）。
+- residual 非 judge 纸 fail-loud unusable，禁止 open-count 铸 continue。
+
+### Fixed
+- empty continue 空转（family + 单切）fail-loud。
+- family refuse keys 与单切同构；ship dual decision-gate 拆除。
+
+
+## [0.28.1.0] — 2026-07-15
+
+### Fixed
+- **编排器 #915 agy 烟测空 `--print` 必死**：`agyPrintInvocation` 把 prompt 作为 `--print` 实参送达（agy 1.1.2 拒空 print、不吃 stdin），bare-ping 与 AgentProvider 共用同一 seam。
+- 删除假 stdin 双通道与 `{ args }` 残袋；interactive 仍走 `--prompt-interactive`，与 print 分缝。
+
+## [0.28.0.0] — 2026-07-15
+
+### Added
+- **编排器 #899 交通信号原生回炉**：reviewer open-count 与 decision gate 走 Sandcastle `Output.object` + `maxRetries: 2`；同 session 结构化重交归底层。
+- 生产边界四案矩阵（首次合格 / bad→good / 耗尽 / 不可恢复）：single-slice、family CMR/coder-fix、ship decision-gate。
+- `receiptRecovery` 统一 typed 收据契约；SOE 经 cause 链识别，兼容 Effect FiberFailure 包装后仍走 #598。
+
+### Changed
+- coder/ship 普通 cargo 保持 opaque：不绑 SO 形状修复；命运只认 exit + typed 信号。
+- 不可用 open-count 不再合成 `findingsCount: 0` 或假 coder 席；按固定拓扑递 raw 给 fixer 路径。
+- review-loop sparse cargo 完成 Action，不把 cargo 形态当 #598 形状 lane。
+
+### Fixed
+- SO 耗尽后 reviewer 同位机械重调，不发明 S5 fixer 派发。
+- 并发环境下 StructuredOutputError 被 FiberFailure/ExecError 包装时，#598 仍正确归类。
+
+## [0.27.0.0] — 2026-07-15
+
+### Added
+- **编排器 #905 路由正名**：`agy` 恢复为真 agy CLI；`grok-4.5` 一律走 SuperGrok；opencode 从 registry / 路由 / 镜像 / auth 全线拆除。
+- **编排器 #906 Coder-Rec**：issue body 经 remark/GFM 剥净再解析；坏标记或未注册模型 admission fail-closed，禁止静默回落默认 coder。
+- **编排器 #909 family 额度韧性**：family 沙箱与单切片共用 quota/idle/429 wrap；`QuotaWait` 不 leg-kill；park/relay 与 baton 真接线。
+- **编排器 #911 soul 战役**：中文角色 soul 定稿落盘；容器 home 环境 dual-mount（Claude `CLAUDE.md` + Codex `AGENTS.md`）；skills 进 `~/.agents/skills` 并兼容 symlink。
+
+### Fixed
+- agy 多行 stdout 在 Sandcastle last-wins 下保留全文；跨 maxIter 累加器在每次 print/interactive 入口重置。
+- agy headless `--print ''` + stdin 与 interactive `--prompt-interactive` 分缝；`--print-timeout` 使用 Go duration（`15m`）。
+- family open-shipped / S3 cmrPass 单槽 / wall-hit knownLive / endgame wall 槽映射等 correctness 接线修复。
+- grok bare-ping 与 worker 一致走 stdin prompt。
+
+### Changed
+- 去掉为过审而加的 live-pool 完备扩表与 prompt 真空回灌；#902 额度完备性缓交。
+- 删除 soul/prompt 散文 inventory 类测试，只保留 dual-mount 等行为钉。
+
+## [0.26.0.0] — 2026-07-13
+
+### Added / Changed
+- **#873 编排器生存版（核心重构）**：拆 runner 收账/git-truthing/读字法庭，切换为三通道路由（exit code / 自报 findings 数 / 决策门，ADR 0131）。
+- **机械补丁**：head 未动短路 (#878)、腿瞬断重试 (#879)、交卷指针 (#880)、resume barrier (#881)。
+- **S8 外围**：`externalCall` 仅装钟（无重试中台），重试归 `legTransientRetry`；route smoke 简化为裸 ping (#884)。
+- 旧 tool-smoke 证据 helper 删除；bare-ping 唯一点火路径。
+
+### Removed
+- verifyCmr accounting courts、git-truthing conviction、no-progress 等 runner 内容法庭与零引用孤儿 helper。
+
+
+
 ## [0.25.0.0] - 2026-07-05
 
 ### 新增

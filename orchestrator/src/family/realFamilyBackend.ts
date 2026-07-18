@@ -22,11 +22,10 @@
  *     single-slice step ledger, but a distinct file.
  *   - runFamilyVerify          → `npx tsc --noEmit` + `npx vitest run` against the
  *     family base; green → {ok:true}, red → {ok:false, errorPackage:{reason}}.
- *   - runIntegratedCmr         → a thin wrap of the local `ak-cross-m-review`
- *     pipeline behind the {@link runCmr} protected seam.
- *   - openFamilyPr             → push the family base + `gh pr create` and STOP
- *     (the family orchestrator's autonomy ends at the PR; online bot cmr + merge
- *     are the separate pr-review-loop stage).
+ *   - runIntegratedCmr         → a legacy per-method throw seam; production CMR
+ *     runs as a container worker through `dispatchWorker`.
+ *   - dispatchWorker(ship)     → the `gstack-ship` worker opens the family PR;
+ *     online bot CMR + merge remain the separate PR-review-loop stage.
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
  *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
  *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
@@ -36,18 +35,24 @@
  *     `git rev-parse` / `git rev-parse --verify` / `git merge-base --is-ancestor`.
  *
  * SEAM BOUNDARY: the deterministic git / file ops run directly; the external side
- * effects (the merger agent container, `gh pr create`, `ak-cross-m-review`) go
- * through protected methods a unit test overrides — so the contract is verified
- * zero-container, and the real container / real GitHub only run on the driver /
- * manual-smoke path (the next unit). This file does NOT wire into the driver / run
- * end-to-end — that is the下一个 unit.
+ * effects go through dispatch/protected seams that unit tests can override. The
+ * production driver is wired to this backend; real container/GitHub effects run
+ * only on its driver/manual-smoke path.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "../externalCall.js";
+import { formatExecFailureOutput } from "../execFailureOutput.js";
+import {
+  ensureRegularFileForBindMount,
+  gitExitStatus,
+  isFileNotFound,
+} from "../fsErrors.js";
+import {
+  appendGitInfoExclude,
+  ensureGitInfoExclude,
+} from "../gitInfoExclude.js";
 import {
   appendFileSync,
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -60,7 +65,43 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
+import {
+  classifyDecisionGate,
+  coderReceiptOutput,
+  logAndRethrowReceiptFailure,
+  mergerReceiptOutput,
+  onlineReviewReceiptOutput,
+  requireTypedTrafficSignal,
+  shipReceiptOutput,
+  workerReceiptOutput,
+} from "../receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  JUDGE_RECEIPT_TAG,
+  MERGER_RECEIPT_TAG,
+  ONLINE_REVIEW_RECEIPT_TAG,
+  SHIP_RECEIPT_TAG,
+  coderStationReceiptSchema,
+  decodeJudgeVerdict,
+  decodeMergerEnvelope,
+  decodeOnlineReviewEnvelope,
+  judgeStationReceiptSchema,
+  mergerStationReceiptSchema,
+  onlineReviewStationReceiptSchema,
+  shipStationReceiptSchema,
+  type JudgeVerdict,
+} from "../stationReceiptContracts.js";
+import {
+  judgeResultFromVerdict,
+  materializeLandingFixPacketBody,
+  unusableResidualOpenCountPaper,
+} from "../judgeStation.js";
+import {
+  successfulLegsFromTransports,
+  type LegTransport,
+} from "../legPaper.js";
 
+import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
@@ -68,22 +109,30 @@ import {
   hasBoundedReopenCondition,
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
-import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
-import { effortForLiveOfficer } from "../modelRegistry.js";
+import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
+import {
+  isBillingPoolDispatchId,
+  modelIdForSlug,
+  resolveModelSlug,
+  resolveModelSlugForPool,
+  unavailableProviderAuth,
+  type ProviderAuthAvailability,
+  resumeCapableForSlug,
+} from "../modelRegistry.js";
 import {
   agentForSlug,
-  assertCompletionSignal,
   candidateBranches,
-  extractCoderTag,
   lastSessionId,
-  parseCoderSelfReport,
-  realCommitCount,
-  reconcileCoderCommits,
+  projectCoderStationReceipt,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
+  appendAgyAuthMount,
+  provisionFamilyWorkerAuth,
+  providerAuthFromCore,
+  type FamilyWorkerAuthCore,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
@@ -98,28 +147,22 @@ import {
   soulsMount,
   REQUIRED_SOUL_FILES,
   soulsDirError,
-  type SelfReportedCoder,
-  verifyOutputSchema,
-  fixerOutputSchema,
-  cleanupOutputSchema,
-  docReleaseOutputSchema,
-  SANDBOX_FIX_FOCUS_PATH_ENV,
+  type AgentSandboxRunOptions,
+  appendHomeEnvMount,
+  homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
+import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-  skeletonReviewLoopWorkerResult,
-} from "../reviewLoopOutcome.js";
+  materializeRawReviewerArtifactsForSandbox,
+  RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+  RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+} from "../rawReviewerArtifacts.js";
 import {
-  FIX_FOCUS_LANDING_FILE,
-  attachSanitizedFindingFamilies,
-  formatFixFocusMarkdown,
-  normalizeFindingFamiliesWireAliases,
-} from "../findingFamilies.js";
-import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
+  ONLINE_REVIEW_LANDING_FILE,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
+} from "./onlineReviewLoop.js";
 import {
+  PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
   resolveTemplateProjectDir,
   runProvisionCommand,
@@ -127,13 +170,14 @@ import {
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
-  cmrLegAccountingFailure,
-  modelForSlot,
-  type CmrLegAccountingRoute,
-} from "../modelRoutes.js";
+  extractLastTagBody,
+  parseLastTaggedJsonSoft,
+} from "../lastTaggedJson.js";
+import { modelForSlot, type ResolvedModelRoute } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
@@ -141,33 +185,43 @@ import {
 import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
-  DOCRELEASE_PROMPT_FILE,
+  formatSandcastleAgentError,
+  isSandcastleAgentError,
+} from "../sandcastleAgentError.js";
+import {
+  LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
+  workerHostForModel,
 } from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
-import { recordFamilyEscalated } from "./ledger.js";
+import { parseFamilyLedgerJsonl, recordFamilyEscalated } from "./ledger.js";
+import { shipOutcomeFromResult } from "../shipOutcome.js";
 import {
-  isFilledString,
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "../shipOutcome.js";
+  configureTelemetryFromWorkerImage,
+  createTelemetryLegStamper,
+  recordVerificationStamp,
+  scheduleTelemetryEnvironmentStamp,
+} from "../telemetry.js";
 
 import type {
   CleanupResult,
   CliMonitorSpawnSpec,
-  CoderResult,
   DispatchContext,
-  DocReleaseResult,
+  LandingResult,
+  Escalation,
   WorkerMonitorHandle,
   Finding,
-  FindingFamily,
   FixerResult,
+  OnlineReviewFindingDisposition,
+  OnlineReviewThreadReply,
   PriorFindingDisposition,
   StepSoul,
   VerifyResult,
+  VerifyWorkerTerminalState,
   WorkerLandingPayload,
+  WorkerOutput,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -183,32 +237,17 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
   MergeResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   ReconcileGit,
-  VerifyFamilyShippedPrRequest,
-  VerifyFamilyShippedPrResult,
 } from "./types.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
 /** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
-/**
- * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
- * runtime config INSIDE the cmr worker container (#335 / #333 gotcha). The host
- * file `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
- * `antigravity-oauth-token`. It is a WRITABLE dir (NOT read-only): the agy CLI
- * writes cache/log/state under its config dir, so a read-only mount would make the
- * agy cmr leg fail at startup and degrade the cmr to codex-only (the #333 spike's
- * agy leg only caught the injected bug WITH its file token mounted writable). The
- * path mirrors the host `~/.gemini/antigravity-cli/` exactly, the same
- * host-mirrored auth-mount pattern codex (`SANDBOX_CODEX_DIR`) uses.
- */
-export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
-/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
-export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+/** Re-export agy mount constants (canonical definitions live in realBackend). */
+export { SANDBOX_AGY_DIR, AGY_TOKEN_FILENAME } from "../realBackend.js";
 
 /**
  * The git-ignored cmr FOCUS file written into the family-base worktree (#335): it
@@ -227,20 +266,15 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * family ship worker runs (cmr S336 r5): it pins the family base branch + the
  * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container
  * `gstack-ship` opens the family PR against the RIGHT base. Without it gstack-ship
- * INFERS the base from the repo default branch (main) — silently regressing the
- * legacy `openFamilyPr` `gh pr create --base this.opts.base` contract whenever the
- * family run targets a non-main integration branch (e.g. `integ/291-wave3`).
+ * infers the repo default branch and cannot honor a non-main integration target.
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
-/** The cmr worker's completion signal (matches the integrated CMR pass prompts). */
-const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /**
- * The integrated-cmr reviewer soul (ADR 0030). It invokes `ak-cross-m-review` for
- * one selected gate and returns runner-visible review outcomes; persistent repairs
- * are made only by the separate family coder-fix worker.
+ * #930: family integrated-cmr court soul = verify judge (same as single-slice
+ * S3/S6). kind remains "cmr" for dispatch; traffic/soul is the convergence judge.
  */
-const CMR_SOUL = "cmr";
+const CMR_SOUL: StepSoul = "verify";
 
 /**
  * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
@@ -249,10 +283,9 @@ const CMR_SOUL = "cmr";
  * TODOS.md) never the PR body — not the coder's TDD build loop.
  */
 const SHIP_SOUL: StepSoul = "ship";
-const OUTCOME_REWRITE_PROMPT = "outcome_rewrite.md";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
-export interface FamilyEscalationRecord extends FamilyEscalation {
+export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {
   readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
   readonly familyHeadAfter?: string;
 }
@@ -300,7 +333,7 @@ export interface RealFamilyBackendOptions {
    * Precedence: `verifyCwd` (explicit) > `resolveVerifyCwd()` (inferred) > `workingRepo`.
    */
   readonly resolveVerifyCwd?: () => string | undefined;
-  /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
+  /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
   readonly base: string;
@@ -312,16 +345,13 @@ export interface RealFamilyBackendOptions {
    * REQUIRED (souls no longer baked).
    */
   readonly soulsDir: string;
+  /**
+   * #911 — container home environment file (default: sibling image/home/CLAUDE.md).
+   * Live-mounted for Claude; content also replaces AGENTS.md in per-issue codex auth dirs.
+   */
+  readonly homeEnvFile?: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
-  /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
-   * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
-   * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
-   * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
-   * (Souls are mounted live per #372, not baked.)
-   */
-  readonly skillsMount?: string;
   /**
    * The family base HEAD at run setup — the baseline {@link ReconcileGit.familyBaseStartHead}
    * returns (the spine provides it; the only baseline available when the ledger is
@@ -352,19 +382,16 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
     "coder_fix.md",
-    OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
     VERIFY_PROMPT_FILE,
     FIXER_PROMPT_FILE,
-    DOCRELEASE_PROMPT_FILE,
+    LANDING_PROMPT_FILE,
   ]),
 ];
-/** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
-const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver model slot, selected by the active route. */
-export function mergerModel(): string {
-  return modelForSlot("merger");
+export function mergerModel(route?: ResolvedModelRoute): string {
+  return route?.slots.merger ?? modelForSlot("merger");
 }
 
 /**
@@ -385,12 +412,27 @@ export function mergerModel(): string {
 export const MERGER_SOUL = "merger";
 
 export class RealFamilyBackend implements FamilyBackend {
+  private verificationStampTail: Promise<void> = Promise.resolve();
   protected readonly opts: RealFamilyBackendOptions;
 
   constructor(opts: RealFamilyBackendOptions) {
     this.opts = opts;
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
+  }
+
+  /**
+   * #786: install this family backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
+   */
+  async installTelemetryRunEnvironment(): Promise<void> {
+    await configureTelemetryFromWorkerImage({
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
+    });
   }
 
   /**
@@ -433,7 +475,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Fail loudly at construction if soulsDir missing or invalid or incomplete.
    * Souls are no longer baked (#372); an existing but wrong/incomplete dir
-   * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
+   * (missing e.g. reviewer.md / verify.md) would sail to runtime.
    * Delegates to the pure {@link soulsDirError} from realBackend (single source;
    * identical messages for both backends).
    */
@@ -445,6 +487,14 @@ export class RealFamilyBackend implements FamilyBackend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    // Fail-closed: path must be a regular file (directory would dual-mount as dir).
+    if (!existsSync(homeEnv) || !statSync(homeEnv).isFile()) {
+      throw new Error(
+        `RealFamilyBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
   }
 
   /**
@@ -454,88 +504,19 @@ export class RealFamilyBackend implements FamilyBackend {
    * — the same seam pattern RealBackend's `sh` uses. The default `cwd` is the
    * dedicated clone (every family git op anchors there).
    */
-  protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+  protected sh(
+    file: string,
+    args: string[],
+    cwd?: string,
+    timeoutMs?: number,
+  ): string {
+    // Mixed read/write seam (merge/push/pr create + rev-parse). Default
+    // no-retry so a timed-out mutation is never auto-replayed (#884 cmr r7).
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
-  }
-
-  protected verifyFamilyShipPr(input: {
-    readonly pr: string;
-    readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
-    try {
-      const raw = this.sh(
-        "gh",
-        [
-          "pr",
-          "view",
-          input.pr,
-          "--repo",
-          this.opts.repo,
-          "--json",
-          "baseRefName,headRefName,headRefOid,state",
-        ],
-        this.opts.workingRepo,
-      );
-      const parsed = JSON.parse(raw) as {
-        readonly baseRefName?: unknown;
-        readonly headRefName?: unknown;
-        readonly headRefOid?: unknown;
-        readonly state?: unknown;
-      };
-      if (parsed.state !== "OPEN") {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
-        };
-      }
-      if (parsed.baseRefName !== this.opts.base) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
-        };
-      }
-      if (parsed.headRefName !== input.familyBase) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
-        };
-      }
-      if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
-        };
-      }
-      return { ok: true, headOid: parsed.headRefOid.trim() };
-    } catch (err) {
-      return {
-        ok: false,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
-  async verifyFamilyShippedPr(
-    request: VerifyFamilyShippedPrRequest,
-  ): Promise<VerifyFamilyShippedPrResult> {
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: request.pr,
-      familyBase: request.familyBase,
+      timeoutMs,
     });
-    if (!verifiedPr.ok) return verifiedPr;
-    if (verifiedPr.headOid !== request.expectedHead) {
-      return {
-        ok: false,
-        reason:
-          `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
-          `does not match current family HEAD ${request.expectedHead}`,
-      };
-    }
-    return { ok: true };
   }
 
   /**
@@ -547,8 +528,76 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
+  /** #934 ID-004 / #937: SO maxRetries from provider resumability. */
+
+  protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+    // Effort comes from the registry row for `spec.model` only (#916: no
+    // role/soul hard override of reasoning effort at dispatch).
+    return agentForSlug(
+      spec.model,
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
+  /**
+   * #955 r7 — receipt maxRetries uses the same (slug, pool) binding as
+   * {@link agentForSpec}. Pool rewrite can move a resume-capable slug onto an
+   * incapable provider; slug-only capability would attach a false maxRetries.
+   */
+  protected resumeCapableForSpec(
+    spec: Pick<WorkerSpec, "model">,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): boolean {
+    return resumeCapableForSlug(
+      spec.model,
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
+  /**
+   * #966 / #979 — resolve a Sandcastle resumeSession id for family workers.
+   * Capability gate + existsOnHost presence check; dead / incapable → undefined
+   * (fresh open). Shared by family CMR judge and family coder-fix — one bus.
+   */
+  protected async resolveSandcastleResumeSessionId(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    agent: sc.AgentProvider,
+  ): Promise<string | undefined> {
+    const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+    let resumeSessionId: string | undefined =
+      typeof ctx.resumeSessionId === "string" && resumeCapable
+        ? ctx.resumeSessionId
+        : undefined;
+    if (
+      resumeSessionId !== undefined &&
+      agent.sessionStorage?.existsOnHost !== undefined
+    ) {
+      const present = await agent.sessionStorage.existsOnHost(
+        this.opts.workingRepo,
+        resumeSessionId,
+      );
+      if (!present) {
+        resumeSessionId = undefined;
+      }
+    }
+    return resumeSessionId;
+  }
+
+  /** Typed provider gate shared by every family `sc.run` dispatch. */
+  protected unavailableWorkerProviderAuth(
+    spec: Pick<WorkerSpec, "model">,
+    auth: Pick<
+      CmrAuth | ShipAuth,
+      "claudeToken" | "grokAuthDir" | "agyDir" | "providerAuth"
+    >,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): "claude" | "grok" | "agy" | undefined {
+    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
+    return unavailableProviderAuth(
+      resolveModelSlugForPool(spec.model, pool).provider,
+      auth.providerAuth ?? providerAuthFromCore(auth),
+    );
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -580,11 +629,8 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    const ledger = raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyLedgerEntry);
-    return ledger;
+    // #934 S-3: per-line shape gate (not bare JSON.parse cast).
+    return parseFamilyLedgerJsonl(raw);
   }
 
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
@@ -606,10 +652,9 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    return raw
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .map((l) => JSON.parse(l) as FamilyEscalationRecord);
+    // #934: per-line shape gate (not bare JSON.parse cast). Invalid JSON or
+    // off-shape object fails closed — never silent-as-typed cargo.
+    return parseLegacyEscalationJsonl(raw);
   }
 
   private legacyEscalationLedgerEntries(): ReadonlyArray<FamilyLedgerEntry> {
@@ -724,8 +769,15 @@ export class RealFamilyBackend implements FamilyBackend {
     // {@link runMergerAgent} seam (fake-able; the real container only on the
     // driver / manual-smoke path).
     // #598 / 2026-07-08: a merger agent that CRASHES (throws) is retried fresh up to
-    // the bound on the CURRENT worktree as-is. A RETURNED `{resolved:false}` is a
-    // JUDGED non-resolve — surfaced below, never retried. A persistent crash re-throws.
+    // the bound on the CURRENT worktree as-is. A returned structured outcome is
+    // telemetry; git post-state below is the only resolve decision. A persistent
+    // plain crash re-throws.
+    // #964: merger seat court at sc.run inside {@link runMergerAgent}
+    // (structured non-resolve + reason). Generic workers share the same
+    // AgentError recognition via {@link workerResultFromAgentError} on the
+    // free-function dispatch / process-root seams. No outer dual conversion
+    // here — AgentError never escapes this seat, so throw→retryProcessCrash
+    // is skipped for the whole AgentError class (not only auth).
     const outcome = await retryProcessCrash(async () => {
       // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
       // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
@@ -735,18 +787,17 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       return await this.runMergerAgent(req);
     });
-    if (!outcome.resolved) {
-      // The resolver could not resolve (escalated / failed) → surface it; the
-      // merger does NOT write a `merged` entry (an unresolved conflict never looks
-      // clean). Throw with the agent's diagnosis so the failure is locatable.
-      throw new Error(
-        `resolveMergeConflict: the merger agent did not resolve child #${req.childIssue}` +
-          (outcome.reason !== undefined ? ` — ${outcome.reason}` : ""),
-      );
+    if (outcome.escalation !== undefined) {
+      return {
+        familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
+        familyHeadBefore,
+        childHead,
+        escalation: outcome.escalation,
+      };
     }
-    // The agent claims it committed the merge — but VERIFY git truth before
-    // returning clean (the prompt's "resolve → add → commit, never --abort" is a
-    // soft LLM instruction, not a postcondition). Failure modes a clean return
+    // The worker has exited — VERIFY git truth before returning clean (the prompt's
+    // "resolve → add → commit, never --abort" is a soft LLM instruction, not a
+    // postcondition). Failure modes a clean return
     // would otherwise wave through into a durable `merged` ledger entry:
     //   (a) the merge is still in progress (MERGE_HEAD present) — the agent never
     //       committed; (codex R2)
@@ -760,12 +811,24 @@ export class RealFamilyBackend implements FamilyBackend {
     // family base ref itself moved past familyHeadBefore AND childHead is now its
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
-    // never looks clean").
+    // never looks clean"). Non-empty merger reason threads onto MergeResult for
+    // family-runner diagnostics (#964 S3; not a public cause token).
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
     const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
-    return childLanded
-      ? { familyHead, familyHeadBefore, childHead }
-      : { familyHead, familyHeadBefore, childHead, conflicted: true };
+    if (childLanded) {
+      return { familyHead, familyHeadBefore, childHead };
+    }
+    const reason =
+      typeof outcome.reason === "string" && outcome.reason.trim().length > 0
+        ? outcome.reason.trim()
+        : undefined;
+    return {
+      familyHead,
+      familyHeadBefore,
+      childHead,
+      conflicted: true,
+      ...(reason !== undefined ? { reason } : {}),
+    };
   }
 
   /**
@@ -784,8 +847,51 @@ export class RealFamilyBackend implements FamilyBackend {
     const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
     return (
       familyHead !== familyHeadBefore &&
-      this.isAncestorOf(childHead, familyHead, repo)
+      this.isAncestorOf(childHead, familyHead, repo) &&
+      this.isMergeCommit(familyHead, repo) &&
+      !this.hasUnmergedEntries(repo) &&
+      !this.hasConflictMarkers(familyHeadBefore, familyHead, repo)
     );
+  }
+
+  /** A resolved conflict must be represented by a real two-parent merge commit. */
+  protected isMergeCommit(commit: string, repo: string): boolean {
+    try {
+      const parents = this.sh("git", ["show", "-s", "--format=%P", commit], repo)
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      return parents.length === 2;
+    } catch {
+      return false;
+    }
+  }
+
+  /** A landed merge must not leave index entries for unresolved paths. */
+  protected hasUnmergedEntries(repo: string): boolean {
+    return this.sh("git", ["ls-files", "-u"], repo).trim().length > 0;
+  }
+
+  /** A merger commit containing conflict markers is not a clean resolution. */
+  protected hasConflictMarkers(before: string, after: string, repo: string): boolean {
+    try {
+      const changed = this.sh(
+        "git",
+        ["diff", "--diff-filter=AM", "--name-only", "-z", before, after],
+        repo,
+      );
+      const paths = changed.split("\0").filter(Boolean);
+      if (paths.length === 0) return false;
+      const matches = this.sh(
+        "git",
+        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", after, "--", ...paths],
+        repo,
+      );
+      return matches.trim().length > 0;
+    } catch (err) {
+      if (gitExitStatus(err) === 1) return false;
+      throw err;
+    }
   }
 
   /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */
@@ -810,11 +916,11 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected async runMergerAgent(
     req: ConflictResolveRequest,
-  ): Promise<{ resolved: boolean; reason?: string }> {
+  ): Promise<{ resolved: boolean; reason?: string; escalation?: FamilyEscalation }> {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
     // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
     // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
-    // Absent, the worker cannot start and never fires its completion signal; that
+    // Absent, the worker cannot start and never reaches clean exit + sidecar; that
     // failure would throw out of `sc.run` (NOT a structured non-resolve), and the
     // thrown startup error would surface as an opaque wave abort instead of the
     // merger's honest "did not resolve" → escalate path
@@ -824,7 +930,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
     try {
-      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+      const model = mergerModel(req.modelRoute);
+      if (modelFamilyForSlug(model) === "claude" && auth.claudeToken === undefined) {
         return {
           resolved: false,
           reason:
@@ -836,25 +943,127 @@ export class RealFamilyBackend implements FamilyBackend {
             "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
         };
       }
+      // N3: agy-selected merger without OAuth is fail-closed (structured non-resolve).
+      if (modelFamilyForSlug(model) === "agy" && auth.agyDir === undefined) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without agy OAuth token — the merger slot is " +
+            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
+      // C5: merger=grok without SuperGrok creds is fail-closed (same N3 shape).
+      if (
+        modelFamilyForSlug(model) === "other" &&
+        model.startsWith("grok") &&
+        auth.grokAuthDir === undefined
+      ) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without SuperGrok auth — the merger slot is " +
+            "grok-family; host grok credentials must be provisioned into the " +
+            "sandbox (mountMergerAuth grokAuthDir). Without it the worker fails to " +
+            "start and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const result = await this.runAgentSandbox({
-          name: `merger-resolve-${req.childIssue}`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.mergerSandbox(auth, outcomeLanding),
-          agent: agentForSlug(mergerModel()),
-          maxIterations: 1,
-          completionSignal: MERGER_COMPLETION_SIGNAL,
-          branchStrategy: { type: "head" }, // commit the resolved merge in place
-          promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+        const telemetrySpec: WorkerSpec = {
+          id: "S1",
+          kind: "merge",
+          role: "coder",
+          host: workerHostForModel(model),
+          session: "fresh",
+          contextRetention: "clean",
+          skill: "resolving-merge-conflicts",
+          promptFile: MERGER_CONFLICT_PROMPT,
+          maxIter: 1,
+          model,
+          soul: "coder",
+          toolchain: [],
+        };
+        const telemetryCtx: DispatchContext = {
+          familyBase: this.opts.familyBase,
+          familyIssue: req.childIssue,
+          stateDir: this.opts.ledgerDir,
+          ...(req.runId !== undefined ? { runId: req.runId } : {}),
+          ...(req.modelRoute !== undefined ? { modelRoute: req.modelRoute } : {}),
+        };
+        const telemetry = createTelemetryLegStamper({
+          ledgerDir: this.opts.ledgerDir,
+          spec: telemetrySpec,
+          ctx: telemetryCtx,
         });
-        return mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+        const telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+          this.opts.ledgerDir,
+          telemetryCtx,
+          this,
+        );
+        telemetry.stampDispatch(new Date().toISOString());
+        try {
+          const result = await this.runAgentSandbox({
+            name: `merger-resolve-${req.childIssue}`,
+            idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+            cwd: this.opts.workingRepo,
+            sandbox: this.mergerSandbox(auth, outcomeLanding, model),
+            agent: agentForSlug(model),
+            maxIterations: 1,
+            branchStrategy: { type: "head" }, // commit the resolved merge in place
+            promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+            // #919 CR T2 / ADR 0132: thin merger station receipt (completed|escalate).
+            // Resolve cargo stays opaque sidecar outside SO.
+            output: mergerReceiptOutput(
+              mergerStationReceiptSchema(),
+              MERGER_RECEIPT_TAG,
+              resumeCapableForSlug(model),
+            ),
+          });
+          // Output.object was attached: absent typed signal → #598, not cargo.
+          const typed = requireTypedTrafficSignal(
+            (result as { readonly output?: unknown }).output,
+            "merger",
+          );
+          const outcome = mergerOutcomeFromResult({
+            ...result,
+            outcomePath: outcomeLanding.path,
+            output: typed,
+          });
+          telemetry.stampCollect({
+            kind: "result",
+            result: outcome.resolved
+              ? { kind: "completed", output: { kind: "merge", familyHead: this.opts.familyBase } }
+              : { kind: "failed", reason: outcome.reason ?? "merger agent did not resolve" },
+          });
+          return outcome;
+        } catch (error) {
+          telemetry.stampCollect({ kind: "thrown", error });
+          await telemetryEnvironmentStamp;
+          // #964: single court at sc.run — ANY Sandcastle AgentError (native
+          // headless auth death, non-zero agent exit, FiberFailure wrap, …) →
+          // structured non-resolve for the owning Merge Action. Intentionally
+          // skips throw→retryProcessCrash for the whole AgentError class: same
+          // dead credentials / agent failure will not recover on re-dispatch.
+          // Do not rethrow FiberFailure/AgentError (launcher terminal lost on
+          // flight3). Plain infrastructure crashes still throw for #598.
+          if (isSandcastleAgentError(error)) {
+            return {
+              resolved: false,
+              reason:
+                `merger agent invocation failed: ${formatSandcastleAgentError(error)}`,
+            };
+          }
+          throw error;
+        }
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -864,15 +1073,16 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
   protected mergerSandbox(
     auth: MergerAuth = this.mountMergerAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth, outcomeLanding));
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding, modelSlug));
   }
 
   /**
@@ -884,36 +1094,13 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` so a unit test points $HOME at a temp dir.
    */
   protected mountMergerAuth(): MergerAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
-      // created before copy/chmod/config writing threw.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ the top-level merger worker degrades; the
-      // runMergerAgent preflight returns a structured non-resolve.
-    }
-    return { codexAuthDir, claudeToken };
+    // #913: single shared provision seam (merger / cmr / ship).
+    return provisionFamilyWorkerAuth({
+      home: this.opts.home ?? homedir(),
+      rolePrefix: "merger",
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+    });
   }
 
   /**
@@ -945,11 +1132,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandboxConfig(
     auth: MergerAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    const model = modelSlug ?? mergerModel();
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
@@ -958,10 +1147,16 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
-      modelFamilyForSlug(mergerModel()) === "codex"
+      modelFamilyForSlug(model) === "codex"
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    // C5: SuperGrok auth mount when merger slot is grok-family.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    // N3: mount agy OAuth when provisioned (writable antigravity config dir).
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -971,12 +1166,19 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for merger worker (data files not baked).
     // Use shared helper (forces readonly:true, single hard-coded sandbox path).
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md.
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return {
       imageName: this.opts.imageName,
       env,
       // #334: no skills mount — the baked image provides the merger skill.
       mounts,
     };
+  }
+
+  /** #911: container home CLAUDE.md (default sibling of soulsDir). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /** Is a git merge in progress (MERGE_HEAD present)? */
@@ -1047,65 +1249,141 @@ export class RealFamilyBackend implements FamilyBackend {
       // repo, non-Node-only diff) ⇒ nothing to verify, skip.
       if (cwd === undefined) return;
     }
-    // #3 (dogfood death) + #372 P2: ALWAYS install deps before running the
-    // project's verify scripts. Freshness by construction (npm ci is idempotent
-    // and lockfile-exact). Do NOT condition on node_modules presence or any
-    // manifest/mtime detection — #372 ratified "freshness by construction, never
-    // by detection". A later wave inside the family clone can mutate
-    // package.json/package-lock.json; the launcher unconditional rebuild only
-    // covers the *orchestrator* dist/image, not the family clone's project deps.
-    // Therefore verify path must unconditionally ensure the cwd's deps.
-    await this.installDeps(cwd);
-    // #5 (dogfood): run the PROJECT'S OWN package.json scripts, NOT a hardcoded
-    // `npx tsc`/`npx vitest`. web/'s test script is `vitest run --environment jsdom`
-    // — a bare `npx vitest run` DROPS `--environment jsdom`, so every jsdom render
-    // test throws `document is not defined` and verify fails a perfectly good
-    // project. (The orchestrator's own scripts HAPPENED to match `npx tsc`/`vitest`,
-    // which is why this only surfaced on a foreign project — web/.) Run the declared
-    // `typecheck` (when present) + `test` scripts so each project's real flags/config
-    // (jsdom, tsc -b, …) are honoured.
+    // #934 ID-011: scripts first (op-error throws); empty verifiable set skips.
     const scripts = this.packageScripts(cwd);
-    // Type-check via the project's OWN command. R1 T3 (codex): web/ has NO `typecheck`
-    // script — its TS check lives in `build` (`tsc -b && vite build`, exactly what the
-    // game CI runs). Skipping it let a web change with TS/build errors pass verify as
-    // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
-    // real type-checking build) > nothing. So types are NEVER silently skipped.
+    if (
+      !scripts.includes("typecheck") &&
+      !scripts.includes("build") &&
+      !scripts.includes("test")
+    ) {
+      return;
+    }
+    // #3/#372: always install before scripts (freshness by construction).
+    await this.installDeps(cwd);
+    // #5: project's own scripts (not hardcoded npx). typecheck > build > none.
     if (scripts.includes("typecheck")) {
-      await this.sh("npm", ["run", "typecheck"], cwd);
+      this.runObservedVerification(
+        _request,
+        "typecheck",
+        ["run", "typecheck"],
+        cwd,
+      );
     } else if (scripts.includes("build")) {
-      await this.sh("npm", ["run", "build"], cwd);
+      this.runObservedVerification(_request, "typecheck", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
-      await this.sh("npm", ["test"], cwd);
+      this.runObservedVerification(
+        _request,
+        _request.phase === "wave" ? "unit" : "full",
+        ["test"],
+        cwd,
+      );
     }
   }
 
   /**
-   * The script names declared in `cwd`'s package.json (`scripts` keys), so
-   * {@link runVerifyCommands} runs the project's OWN `typecheck`/`test` commands
-   * (#5) instead of a hardcoded `npx`. `protected` so a unit test drives the
-   * branches without a real FS. Returns [] on any read/parse failure (a non-Node
-   * dir verifies nothing — installDeps would have failed earlier for a Node project
-   * lacking a lockfile or package context).
+   * Narrow verification-result seam: observe the harness exit and monotonic
+   * duration, then append a raw sidecar row. Counts come only from an explicitly
+   * side channel. The project's declared command is never rewritten just to get
+   * telemetry, so this path currently records an explicitly unknown count. The
+   * write is telemetry-only and cannot affect a verify result.
    */
+  protected runObservedVerification(
+    request: FamilyVerifyRequest,
+    verification: "typecheck" | "unit" | "full",
+    args: string[],
+    cwd: string,
+  ): string {
+    const startedAt = process.hrtime.bigint();
+    let passed = false;
+    try {
+      const output = this.sh(
+        "npm",
+        args,
+        cwd,
+        PROVISION_SUBPROCESS_TIMEOUT_MS,
+      );
+      passed = true;
+      return output;
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      // Intentionally detached: a slow/full telemetry filesystem must not delay
+      // or change the project's verify verdict.
+      const stampInput = {
+        ...(request.runId !== undefined ? { runId: request.runId } : {}),
+        ...(request.issue !== undefined ? { issue: request.issue } : {}),
+        verification,
+        passed,
+        // No structured side channel is available without changing the declared
+        // project command. `null` is an honest unknown, never a prose-derived 0.
+        count: null,
+        durationMs,
+      };
+      // Keep JSONL order deterministic without awaiting the side effect on the
+      // verify path. recordVerificationStamp catches its own I/O failures, but
+      // an unexpected throw must not poison the tail and block later stamps.
+      this.verificationStampTail = this.verificationStampTail
+        .then(async () => {
+          await recordVerificationStamp(this.opts.ledgerDir, stampInput);
+        })
+        .catch((error: unknown) => {
+          console.warn("verification telemetry stamp failed; continuing", error);
+        });
+    }
+  }
+
+  /** Test/offline consumer seam for detached verification telemetry writes. */
+  protected async waitForVerificationStamps(): Promise<void> {
+    await this.verificationStampTail;
+  }
+
   /**
-   * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
-   * for non-Node diffs. `protected` so a unit test drives the skip branch without a
-   * real FS.
+   * True iff package.json is a file (R1 T2 verify-skip guard). ENOENT→false;
+   * other probe errors throw (#934 ID-011 / #939) — never soft-skip as non-Node.
+   * `protected` so a unit test drives the skip branch without a real FS.
    */
   protected isNodeProject(cwd: string): boolean {
-    return existsSync(join(cwd, "package.json"));
+    const path = join(cwd, "package.json");
+    try {
+      return statSync(path).isFile();
+    } catch (err) {
+      if (isFileNotFound(err)) return false;
+      const d = err instanceof Error ? err.message : String(err);
+      // #934 CR: one canonical reason token (no dual-era parenthetical).
+      throw new Error(
+        `family verify: package.json probe failed at "${path}": ${d}`,
+      );
+    }
   }
 
+  /**
+   * Script names from package.json. Read/parse/shape op-errors throw (#934 ID-011).
+   * Only a successful valid object may return [] (legal empty skip).
+   */
   protected packageScripts(cwd: string): readonly string[] {
+    const path = join(cwd, "package.json");
+    const detail = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    let raw: string;
     try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
-      return Object.keys(pkg.scripts ?? {});
-    } catch {
-      return [];
+      raw = readFileSync(path, "utf8");
+    } catch (err) {
+      throw new Error(`family verify: failed to read package.json at "${path}": ${detail(err)}`);
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`family verify: failed to parse package.json at "${path}": ${detail(err)}`);
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`family verify: package.json at "${path}" must be a JSON object`);
+    }
+    const scripts = (parsed as { scripts?: unknown }).scripts;
+    if (scripts === undefined) return [];
+    if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+      throw new Error(`family verify: package.json "scripts" at "${path}" must be an object`);
+    }
+    return Object.keys(scripts as Record<string, unknown>);
   }
 
   /**
@@ -1153,17 +1431,19 @@ export class RealFamilyBackend implements FamilyBackend {
    *   - coder (#550): a family coder-fix worker invoking `/tdd` for blocking CMR
    *     findings (`runFamilyCoderFixWorker`).
    *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
-   *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
+   *     (`dispatchShipWorker`).
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
    * wrapper until its own slice wires it.
    *
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
    * reviewer for ONE ADR 0030 pass (completeness or correctness). It
    * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
-   * verdict. The runner (`verifyCmr.ts`) owns pass order, route-leg accounting,
-   * ADR0032 strong-leg floor, blocking-finding classification, coder-fix dispatch,
-   * and fresh re-review before ship. A non-converged review outcome is a completed
-   * CMR payload the runner routes; it is NOT a failed worker.
+   * verdict. The runner (`verifyCmr.ts`) owns pass order, ADR0032 strong-leg /
+   * required-leg floor, three-channel routing (exit / judge status / decision
+   * gate), coder-fix dispatch, and fresh re-review before ship. #875 demolished
+   * the accounting court (leg-accounting death / claimed-fixed coverage /
+   * disposition-enum kill). A non-converged review outcome is a completed CMR
+   * payload the runner routes; it is NOT a failed worker.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -1171,44 +1451,17 @@ export class RealFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind === "ship") {
-      // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
-      // `gstack-ship` (replacing the inline `openFamilyPr`).
+      // #336: the family ship step (止于 PR) is a container ship worker invoking
+      // `gstack-ship`.
       return this.dispatchShipWorker(spec, ctx);
     }
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
-    // S11 post-merge cleanup (#603): deterministic when landing carries pr_merged.
-    if (spec.kind === "cleanup") {
-      if (landing?.cleanupDispatch !== undefined) {
-        const ghSh: Sh = (file, args) =>
-          execFileSync(file, args, {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          }).trim();
-        try {
-          const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
-          return { kind: "completed", output };
-        } catch (err) {
-          return {
-            kind: "failed",
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      const stub = skeletonReviewLoopWorkerResult(spec.kind);
-      if (stub !== undefined) {
-        return stub;
-      }
-      return {
-        kind: "failed",
-        reason: `family ${spec.kind} stub unavailable`,
-      };
-    }
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
-    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "docRelease") {
+    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "landing") {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -1221,8 +1474,19 @@ export class RealFamilyBackend implements FamilyBackend {
           "merged base whose diff the cross-model review audits).",
       );
     }
-    const outcome = await this.runCmrWorker(spec, ctx);
+    // #919 R2: pass refuseRecords / priorJudgeVerdicts landing into CMR court
+    // (same fix-findings landing shape as single-slice S6 reverify).
+    const outcome = await this.runCmrWorker(spec, ctx, landing);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  async runPostMergeCleanup(
+    landing: WorkerLandingPayload,
+    ctx: DispatchContext,
+  ): Promise<CleanupResult> {
+    const ghSh: Sh = (file, args) =>
+      shWithClock(file, args, { stage: `cleanup:${file}` });
+    return dispatchPostMergeCleanup(landing, ctx, ghSh);
   }
 
   /**
@@ -1255,6 +1519,10 @@ export class RealFamilyBackend implements FamilyBackend {
     });
   }
 
+  resolveTelemetryDir(_ctx: DispatchContext): string {
+    return this.opts.ledgerDir;
+  }
+
   /**
    * #684: map a finished monitored family CLI bridge child into a WorkerResult.
    */
@@ -1268,29 +1536,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  async rewriteWorkerOutcome(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<WorkerResult> {
-    if (spec.kind !== "cmr") {
-      return {
-        kind: "failed",
-        reason:
-          `outcome protocol rewrite for worker kind "${spec.kind}" is not implemented`,
-      };
-    }
-    const outcome = await this.runCmrOutcomeRewrite(
-      spec,
-      ctx,
-      protocolFailure,
-      attempt,
-    );
-    if (outcome.kind === "outcome_protocol_failure") return outcome;
-    return this.cmrOutcomeToWorkerResult(outcome, ctx);
-  }
-
   private cmrOutcomeToWorkerResult(
     outcome: CmrWorkerOutcome,
     ctx: DispatchContext,
@@ -1301,46 +1546,66 @@ export class RealFamilyBackend implements FamilyBackend {
       // pass — verifyCmr.ts calls escalateFamily with this reason.
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
+        },
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
+    // #930 / #919 E / CR S1: live typed path is kind:"judge" only. Residual
+    // open-count / kind:verdict never mints continue — one shared unusable
+    // paper ({@link unusableResidualOpenCountPaper}, same as single-slice).
+    // Court fail-louds non-judge; never open-count second closer / dual shapes.
+    void ctx;
+    if (outcome.kind === "judge") {
+      const verdict: JudgeVerdict =
+        outcome.status === "converged"
+          ? { station: "judge", status: "converged" }
+          : outcome.status === "escalate"
+            ? {
+                station: "judge",
+                status: "escalate",
+                reason: outcome.reason ?? "family judge escalate",
+                diagnosis: outcome.diagnosis ?? "judge declared escalate",
+              }
+            : (() => {
+                // ADR 0138 / #978 CR S2: never invent an empty packet body when
+                // missing — fail at projection (schema already requires body on
+                // live continue; empty invent only hides contract drift).
+                if (typeof outcome.fixPacketBody !== "string") {
+                  throw new Error(
+                    "family judge continue missing fixPacketBody " +
+                      "(ADR 0138; refuse invent empty string at projection)",
+                  );
+                }
+                return {
+                  station: "judge" as const,
+                  status: "continue" as const,
+                  findingDispositions: outcome.findingDispositions ?? [],
+                  fixPacketBody: outcome.fixPacketBody,
+                  ...(outcome.advanceCoder !== undefined
+                    ? { advanceCoder: outcome.advanceCoder }
+                    : {}),
+                };
+              })();
+      const judge = judgeResultFromVerdict(verdict, outcome.findings);
       return {
-        kind: "malformed",
-        reason: outcome.reason,
-        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-        ...(outcome.cmrLegAccountingPayload !== undefined
-          ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
+        kind: "completed",
+        output: withFamilyJudgeCargo(judge, outcome),
+        ...(outcome.sessionId !== undefined
+          ? { sessionId: outcome.sessionId }
           : {}),
       };
     }
+    // Residual (incl. positive findingsCount / kind:verdict cargo): one unusable
+    // paper only — {@link unusableResidualOpenCountPaper} (kind:"reviewer").
     return {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        converged: outcome.converged,
-        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-        successfulLegs: outcome.successfulLegs,
-        ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
-        ...(outcome.claimedFixedFindingIdentityKeys !== undefined
-          ? {
-              claimedFixedFindingIdentityKeys:
-                outcome.claimedFixedFindingIdentityKeys,
-            }
-          : {}),
-        ...(outcome.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: outcome.priorFindingDispositions }
-          : {}),
-        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
-        ...(outcome.findingFamilies !== undefined
-          ? { findingFamilies: outcome.findingFamilies }
-          : {}),
-        evidencePaths: outcome.evidencePaths,
-      },
-      ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+      output: unusableResidualOpenCountPaper(),
+      ...(outcome.sessionId !== undefined
+        ? { sessionId: outcome.sessionId }
+        : {}),
     };
   }
 
@@ -1382,14 +1647,15 @@ export class RealFamilyBackend implements FamilyBackend {
    *
    * The worker is the container's TOP-LEVEL route-selected reviewer, running on the
    * resident family base (`branchStrategy: head` keeps it on the full current diff)
-   * under the dedicated `cmr` soul. Its `<cmr>` tag TERMINAL pass verdict is gated
-   * on the completion signal then parsed into a
+   * under the dedicated `cmr` soul. Completion is clean exit + typed receipt /
+   * legal sidecar (#928); the `<cmr>` verdict is parsed into a
    * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
    * and accounting around that verdict.
    */
   protected async runCmrWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<CmrWorkerOutcome> {
     // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
     // EXACT cut-SHA review-scope diff (prompt contract in the integrated CMR pass prompts — do
@@ -1409,6 +1675,12 @@ export class RealFamilyBackend implements FamilyBackend {
           "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
           "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
           "RealFamilyBackendOptions.familyBaseStartHead.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason:
+            "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope",
+          diagnosis:
+            "the integrated cmr focus file must pin the exact cut-SHA review scope before launch",
+        }),
       };
     }
     // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): when the cmr slot
@@ -1433,10 +1705,28 @@ export class RealFamilyBackend implements FamilyBackend {
           "cmrWorkerSpec must freeze the route-selected cmrReview leg collection before " +
           "dispatch. Refusing to re-read process.env in runCmrWorker because that can " +
           "write a route file that disagrees with the verified route fingerprint.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason: "cmr worker spec missing frozen review legs",
+          diagnosis:
+            "cmrWorkerSpec must freeze the route-selected review legs before launch",
+        }),
       };
     }
     const auth = this.mountCmrAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+          diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the cmr launch before sc.run",
+          }),
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -1447,6 +1737,12 @@ export class RealFamilyBackend implements FamilyBackend {
             "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
             "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
             "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+            diagnosis:
+              "the selected top-level Claude CMR worker cannot start without its OAuth token",
+          }),
         };
       }
       // Check out the family base so the in-container ak-cross-m-review reviews the
@@ -1463,137 +1759,135 @@ export class RealFamilyBackend implements FamilyBackend {
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
+      // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
+      // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
+      // Trigger on ctx keys OR landing refuseRecords OR priorJudgeVerdicts.
+      const needsFixFindingsLanding =
+        (landing?.refuseRecords !== undefined &&
+          landing.refuseRecords.length > 0) ||
+        (ctx.refusedFindingIdentityKeys !== undefined &&
+          ctx.refusedFindingIdentityKeys.length > 0) ||
+        (ctx.priorJudgeVerdicts !== undefined &&
+          ctx.priorJudgeVerdicts.length > 0);
+      const fixFindingsLanding = needsFixFindingsLanding
+        ? this.writeFamilyFixFindingsFile(ctx, landing)
+        : undefined;
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
-        const result = await this.runAgentSandbox({
-          name: "family-cmr",
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-          // Derive the model from the spec via the shared validated seam (cmr S336 r7
-          // symmetry): resolve the worker's slug through the same registry as the
-          // single-slice + family ship paths — no constant that could silently drift
-          // from the spec the runner declares.
-          agent: this.agentForSpec(spec),
-          // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
-          // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
-          // sequencing and accounting.
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          // On the resident family base so the clean CMR reviewer audits the
-          // current full family diff. Persistent repairs are made only by the
-          // separate family coder-fix worker.
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-        });
+        let result: Awaited<ReturnType<typeof sc.run>>;
+        try {
+          // #966: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (single-slice already does via resumeSession / runAgentSandbox).
+          // Capability gate matches runner #955: incapable provider → fresh open
+          // with priorJudgeVerdicts still landed above (AC4 session-loss shape).
+          // When the ledger id is present but the host session file is gone,
+          // omit resumeSession (fresh open) — still keep priorJudgeVerdicts.
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const agent = this.agentForSpec(spec, ctx);
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
+          result = await this.runAgentSandbox({
+            name: "family-cmr",
+            idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+            cwd: this.opts.workingRepo,
+            sandbox: this.cmrSandbox(
+              auth,
+              frozenReviewLegs,
+              outcomeLanding,
+              ctx,
+              fixFindingsLanding,
+            ),
+            // Derive the model from the spec via the shared validated seam (cmr S336 r7
+            // symmetry): resolve the worker's slug through the shared family registry —
+            // no constant that could silently drift
+            // from the spec the runner declares.
+            agent,
+            // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
+            // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
+            // sequencing and accounting.
+            maxIterations: spec.maxIter,
+            // On the resident family base so the clean CMR reviewer audits the
+            // current full family diff. Persistent repairs are made only by the
+            // separate family coder-fix worker.
+            branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
+            promptFile: join(this.opts.promptsDir, spec.promptFile),
+            // #930: same live judge seat as single-slice S3/S6 — T2 station
+            // receipt on JUDGE_RECEIPT_TAG (not open-count `cmr` workerReceipt).
+            // Sandcastle owns malformed-receipt recovery; sidecar stays cargo.
+            output: workerReceiptOutput(
+              JUDGE_RECEIPT_TAG,
+              judgeStationReceiptSchema(),
+              resumeCapable,
+            ),
+          });
+        } catch (err) {
+          // #899: typed traffic-signal exhaust exits non-zero for #598; do not
+          // convert SOE into a sparse success verdict that feeds the fixer.
+          logAndRethrowReceiptFailure(err, "family CMR");
+        }
+        // Output.object was attached: absent typed signal → #598, not cargo
+        // no-gate completion (same class as realBackend.rawOutputFor).
+        const typed = requireTypedTrafficSignal(
+          (result as { readonly output?: unknown }).output,
+          "family CMR",
+        );
+        // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
+        // host rebuilds successfulLegs transport-only (production panel path).
+        const legTransports = legTransportsFromCmrSandboxResult(result);
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
+            output: typed,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
+            ...(legTransports !== undefined ? { legTransports } : {}),
           }),
           lastSessionIdIfPresent(result),
         );
       } finally {
+        if (fixFindingsLanding !== undefined) {
+          rmSync(fixFindingsLanding.path, { force: true });
+        }
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
-  protected async runCmrOutcomeRewrite(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<CmrWorkerOutcome | Extract<WorkerResult, { kind: "outcome_protocol_failure" }>> {
-    if (ctx.familyBase === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires ctx.familyBase",
-        ...(protocolFailure.sessionId !== undefined
-          ? { sessionId: protocolFailure.sessionId }
-          : {}),
-      };
-    }
-    if (protocolFailure.sessionId === undefined) {
-      return {
-        kind: "malformed",
-        reason:
-          "cmr outcome rewrite requires the malformed worker sessionId to resume the same producing worker",
-      };
-    }
-    const frozenReviewLegs = spec.cmrReviewLegs;
-    if (frozenReviewLegs === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires frozen review legs on the worker spec",
-        sessionId: protocolFailure.sessionId,
-      };
-    }
-    const auth = this.mountCmrAuth();
-    try {
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "malformed",
-          reason:
-            "cmr outcome rewrite cannot resume the same Claude worker without CLAUDE_CODE_OAUTH_TOKEN",
-          sessionId: protocolFailure.sessionId,
-        };
-      }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const gitBefore = this.captureOutcomeRewriteGitEvidence();
-      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `family-cmr-outcome-rewrite-${ctx.cmrPass ?? "legacy"}-${attempt}`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-          agent: this.agentForSpec(spec),
-          maxIterations: 1,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          resumeSession: protocolFailure.sessionId,
-          promptFile: join(this.opts.promptsDir, OUTCOME_REWRITE_PROMPT),
-          promptArgs: {
-            ATTEMPT: String(attempt),
-            FAILURE_REASON: protocolFailure.reason,
-            WORKER_KIND: spec.kind,
-            CMR_PASS: ctx.cmrPass ?? "legacy",
-            COMPLETION_SIGNAL: spec.completionSignal,
-          },
-        });
-        const outcome = withCmrSession(
-          cmrOutcomeFromResult({
-            ...result,
-            cmrReviewLegs: frozenReviewLegs,
-            outcomePath: outcomeLanding.path,
-          }),
-          lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-        );
-        const gitFailure = this.outcomeRewriteGitFailure({
-          before: gitBefore,
-          after: this.captureOutcomeRewriteGitEvidence(),
-          attempt,
-          sessionId: outcome.sessionId,
-        });
-        if (gitFailure !== undefined) return gitFailure;
-        return outcome;
-      } finally {
-        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
-      }
-    } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
-    }
-  }
+  // ADR 0131 removed the same-worker outcome rewrite ladder.
 
-  protected async runAgentSandbox(
+  /**
+   * Thin Sandcastle `sc.run` seam (parallel to {@link RealBackend.invokeSandcastleRun}).
+   * Unit tests override THIS method to fake container results while still
+   * exercising the shared #909 idle/quota wrap in {@link runAgentSandbox}.
+   */
+  protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return await sc.run(options);
+    // #899 / #928 / #919 F2: shared wrap — same helper as RealBackend.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
+
+  /**
+   * Production family agent-sandbox entry (#937 / #934 ID-007). Same as
+   * single-slice {@link RealBackend.runAgentSandbox}: Sandcastle only — silence
+   * must not trigger quota probe/park/kill/relay. Explicit typed 429/capacity
+   * enter park/relay via live constructors elsewhere.
+   */
+  protected async runAgentSandbox(
+    options: AgentSandboxRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return this.invokeSandcastleRun(options);
+  }
+
 
   // ─────────────────────────── family coder-fix ───────────────────────────
 
@@ -1617,10 +1911,20 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
+          }),
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family coder-fix worker cannot start",
             diagnosis:
@@ -1628,25 +1932,49 @@ export class RealFamilyBackend implements FamilyBackend {
               "active route selects a Claude-family coderFix model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude " +
               "coderFix route.",
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
-      const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
+          // #919 R3: T2 coder station receipt (CODER_RECEIPT_TAG + schema) —
+          // same as single-slice; ordinary committed cargo stays outside SO.
+          // #979: honor ledger-derived resumeSessionId on the live Sandcastle
+          // path (same bus as family CMR #966 / single-slice #924).
+          const resumeCapable = this.resumeCapableForSpec(spec, ctx);
+          const agent = this.agentForSpec(spec, ctx);
+          const resumeSessionId = await this.resolveSandcastleResumeSessionId(
+            spec,
+            ctx,
+            agent,
+          );
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
-            agent: this.agentForSpec(spec),
+            sandbox: this.familyCoderSandbox(
+              auth,
+              spec.model,
+              ctx,
+              outcomeLanding,
+            ),
+            agent,
             maxIterations: spec.maxIter,
-            completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
+            ...(resumeSessionId !== undefined
+              ? { resumeSession: resumeSessionId }
+              : {}),
             promptFile: join(this.opts.promptsDir, spec.promptFile),
+            // #919 post-R8 M1 / R3: T2 coderStationReceiptSchema — refuse
+            // traffic survives the family decode path (not decision-gate dual).
+            output: coderReceiptOutput(
+              coderStationReceiptSchema(),
+              CODER_RECEIPT_TAG,
+              resumeCapable,
+            ),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1654,12 +1982,15 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       } finally {
         rmSync(fixFindingsLanding.path, { force: true });
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
-        }
+        rmSync(join(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE), {
+          force: true,
+        });
+        rmSync(join(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
+          force: true,
+        });
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -1668,16 +1999,40 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
-    this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    // Host monitor paths are not visible inside the family coder-fix container.
+    // Materialise into the sandbox cwd (workingRepo) and rewrite pointers (#899).
+    const rawReviewerArtifacts =
+      landing?.rawReviewerArtifacts !== undefined
+        ? materializeRawReviewerArtifactsForSandbox(
+            landing.rawReviewerArtifacts,
+            this.opts.workingRepo,
+          )
+        : undefined;
+    const identityKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
+    // Shared helper with single-slice landing writer — fail-loud when open set
+    // lacks body (raw-artifacts-only path with empty keys still soft-omits).
+    const fixPacketBody = materializeLandingFixPacketBody({
+      fixPacketBody: landing?.fixPacketBody,
+      blockingFindingIdentityKeys: identityKeys,
+      blockingFindingCount: ctx.blockingFindingCount,
+    });
+    // #1012: same host-file guarantee as single-slice landing writer.
+    ensureRegularFileForBindMount(path);
     writeFileSync(
       path,
       `${JSON.stringify(
         {
-          // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
-          // ADR 0062) — never from the runner's thin DispatchContext.
-          blockingFindings: landing?.blockingFindings ?? [],
-          blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+          // ADR 0138 / #978: sole coder-fix packet content — judge body
+          // verbatim. Bare findings packing deleted (no second path).
+          ...(fixPacketBody !== undefined ? { fixPacketBody } : {}),
+          ...(rawReviewerArtifacts !== undefined
+            ? { rawReviewerArtifacts }
+            : {}),
+          blockingFindingIdentityKeys: identityKeys,
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
             : {}),
@@ -1685,12 +2040,23 @@ export class RealFamilyBackend implements FamilyBackend {
           ctx.refusedFindingIdentityKeys.length > 0
             ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
             : {}),
+          // #919 R2 / #927: opaque refuse cargo for judge re-adjudicate —
+          // landing only (信封宪法); never invented from thin ctx.
+          ...(landing?.refuseRecords !== undefined &&
+          landing.refuseRecords.length > 0
+            ? { refuseRecords: landing.refuseRecords }
+            : {}),
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
             ? { repairAttemptFailures: ctx.repairAttemptFailures }
             : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
+          // #925 F1 / #919: structured prior judge rows for session-loss reopen.
+          ...(ctx.priorJudgeVerdicts !== undefined &&
+          ctx.priorJudgeVerdicts.length > 0
+            ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
             : {}),
         },
         null,
@@ -1701,20 +2067,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return { path, sandboxPath: FAMILY_FIX_FINDINGS_FILENAME };
   }
 
-  /** Runner-owned pattern briefs for family coder-fix / online fixer (#711). */
-  protected writeFamilyFixFocusFile(
-    landing?: WorkerLandingPayload,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
-      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
-      return undefined;
-    }
-    this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
-    const path = join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE);
-    writeFileSync(path, `${formatFixFocusMarkdown(landing.findingFamilies)}\n`, "utf8");
-    return { path, sandboxPath: FIX_FOCUS_LANDING_FILE };
-  }
-
   protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
@@ -1722,7 +2074,7 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const path = join(dir, "outcome.json");
       writeFileSync(path, "", "utf8");
-      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
       success = true;
       return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
     } finally {
@@ -1732,22 +2084,37 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
+  protected prepareFamilyReviewOutcomeLanding(): { path: string; sandboxPath: string } {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-review-"));
+    let success = false;
+    try {
+      const path = join(dir, "outcome.json");
+      writeFileSync(path, "", "utf8");
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
+      success = true;
+      return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
+    } finally {
+      if (!success) rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
   protected familyCoderSandbox(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding),
     );
   }
 
   protected familyCoderSandboxConfig(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1760,9 +2127,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
-    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -1773,63 +2137,80 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
     ];
-    if (fixFocusLanding !== undefined) {
-      mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
-        readonly: true,
-      });
-    }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
+  /**
+   * #919 post-R8 M1 — family coder-fix uses the same T2 projection as
+   * single-slice {@link projectCoderStationReceipt}: status:refused + keys
+   * survive; cargo refuseRecords are opaque; cargo never invents refuse traffic.
+   */
   protected familyCoderResultFromRun(
     result: Pick<
       Awaited<ReturnType<typeof sc.run>>,
-      "completionSignal" | "stdout" | "commits" | "iterations"
-    >,
+      "stdout" | "commits" | "iterations"
+    > & { readonly output?: unknown },
     spec: WorkerSpec,
     outcomePath: string,
   ): WorkerResult {
+    void spec;
+    // Output.object was attached for this seat: absent typed signal fails for
+    // #598 — never treat missing SO as cargo/no-gate completion (#899).
+    const typed = requireTypedTrafficSignal(result.output, "family-coder-fix");
+    const cargo = this.familyCoderCargoRaw(outcomePath);
     try {
-      assertCompletionSignal(result, spec.completionSignal, "family-coder-fix");
-      const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
-      const truth = reconcileCoderCommits(
-        parseCoderSelfReport(raw),
-        realCommitCount(result),
-      );
       return {
         kind: "completed",
-        output: this.familyCoderOutput(truth),
+        output: projectCoderStationReceipt(typed, cargo),
         sessionId: lastSessionId(result),
       };
     } catch (err) {
-      return {
-        kind: "malformed",
-        reason:
-          `family coder-fix worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        sessionId: lastSessionId(result),
-      };
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        reason.startsWith("illegal coder station receipt")
+          ? `family-coder-fix: ${reason}`
+          : `family-coder-fix: illegal coder station receipt: ${reason}`,
+      );
     }
   }
 
-  private familyCoderOutput(output: SelfReportedCoder): CoderResult {
-    return {
-      kind: "coder",
-      committed: output.committed,
-      commitsAdded: output.commitsAdded,
-      ...(output.repairEvidence !== undefined
-        ? { repairEvidence: output.repairEvidence }
-        : {}),
-      ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
-    };
+  /**
+   * Family coder-fix cargo from the sidecar only. Tolerant reads — no
+   * Zod/schema gate on ordinary cargo. Fate keys (escalate) are stripped so
+   * a spoofed sidecar cannot override a validated typed T2 receipt (#899).
+   */
+  private familyCoderCargoRaw(outcomePath: string): unknown | undefined {
+    try {
+      const cargo = (() => {
+        try {
+          return readRequiredWorkerOutcomeSidecar(outcomePath);
+        } catch {
+          return undefined;
+        }
+      })();
+      if (cargo === undefined) return undefined;
+      if (cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)) {
+        const stripped: Record<string, unknown> = {
+          ...(cargo as Record<string, unknown>),
+        };
+        delete stripped.escalate;
+        return stripped;
+      }
+      return cargo;
+    } catch {
+      return undefined;
+    }
   }
 
   protected async runFamilyReviewLoopWorker(
@@ -1845,30 +2226,41 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
+          }),
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
             diagnosis:
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
-            synthesizedFailure: true,
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      // verify/fixer need the bot-evidence landing; docRelease only invokes
+      // verify/fixer need the bot-evidence landing; landing only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
-        spec.kind === "docRelease"
+        spec.kind === "landing"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
-      const fixFocusLanding =
-        spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
+      const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
+        // #919 CR T2 / ADR 0132: thin onlineReview station receipt
+        // (completed|escalate). Role cargo (verify/fixer/cleanup/landing)
+        // rides opaque sidecar only — never dual decision-gate tag.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1878,25 +2270,27 @@ export class RealFamilyBackend implements FamilyBackend {
             spec,
             ctx,
             onlineReviewLanding,
-            fixFocusLanding,
+            outcomeLanding,
           ),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          output: onlineReviewReceiptOutput(
+            onlineReviewStationReceiptSchema(),
+            ONLINE_REVIEW_RECEIPT_TAG,
+            this.resumeCapableForSpec(spec, ctx),
+          ),
         });
-        return this.familyReviewLoopResultFromRun(result, spec);
+        return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
         if (onlineReviewLanding !== undefined) {
           rmSync(onlineReviewLanding.path, { force: true });
         }
-        if (fixFocusLanding !== undefined) {
-          rmSync(fixFocusLanding.path, { force: true });
-        }
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -1909,7 +2303,7 @@ export class RealFamilyBackend implements FamilyBackend {
         "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
       );
     }
-    this.excludeOptionalRuntimeFileFromGit(ONLINE_REVIEW_LANDING_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     writeFileSync(
       path,
@@ -1940,7 +2334,7 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
+    outcomeLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
       this.familyReviewLoopSandboxConfig(
@@ -1948,7 +2342,7 @@ export class RealFamilyBackend implements FamilyBackend {
         spec,
         ctx,
         onlineReviewLanding,
-        fixFocusLanding,
+        outcomeLanding,
       ),
     );
   }
@@ -1958,13 +2352,15 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
     onlineReviewLanding?: { path: string; sandboxPath: string },
-    fixFocusLanding?: { path: string; sandboxPath: string },
+    outcomeLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    // #919 R8: pass id so isJudgeSeat (S3/S6 step/id only) is correct for family seats.
     const soul = soulForStep({
+      id: spec.id,
       role: spec.role,
       soul: spec.soul,
     });
@@ -1976,8 +2372,8 @@ export class RealFamilyBackend implements FamilyBackend {
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
-    if (fixFocusLanding !== undefined) {
-      env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
@@ -1994,113 +2390,58 @@ export class RealFamilyBackend implements FamilyBackend {
         readonly: true,
       });
     }
-    if (fixFocusLanding !== undefined) {
+    if (outcomeLanding !== undefined) {
       mounts.push({
-        hostPath: fixFocusLanding.path,
-        sandboxPath: fixFocusLanding.sandboxPath,
-        readonly: true,
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
       });
     }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    appendAgyAuthMount(mounts, auth.agyDir);
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
   protected familyReviewLoopResultFromRun(
-    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations">,
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "stdout" | "iterations"> & {
+      readonly output?: unknown;
+    },
     spec: WorkerSpec,
+    outcomePath?: string,
   ): WorkerResult {
-    try {
-      assertCompletionSignal(result, spec.completionSignal, `family-${spec.kind}`);
-      const sessionId = lastSessionIdIfPresent(result);
-      if (spec.kind === "verify") {
-        const parsed = parseVerifyOutcome(result.stdout);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
-        }
-        return { kind: "completed", output: parsed, sessionId };
-      }
-      if (spec.kind === "fixer") {
-        const parsed = parseFixerOutcome(result.stdout);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
-        }
-        return { kind: "completed", output: parsed, sessionId };
-      }
-      if (spec.kind === "cleanup") {
-        const parsed = parseCleanupOutcome(result.stdout);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
-        }
-        return { kind: "completed", output: parsed, sessionId };
-      }
-      const parsed = parseDocReleaseOutcome(result.stdout);
-      if (parsed.kind === "malformed") {
-        return { kind: "malformed", reason: parsed.reason, sessionId };
-      }
-      return { kind: "completed", output: parsed, sessionId };
-    } catch (err) {
+    const sessionId = lastSessionIdIfPresent(result);
+    // Output.object was attached: absent typed signal → #598, not cargo/no-gate.
+    const typed = requireTypedTrafficSignal(
+      result.output,
+      `family-${spec.kind}`,
+    );
+    // #919 CR T2: thin onlineReview envelope is sole fate channel.
+    const decoded = decodeOnlineReviewEnvelope(typed);
+    if (!decoded.ok) {
+      throw new Error(
+        `family-${spec.kind}: illegal onlineReview station receipt: ${decoded.reason}`,
+      );
+    }
+    if (decoded.value.status === "escalate") {
       return {
-        kind: "malformed",
-        reason:
-          `family ${spec.kind} worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        sessionId: lastSessionIdIfPresent(result),
+        kind: "escalated",
+        escalation: {
+          reason: decoded.value.reason,
+          diagnosis: decoded.value.diagnosis,
+        },
+        sessionId,
       };
     }
-  }
-
-  private captureOutcomeRewriteGitEvidence(): {
-    readonly head: string;
-    readonly trackedStatus: readonly string[];
-  } {
-    const trackedStatus = this.sh("git", [
-      "status",
-      "--short",
-      "--untracked-files=no",
-    ], this.opts.workingRepo).trim();
-    return {
-      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo).trim(),
-      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
-    };
-  }
-
-  private outcomeRewriteGitFailure(input: {
-    readonly before: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly after: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly attempt: number;
-    readonly sessionId?: string;
-  }): Extract<WorkerResult, { kind: "outcome_protocol_failure" }> | undefined {
-    const headMoved = input.before.head !== input.after.head;
-    const trackedDirty = input.after.trackedStatus.length > 0;
-    if (!headMoved && !trackedDirty) return undefined;
-
-    const commitEvidence = headMoved
-      ? this.sh("git", [
-          "log",
-          "--oneline",
-          `${input.before.head}..${input.after.head}`,
-        ], this.opts.workingRepo)
-      : "";
-    const reasons = [
-      headMoved
-        ? `outcome rewrite moved HEAD from ${input.before.head} to ${input.after.head}; commits: ${
-            commitEvidence === "" ? "(no descendant commits listed)" : commitEvidence
-          }`
-        : undefined,
-      trackedDirty
-        ? `outcome rewrite left tracked changes: ${input.after.trackedStatus.join("; ")}`
-        : undefined,
-    ].filter((reason): reason is string => reason !== undefined);
-
-    return {
-      kind: "outcome_protocol_failure",
-      reason: reasons.join(" | "),
-      attempts: input.attempt,
-      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
-    };
+    // completed: sidecar/stdout enrich role cargo only — never escalate.
+    // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
+    // cargo shape is never a #598 process failure (#899 / ADR 0131).
+    return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
   }
 
   /**
@@ -2225,37 +2566,15 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
   /** Add a transient cmr runtime file to the worktree's local git excludes. */
   protected excludeFromGit(filename: string): void {
     try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
-        );
-      }
+      // Shared info/exclude write (#1014 DRY); throw-through for CMR must-exclude.
+      appendGitInfoExclude(this.opts.workingRepo, filename);
     } catch (err) {
       throw new Error(
         `excludeFromGit: failed to exclude transient CMR runtime file "${filename}": ` +
@@ -2275,8 +2594,18 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
+    fixFindingsLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding));
+    return docker(
+      this.cmrSandboxConfig(
+        auth,
+        reviewLegs,
+        outcomeLanding,
+        ctx,
+        fixFindingsLanding,
+      ),
+    );
   }
 
   /**
@@ -2285,86 +2614,33 @@ export class RealFamilyBackend implements FamilyBackend {
    * the claude leg uses the durable OAuth token env var. Mirrors
    * `RealBackend.mountAuth`. The agy token is copied into a per-run dir mounted
    * WRITABLE (the agy CLI writes runtime state under its config dir — #333 gotcha).
+   *
+   * codex cmr R1: EACH leg's auth is BEST-EFFORT (降级链). Core provision is
+   * shared (#913); gh is BEST-EFFORT here (completeness gate degrades without it,
+   * never blocks the cmr worker).
    */
   protected mountCmrAuth(): CmrAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
+    return this.mountAuthWithGh("cmr");
+  }
 
-    // codex cmr R1 (high): EACH leg's auth is BEST-EFFORT. The cmr contract is a
-    // 降级链 — a leg whose auth is absent must let that leg DEGRADE (the skill drops
-    // it; a missing reviewer is not a finding), NOT crash the whole gate. A hard
-    // `copyFileSync` throw here would propagate out of `dispatchWorker` (verifyCmr
-    // does not convert a thrown error into a structured WorkerResult), failing the
-    // gate even when the OTHER legs could review. So a missing source ⇒ omit that
-    // leg's auth (undefined) and let it degrade in-container.
-
-    // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      // Per-INVOCATION unique dir (codex cmr R2): a fixed path would be rmSync'd
-      // + rebuilt under a concurrent family CMR worker, deleting the dir it has
-      // mounted. mkdtempSync gives each invocation its own owner-only (0700) dir.
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible — the failure that degrades cmr legs to static-only).
-      // The host config.toml is host-personal and irrelevant — only auth.json
-      // crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
-      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
-      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
-      // invocation dir would otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-
-    // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
-    // path (the agy CLI writes cache/log under its config dir, so it must NOT be
-    // read-only — #333 gotcha).
-    let agyDir: string | undefined;
-    let tempAgyDir: string | undefined;
-    try {
-      // Per-INVOCATION unique dir (codex cmr R2): same concurrency hazard as the
-      // codex dir above — and the agy dir is mounted WRITABLE, so a shared path
-      // would also cross-talk runtime state between concurrent workers.
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempAgyDir = mkdtempSync(join(root, "cmr-agy-"));
-      copyFileSync(join(home, ".sc-agy-oauth-token"), join(tempAgyDir, AGY_TOKEN_FILENAME));
-      chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
-      agyDir = tempAgyDir;
-    } catch {
-      // agy token absent ⇒ the agy leg degrades (no mount); cmr falls to the rest.
-      // Reclaim the mkdtemp dir if it was created before copy/chmod threw (online
-      // review r2, gemini): on the degrade path agyDir stays undefined, so the
-      // per-invocation dir would otherwise leak past the caller's finally cleanup.
-      if (agyDir === undefined && tempAgyDir !== undefined) {
-        rmSync(tempAgyDir, { recursive: true, force: true });
-      }
-    }
-
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ the Claude Agent leg degrades (no env var).
-    }
-    // gh token → GH_TOKEN for the in-container completeness gate's `gh issue view`
-    // (the live issue body is its DELIVERED-vs-spec authority). BEST-EFFORT, mirroring
-    // the ship worker's readGhToken extraction (host OS keyring, not a portable
-    // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
-    // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
-    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
+  /**
+   * Shared cmr/ship auth mount: core credentials via {@link provisionFamilyWorkerAuth}
+   * plus gh + providerAuth projection. Differs only by `rolePrefix` (temp-dir
+   * identity / cleanup). Policy on gh (best-effort vs hard-required) lives at
+   * the worker preflight, not here.
+   */
+  private mountAuthWithGh(rolePrefix: "cmr" | "ship"): FamilyWorkerAuthWithGh {
+    const core = provisionFamilyWorkerAuth({
+      home: this.opts.home ?? homedir(),
+      rolePrefix,
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+    });
+    return {
+      ...core,
+      ghToken: this.readGhToken(),
+      providerAuth: providerAuthFromCore(core),
+    };
   }
 
   /**
@@ -2408,6 +2684,8 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
+    fixFindingsLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2419,10 +2697,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // sourceRepo to the local repo) the container's git remote is the local path,
     // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
     // (codex #384). Mirrors ship/coder.
-    // #768: pin the baked skill's CMR_CODEX_MODEL to the frozen route's codex
-    // cmrReview leg. Without this, route labels (ORCHESTRATOR_CMR_REVIEW_LEGS /
-    // .cmr-route.json) can say sol while codex-review.sh still defaults to
-    // gpt-5.5 — leg execution ≠ route label. Derive from reviewLegs; never hardcode.
+    // #768: pin the baked skill's CMR_CODEX_MODEL + CMR_CODEX_EFFORT to the
+    // frozen route's codex cmrReview leg. Without this, route labels
+    // (ORCHESTRATOR_CMR_REVIEW_LEGS / .cmr-route.json) can say sol while
+    // codex-review.sh still defaults to gpt-5.5 / medium — leg execution ≠
+    // route/registry authority. Derive from reviewLegs; never hardcode.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
@@ -2431,7 +2710,16 @@ export class RealFamilyBackend implements FamilyBackend {
     };
     const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
     if (codexReviewLeg !== undefined) {
-      env.CMR_CODEX_MODEL = codexReviewLeg.slug;
+      // Resolve effort-variant registry slugs (e.g. gpt-5.6-sol-low) to the CLI
+      // model id the baked codex-review.sh expects — not the registry key.
+      env.CMR_CODEX_MODEL = modelIdForSlug(codexReviewLeg.slug);
+      // Effort authority = registry row for the slug. codex-review.sh reads
+      // CMR_CODEX_EFFORT (default medium); omitting it collapses sol-low/high
+      // variants to medium and defeats route/registry effort selection.
+      const entry = resolveModelSlug(codexReviewLeg.slug);
+      if (entry.provider === "codex" && entry.options?.effort !== undefined) {
+        env.CMR_CODEX_EFFORT = entry.options.effort;
+      }
     }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
@@ -2442,6 +2730,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
+    // #919 R2: same fix-findings env pointer as single-slice judge / family coder.
+    if (fixFindingsLanding !== undefined) {
+      env[SANDBOX_FIX_FINDINGS_PATH_ENV] = fixFindingsLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
@@ -2449,8 +2741,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    if (auth.agyDir !== undefined) {
-      mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
+    appendAgyAuthMount(mounts, auth.agyDir);
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -2458,9 +2751,12 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // Fix-findings is written into the worktree cwd (workingRepo); no extra
+    // bind-mount is required — env points at the sandbox-relative filename.
     // #372: souls mount live for integrated cmr worker (souls not baked).
     // Shared helper (single source for the mount + readonly:true).
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2469,10 +2765,10 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Dispatch the FAMILY ship WORKER (#336): a CONTAINER ship worker invoking
    * `gstack-ship` over the family base, 止于 PR (the online bot cmr + merge are the
-   * separate pr-review-loop stage). Maps the {@link ShipWorkerOutcome} to the full
+   * separate pr-review-loop stage). Maps the ship receipt to the full
    * {@link WorkerResult} union (PRD #330 R2): shipped → `completed` ShipResult; a
-   * genuine block → `escalated`; a hard ship/test failure → `failed`; unparseable →
-   * `malformed`. A rerun-able flake is NOT escalated — the worker reruns it itself.
+   * genuine block → `escalated`. A rerun-able flake is handled inside the worker;
+   * other clean-exit cargo returns a completed placeholder.
    */
   protected async dispatchShipWorker(
     spec: WorkerSpec,
@@ -2490,60 +2786,32 @@ export class RealFamilyBackend implements FamilyBackend {
       // decide) — the family escalate续跑 path (verifyCmr calls escalateFamily).
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
+        },
       };
     }
-    if (outcome.kind === "failed") {
-      // A hard ship/test failure no rerun cleared → the family PR could not open
-      // (verifyCmr fail-safes a non-ship/non-completed result to INCOMPLETE_GATE).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      return { kind: "malformed", reason: outcome.reason };
-    }
-    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
-    // a worker that ships some OTHER branch (e.g. the PR target base) but reports it
-    // as a success must NOT be read as the family delivery → verifyCmr would return
-    // ok:true on a PR for the wrong branch. prompts/family_ship.md pins the family
-    // base (the worker `git checkout`s ctx.familyBase, `branchStrategy:{type:"head"}`)
-    // and asks it to report THE family base branch — no legitimate rename path — so an
-    // `outcome.branch` ≠ `ctx.familyBase` is off-contract → malformed.
-    if (outcome.branch !== ctx.familyBase) {
+    // Clean exit (exit 0): process success regardless of cargo richness.
+    // Missing / off-shape delivery cargo must NOT become a coder no-commit
+    // report — that re-opens cargo as a fourth fate channel (#899 / ADR 0131).
+    // Cargo fields are transported as-is; status is never synthesized.
+    if (outcome.kind === "completed") {
       return {
-        kind: "malformed",
-        reason: `family ship worker reported branch "${outcome.branch}" but was asked to deliver the family base "${ctx.familyBase}" (a ship of a different branch is not the family delivery)`,
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase,
+        },
       };
-    }
-    // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
-    // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
-    // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
-    // slice, prompts/ship.md), so a family worker that pushed-but-opened-no-PR
-    // would otherwise be read as a completed family delivery → verifyCmr ok:true on
-    // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
-    // (legal there); only THIS family consumer narrows it (verifyCmr never reads
-    // success on a non-PR family ship). The `pr` belt uses isFilledString as
-    // defense-in-depth (the parser already enforces non-empty pr — cmr S336 r3).
-    if (outcome.status !== "pr_opened" || !isFilledString(outcome.pr)) {
-      return {
-        kind: "malformed",
-        reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
-      };
-    }
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: outcome.pr,
-      familyBase: ctx.familyBase,
-    });
-    if (!verifiedPr.ok) {
-      return { kind: "malformed", reason: verifiedPr.reason };
     }
     return {
       kind: "completed",
       output: {
         kind: "ship",
-        branch: outcome.branch,
-        status: outcome.status,
-        pr: outcome.pr,
-        prHead: verifiedPr.headOid,
+        branch: outcome.branch ?? ctx.familyBase,
+        ...(outcome.status !== undefined ? { status: outcome.status } : {}),
+        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
     };
   }
@@ -2557,13 +2825,14 @@ export class RealFamilyBackend implements FamilyBackend {
    * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
    * retry cycles run there), under the WRITE (`coder`) soul (it
    * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
-   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base. Its
-   * `<ship>` tag is gated on the completion signal then classified.
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
+   * Completion is clean exit + legal sidecar / typed gate (#928); delivery cargo
+   * is classified from the typed envelope / sidecar, not a STEP_COMPLETE password.
    */
   protected async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
     // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
     // preflight ~645-666): when the ship slot resolves to a Claude-family model,
     // the Claude OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's
@@ -2582,11 +2851,30 @@ export class RealFamilyBackend implements FamilyBackend {
     // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+          diagnosis:
+            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the ship launch before sc.run",
+          }),
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+            diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          }),
         };
       }
       // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
@@ -2607,29 +2895,39 @@ export class RealFamilyBackend implements FamilyBackend {
             "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
             "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
             "late in-container `gh pr create` failure would surface as an opaque error).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+            diagnosis:
+              "the family ship worker cannot open its PR without host GitHub authentication",
+          }),
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
       this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
-      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
-      // the base from the repo default branch (main), regressing the legacy
-      // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
-      // target. Written AFTER the checkout (the file lives in the family-base
+      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
+      // the repo default branch and misses a configured non-main target. Written
+      // AFTER the checkout (the file lives in the family-base
       // worktree) and BEFORE the container so the worker can read it.
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
-        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
+        // Output.object was attached: absent typed signal → #598, not cargo.
+        const typed = requireTypedTrafficSignal(
+          (result as { readonly output?: unknown }).output,
+          "family-ship",
+        );
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
+          output: typed,
         });
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2643,22 +2941,31 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return sc.run({
+    // #909: route ship through runAgentSandbox (not bare sc.run) so the shared
+    // idle → quota-probe wrap applies on the same seam as other family workers.
+    // Tests can trap launch options here without spying on Sandcastle ESM exports.
+    return this.runAgentSandbox({
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(auth, outcomeLanding),
-      // Derive the model from the spec via the SAME validated mapping the
-      // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
+      // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
-      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-4-6`
+      // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
-      agent: this.agentForSpec(spec),
+      agent: this.agentForSpec(spec, ctx),
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
+      // #919 D / ADR 0132: T2 ship station receipt (SHIP_RECEIPT_TAG + schema).
+      // PR/URL delivery cargo stays on sidecar outside SO.
+      output: shipReceiptOutput(
+        shipStationReceiptSchema(),
+        SHIP_RECEIPT_TAG,
+        this.resumeCapableForSpec(spec, ctx),
+      ),
     });
   }
 
@@ -2667,7 +2974,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -2676,8 +2983,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * r5): the family base branch + the CONFIGURED PR target base (`opts.base`) + the
    * repo slug. The worker's prompt reads it FIRST so the in-container `gstack-ship`
    * opens the family PR against the configured base instead of its inferred repo
-   * default — preserving the legacy `openFamilyPr` `--base this.opts.base` contract
-   * (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
+   * default (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
    * branch, `--repo` = the clone's origin, title/body/CHANGELOG = the skill's own,
    * push = the skill's; ONLY the non-default target base is unknowable to it).
    * `protected` so a unit test can fixture it without a real worktree.
@@ -2703,40 +3009,8 @@ export class RealFamilyBackend implements FamilyBackend {
         : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
-    this.excludeOptionalRuntimeFileFromGit(SHIP_FOCUS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
-  }
-
-  /** Best-effort exclude for optional runtime files that must never be committed. */
-  protected excludeOptionalRuntimeFileFromGit(filename: string): void {
-    try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") + filename + "\n",
-          "utf8",
-        );
-      }
-    } catch {
-      // Best-effort: if excludes can't be written the file is still produced; the
-      // ship worker delivers the family base, and a stray untracked focus file is
-      // harmless (gstack-ship ships the family base's TRACKED commits).
-    }
   }
 
   /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
@@ -2757,47 +3031,13 @@ export class RealFamilyBackend implements FamilyBackend {
    * degrades silently.
    */
   protected mountShipAuth(): ShipAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible). The host config.toml is host-personal and irrelevant
-      // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
-      // the separate, preflighted ghToken (cmr S336 r10). Reclaim the mkdtemp dir if
-      // it was created before copy/chmod threw (online review r2, gemini): on the
-      // degrade path codexAuthDir stays undefined, so the per-invocation dir would
-      // otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
-      // route slots simply run without this env var.
-    }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    // #913: shared core + gh + providerAuth; ship REQUIRE-gh is preflighted in
+    // runShipWorker (cmr S336 r10), not at mount time.
+    return this.mountAuthWithGh("ship");
   }
 
   /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10) — the same
-   * extraction the single-slice ship uses (`RealBackend.readGhToken`). The token
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
    * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
    * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV}. Returns undefined when gh
    * is unauthenticated / absent (the `runShipWorker` preflight then escalates — gh is
@@ -2815,7 +3055,7 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /**
    * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
-   * seam (mirrors `cmrSandboxConfig` / `RealBackend.shipSandboxConfig`). No
+   * seam (mirrors `cmrSandboxConfig`). No
    * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
    * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
@@ -2832,7 +3072,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
     // export it or that tracker write fails on an unset var (codex #384 — symmetric
-    // with the single-slice ship sandbox).
+    // with the other family worker sandboxes).
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
@@ -2841,7 +3081,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
-    // gate is the runShipWorker preflight — symmetric with the single-slice path).
+    // gate is the runShipWorker preflight).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -2850,6 +3090,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2859,47 +3103,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
-  }
-
-  // ─────────────────────────── open PR (止于 PR) — legacy inline ───────────────
-
-  /**
-   * LEGACY inline 止于 PR (push family base + `gh pr create`). RETAINED as a
-   * `protected`-style fallback the production seam no longer reaches: ADR 0026 /
-   * #336 makes 止于 PR a ship WORKER (gstack-ship via {@link dispatchShipWorker}).
-   * A direct caller (a test / a back-compat path bypassing the unified seam) may
-   * still reach it; verifyCmr always dispatches through dispatchFamilyWorker.
-   */
-  async openFamilyPr(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    const repo = this.opts.workingRepo;
-    // ONLY here do we push the family base + open the PR — and STOP (the family
-    // orchestrator's autonomy ends at the PR; online bot cmr + merge are the
-    // separate pr-review-loop stage). This is the SOLE remote push.
-    this.sh("git", ["push", "-u", "origin", request.familyBase], repo);
-    const url = this.sh(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        this.opts.repo,
-        "--base",
-        this.opts.base,
-        "--head",
-        request.familyBase,
-        "--fill",
-      ],
-      repo,
-    );
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: url,
-      familyBase: request.familyBase,
-    });
-    if (!verifiedPr.ok) {
-      throw new Error(verifiedPr.reason);
-    }
-    return { url, prHead: verifiedPr.headOid };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────
@@ -2924,8 +3129,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // This is the resume truth the family runner reads: no later
     // `escalation_answered` row keeps the run paused; a later answer reopens it.
     await recordFamilyEscalated(this, {
-      escalationKind: "decision",
-      phase: "final",
+      escalationKind: escalation.escalationKind,
+      phase: escalation.phase ?? "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
       stopSummary: escalation.stopSummary,
@@ -3036,28 +3241,42 @@ export class RealFamilyBackend implements FamilyBackend {
 // ─────────────────────────── cmr worker outcome (#335) ───────────────────────────
 
 /**
- * The classified outcome of the integrated cmr WORKER's run (#335). One of:
- *   - `verdict`   — the worker produced a `{converged, reason?, successfulLegs}`
- *     verdict plus the leg slugs that actually reviewed (the normal case;
- *     `verifyCmr.ts` reads `converged` and enforces ADR0032's strong-leg floor);
- *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
- *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
- *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
- *     read it as a pass (fail-closed).
- * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
- * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
+ * The classified outcome of the integrated cmr WORKER's run (#335 / #930).
+ *   - `judge`    — live T2 tri-state verdict (sole production traffic after #930);
+ *   - `verdict`  — residual open-count / legacy cargo paper (project once at
+ *     {@link RealFamilyBackend.cmrOutcomeToWorkerResult} boundary);
+ *   - `escalate` — model-stuck ⇒ WorkerResult-level escalate 续跑 fork.
  */
 export type CmrWorkerOutcome =
   | {
+      readonly kind: "judge";
+      readonly status: "converged" | "continue" | "escalate";
+      readonly findingDispositions?: ReadonlyArray<
+        import("../types.js").JudgeFindingDisposition
+      >;
+      /** ADR 0138: judge-authored coder-fix packet body on continue. */
+      readonly fixPacketBody?: string;
+      readonly advanceCoder?: string;
+      readonly findings?: readonly Finding[];
+      readonly reason?: string;
+      readonly diagnosis?: string;
+      readonly successfulLegs?: readonly string[];
+      readonly skippedLegs?: readonly CmrSkippedLeg[];
+      readonly claimedFixedFindingIdentityKeys?: readonly string[];
+      readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+      readonly evidencePaths?: readonly string[];
+      readonly sessionId?: string;
+    }
+  | {
       readonly kind: "verdict";
-      readonly converged: boolean;
+      readonly converged?: boolean;
       readonly reason?: string;
       readonly successfulLegs: readonly string[];
       readonly skippedLegs?: readonly CmrSkippedLeg[];
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
-      readonly findingFamilies?: readonly FindingFamily[];
+      readonly findingsCount?: number;
       readonly evidencePaths: readonly string[];
       readonly sessionId?: string;
     }
@@ -3065,17 +3284,41 @@ export type CmrWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
+      readonly escalation?: Escalation;
       readonly sessionId?: string;
-    }
-  | {
-      readonly kind: "malformed";
-      readonly reason: string;
-      readonly sessionId?: string;
-      readonly cmrLegAccountingPayload?: {
-        readonly successfulLegs?: readonly string[];
-        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-      };
     };
+
+/** Ride family cargo siblings on kind:judge without inventing a second closer. */
+function withFamilyJudgeCargo(
+  judge: import("../types.js").JudgeResult,
+  cargo: {
+    readonly skippedLegs?: readonly CmrSkippedLeg[];
+    readonly successfulLegs?: readonly string[];
+    readonly evidencePaths?: readonly string[];
+    readonly claimedFixedFindingIdentityKeys?: readonly string[];
+    readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  },
+): import("../types.js").JudgeResult {
+  return {
+    ...judge,
+    ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
+    ...(cargo.successfulLegs !== undefined
+      ? { successfulLegs: cargo.successfulLegs }
+      : {}),
+    ...(cargo.evidencePaths !== undefined
+      ? { evidencePaths: cargo.evidencePaths }
+      : {}),
+    ...(cargo.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys:
+            cargo.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(cargo.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cargo.priorFindingDispositions }
+      : {}),
+  };
+}
 
 interface CmrSkippedLeg {
   readonly slug: string;
@@ -3098,26 +3341,25 @@ function lastSessionIdIfPresent(result: unknown): string | undefined {
 }
 
 /**
+ * Shared cmr/ship extras on top of {@link FamilyWorkerAuthCore} (#913 F8):
+ * gh token + typed providerAuth projection. Worker policy on gh differs
+ * (cmr best-effort completeness gate vs ship hard-required `gh pr create`)
+ * and lives at preflight, not in this shape.
+ */
+export type FamilyWorkerAuthWithGh = FamilyWorkerAuthCore & {
+  readonly ghToken?: string;
+  readonly providerAuth?: ProviderAuthAvailability;
+};
+
+/**
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
  * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
  * skill drops that leg, the rest still review), never crashing the whole gate.
+ * Core fields on {@link FamilyWorkerAuthCore}; gh is BEST-EFFORT for the
+ * completeness gate (`gh issue view`) — absence degrades authority, never
+ * blocks the cmr worker.
  */
-export interface CmrAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
-  readonly agyDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /**
-   * The host gh OAuth token (`gh auth token` → {@link SANDBOX_GH_TOKEN_ENV} env), or
-   * undefined if absent. BEST-EFFORT (unlike the ship worker's hard-required gh): the
-   * completeness gate grounds against the live issue body via `gh issue view`, so a
-   * present token keeps that authority intact, but its ABSENCE only DEGRADES the gate
-   * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
-   */
-  readonly ghToken?: string;
-}
+export type CmrAuth = FamilyWorkerAuthWithGh;
 
 /**
  * The family ship worker's auth (#336). The codex dir is BEST-EFFORT (mirrors
@@ -3126,88 +3368,86 @@ export interface CmrAuth {
  * delivery requires) are LOAD-BEARING — `runShipWorker` preflights both and escalates
  * when either is absent (cmr S336 r8 + r10). A missing codex source degrades that
  * mount rather than crashing the gate.
+ * Core fields on {@link FamilyWorkerAuthCore}; shape shares {@link FamilyWorkerAuthWithGh}.
  */
-export interface ShipAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /**
-   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
-   * env), or undefined if absent. NOT best-effort: the family delivery is a PR
-   * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
-   */
-  readonly ghToken?: string;
-}
+export type ShipAuth = FamilyWorkerAuthWithGh;
 
 /**
  * The merger worker's auth (integ-cmr int-r2 A-1). When the active route selects a
  * Claude-family merger slug, the claude OAuth token is its OWN auth
  * (LOAD-BEARING) — `runMergerAgent` preflights it and returns a structured
- * non-resolve when absent. The merger resolves + commits the merge in place
+ * non-resolve when absent. When the merger slot is agy, the OAuth dir is likewise
+ * load-bearing (N3: reuse provisionAgyAuthDir / appendAgyAuthMount; fail-closed
+ * without token). The merger resolves + commits the merge in place
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
+ * No role-only extras (no gh / providerAuth) — alias of {@link FamilyWorkerAuthCore}.
  */
-export interface MergerAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
+export type MergerAuth = FamilyWorkerAuthCore;
+
+/**
+ * Prefer Sandcastle typed receipt for fate signals (T2 judge + decision gate).
+ * #928: completion is clean exit + typed envelope / legal sidecar — no signal.
+ * Sidecar/stdout are cargo only — never override a schema-validated judge
+ * envelope or admit an unvalidated decision bell into the human loop (#899).
+ * Residual open-count paper is transport-only (project at worker boundary).
+ *
+ * #1005 / ADR 0141: when host-observed {@link LegTransport}s are supplied
+ * (argument or soft cargo `legTransports`), rebuild `successfulLegs` via
+ * {@link successfulLegsFromTransports} — pure prose / unanchored exit0
+ * stdout is present paper; content shape is never a gate.
+ */
+export function cmrOutcomeFromResult(result: {
+  cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
+  /**
+   * Host-observed per-leg transports. When present, authority for
+   * `successfulLegs` presence under ADR 0141 (overlays cargo lists).
+   */
+  legTransports?: ReadonlyArray<LegTransport>;
+  outcomePath?: string;
+  output?: unknown;
+  stdout?: string;
+}): CmrWorkerOutcome {
+  const stdout = (result.stdout ?? "").trim();
+  // Typed Output.object is the sole live fate channel (judge tri-state + gate).
+  let outcome: CmrWorkerOutcome;
+  if (result.output !== undefined) {
+    outcome = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
+  } else if (result.outcomePath !== undefined) {
+    // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
+    // findingsCount or escalate as process fate from untyped transports (#899).
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        outcome = classifyCmrCargoOnly(sidecar);
+      } else {
+        outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
+      }
+    } catch {
+      // Unreadable sidecar → try stdout cargo below.
+      outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
+    }
+  } else {
+    outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
+  }
+  return overlaySuccessfulLegsFromTransports(outcome, result.legTransports);
 }
 
 /**
- * Decide the cmr worker outcome from a Sandcastle run result. Guarded CMR workers
- * write their machine result to the runner-owned sidecar; a valid sidecar is the
- * completion proof and verdict source. Legacy/no-sidecar workers still require the
- * Sandcastle completion signal before stdout fallback is trusted.
+ * #1005 / ADR 0141: when host-observed leg transports are present, they are
+ * the authority for panel presence — rebuild successfulLegs transport-only
+ * and overlay any cargo list (including a stale []). Content shape is never
+ * a gate; monorepo does not park on empty successfulLegs cargo.
+ * Escalate outcomes are fate-only and carry no leg cargo.
  */
-export function cmrOutcomeFromResult(result: {
-  completionSignal?: string | string[];
-  cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
-  outcomePath?: string;
-  stdout: string;
-}): CmrWorkerOutcome {
-  const signal = result.completionSignal;
-  const signaled = Array.isArray(signal)
-    ? signal.includes(CMR_COMPLETION_SIGNAL)
-    : signal === CMR_COMPLETION_SIGNAL;
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyCmrOutcomePayload(
-        sidecar,
-        result.cmrReviewLegs ?? process.env,
-        "cmr worker outcome sidecar",
-      );
-    }
-  } catch (err) {
-    if (!signaled) return missingCmrCompletionSignalOutcome(signal);
-    return {
-      kind: "malformed",
-      reason:
-        `cmr worker outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  if (!signaled) {
-    return missingCmrCompletionSignalOutcome(signal);
-  }
-  return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
-}
-
-function missingCmrCompletionSignalOutcome(
-  signal: string | string[] | undefined,
+function overlaySuccessfulLegsFromTransports(
+  outcome: CmrWorkerOutcome,
+  transports: ReadonlyArray<LegTransport> | undefined,
 ): CmrWorkerOutcome {
-  const actual =
-    signal === undefined
-      ? "none (no signal fired before the iteration limit)"
-      : `"${String(signal)}"`;
+  if (transports === undefined) return outcome;
+  if (outcome.kind !== "judge" && outcome.kind !== "verdict") return outcome;
   return {
-    kind: "escalate",
-    reason: "cmr worker did not fire its completion signal",
-    diagnosis:
-      `expected "${CMR_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-      `cmr run is not trusted as a verdict — escalate, never a fabricated pass)`,
+    ...outcome,
+    successfulLegs: successfulLegsFromTransports(transports),
   };
 }
 
@@ -3215,27 +3455,102 @@ function missingCmrCompletionSignalOutcome(
 const nonEmpty = z.string().trim().min(1);
 
 /**
- * The three — and ONLY three — `<cmr>` shapes (integ-cmr int-r1, Finding A;
- * mirrors shipOutcome.ts `.strict()` union). Each is `.strict()` so any EXTRA /
- * mixed key (a converged success carrying an `escalate` verdict, an off-contract
- * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
- * branch" fail-open the ship parser was already hardened against. The contract is
- * the integrated CMR pass prompts' "must match one of the shapes above exactly":
- *   1. `{converged:true, successfulLegs, skippedLegs?, evidencePaths}`           — converged;
- *   2. `{converged:false, reason, successfulLegs, skippedLegs?, evidencePaths}`  — not converged;
- *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
- * Verdicts must also account for every default CMR leg: each must be either
- * successful or explicitly skipped.
- * Escalate is tried FIRST (a stuck worker carries no usable verdict).
+ * Optional CMR cargo decoders. Escalation is probed independently before these
+ * fields; none of the cargo shapes can reject a completed reviewer receipt.
  */
 const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
   .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
   .strict();
-const cmrVerdictLegsSchema = {
-  successfulLegs: z.array(cmrLegSlugSchema).min(1),
-  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
-} as const;
+// #875 kill-axis: leg lists are worker prose at parse — non-array / empty /
+// chatty skip elements must not shape-kill the whole verdict. Required-leg
+// availability is checked earlier by route smoke, not recreated in this parser.
+function softParseSuccessfulLegs(raw: unknown): string[] {
+  // Always a string[] on the verdict type (CmrWorkerOutcome requires it).
+  // Missing / non-array / empty remains [] for the mechanical downstream reader.
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      kept.push(item.trim());
+    }
+  }
+  return kept;
+}
+
+/**
+ * Soft-parse optional per-leg transports from cargo (#1005 / ADR 0141).
+ * Non-array / undefined → undefined (fall back to successfulLegs list).
+ * Empty array or all-invalid rows after filter → undefined (same fall-back
+ * as transport-absent — chatty garbage must not force successfulLegs=[]).
+ * Well-formed rows (including dead transports) feed
+ * {@link successfulLegsFromTransports}.
+ */
+function softParseLegTransports(
+  raw: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (raw === undefined || !Array.isArray(raw)) return undefined;
+  const kept: LegTransport[] = [];
+  for (const item of raw) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.slug !== "string" || rec.slug.trim().length === 0) continue;
+    if (typeof rec.exitCode !== "number" || !Number.isFinite(rec.exitCode)) {
+      continue;
+    }
+    if (
+      rec.stdout !== null &&
+      rec.stdout !== undefined &&
+      typeof rec.stdout !== "string"
+    ) {
+      continue;
+    }
+    kept.push({
+      slug: rec.slug.trim(),
+      exitCode: rec.exitCode,
+      stdout: rec.stdout as string | null | undefined,
+    });
+  }
+  // No legal rows after filter ≡ transport-absent (fall back).
+  return kept.length > 0 ? kept : undefined;
+}
+
+/**
+ * Production panel path: pull host-observed leg transports off a sandbox
+ * result when present (ADR 0141). Looks at real production shapes:
+ *   1. top-level `result.legTransports` (host / producer field)
+ *   2. typed-output soft cargo `result.output.legTransports` (SO passthrough)
+ * Absent → undefined; cargo soft path may still rebuild from payload.
+ */
+function legTransportsFromCmrSandboxResult(
+  result: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const rec = result as Record<string, unknown>;
+  const topLevel = softParseLegTransports(rec.legTransports);
+  if (topLevel !== undefined) return topLevel;
+  const output = rec.output;
+  if (output !== null && typeof output === "object" && !Array.isArray(output)) {
+    return softParseLegTransports(
+      (output as Record<string, unknown>).legTransports,
+    );
+  }
+  return undefined;
+}
+function softParseSkippedLegs(
+  raw: unknown,
+): Array<{ slug: string; reason: string }> | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: Array<{ slug: string; reason: string }> = [];
+  for (const item of raw) {
+    const parsed = cmrSkippedLegSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
 const cmrFindingDispositionSchema = z
   .object({
     identityKey: nonEmpty,
@@ -3250,43 +3565,38 @@ const cmrFindingDispositionSchema = z
     scope: z.string().optional(),
     boundedReopen: z.string().optional(),
   })
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (disposition.status !== "accepted_suppressed") return;
-    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-      if (disposition[field] === undefined || disposition[field].trim() === "") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `accepted_suppressed prior finding disposition requires ${field}`,
-          path: [field],
-        });
-      }
-    }
-    if (
-      disposition.source !== undefined &&
-      !hasExplicitAcceptedSuppressionSource(disposition.source)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-        path: ["source"],
-      });
-    }
-    if (
-      disposition.boundedReopen !== undefined &&
-      !hasBoundedReopenCondition(disposition.boundedReopen)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-        path: ["boundedReopen"],
-      });
-    }
-  });
-const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema),
-} as const;
+  .strict();
+// #875 kill-axis: priorFindingDispositions are opaque worker prose at parse.
+// Omitting the array, incomplete accepted_suppressed fields, unknown status
+// buckets, or extra chatty keys must NOT make the whole verdict malformed.
+// Keep only well-formed entries; drop the rest (they do not govern).
+// Governance for *finding* suppressions stays strict on
+// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions still filters
+// via hasAcceptedSuppressionAuthority.
+function softParsePriorFindingDispositions(
+  raw: unknown,
+): PriorFindingDisposition[] | undefined {
+  if (raw === undefined) return undefined;
+  // Non-array chatty values (object/string/null) → empty prose, not malformed.
+  if (!Array.isArray(raw)) return [];
+  const kept: PriorFindingDisposition[] = [];
+  for (const item of raw) {
+    const parsed = cmrFindingDispositionSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
+function softParseClaimedFixedFindingIdentityKeys(
+  raw: unknown,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) kept.push(item);
+  }
+  return kept;
+}
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
 // accepted-suppression governance carrier.
@@ -3341,8 +3651,7 @@ export const cmrReviewerFindingSchema = z
     }
     // #604 correctness r1 (P2-a): an `accepted_suppressed` governance disposition
     // is ONLY valid on a wont_fix/rejected finding. On a fix_now finding it would
-    // otherwise validate, and classifyFindings (fix_now ⇒ blocking) would silently
-    // turn the governance suppression into a blocker. Reject it here.
+    // otherwise validate despite contradicting the suppression contract.
     if (
       finding.action !== "wont_fix" &&
       finding.action !== "rejected" &&
@@ -3386,58 +3695,12 @@ function normalizeCmrReviewerFinding(
     },
   };
 }
-const cmrFindingsSchema = {
-  findings: z.array(cmrReviewerFindingSchema).optional(),
-  // #711: malformed families degrade to no brief — never block the CMR gate.
-  findingFamilies: z.unknown().optional(),
-} as const;
-const cmrEvidenceSchema = {
-  evidencePaths: z.array(nonEmpty).min(1),
-} as const;
-const cmrConvergedSchema = z
-  .object({
-    converged: z.literal(true),
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .strict()
-  .superRefine((outcome, ctx) => {
-    const fixNowIndex = outcome.findings?.findIndex(
-      (finding) => finding.action === "fix_now",
-    );
-    if (fixNowIndex !== undefined && fixNowIndex >= 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["findings", fixNowIndex, "action"],
-        message: "converged CMR outcome cannot carry fix_now findings",
-      });
-    }
-  });
-const cmrRedSchema = z
-  .object({
-    converged: z.literal(false),
-    reason: nonEmpty,
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .strict();
-const cmrEscalateSchema = z
-  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
-  .strict();
-
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
-  // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
-  // before .strict() schemas reject them as extra keys.
-  const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
-  const base = isJsonRecord(withFamilies) ? withFamilies : parsed;
+  const base = parsed;
   const dispositions = base.priorFindingDispositions;
   if (!Array.isArray(dispositions)) return base;
   return {
@@ -3459,537 +3722,665 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
  * it is unit-tested without a container.
  *
- * integ-cmr int-r1 (Finding A): classification is centralized into three
- * `.strict()` zod schemas (mirroring shipOutcome.ts). `safeParse` rejects every
- * EXTRA / mixed key, a NON-boolean `converged`, a blank `reason`, and a garbage
- * escalate (blank reason/diagnosis) → all map to malformed (fail-CLOSED: the gate
- * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
- * `<cmr>` tag is read (the worker may iterate).
+ * The independent bell probe precedes verdict cargo parsing, so unrelated schema
+ * defects cannot suppress escalation. Verdict parsing is tolerant cargo support;
+ * reviewer fate comes from its declared count. Only the LAST `<cmr>` tag is read.
  */
-export function parseCmrOutcome(
-  stdout: string,
-  routeOrEnv: CmrLegAccountingRoute = process.env,
-): CmrWorkerOutcome {
-  const re = /<cmr>([\s\S]*?)<\/cmr>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { kind: "malformed", reason: "cmr worker emitted no <cmr> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
-  }
-  return classifyCmrOutcomePayload(parsed, routeOrEnv, "cmr worker <cmr> tag");
+export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
+  const parsed = parseLastTaggedJsonSoft(stdout, "cmr");
+  if (parsed === undefined) return sparseCmrCargo();
+  return classifyCmrOutcomePayload(parsed, "cmr worker <cmr> tag");
 }
 
 function classifyCmrOutcomePayload(
   parsed: unknown,
-  routeOrEnv: CmrLegAccountingRoute,
-  source: string,
+  _source: string,
 ): CmrWorkerOutcome {
-  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
-  // schemas reject every non-object, but guard explicitly so the malformed
-  // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
-  if (!isJsonRecord(parsed)) {
-    return { kind: "malformed", reason: `${source} was not a JSON object` };
-  }
+  if (!isJsonRecord(parsed)) return sparseCmrCargo();
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
-  if (
-    normalizedParsed.converged === true &&
-    Array.isArray(normalizedParsed.findings) &&
-    normalizedParsed.findings.some(
-      (finding) => isJsonRecord(finding) && finding.action === "fix_now",
-    )
-  ) {
-    return {
-      kind: "malformed",
-      reason: `${source} cannot be converged while findings include fix_now actions`,
-    };
-  }
-  // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
-  if (escalate.success) {
+  // #899: only well-formed bells are fate signals. Present-but-malformed
+  // escalate fails closed for #598 (typed seats also re-ask via schema).
+  const gate = classifyDecisionGate(normalizedParsed, "cmr");
+  if (gate.kind === "bell") {
     return {
       kind: "escalate",
-      reason: escalate.data.escalate.reason,
-      diagnosis: escalate.data.escalate.diagnosis,
+      reason: gate.reason,
+      diagnosis: gate.diagnosis,
     };
   }
-  if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
-    const converged = cmrConvergedSchema.parse(normalizedParsed);
-    const legAccountingFailure = cmrLegAccountingFailure(converged, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
+
+  // #930 live path: T2 judge verdict (same decode as single-slice S3/S6).
+  // Strip cargo siblings before strict decode (findings ride as opaque cargo —
+  // same class as coder pickCoderTraffic).
+  const envelope = decodeJudgeVerdict(pickJudgeTraffic(normalizedParsed));
+  if (envelope.ok) {
+    const cargo = extractCmrCargoFields(normalizedParsed);
+    const v = envelope.value;
+    if (v.status === "converged") {
+      return { kind: "judge", status: "converged", ...cargo };
+    }
+    if (v.status === "escalate") {
       return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: converged.successfulLegs,
-          ...(converged.skippedLegs !== undefined
-            ? { skippedLegs: converged.skippedLegs }
-            : {}),
-        },
+        kind: "judge",
+        status: "escalate",
+        reason: v.reason,
+        diagnosis: v.diagnosis,
+        ...cargo,
       };
     }
     return {
-      kind: "verdict",
-      converged: true,
-      successfulLegs: converged.successfulLegs,
-      ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys:
-        converged.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: converged.priorFindingDispositions,
-      ...(converged.findings !== undefined
-        ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
-      ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
-      evidencePaths: converged.evidencePaths,
+      kind: "judge",
+      status: "continue",
+      findingDispositions: v.findingDispositions,
+      fixPacketBody: v.fixPacketBody,
+      ...(v.advanceCoder !== undefined ? { advanceCoder: v.advanceCoder } : {}),
+      ...cargo,
     };
   }
-  const red = cmrRedSchema.safeParse(normalizedParsed);
-  if (red.success) {
-    const legAccountingFailure = cmrLegAccountingFailure(red.data, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
-      return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: red.data.successfulLegs,
-          ...(red.data.skippedLegs !== undefined
-            ? { skippedLegs: red.data.skippedLegs }
-            : {}),
-        },
-      };
+
+  // #919 E: residual open-count / legacy cmr paper is BOUNDARY-ONLY transport.
+  // Typed judge failed above → never treat open-count as live fate. Residual
+  // cargo rides as kind:verdict; cmrOutcomeToWorkerResult maps it to
+  // {@link unusableResidualOpenCountPaper} (kind:"reviewer"+findingsCount:0) —
+  // never mint continue from findingsCount; never dual kind:"cmr" unusable.
+  return residualCmrVerdictCargo(normalizedParsed);
+}
+
+/** Traffic keys for T2 judge envelopes — cargo siblings stay off the strict decode. */
+const JUDGE_TRAFFIC_KEYS = new Set([
+  "station",
+  "status",
+  "cargoPointer",
+  "findingDispositions",
+  "fixPacketBody",
+  "advanceCoder",
+  "reason",
+  "diagnosis",
+]);
+
+function pickJudgeTraffic(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const traffic: Record<string, unknown> = {};
+  for (const key of JUDGE_TRAFFIC_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      traffic[key] = record[key];
     }
-    return {
-      kind: "verdict",
-      converged: false,
-      reason: red.data.reason,
-      successfulLegs: red.data.successfulLegs,
-      ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: red.data.priorFindingDispositions,
-      ...(red.data.findings !== undefined
-        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
-      ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
-      evidencePaths: red.data.evidencePaths,
-    };
   }
+  return traffic;
+}
+
+function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
+  readonly findings?: Finding[];
+  readonly successfulLegs?: string[];
+  readonly skippedLegs?: Array<{ slug: string; reason: string }>;
+  readonly claimedFixedFindingIdentityKeys?: string[];
+  readonly priorFindingDispositions?: PriorFindingDisposition[];
+  readonly evidencePaths?: string[];
+} {
+  const findings = Array.isArray(normalizedParsed.findings)
+    ? normalizedParsed.findings.flatMap((rawFinding) => {
+        const candidate = cmrReviewerFindingSchema.safeParse(rawFinding);
+        return candidate.success
+          ? [normalizeCmrReviewerFinding(candidate.data)]
+          : [];
+      })
+    : undefined;
+  const evidencePaths = Array.isArray(normalizedParsed.evidencePaths)
+    ? normalizedParsed.evidencePaths.filter(
+        (path): path is string =>
+          typeof path === "string" && path.trim().length > 0,
+      )
+    : undefined;
+  const skippedLegs = softParseSkippedLegs(normalizedParsed.skippedLegs);
+  const claimedFixedFindingIdentityKeys =
+    softParseClaimedFixedFindingIdentityKeys(
+      normalizedParsed.claimedFixedFindingIdentityKeys,
+    );
+  const priorFindingDispositions = softParsePriorFindingDispositions(
+    normalizedParsed.priorFindingDispositions,
+  );
+  // #1005 / ADR 0141: when cargo lands per-leg transports, host rebuilds
+  // successfulLegs transport-only (isLegalLegPaper). Content shape is never
+  // a gate; transports overlay any cargo successfulLegs (including []).
+  // Monorepo is consumer+overlay only — it does not park on empty lists.
+  const cargoTransports = softParseLegTransports(
+    normalizedParsed.legTransports,
+  );
+  const successfulLegs =
+    cargoTransports !== undefined
+      ? successfulLegsFromTransports(cargoTransports)
+      : softParseSuccessfulLegs(normalizedParsed.successfulLegs);
   return {
-    kind: "malformed",
-    reason:
-      `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
+    ...(findings !== undefined ? { findings } : {}),
+    successfulLegs,
+    ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+    ...(claimedFixedFindingIdentityKeys !== undefined
+      ? { claimedFixedFindingIdentityKeys }
+      : {}),
+    ...(priorFindingDispositions !== undefined
+      ? { priorFindingDispositions }
+      : {}),
+    ...(evidencePaths !== undefined ? { evidencePaths } : {}),
   };
 }
 
-/**
- * Decide the merger outcome from a Sandcastle run result: gate on the completion
- * signal FIRST, then parse the `<merger>` tag. Pure (a check on the run-result
- * shape) so the gate is unit-tested without a container.
- *
- * The completion-signal gate mirrors the single-slice RealBackend's
- * `assertCompletionSignal` invariant ("#244 agent emit completionSignal 才进下一步"):
- * a complete-but-unsignaled run (e.g. `maxIterations` hit mid-resolution) can still
- * carry an EARLIER `<merger>{"resolved":true}</merger>` in its stdout; without this
- * gate {@link parseMergerOutcome} would accept that as resolved and record a merge
- * the agent never signaled done (codex R1). An unsignaled run is treated as
- * UNRESOLVED (escalate), never resolved — the safe direction; the caller surfaces
- * it rather than recording a phantom-clean merge.
- */
-export function mergerOutcomeFromResult(result: {
-  completionSignal?: string | string[];
-  outcomePath?: string;
-  stdout: string;
-}): { resolved: boolean; reason?: string } {
-  const signal = result.completionSignal;
-  const signaled = Array.isArray(signal)
-    ? signal.includes(MERGER_COMPLETION_SIGNAL)
-    : signal === MERGER_COMPLETION_SIGNAL;
-  if (!signaled) {
-    const actual =
-      signal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${String(signal)}"`;
-    return {
-      resolved: false,
-      reason:
-        `merger agent did not fire its completion signal — expected ` +
-        `"${MERGER_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-        `run does not count as resolved)`,
-    };
-  }
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
-    }
-  } catch (err) {
-    return {
-      resolved: false,
-      reason:
-        `merger agent outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  return parseMergerOutcome(result.stdout);
+function residualCmrVerdictCargo(
+  normalizedParsed: Record<string, unknown>,
+): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  const cargo = extractCmrCargoFields(normalizedParsed);
+  const findingsCount =
+    typeof normalizedParsed.findingsCount === "number" &&
+    Number.isSafeInteger(normalizedParsed.findingsCount) &&
+    normalizedParsed.findingsCount >= 0
+      ? normalizedParsed.findingsCount
+      : undefined;
+  return {
+    kind: "verdict",
+    ...(typeof normalizedParsed.converged === "boolean"
+      ? { converged: normalizedParsed.converged }
+      : {}),
+    ...(typeof normalizedParsed.reason === "string" &&
+    normalizedParsed.reason.trim().length > 0
+      ? { reason: normalizedParsed.reason }
+      : {}),
+    successfulLegs: cargo.successfulLegs ?? [],
+    ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
+    ...(cargo.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys:
+            cargo.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(cargo.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cargo.priorFindingDispositions }
+      : {}),
+    ...(cargo.findings !== undefined ? { findings: cargo.findings } : {}),
+    ...(findingsCount !== undefined ? { findingsCount } : {}),
+    evidencePaths: cargo.evidencePaths ?? [],
+  };
+}
+
+function sparseCmrCargo(): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  return { kind: "verdict", successfulLegs: [], evidencePaths: [] };
 }
 
 /**
- * The two — and ONLY two — `<merger>` shapes (integ-cmr int-r1, Finding A; mirrors
- * shipOutcome.ts `.strict()` union). Each is `.strict()` so a resolved:true carrying
- * an EXTRA / mixed key (e.g. an `escalate` verdict, an off-contract field) is
- * rejected → NOT a clean resolve (fail-CLOSED). The contract is
- * prompts/merger_resolve_conflict.md "must match the shape above exactly":
- *   1. `{resolved:true, tradeoffs?}`               — resolved (tradeoffs OPTIONAL note);
- *   2. `{resolved:false, escalate:{reason, diagnosis}}` — escalate (could not resolve).
- * `tradeoffs` is optional (the prompt allows an empty/absent note); the escalate
- * `diagnosis` is optional at the schema layer to keep surfacing a reason-only legacy
- * escalate, but a blank `reason` no longer coerces into a resolve.
+ * Cargo-only CMR classify: strip findingsCount + escalate so untyped transports
+ * cannot change routing (#899). Other prose cargo (legs, findings rows, evidence)
+ * may still be transported for the next fixer.
  */
+function classifyCmrCargoOnly(parsed: unknown): CmrWorkerOutcome {
+  if (!isJsonRecord(parsed)) return sparseCmrCargo();
+  const cargo: Record<string, unknown> = { ...parsed };
+  delete cargo.escalate;
+  delete cargo.findingsCount;
+  return classifyCmrOutcomePayload(cargo, "cmr cargo");
+}
+
+/** Parse `<cmr>` stdout as opaque cargo JSON (no fate probes). */
+function parseCmrStdoutCargo(stdout: string): unknown {
+  return parseLastTaggedJsonSoft(stdout, "cmr");
+}
+
+/**
+ * Parse the merger's structured result for telemetry. The caller does not use
+ * this self-report as proof of a landed merge: the post-run git state must show
+ * a two-parent merge commit with no in-progress conflict.
+ *
+ * #919 CR T2 / ADR 0132: typed Output.object is the thin merger station receipt
+ * (completed | escalate). Resolve cargo rides on sidecar/stdout and never
+ * reintroduces escalate when the typed signal is completed (same class as
+ * shipOutcomeFromResult).
+ */
+export function mergerOutcomeFromResult(result: {
+  outcomePath?: string;
+  stdout: string;
+  output?: unknown;
+}): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  // Typed T2 merger envelope is the sole fate channel for gates.
+  if (result.output !== undefined) {
+    const decoded = decodeMergerEnvelope(result.output);
+    if (!decoded.ok) {
+      throw new Error(
+        `merger: illegal merger station receipt: ${decoded.reason}`,
+      );
+    }
+    if (decoded.value.status === "escalate") {
+      return {
+        resolved: false,
+        reason: decoded.value.reason,
+        escalation: {
+          reason: decoded.value.reason,
+          diagnosis: decoded.value.diagnosis,
+          escalationKind: "decision",
+          phase: "wave",
+        },
+      };
+    }
+    // completed: resolve status from cargo only (never escalate).
+    return mergerResolveCargoFromResult(result);
+  }
+  // No typed signal (pure unit-test cargo path): resolve may enrich, escalate must not.
+  return mergerResolveCargoFromResult(result);
+}
+
+/** Sidecar/stdout resolve cargo with escalate stripped (not a fate channel). */
+function mergerResolveCargoFromResult(result: {
+  outcomePath?: string;
+  stdout: string;
+}): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyMergerCargoOnly(sidecar, "merger agent outcome sidecar");
+      }
+    } catch (err) {
+      return {
+        resolved: false,
+        reason: `merger worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+  return classifyMergerCargoOnly(
+    parseLastTaggedJsonSoft(result.stdout, "merger"),
+    "merger agent <merger> tag",
+  );
+}
+
+function classifyMergerCargoOnly(
+  parsed: unknown,
+  source: string,
+): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  // Arrays are typeof "object" in JS — reject them at the cargo boundary so
+  // spread does not invent numeric keys from a JSON array payload.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      resolved: false,
+      reason: parsed === undefined
+        ? `${source} carried no cargo`
+        : `${source} was not a JSON object`,
+    };
+  }
+  const cargo: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+  delete cargo.escalate;
+  return classifyMergerOutcomePayload(cargo, source);
+}
+
+/** Resolved cargo stays strict; the decision bell is probed independently first. */
 const mergerResolvedSchema = z
   .object({ resolved: z.literal(true), tradeoffs: z.string().optional() })
   .strict();
-const mergerEscalateSchema = z
-  .object({
-    resolved: z.literal(false),
-    escalate: z
-      .object({ reason: nonEmpty, diagnosis: nonEmpty.optional() })
-      .strict(),
-  })
-  .strict();
 
 /**
- * Parse the merger agent's `<merger>{…}</merger>` outcome from its stdout (the
- * shape in prompts/merger_resolve_conflict.md). Pure so it is unit-tested without
- * a container. Returns whether it resolved + an optional escalate reason.
- *
- * integ-cmr int-r1 (Finding A): classification is centralized into two `.strict()`
- * zod schemas (mirroring shipOutcome.ts). A resolved:true carrying any extra/mixed
- * key (the dangerous false-clean: a success payload smuggling an escalate) no
- * longer counts as resolved → fail-CLOSED to unresolved. Only the LAST `<merger>`
- * tag is read (the agent may iterate).
+ * Resolve-cargo only (no decision-gate dual). Escalate fate is the T2 merger
+ * station receipt via {@link mergerOutcomeFromResult} / decodeMergerEnvelope
+ * (#919 CR N1). Callers that still hold raw stdout must strip escalate first
+ * (see {@link classifyMergerCargoOnly}).
  */
-export function parseMergerOutcome(stdout: string): {
-  resolved: boolean;
-  reason?: string;
-} {
-  const re = /<merger>([\s\S]*?)<\/merger>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { resolved: false, reason: "merger agent emitted no <merger> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
-  }
-  return classifyMergerOutcomePayload(parsed, "merger agent <merger> tag");
-}
-
 function classifyMergerOutcomePayload(
   parsed: unknown,
   source: string,
-): { resolved: boolean; reason?: string } {
-  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
-  // strict schemas reject every non-object, but guard explicitly so the message
-  // stays specific (agy R1: a non-object must never crash or coerce to resolved).
-  if (parsed === null || typeof parsed !== "object") {
+): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"` / `[]`;
+  // arrays are typeof "object" — reject them here so messages stay specific and
+  // we never treat an array payload as merger cargo (agy R1 / gemini R1).
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
   if (mergerResolvedSchema.safeParse(parsed).success) {
     return { resolved: true };
   }
-  const escalate = mergerEscalateSchema.safeParse(parsed);
-  if (escalate.success) {
-    return {
-      // `reason` is a required `nonEmpty` field in mergerEscalateSchema, so it is
-      // always a non-empty string here — the old `?? diagnosis` fallback was dead
-      // code (online review r3, gemini). `diagnosis` stays an optional schema field.
-      resolved: false,
-      reason: escalate.data.escalate.reason,
-    };
-  }
-  // No strict schema matched → off-contract (mixed payload, extra key, blank
-  // reason, unknown shape). Fail-CLOSED: never read as a clean resolve.
+  // No resolved schema matched → off-contract cargo. Never read it as a clean resolve.
   return { resolved: false, reason: "merger did not resolve" };
 }
 
-/**
- * Is this read error a "file does not exist yet" (ENOENT)? Used to keep the
- * ledger/escalation reads fail-CLOSED: only a missing file maps to an empty set;
- * any other read failure (EACCES / EISDIR / IO / corruption) must rethrow so an
- * unreadable-but-present durable file is never silently read as empty (codex R2).
- */
-function isFileNotFound(err: unknown): boolean {
-  return (
-    err !== null &&
-    typeof err === "object" &&
-    (err as { code?: unknown }).code === "ENOENT"
-  );
-}
-
 /** A one-line human-readable summary of a failed verify command (phase + error). */
-function summarizeError(phase: "wave" | "final", err: unknown): string {
+function summarizeError(
+  phase: VerifyCmrPhase,
+  err: unknown,
+): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
   // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
-  // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only
-  // `.message` drops it, so the ledger could not name WHY verify went red,
-  // breaking decision 3④/5 "reason locatable from the ledger alone" (agy R1).
-  let detail = err instanceof Error ? err.message : String(err);
-  if (err !== null && typeof err === "object") {
-    const e = err as { stderr?: unknown; stdout?: unknown };
-    // Append BOTH streams (labeled), not just the first non-empty one: some tools
-    // put warnings/noise on stderr and the actual failure body on stdout (tsc/
-    // vitest do), so taking stderr-OR-stdout would drop the locatable reason
-    // (codex R3). The 600-char tail below keeps the trailing end where the real
-    // failure lands.
-    const stderr = decodeChildOutput(e.stderr);
-    const stdout = decodeChildOutput(e.stdout);
-    if (stderr.length > 0) detail += `\nstderr: ${stderr}`;
-    if (stdout.length > 0) detail += `\nstdout: ${stdout}`;
-  }
+  // output (the locatable reason) is on `.stderr` / `.stdout`. Shared capture
+  // keeps BOTH streams labeled (formatExecFailureOutput; codex R3 / #1006 DRY).
+  // The 600-char tail keeps the trailing end where the real failure lands.
+  const detail = formatExecFailureOutput(err);
   const tail = detail.length > 600 ? detail.slice(-600) : detail;
   return `family verify (${phase}) failed: ${tail}`;
 }
 
-/** Decode an execFileSync `stderr`/`stdout` field (string | Buffer | undefined) to trimmed text. */
-function decodeChildOutput(v: unknown): string {
-  if (typeof v === "string") return v.trim();
-  if (v instanceof Buffer) return v.toString("utf8").trim();
-  return "";
+/**
+ * Parse legacy family-escalations.jsonl fail-closed: every non-empty line must
+ * JSON.parse AND pass {@link isLegacyEscalationRecordShape}. Blank lines ok.
+ */
+function parseLegacyEscalationJsonl(raw: string): FamilyEscalationRecord[] {
+  const records: FamilyEscalationRecord[] = [];
+  let lineNo = 0;
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    lineNo += 1;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not valid JSON — ` +
+          `refusing to read a partially-readable escalation log (fail closed): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+    }
+    if (!isLegacyEscalationRecordShape(parsed)) {
+      throw new Error(
+        `readEscalations: legacy escalation line ${lineNo} is not a valid ` +
+          `FamilyEscalationRecord shape (must be an object with string reason) — ` +
+          `refusing silent cast (fail closed).`,
+      );
+    }
+    records.push(parsed);
+  }
+  return records;
 }
 
 /**
- * The process exit status carried by an `execFileSync` throw (`err.status`), or
- * `undefined` if the error is not an exit-code failure (e.g. ENOENT spawning git).
- * Lets a git predicate tell a LEGIT non-zero (`merge-base --is-ancestor` exits 1 for
- * "not an ancestor") from an OPERATIONAL failure (exit 128: bad object / broken repo)
- * that must propagate rather than read as a false predicate (online R1 CodeRabbit).
+ * Minimum shape for a legacy escalation stuck-point row. `reason` is the only
+ * required field; optional known fields are type-checked when present. Extra
+ * migration keys (e.g. `ts`) are tolerated on a valid object.
  */
-function gitExitStatus(err: unknown): number | undefined {
-  const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" ? status : undefined;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// #596 F2: family-side real decode/transport path for the 4 review-loop kinds.
-// Mirror cmr/ship/merger parse style (last <tag> wins, JSON, explicit malformed on
-// bad shape). Use isValid*Result guards (from reviewLoopOutcome) as decode validation.
-// Raw (tag string) fed in tests — not fake WorkerOutput construction. Shape-valid
-// false flags pass (no semantic branching). Malformed fails closed.
-// Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
-// ════════════════════════════════════════════════════════════════════════════
-
-function extractLastTag(stdout: string, tag: string): string | undefined {
-  // Mirror single-slice extractTaggedJson semantics exactly (indexOf collection +
-  // backward scan for last start that has a close after it). This avoids:
-  // (1) prose/conversational <tag> mentions before the real block poisoning the
-  //     span (regex from mention open to first close), (2) regex perf on large
-  //     stdout, (3) divergence from the realBackend.ts side of the seam.
-  // lastIndexOf alone is insufficient (must fallback from unclosed trailing opens).
-  const open = `<${tag}>`;
-  const close = `</${tag}>`;
-  const starts: number[] = [];
-  for (
-    let idx = stdout.indexOf(open);
-    idx !== -1;
-    idx = stdout.indexOf(open, idx + open.length)
+function isLegacyEscalationRecordShape(v: unknown): v is FamilyEscalationRecord {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.reason !== "string" || o.reason.trim().length === 0) return false;
+  if (
+    o.escalationKind !== undefined &&
+    o.escalationKind !== "decision" &&
+    o.escalationKind !== "failure"
   ) {
-    starts.push(idx);
+    return false;
   }
-  if (starts.length === 0) {
-    return undefined;
+  if (o.familyHeadAfter !== undefined && typeof o.familyHeadAfter !== "string") {
+    return false;
   }
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const bodyStart = starts[i] + open.length;
-    const end = stdout.indexOf(close, bodyStart);
-    if (end === -1) continue;
-    const body = stdout.slice(bodyStart, end);
-    return body;
+  if (o.phase !== undefined && o.phase !== "wave" && o.phase !== "final") {
+    return false;
   }
-  return undefined;
+  if (o.diagnosis !== undefined && typeof o.diagnosis !== "string") {
+    return false;
+  }
+  return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// #596 F2 / #899 / ADR 0131: family-side cargo transport for the 4 review-loop
+// kinds (verify / fixer / cleanup / landing). Sidecar-prefer + last <tag>
+// JSON enrich delivery cargo only — never a fate court.
+// Law: cargo is opaque. Sparse / unreadable / off-shape cargo completes the
+// Action as best-effort (sparseReviewLoopCompleted); it does NOT throw for
+// abolished #598 shape-lane and does NOT mint a fake kind:"coder" seat.
+// Fate is exit code + typed decision-gate Output.object only. SOE exhaust is
+// the sole process-level #598 redispatch channel (handled at the sc.run seat).
+// Single-slice uses RealBackend outputFor/decodeOutput; this is the family eqv.
+// ════════════════════════════════════════════════════════════════════════════
+
+function parseOutcomePayload(
+  stdout: string,
+  tag: string,
+  outcomePath?: string,
+): { parsed: unknown; source: string } | { error: string } {
+  if (outcomePath !== undefined) {
+    let sidecar: unknown | undefined;
+    let sidecarReadError: unknown | undefined;
+    try {
+      sidecar = readWorkerOutcomeSidecar(outcomePath);
+    } catch (err) {
+      sidecarReadError = err;
+    }
+    if (sidecar !== undefined) {
+      // Cargo source selection is not a gate court (#899 / H2). Prefer a
+      // readable sidecar; do not shop stdout because it carries a decision
+      // bell. Fate is typed SO only — callers strip escalate after read.
+      return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
+    }
+    if (sidecarReadError !== undefined) {
+      const last = extractLastTagBody(stdout, tag);
+      if (last !== undefined) {
+        try {
+          const parsed = JSON.parse(last.trim());
+          return { parsed, source: `${tag} worker <${tag}> tag` };
+        } catch {
+          // The sidecar and compatibility receipt are both unreadable cargo.
+        }
+      }
+      return {
+        error: `${tag} worker outcome sidecar protocol failure: ${sidecarReadError instanceof Error ? sidecarReadError.message : String(sidecarReadError)}`,
+      };
+    }
+  }
+  const last = extractLastTagBody(stdout, tag);
+  if (last === undefined) {
+    return { error: `${tag} worker emitted no <${tag}> tag` };
+  }
+  try {
+    return {
+      parsed: JSON.parse(last.trim()),
+      source: `${tag} worker <${tag}> tag`,
+    };
+  } catch {
+    return { error: `${tag} worker <${tag}> tag was not valid JSON` };
+  }
+}
+
+type ReceiptCargo = { readonly kind: "cargo" };
+
+const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
+
+/**
+ * Role-native opaque-miss cargo after a clean process + typed no-gate decision
+ * (ship-aligned; #899 / ADR 0131). Cargo shape never fails the Action for #598
+ * and never mints a fake `kind:"coder"` seat report.
+ */
+function sparseReviewLoopCompleted(
+  kind: string,
+  sessionId: string | undefined,
+): WorkerResult {
+  const output: WorkerOutput =
+    kind === "verify"
+      ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
+        { kind: "verify", converged: false }
+      : kind === "fixer"
+        ? { kind: "fixer", committed: false }
+        : kind === "cleanup"
+          ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
+            { kind: "cleanup", terminal: true, ok: true }
+          : // Empty-run success is legal for 文档发布 (process success, cargo miss).
+            { kind: "landing", released: true };
+  return { kind: "completed", output, sessionId };
+}
+
+/**
+ * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
+ * — those transports enrich delivery cargo only (#899). Fate comes solely from
+ * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
+ */
+function reviewLoopCargoResult(
+  stdout: string,
+  kind: string,
+  sessionId: string | undefined,
+  outcomePath?: string,
+): WorkerResult {
+  const tag =
+    kind === "verify" ||
+    kind === "fixer" ||
+    kind === "cleanup" ||
+    kind === "landing"
+      ? kind
+      : "verify";
+  // Read cargo, strip fate keys, re-decode without escalate so a spoofed
+  // sidecar bell cannot mask legitimate delivery cargo.
+  const raw = parseOutcomePayload(stdout, tag, outcomePath);
+  if ("error" in raw || !isJsonRecord(raw.parsed)) {
+    // Sparse / unreadable cargo: process success + opaque miss (not #598).
+    return sparseReviewLoopCompleted(kind, sessionId);
+  }
+  const cargo: Record<string, unknown> = { ...raw.parsed };
+  delete cargo.escalate;
+  const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
+  const parsed =
+    kind === "verify"
+      ? parseVerifyOutcome(cargoStdout)
+      : kind === "fixer"
+        ? parseFixerOutcome(cargoStdout)
+        : kind === "cleanup"
+          ? parseCleanupOutcome(cargoStdout)
+          : parseLandingOutcome(cargoStdout);
+  if (parsed.kind === "cargo") {
+    // Off-shape paper is opaque miss cargo — complete the Action; do not
+    // re-open cargo shape as a #598 channel.
+    return sparseReviewLoopCompleted(kind, sessionId);
+  }
+  return { kind: "completed", output: parsed, sessionId };
+}
+
+/**
+ * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
+ * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
+ * Host fail-safe applicator (correctness K1) needs threadReplies /
+ * threadsToResolve / deferredIssueUrls decoded when well-typed.
+ */
 export function parseVerifyOutcome(
   stdout: string,
-): VerifyResult | { kind: "malformed"; reason: string } {
-  const last = extractLastTag(stdout, "verify");
-  if (last === undefined) {
-    return { kind: "malformed", reason: "verify worker emitted no <verify> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "verify worker <verify> tag was not valid JSON" };
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
-  // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
-  const shape = verifyOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const v = shape.data;
+  outcomePath?: string,
+): VerifyResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "verify", outcomePath);
+  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  const findingDispositions = Array.isArray(parsed.findingDispositions)
+    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
+        if (!isJsonRecord(item)) return false;
+        return (
+          typeof item.identityKey === "string" &&
+          typeof item.threadId === "string" &&
+          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
+          (item.reason === undefined || typeof item.reason === "string")
+        );
+      })
+    : undefined;
+  const threadReplies = Array.isArray(parsed.threadReplies)
+    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
+        isJsonRecord(item) &&
+        typeof item.threadId === "string" &&
+        typeof item.body === "string",
+      )
+    : undefined;
+  const terminalState: VerifyWorkerTerminalState | undefined =
+    parsed.terminalState === "mergeable" ||
+    parsed.terminalState === "decision_gate_raised"
+      ? parsed.terminalState
+      : undefined;
+  const advanceCoder =
+    typeof parsed.advanceCoder === "string" && parsed.advanceCoder.trim().length > 0
+      ? parsed.advanceCoder.trim()
+      : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
-    ...attachSanitizedFindingFamilies(
-      {
-        converged: v.converged,
-        ...(v.findingDispositions !== undefined
-          ? { findingDispositions: v.findingDispositions }
-          : {}),
-        ...(v.fixMarkedFindingIdentityKeys !== undefined
-          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-          : {}),
-        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-        ...(v.threadsToResolve !== undefined
-          ? { threadsToResolve: v.threadsToResolve }
-          : {}),
-        ...(v.deferredIssueUrls !== undefined
-          ? { deferredIssueUrls: v.deferredIssueUrls }
-          : {}),
-        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
-      },
-      v.findingFamilies,
-    ),
+    converged: parsed.converged,
+    ...(findingDispositions !== undefined ? { findingDispositions } : {}),
+    ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
+      ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
+      : {}),
+    ...(threadReplies !== undefined ? { threadReplies } : {}),
+    ...(stringArray(parsed.threadsToResolve)
+      ? { threadsToResolve: parsed.threadsToResolve }
+      : {}),
+    ...(stringArray(parsed.deferredIssueUrls)
+      ? { deferredIssueUrls: parsed.deferredIssueUrls }
+      : {}),
+    ...(terminalState !== undefined ? { terminalState } : {}),
+    ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
+    ...(advanceCoder !== undefined ? { advanceCoder } : {}),
   };
-  if (!isValidVerifyResult(candidate)) {
-    return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
-  }
   return candidate;
 }
 
 export function parseFixerOutcome(
   stdout: string,
-): FixerResult | { kind: "malformed"; reason: string } {
-  const last = extractLastTag(stdout, "fixer");
-  if (last === undefined) {
-    return { kind: "malformed", reason: "fixer worker emitted no <fixer> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag was not valid JSON" };
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = fixerOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
-    };
-  }
+  outcomePath?: string,
+): FixerResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "fixer", outcomePath);
+  if ("error" in payload) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
   const candidate: FixerResult = {
     kind: "fixer",
-    committed: shape.data.committed,
-    ...(shape.data.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-    ...(shape.data.fixCommitSha !== undefined
-      ? { fixCommitSha: shape.data.fixCommitSha }
+    committed: parsed.committed,
+    ...(typeof parsed.alreadySatisfied === "boolean"
+      ? { alreadySatisfied: parsed.alreadySatisfied }
+      : {}),
+    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
+      ? { fixCommitSha: parsed.fixCommitSha }
       : {}),
   };
-  if (!isValidFixerResult(candidate)) {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
-  }
   return candidate;
 }
 
 export function parseCleanupOutcome(
   stdout: string,
-): CleanupResult | { kind: "malformed"; reason: string } {
-  const last = extractLastTag(stdout, "cleanup");
-  if (last === undefined) {
-    return { kind: "malformed", reason: "cleanup worker emitted no <cleanup> tag" };
+  outcomePath?: string,
+): CleanupResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "cleanup", outcomePath);
+  if ("error" in payload) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  if (typeof parsed.terminal !== "boolean" || typeof parsed.ok !== "boolean") {
+    return RECEIPT_CARGO;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not valid JSON" };
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = cleanupOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
-    };
-  }
+  const branchOutcome =
+    parsed.branchOutcome === "deleted" ||
+    parsed.branchOutcome === "already_gone" ||
+    parsed.branchOutcome === "skipped_tip_drift" ||
+    parsed.branchOutcome === "skipped_pr_not_merged" ||
+    parsed.branchOutcome === "skipped_precondition"
+      ? parsed.branchOutcome
+      : undefined;
   const candidate: CleanupResult = {
     kind: "cleanup",
-    terminal: shape.data.terminal,
-    ok: shape.data.ok,
-    ...(shape.data.issuesClosed !== undefined
-      ? { issuesClosed: shape.data.issuesClosed }
+    terminal: parsed.terminal,
+    ok: parsed.ok,
+    ...(Array.isArray(parsed.issuesClosed) &&
+    parsed.issuesClosed.every(
+      (issue): issue is number => Number.isInteger(issue) && (issue as number) > 0,
+    )
+      ? { issuesClosed: parsed.issuesClosed }
       : {}),
-    ...(shape.data.parentIssueClosed === true
-      ? { parentIssueClosed: true }
+    ...(typeof parsed.parentIssueClosed === "boolean"
+      ? { parentIssueClosed: parsed.parentIssueClosed }
       : {}),
-    ...(shape.data.branchOutcome !== undefined
-      ? { branchOutcome: shape.data.branchOutcome }
+    ...(branchOutcome !== undefined
+      ? { branchOutcome }
       : {}),
-    ...(shape.data.skippedReasons !== undefined
-      ? { skippedReasons: shape.data.skippedReasons }
+    ...(Array.isArray(parsed.skippedReasons) &&
+    parsed.skippedReasons.every((reason): reason is string => typeof reason === "string")
+      ? { skippedReasons: parsed.skippedReasons }
       : {}),
   };
-  if (!isValidCleanupResult(candidate)) {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
-  }
   return candidate;
 }
 
-export function parseDocReleaseOutcome(
+export function parseLandingOutcome(
   stdout: string,
-): DocReleaseResult | { kind: "malformed"; reason: string } {
-  const last = extractLastTag(stdout, "docRelease");
-  if (last === undefined) {
-    return { kind: "malformed", reason: "docRelease worker emitted no <docRelease> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not valid JSON" };
-  }
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = docReleaseOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "docRelease worker <docRelease> tag did not satisfy docReleaseOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
-  if (!isValidDocReleaseResult(candidate)) {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
-  }
+  outcomePath?: string,
+): LandingResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "landing", outcomePath);
+  if ("error" in payload) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
+  const candidate: LandingResult = { kind: "landing", released: parsed.released };
   return candidate;
 }

@@ -2,8 +2,8 @@
  * #598 — generic mechanical retry at the shared dispatch seam.
  *
  * Runner function (a) (ADR 0062 / #604): a worker dispatch that ends in a
- * PROCESS-LEVEL failure (a returned `failed`/`malformed`/`outcome_protocol_failure`
- * kind, a thrown exception, or a "no completion signal" case surfacing as one of
+ * PROCESS-LEVEL failure (a returned `failed`
+ * kind, a thrown exception, or a missing-sidecar / incomplete handoff surfacing as one of
  * those) is retried with a FRESH (non-resume) session for the SAME step, up to a
  * small fixed bound. A result that parsed into a valid, JUDGED shape
  * (`completed` / `escalated`) is returned as-is with ZERO retry, regardless of
@@ -12,39 +12,146 @@
  * returned so the caller's existing durable-abort path handles it (no new
  * supervisor, no new stop-reason field).
  *
- * This layer reads ONLY the outcome discriminant (`result.kind`) — never the
- * worker's self-reported content.
+ * This layer classifies process-level outcomes for mechanical retry:
+ * primarily the outcome discriminant (`result.kind`), plus durable host-FS
+ * (EISDIR-class) classification on throw / failed `reason` (#1012) so the same
+ * host path is not re-dispatched. It never reads worker self-reported content
+ * for judgment — that belongs to the next fresh reviewer pass.
  */
 
+import type { ChildProcess } from "node:child_process";
+
+import { isEisdirClassHostFsError } from "./fsErrors.js";
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
+import { capacityRelayErrorFrom } from "./relayDispatch.js";
 import {
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-} from "./relayDispatch.js";
+  isSandcastleAgentError,
+  workerResultFromAgentError,
+} from "./sandcastleAgentError.js";
+import {
+  isWorkerTerminationFailedError,
+  terminateSpawnedChild,
+  WorkerTerminationFailedError,
+  type WorkerMonitorDeps,
+} from "./workerMonitor.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
- * Total dispatch attempts for one step (1 initial + retries) for a PROCESS-LEVEL
- * failure (crash / no-output). #598 owns this number.
- *
- * This is a DIFFERENT, independent bound from the reviewer's
- * `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` (= 2, runner.ts): that one bounds SEMANTIC
- * reruns of a reviewer that produced INVALID OUTPUT (a model/prompt problem that a
- * 3rd try rarely fixes → deliberately tighter), whereas this bounds a transient
- * process crash (retrying more is worth it). #592 ("no role treated specially")
- * means no role gets ZERO retry — NOT that the two bounds must be equal; a reviewer
- * crash that surfaces as a THROW still uses this generic bound (3) via the runner's
- * reviewer predicate. (The two are intentionally unequal; do not conflate them.)
+ * #934 ID-004 / #937: adoption/persist failure after exact-handle terminate.
+ * Must not enter process-root mechanical retry (would re-spawn on the same
+ * fixed position after the prior instance was already terminated).
  */
-export const MAX_DISPATCH_ATTEMPTS = 3;
+export class AdoptionPersistFailedError extends Error {
+  readonly reason = "adoption_persist_failed" as const;
+
+  constructor(cause: unknown) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    super(`adoption_persist_failed: ${msg}`);
+    this.name = "AdoptionPersistFailedError";
+    if (cause instanceof Error) this.cause = cause;
+  }
+}
+
+export function isAdoptionPersistFailedError(
+  err: unknown,
+): err is AdoptionPersistFailedError {
+  return (
+    err instanceof AdoptionPersistFailedError ||
+    (typeof err === "object" &&
+      err !== null &&
+      (err as { readonly name?: unknown }).name === "AdoptionPersistFailedError")
+  );
+}
+
+/**
+ * #934 ID-006 / #937 S1 — single court for spawn-adoption failure cleanup.
+ *
+ * Exact-handle terminate → wait exitPromise → promote
+ * {@link WorkerTerminationFailedError} or wrap {@link AdoptionPersistFailedError}.
+ * Shared by single-slice dispatchWorker and family dispatchFamilyWorker so the
+ * two call sites cannot drift on monitorDeps / message shaping.
+ */
+export async function abandonSpawnAfterAdoptionFailure(input: {
+  readonly child: ChildProcess;
+  readonly exitPromise: Promise<unknown>;
+  readonly adoptionError: unknown;
+  readonly instanceId: string;
+  readonly monitorDeps?: WorkerMonitorDeps;
+}): Promise<never> {
+  try {
+    await terminateSpawnedChild(input.child, input.monitorDeps, {
+      instanceId: input.instanceId,
+    });
+  } catch (termErr) {
+    if (isWorkerTerminationFailedError(termErr)) {
+      const base =
+        input.adoptionError instanceof Error
+          ? input.adoptionError.message
+          : String(input.adoptionError);
+      throw new WorkerTerminationFailedError({
+        ...(termErr.pid !== undefined ? { pid: termErr.pid } : {}),
+        instanceId: input.instanceId,
+        message:
+          `${base}; worker_termination_failed` +
+          (termErr.pid !== undefined ? ` pid=${termErr.pid}` : "") +
+          ` instanceId=${input.instanceId}`,
+      });
+    }
+  }
+  try {
+    await input.exitPromise;
+  } catch {
+    // Preserve the original spawn-persist error if child cleanup fails.
+  }
+  throw new AdoptionPersistFailedError(input.adoptionError);
+}
+
+/** Non-retryable throws that surface after exact-handle cleanup or durable edge. */
+function isNonRetryableDispatchThrow(err: unknown): boolean {
+  return (
+    isQuotaWaitForResetError(err) ||
+    capacityRelayErrorFrom(err) !== undefined ||
+    isWorkerTerminationFailedError(err) ||
+    isAdoptionPersistFailedError(err) ||
+    // #1012: host FS EISDIR (docker dir-placeholder / open on directory) is
+    // durable infra — re-dispatch cannot heal the same host path.
+    isEisdirClassHostFsError(err)
+  );
+}
+
+/** #1012: failed WorkerResult whose reason is EISDIR-class — same durable class. */
+function isEisdirClassFailedResult(result: WorkerResult): boolean {
+  return result.kind === "failed" && isEisdirClassHostFsError(result.reason);
+}
+
+/**
+ * Total process-root dispatch attempts for one fixed position (1 initial +
+ * 5 retries) when invocation transport/crash/signal/SO extraction fails and
+ * no durable outcome exists yet (#934 ID-004 / #937).
+ *
+ * This is the single process-failure retry budget shared by every worker role.
+ * Completed/escalated worker receipts are never retried here; the runner only
+ * transports their self-reported gates and counts.
+ */
+export const MAX_DISPATCH_ATTEMPTS = 6;
+
+/** Five 15s intervals between the 6 process-root attempts (#934 ID-004). */
+export const DISPATCH_RETRY_BACKOFF_MS = [
+  15_000,
+  15_000,
+  15_000,
+  15_000,
+  15_000,
+] as const;
+
+const defaultRetrySleepMs = (ms: number): Promise<void> =>
+  process.env.VITEST === "true"
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The `WorkerResult` kinds that are a process-level failure (retryable). */
 function isProcessFailure(result: WorkerResult): boolean {
-  return (
-    result.kind === "failed" ||
-    result.kind === "malformed" ||
-    result.kind === "outcome_protocol_failure"
-  );
+  return result.kind === "failed";
 }
 
 /** Force a retry dispatch to be FRESH: a resume dispatch never resumes the old session. */
@@ -72,20 +179,27 @@ export type DispatchOutcome =
   | { readonly result: WorkerResult };
 
 /**
- * Options that let a caller compose its OWN semantic-retry layer with this generic
- * mechanical layer WITHOUT double-counting (#598 acceptance: "each keeps its own
- * counter, the generic layer firing only after those run").
+ * Options for the shared process-failure retry layer.
  */
 export interface MechanicalRetryOptions {
+  /** Injectable retry wait so tests and callers with virtual clocks do not sleep. */
+  readonly sleepMs?: (ms: number) => Promise<void>;
   /**
-   * Return `true` when THIS failure is owned by the caller's semantic-retry layer
-   * (e.g. the reviewer's invalid-output rerun, or CMR's same-worker outcome
-   * rewrite) and must NOT be retried here — the generic layer defers it to the
-   * caller (re-throws a thrown error, returns a resolved result) so the caller's
-   * own bounded loop handles it with its own counter. Everything else (a generic
-   * crash / connection drop / process-protocol failure the caller does not own) is
-   * retried fresh here. Absent ⇒ nothing is caller-owned; every process failure is
-   * retried generically.
+   * Durable attempts already consumed for this step before the current runner
+   * process started.  The retry budget is global to the durable step, not this
+   * one invocation of `withMechanicalRetry`.
+   */
+  readonly attemptsAlreadyUsed?: number;
+  /** Called immediately before each real worker dispatch with its absolute attempt number. */
+  readonly onAttempt?: (attempt: number) => Promise<void>;
+  /** Persist/observe a failed attempt before the same step is retried. */
+  readonly onFailure?: (outcome: DispatchOutcome, attempt: number) => Promise<void>;
+  /**
+   * Optional escape hatch for an outcome that is not a process failure and must
+   * surface unchanged. Callers that own a domain-specific throw→result converter
+   * claim the outcome so the generic layer does not double-count it.
+   * #899: StructuredOutputError after maxRetries is a process-level failure for
+   * #598, not a caller-owned path that feeds empty cargo to the fixer.
    */
   readonly callerOwns?: (outcome: DispatchOutcome) => boolean;
   /**
@@ -98,14 +212,6 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
-  /**
-   * Idempotency hook (#598): reset LOCAL side effects (git HEAD/worktree residue)
-   * to the pre-attempt state BEFORE each retry, so a retry never runs on top of an
-   * uncleaned side effect the previous crashed attempt left behind. Called only
-   * before a retry (never before the first attempt). Remote side effects (pushed
-   * branch, opened PR) must be made idempotent or excluded by the caller.
-   */
-  readonly resetBeforeRetry?: () => Promise<void>;
 }
 
 /**
@@ -116,10 +222,11 @@ export interface MechanicalRetryOptions {
  * `opts.callerOwns` claims it, in which case it is re-thrown (thrown outcome) or
  * returned (resolved outcome) for the caller's own semantic layer to handle.
  *
- * #686: resource failures (quota wall / hang-with-live-pool) are NEVER retried
- * here and NEVER trigger `resetBeforeRetry` — they surface for relay disposition.
- * On process-failure exhaustion the annotated result is a relay *candidate*
- * (caller may hand off via roster+pool lookup) rather than a silent durable abort.
+ * #686/#937: resource failures (quota / capacity) and adoption/termination
+ * failures are NEVER retried here. Process-root redispatch preserves the current
+ * scene — never reset/checkout/clean Git residue (#934 ID-004/006; resetBeforeRetry deleted).
+ * On process-failure exhaustion the result is the phase's canonical failed
+ * edge (#934 ID-004) — runner escalateTermination, not a baton handoff.
  */
 export async function withMechanicalRetry(
   spec: WorkerSpec,
@@ -127,46 +234,59 @@ export async function withMechanicalRetry(
   dispatch: (spec: WorkerSpec, ctx: DispatchContext) => Promise<WorkerResult>,
   opts?: MechanicalRetryOptions,
 ): Promise<WorkerResult> {
+  const attemptsAlreadyUsed = opts?.attemptsAlreadyUsed ?? 0;
+  if (!Number.isInteger(attemptsAlreadyUsed) || attemptsAlreadyUsed < 0) {
+    throw new Error(
+      `withMechanicalRetry: attemptsAlreadyUsed must be a non-negative integer (received ${attemptsAlreadyUsed})`,
+    );
+  }
+  if (attemptsAlreadyUsed >= MAX_DISPATCH_ATTEMPTS) {
+    return {
+      kind: "failed",
+      reason:
+        `mechanical redispatch budget already exhausted ` +
+        `(after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`,
+    };
+  }
   let last: WorkerResult | undefined;
   let lastError: unknown;
   let lastAttemptThrew = false;
-  for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
-    const useSpec = attempt === 1 ? spec : forceFreshSpec(spec);
-    const useCtx = attempt === 1 ? ctx : stripResume(ctx);
-    // Idempotency: before a RETRY, reset local git residue the crashed attempt may
-    // have left, so the fresh re-dispatch starts from the pre-attempt state.
-    // #598 r4 (codexB): if the reset FAILS (git lock / permissions), the worktree is
-    // in an unknown/dirty state — do NOT dispatch on it (that would run the worker on
-    // top of an uncleaned side effect, the exact idempotency violation). Instead SKIP
-    // this attempt's dispatch, record a synthetic reset failure, and let the loop retry
-    // the reset next iteration (a transient reset failure recovers; a persistent one
-    // exhausts into the durable abort below — the worker never runs on a dirty state).
-    // #686: only process-level retries reach here; resource failures throw above and
-    // never invoke resetBeforeRetry.
+  for (
+    let attempt = attemptsAlreadyUsed + 1;
+    attempt <= MAX_DISPATCH_ATTEMPTS;
+    attempt++
+  ) {
+    const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
+    const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
+    const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
+    // #934 ID-004/006 / #937: process-root redispatch preserves the current
+    // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
+    // Sleep binds to absolute attempt index (not first-in-this-process): a
+    // durable re-entry with attemptsAlreadyUsed>0 must still honor the 15s
+    // interval before the next dispatch (five 15s slots across six attempts).
     if (attempt > 1) {
-      try {
-        await opts?.resetBeforeRetry?.();
-      } catch (err) {
-        last = {
-          kind: "failed",
-          reason: `retry reset failed, worker not dispatched on un-reset state: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        };
-        lastAttemptThrew = false;
-        continue;
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
+      if (delayMs !== undefined) {
+        const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
+        await sleepMs(delayMs);
       }
     }
+    // #934 ID-004 / #937: durable attempt markers are written only after a
+    // process-level failure classification. Explicit 429/quota / capacity /
+    // resource throws must not burn process-root budget (onAttempt used to
+    // write mechanical_redispatch_attempt before dispatch).
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
       lastAttemptThrew = false;
     } catch (err) {
-      // #683/#686: resource failures park/relay — never mechanical-retry
-      // (would thrash the same pool / destroy uncommitted drift via reset).
-      if (isQuotaWaitForResetError(err)) throw err;
-      if (isHangWithLivePoolError(err)) throw err;
-      if (isSelfReportedRelayError(err)) throw err;
+      // #964: AgentError → Action-typed failure for this invocation only.
+      // Same dead credentials / agent death will not recover on re-dispatch —
+      // convert once and return (do not burn process-root budget).
+      const agentFailure = workerResultFromAgentError(err, spec.kind);
+      if (agentFailure !== undefined) return agentFailure;
+      // #683/#686/#937: resource / adoption / termination — never mechanical-retry.
+      if (isNonRetryableDispatchThrow(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
       // the generic layer never retries it (no double-count).
       if (opts?.callerOwns?.({ kind: "thrown", error: err }) === true) throw err;
@@ -176,28 +296,34 @@ export async function withMechanicalRetry(
         kind: "failed",
         reason: `dispatch threw: ${err instanceof Error ? err.message : String(err)}`,
       };
+      await opts?.onAttempt?.(attempt);
+      await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
       continue;
     }
+    const capacityError =
+      result.kind === "failed" ? capacityRelayErrorFrom(new Error(result.reason)) : undefined;
+    if (capacityError !== undefined) throw capacityError;
     if (!isProcessFailure(result)) return result;
+    // #1012: hostCliWorkerRunner converts EISDIR throws into failed results;
+    // do not empty-spin the process-root budget on the same host-FS error.
+    if (isEisdirClassFailedResult(result)) return result;
     // A process-level failure the caller's semantic layer owns is returned as-is so
     // the caller's own bounded loop retries it with its own counter (#598 sequential
     // composition — the generic layer fires only for failures nobody else owns).
     if (opts?.callerOwns?.({ result }) === true) return result;
     last = result;
+    await opts?.onAttempt?.(attempt);
+    await opts?.onFailure?.({ result }, attempt);
   }
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
-  // Otherwise return the last process-level failure, ANNOTATING the reason with the
-  // generic dispatch attempt count (#598 crit 6 — durable abort names the failed
-  // step [added by the caller] AND the attempt count, using the existing
-  // stop-reason vocabulary, no new field). #686: exhaustion is a relay *candidate*
-  // (board depth) rather than a silent durable abort — the annotation keeps the
-  // existing vocabulary while signalling the caller may hand off.
+  // #934 ID-004 / #937: exhaustion is the phase's canonical failed edge —
+  // attempt count only (no relay-candidate / baton handoff vocabulary).
   const attempts = MAX_DISPATCH_ATTEMPTS;
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
-    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts; relay candidate)`,
+    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
   };
 }
 
@@ -205,15 +331,15 @@ export async function withMechanicalRetry(
  * The generic mechanical retry for a NON-WorkerResult seam that signals a process
  * crash by THROWING (#598 — the merge-conflict resolver's own call site). Retries
  * `fn` up to a bound when it throws; a RETURNED value (even a judged not-ok, e.g. a
- * merger `{resolved:false}`) is never retried — the caller surfaces it. A local
- * side effect the crashed attempt left is reset before each retry via
- * `resetBeforeRetry`. Persistent crash re-throws the last error.
+ * merger `{resolved:false}`) is never retried — the caller surfaces it.
+ * #937: no local-git reset court — scene is preserved across retries.
  */
 export async function retryProcessCrash<T>(
   fn: () => Promise<T>,
   opts?: {
     readonly maxAttempts?: number;
-    readonly resetBeforeRetry?: () => Promise<void>;
+    /** Injectable wait between attempts (same contract as withMechanicalRetry). */
+    readonly sleepMs?: (ms: number) => Promise<void>;
   },
 ): Promise<T> {
   const max = opts?.maxAttempts ?? MAX_DISPATCH_ATTEMPTS;
@@ -227,20 +353,23 @@ export async function retryProcessCrash<T>(
   let lastError: unknown;
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
-      // #598 r4 (codexB): a failed reset means the state is unknown/dirty — do NOT run
-      // `fn` on it. Record the reset failure and retry the reset next iteration (a
-      // transient one recovers; a persistent one exhausts into the re-throw below —
-      // `fn` never runs on an un-reset state).
-      try {
-        await opts?.resetBeforeRetry?.();
-      } catch (err) {
-        lastError = err;
-        continue;
+      // #934 ID-004: five 15s intervals between the six process-root attempts
+      // (same clock contract as withMechanicalRetry). No Git reset court.
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
+      if (delayMs !== undefined) {
+        const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
+        await sleepMs(delayMs);
       }
     }
     try {
       return await fn();
     } catch (err) {
+      // #964: AgentError is Action-typed failure for this invocation — never
+      // re-burn process-root retries on the same dead credentials. Rethrow so
+      // the seat court (merger) / outer converter surfaces structured failure.
+      if (isSandcastleAgentError(err)) throw err;
+      // #683/#686/#909/#937: resource / adoption / termination — NEVER retry.
+      if (isNonRetryableDispatchThrow(err)) throw err;
       lastError = err;
     }
   }
