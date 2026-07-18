@@ -33,7 +33,15 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+    Function as ToolFunction,
+)
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import (
+    ChoiceDeltaToolCall,
+    ChoiceDeltaToolCallFunction,
+)
 from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
@@ -918,7 +926,8 @@ def extract_minister_actions(
     return {
         "secret_action": _action,
         "order_id": _int(obj.get("目标密令编号")),
-        "new_title": str(obj.get("新标题") or "").strip()[:20],
+        # Title has no formal length cap (family removed silent 20-char hard trunc).
+        "new_title": str(obj.get("新标题") or "").strip(),
         "new_content": str(obj.get("新内容") or "").strip(),
         "deadline_months": _int(obj.get("期限月数"), 36),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:20],
@@ -1003,7 +1012,8 @@ def classify_cli_action_intent(
         "secret_action": _enum(
             obj.get("密令动作"), {"无", "更新", "提交核议", "催办", "记进展"}, "无"),
         "order_id": _int(obj.get("目标密令编号")),
-        "new_title": str(obj.get("新标题") or "").strip()[:60],
+        # Align with extract_minister_actions: no formal title hard-cap.
+        "new_title": str(obj.get("新标题") or "").strip(),
         "new_content": str(obj.get("新内容") or "").strip()[:500],
         "deadline_months": max(0, min(_int(obj.get("期限月数")), 36)),
         "cultivate_skill": str(obj.get("调教技能") or "").strip()[:30],
@@ -1767,12 +1777,13 @@ def _extract_secret_order(
         "下面是皇帝下达的一道密令交代，以及承命大臣的回话。请抽出这道密令的结构化字段，"
         "只输出一个 JSON 对象，不要 markdown 代码围栏、不要 JSON 以外任何字：\n"
         "{\n"
-        "  \"标题\": \"≤14字的密令简称，概括任务，如 密查关宁军饷、暗结蒙古诸部\",\n"
+        "  \"标题\": \"密令简称，概括任务，如 密查关宁军饷、暗结蒙古诸部（不硬截长度）\",\n"
         "  \"内容\": \"密令完整任务详情：目标、保密要求、做法\",\n"
         "  \"承办人\": \"实际承办此密令的人名；皇帝或大臣指明谁就填谁，没指明就填 "
         + (default_assignee or "") + "\",\n"
         "  \"期限月数\": 整数，皇帝限了期就填月数（如『三月内结案』填3），没限填0,\n"
-        "  \"标签\": [\"相关人名/地区/事项关键词\"]\n"
+        "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
+        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]}\n"
         "}\n\n"
         "【皇帝密令】" + (player_command or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -1820,7 +1831,9 @@ def _extract_secret_order(
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
         # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
         content = _merge_secret_content(_emperor_fallback, _content_llm, minister_reply)
-    title = str(obj.get("标题") or "").strip()[:20] or (content or player_command)[:14]
+    # No formal title hard-cap: keep the full extracted title; only synthesize a
+    # short fallback when the extractor omitted 标题 entirely.
+    title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
     # 承办人：LLM 字段经校验才采信（防漂移），否则退回经校验线索（御旨祈使 / 大臣建议 /
     # 最终正文），最后才默认召对大臣（#401 R1 CodeRabbit major：旧 `or` 链盲信任何非空
     # LLM 字段，正文留李若琏、字段填王在晋时即漂移）。
@@ -1835,14 +1848,25 @@ def _extract_secret_order(
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
+    from ming_sim.db import canonical_secret_order_exclusions
+    raw_targets = obj.get("排除对象") if isinstance(obj.get("排除对象"), dict) else {}
+    raw_people = raw_targets.get("人物", raw_targets.get("people", obj.get("排除名单", [])))
+    raw_offices = raw_targets.get("机构", raw_targets.get("offices", []))
+    excluded_names, excluded_offices = canonical_secret_order_exclusions(
+        None,
+        raw_people if isinstance(raw_people, list) else [],
+        raw_offices if isinstance(raw_offices, list) else [],
+        player_command,
+    )
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
     return {"title": title, "content": content, "assignee": assignee,
-            "deadline_months": deadline, "tags": tags}
-
+            "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
+            "excluded_offices": excluded_offices,
+            "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
@@ -1915,9 +1939,76 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
 
 
-def _fake_completion(text: str, model_id: str) -> ChatCompletion:
+_CLI_RECOMMENDATION_CALL = re.compile(
+    r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
+)
+_CLI_RECOMMENDATION_PREFIX = "[[recommend_person:"
+
+
+def _cli_prompt(
+    messages: List[Message], response_format: object, tools: object,
+) -> str:
+    """Build one CLI prompt, including instructions derived from offered tools."""
+    prompt = _messages_to_prompt(messages, response_format)
+    recommendation_schema = next(
+        (tool.get("function", tool) for tool in (tools or [])
+         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
+        None,
+    )
+    if recommendation_schema:
+        prompt += (
+            "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
+            f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
+        )
+    return prompt
+
+
+def _cli_stream_safe_prefix(text: str) -> tuple[str, str]:
+    """Release text that cannot belong to a trailing recommendation envelope."""
+    marker_at = text.rfind(_CLI_RECOMMENDATION_PREFIX)
+    if marker_at >= 0:
+        return text[:marker_at], text[marker_at:]
+    keep = 0
+    for length in range(1, min(len(text), len(_CLI_RECOMMENDATION_PREFIX) - 1) + 1):
+        if text.endswith(_CLI_RECOMMENDATION_PREFIX[:length]):
+            keep = length
+    return (text[:-keep], text[-keep:]) if keep else (text, "")
+
+
+def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
+    """Adapt an explicit CLI recommendation envelope into the existing tool seam."""
+    offered = next(
+        (tool.get("function", tool) for tool in (tools or [])
+         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
+        None,
+    )
+    match = _CLI_RECOMMENDATION_CALL.search(text) if offered else None
+    if not match:
+        return text, []
+    try:
+        payload = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return text, []
+    schema = offered.get("parameters") or {}
+    required = schema.get("required") or []
+    properties = schema.get("properties") or {}
+    if (not isinstance(payload, dict)
+            or any(not str(payload.get(key) or "").strip() for key in required)
+            or any(key not in properties for key in payload)):
+        return text, []
+    call = ChatCompletionMessageFunctionToolCall(
+        id="cli-recommendation",
+        type="function",
+        function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
+    )
+    return text[:match.start()].rstrip(), [call]
+
+
+def _fake_completion(
+    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
+) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
-    msg = ChatCompletionMessage(role="assistant", content=text)
+    msg = ChatCompletionMessage(role="assistant", content=text, tool_calls=tool_calls)
     choice = Choice(index=0, message=msg, finish_reason="stop")
     return ChatCompletion(
         id="cli-backend", choices=[choice], created=0,
@@ -1927,7 +2018,7 @@ def _fake_completion(text: str, model_id: str) -> ChatCompletion:
 
 @dataclass
 class CliChat(OpenAIChat):
-    """agy / codex 当后端。只覆盖 invoke/ainvoke，复用 agno 其余全部逻辑。"""
+    """agy / codex 当后端；provider 调用适配后复用 agno 的 tool loop。"""
 
     backend: str = "agy"
     reasoning_strength: str = ""
@@ -1959,7 +2050,7 @@ class CliChat(OpenAIChat):
         # 拟旨/密令不走 agno function-calling（agy 不支持）。大臣照常自然回话；
         # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
-        prompt = _messages_to_prompt(messages, response_format)
+        prompt = _cli_prompt(messages, response_format, tools)
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -1987,7 +2078,11 @@ class CliChat(OpenAIChat):
                  + (f" ERROR={error}" if error else ""))
 
         text = _strip_agent_narration(text)
-        provider_response = _fake_completion(text, self.id)
+        text, tool_calls = _cli_recommendation_call(text, tools)
+        provider_response = (
+            _fake_completion(text, self.id, tool_calls)
+            if tool_calls else _fake_completion(text, self.id)
+        )
         return self._parse_provider_response(provider_response, response_format=response_format)
 
     async def ainvoke(  # type: ignore[override]
@@ -2007,12 +2102,57 @@ class CliChat(OpenAIChat):
             compress_tool_results=compress_tool_results,
         )
 
-    def invoke_stream(self, *args, **kwargs):  # type: ignore[override]
-        # 底层流式不实现；高层 response_stream 已改为委托非流式 response()。
-        raise NotImplementedError("CliChat 不支持底层流式")
+    def invoke_stream(  # type: ignore[override]
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Any = None,
+        compress_tool_results: bool = False,
+    ):
+        if self.backend != "codex" or response_format is not None:
+            yield self.invoke(
+                messages, assistant_message, response_format=response_format,
+                tools=tools, tool_choice=tool_choice, run_response=run_response,
+                compress_tool_results=compress_tool_results,
+            )
+            return
+        prompt = _cli_prompt(messages, response_format, tools)
+        held = ""
+        for delta in _iter_codex_stream_chunks(
+            prompt,
+            model=str(getattr(self, "id", "") or ""),
+            timeout=getattr(self, "timeout", None),
+            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+        ):
+            ready, held = _cli_stream_safe_prefix(held + str(delta))
+            if ready:
+                yield ModelResponse(role="assistant", content=ready)
+        text, tool_calls = _cli_recommendation_call(held, tools)
+        if text:
+            yield ModelResponse(role="assistant", content=text)
+        if tool_calls:
+            yield ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=index,
+                        id=call.id,
+                        type=call.type,
+                        function=ChoiceDeltaToolCallFunction(
+                            name=call.function.name,
+                            arguments=call.function.arguments,
+                        ),
+                    )
+                    for index, call in enumerate(tool_calls)
+                ],
+            )
 
-    def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
-        raise NotImplementedError("CliChat 不支持底层流式")
+    async def ainvoke_stream(self, *args, **kwargs):  # type: ignore[override]
+        for response in self.invoke_stream(*args, **kwargs):
+            yield response
 
     def response_stream(  # type: ignore[override]
         self,
@@ -2027,21 +2167,12 @@ class CliChat(OpenAIChat):
         compression_manager: Any = None,
         **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
-        if self.backend == "codex" and response_format is None:
-            prompt = _messages_to_prompt(messages, response_format)
-            for delta in _iter_codex_stream_chunks(
-                prompt,
-                model=str(getattr(self, "id", "") or ""),
-                timeout=getattr(self, "timeout", None),
-                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-            ):
-                yield ModelResponse(role="assistant", content=delta)
-            return
-
-        # agy/claude 一次性出全文；结构化输出也保持非流式，避免拼接 JSON。
-        yield self.response(
-            messages, response_format=response_format, tools=None,
-            run_response=run_response,
+        yield from super().response_stream(
+            messages, response_format=response_format, tools=tools,
+            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
+            stream_model_response=stream_model_response, run_response=run_response,
+            send_media_to_model=send_media_to_model,
+            compression_manager=compression_manager, **kwargs,
         )
 
     async def aresponse_stream(  # type: ignore[override]
@@ -2057,10 +2188,14 @@ class CliChat(OpenAIChat):
         compression_manager: Any = None,
         **kwargs: Any,  # 吸掉 agno 演进新增的 kwarg(如 after_tool_results)，免 override 签名漂移炸 CI
     ):
-        yield self.response(
-            messages, response_format=response_format, tools=None,
-            run_response=run_response,
-        )
+        async for response in super().aresponse_stream(
+            messages, response_format=response_format, tools=tools,
+            tool_choice=tool_choice, tool_call_limit=tool_call_limit,
+            stream_model_response=stream_model_response, run_response=run_response,
+            send_media_to_model=send_media_to_model,
+            compression_manager=compression_manager, **kwargs,
+        ):
+            yield response
 
 
 def cli_backend_from_env() -> Optional[str]:

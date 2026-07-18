@@ -400,6 +400,27 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     assert pending[0]["action"] == "记进展"
 
 
+def test_chat_prompt_builder_internal_typeerror_is_not_retried_without_turn_scope(game):
+    """真实 builder 的 TypeError 不能被误判为旧签名兼容而改走无 turn 的调用。"""
+    _db, _state, content = game
+    minister = "毕自严"
+    calls = []
+    sess = GameSession.__new__(GameSession)
+    sess.content = content
+    sess.registry = SimpleNamespace(get=lambda _character: object())
+    sess.temporary_characters = set()
+
+    def prompt_builder(message, character, *, chat_turn_id=0):
+        calls.append((message, character.name, chat_turn_id))
+        raise TypeError("production prompt failure")
+
+    sess._audience_prompt_for_message = prompt_builder
+
+    with pytest.raises(TypeError, match="^production prompt failure$"):
+        GameSession.chat(sess, minister, "请奏", chat_turn_id=7)
+    assert calls == [("请奏", minister, 7)]
+
+
 def test_propose_directive_tool_arguments_stages_draft(game):
     """session 路 tool 参数兼容 arguments/tool_args，避免丢 Agno/Phidata decree_text。"""
     db, state, content = game
@@ -1340,7 +1361,10 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
     db, state, _ = game
     minister = "魏忠贤"
-    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    oid = db.create_secret_order(
+        state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3,
+        excluded_names=["毕自严"], excluded_offices=["户部"],
+    )
     s = _session(db, state)
 
     pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
@@ -1356,6 +1380,11 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     assert payload["assignee"] == minister
     assert payload["tags"] == ["辽饷"]
     assert payload["deadline_months"] == 3
+    assert "毕自严" in payload["excluded_names"]
+    assert payload["excluded_offices"] == ["户部"]
+    assert not db.conn.execute(
+        "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)
+    ).fetchone()
 
 
 def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):
@@ -2418,6 +2447,36 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
     db.commit_pending_actions(state)
     assert db.conn.execute(
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
+
+
+@pytest.mark.parametrize("action, payload_key", [("提交核议", "claim"), ("记进展", "note")])
+def test_secret_conversation_actions_persist_complete_minister_reply(
+    game, monkeypatch, action, payload_key,
+):
+    db, state, _content = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    who = "长回话承办官"
+    oid = db.create_secret_order(state, who, "查核边饷", "逐项查核", [])
+    if action == "记进展":
+        db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
+        db.conn.commit()
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": action, "order_id": oid, "new_title": "",
+        "new_content": "", "deadline_months": 0,
+        "cultivate_skill": "", "cultivate_trait": "",
+    })
+    reply = "臣已逐册查核。" + "甲乙丙丁戊己庚辛壬癸" * 30 + "末尾凭据完整。"
+    session = _session(db, state, registry=SimpleNamespace(refresh=lambda _name: None))
+
+    result = session.apply_cli_conversation_actions(
+        SimpleNamespace(name=who, office_type="兵部"), action, reply,
+        has_directive=False, secret_order_id=None,
+    )
+
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (result["pending_action_id"],)
+    ).fetchone()
+    assert json.loads(row["payload_json"])[payload_key] == reply
 
 
 def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatch):

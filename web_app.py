@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import queue
@@ -617,6 +618,26 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     if debut_year > current_year or (debut_year == current_year and debut_month > current_period):
         return False
     return _character_power_id(character, db) == "ming"
+
+
+def _audience_prompt_for_web_chat(session: Any, text: str, character: Character, chat_turn_id: int) -> str:
+    """Build a minister prompt without mistaking production failures for legacy APIs.
+
+    Lightweight test doubles may still expose the old one-argument builder.
+    Choose that compatibility path by binding its signature *before* invoking
+    it, so a TypeError raised inside the real per-character builder propagates
+    to the normal chat-turn rollback path instead of causing an unscoped retry.
+    """
+    prompt_builder = getattr(session, "_audience_prompt_for_message", None)
+    if prompt_builder is None:
+        return text
+    signature = inspect.signature(prompt_builder)
+    try:
+        signature.bind(text, character, chat_turn_id=chat_turn_id)
+    except TypeError:
+        signature.bind(text)
+        return prompt_builder(text)
+    return prompt_builder(text, character, chat_turn_id=chat_turn_id)
 
 
 class WebGame:
@@ -1485,12 +1506,17 @@ class WebGame:
         accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
-        self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        # Durable chat_turn message ids first, then memory history.  Publishing
+        # history before append/update opens a race: observers see the minister
+        # reply while can_undo_last_chat_turn is still false (#976 hold path
+        # lengthens append_chat_message; background stream + early assert flaked
+        # and tore down the shared DB under the worker → SIGSEGV).
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
+        self.chat_history[minister_name].append({"role": "minister", "content": answer})
         return {
             "minister": minister_name,
             "answer": answer,
@@ -1533,7 +1559,14 @@ class WebGame:
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         try:
-            result = self.session.chat(minister_name, text)
+            chat_signature = inspect.signature(self.session.chat)
+            try:
+                chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
+            except TypeError:
+                chat_signature.bind(minister_name, text)
+                result = self.session.chat(minister_name, text)
+            else:
+                result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
             proposed = None
             if result.proposed_directive is not None:
                 d = result.proposed_directive
@@ -1577,8 +1610,11 @@ class WebGame:
         agent = self.session.registry.get(character)
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
-        prompt_builder = getattr(self.session, "_audience_prompt_for_message", None)
-        agent_prompt = prompt_builder(text) if prompt_builder is not None else text
+        # The session audience seam is per-character: passing only the message
+        # makes a web-streamed question bypass that perspective.
+        agent_prompt = _audience_prompt_for_web_chat(
+            self.session, text, character, chat_turn_id,
+        )
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
@@ -1647,10 +1683,15 @@ class WebGame:
                             self.state.turn, character.name,
                             payload={"text": draft_text, "actor": character.name},
                         )
-                elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
+                elif (
+                    tool_name == "propose_appointment"
+                    or res.startswith("__pending_appointment__")
+                    or res.startswith("__pending_recommendation__")
+                ):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
-                    payload_json = res.removeprefix("__pending_appointment__").strip()
+                    payload_json = res.removeprefix("__pending_recommendation__")
+                    payload_json = payload_json.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
@@ -1708,6 +1749,10 @@ class WebGame:
                                 order_id = 0
                             payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
                             if action and order_id:
+                                if action == "更新":
+                                    payload = self.db.attach_secret_oral_pin(
+                                        character.name, int(self.state.turn), payload,
+                                    )
                                 pending_action_id = self.db.stage_pending_action(
                                     self.state.turn, kind="secret_order", action=action,
                                     minister_name=character.name, target_id=order_id,
@@ -1744,6 +1789,8 @@ class WebGame:
                                     "assignee": str(payload.get("assignee") or character.name).strip(),
                                     "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                     "deadline_months": payload.get("deadline_months") or 0,
+                                    "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                    "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                                 },
                             )
                             tool_pending_action_id = pending_action_id
@@ -1773,8 +1820,7 @@ class WebGame:
                 )
             answer = GameSession._ensure_confirmation_cue(answer)
         pending_action_failures = list(res.get("pending_action_failures") or [])
-        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        return self._chat_payload(
+        payload = self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
             proposed_directive=proposed, appointed_minister=appointed,
             registered_minister=registered,
@@ -1785,6 +1831,8 @@ class WebGame:
             chat_turn_id=chat_turn_id,
             accepted_turn=accepted_turn,
         )
+        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        return payload
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -1842,10 +1890,9 @@ class WebGame:
             try:
                 payload = self._chat_stream_payload(
                     minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
-                ev_queue.put({"type": "done", "payload": payload})
             except Exception as error:  # noqa: BLE001
                 # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
-                # 否则 error 事件不会被投进 queue、消费者永久挂死（finally 只保 gate/counter 释放）。
+                # 否则 error 事件不会被投进 queue、消费者永久挂死。
                 try:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                 except Exception:
@@ -1854,11 +1901,13 @@ class WebGame:
                     ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
                 else:
                     ev_queue.put({"type": "error", "message": str(error)})
+                return
             finally:
                 if not gate_released:
                     write_gate.release()
                     gate_released = True
                 self._complete_pending_write()
+            ev_queue.put({"type": "done", "payload": payload})
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
@@ -2868,7 +2917,7 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
     game = get_game()
     _require_active_minister(minister_name)
-    title = request.title.strip()[:20]
+    title = request.title.strip()
     content = request.content.strip()
     if not title or not content:
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")

@@ -18,11 +18,14 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert chars["李从心"].seed_guilt == {"crime": "交结近侍又次等", "severity": "中"}
 
     hu = chars["胡廷宴"]
-    assert hu.office == "陕西巡抚"
-    assert hu.office_type == "地方"
-    assert hu.status == "active"
-    assert hu.aliases == ["胡廷宴", "胡巡抚"]
-    assert hu.seed_guilt == {"crime": "请建魏忠贤生祠", "severity": "轻"}
+    assert hu.office == "原三边总督，革职候勘"
+    assert hu.office_type == "督抚"
+    assert hu.status == "dismissed"
+    assert hu.aliases == ["胡廷宴", "胡总督"]
+    assert hu.seed_guilt == {
+        "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
+        "severity": "轻",
+    }
 
     li = chars["李从心"]
     assert "工部尚书" in li.office
@@ -34,13 +37,18 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert {"河道治理", "漕运工程"} <= set(li.personal_skills)
 
 
-def test_r4_hu_tingyan_loader_and_db_use_legal_office_type(read_game):
+def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
     db, _state, _content = read_game
 
     row = db.conn.execute(
-        "SELECT office, office_type FROM characters WHERE name=?", ("胡廷宴",)
+        "SELECT office, office_type, status, seed_guilt FROM characters WHERE name=?", ("胡廷宴",)
     ).fetchone()
-    assert dict(row) == {"office": "陕西巡抚", "office_type": "地方"}
+    assert {key: row[key] for key in ("office", "office_type", "status")} == {
+        "office": "原三边总督,革职候勘",
+        "office_type": "督抚",
+        "status": "dismissed",
+    }
+    assert __import__("json").loads(row["seed_guilt"]) == _by_name()["胡廷宴"].seed_guilt
 
 
 def test_r4_named_characters_debut_in_historical_order(game):

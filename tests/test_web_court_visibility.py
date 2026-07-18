@@ -417,3 +417,33 @@ def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
         asyncio.run(web_app.api_create_secret_order(name, req))
     assert ei.value.status_code == 409
     assert "宗室" in ei.value.detail
+
+
+def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from web_app import SecretOrderRequest
+
+    db, state, content = game
+    minister = next(
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(c.name)[0] == "active"
+    )
+    seen = {}
+    stub = SimpleNamespace(
+        content=content,
+        state=state,
+        db=db,
+        session=SimpleNamespace(content=content, temporary_characters=set()),
+        character_power_id=lambda c: web_app._character_power_id(c, db),
+        _chat_with_write_gate_held=lambda name, message: seen.update(name=name, message=message) or {"ok": True},
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+    title = "超过二十个字的密令标题应完整进入确认与持久化恢复链路甲乙丙丁"
+
+    asyncio.run(web_app.api_create_secret_order(
+        minister.name, SecretOrderRequest(title=title, content="着尔暗中查访"),
+    ))
+
+    assert title in seen["message"]

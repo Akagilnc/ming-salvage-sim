@@ -6,6 +6,35 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected_kind", "expected_target"),
+    [
+        ("对魏忠贤保密", "people", "魏忠贤"),
+        ("别让户部知道", "offices", "户部"),
+        ("莫让魏忠贤知晓", "people", "魏忠贤"),
+    ],
+)
+def test_secret_order_update_persists_new_explicit_secrecy_wording(
+    game, clause, expected_kind, expected_target,
+):
+    db, state, _content = game
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type NOT IN ('后宫','宗藩','未仕') LIMIT 1"
+    ).fetchone()["name"]
+
+    order_id = db.create_secret_order(
+        state, minister, "密查账目", "核清旧账。", [],
+    )
+    assert db.update_secret_order_by_id(
+        state, order_id, "密查账目", f"核清旧账，{clause}。", [],
+    )
+
+    order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
+    assert expected_target in order["excluded_targets"][expected_kind]
+
 
 def test_upsert_creates_then_updates(game):
     db, state, _ = game
@@ -55,6 +84,88 @@ def test_update_by_id_preserves_tags_when_none(game):
     row = db.conn.execute("SELECT tags FROM secret_orders WHERE id=?", (oid,)).fetchone()
     import json as _j
     assert _j.loads(row["tags"]) == ["辽东", "军饷"]   # 原标签保留
+
+
+def test_update_recanonicalizes_new_secrecy_clause_and_preserves_long_text(game):
+    db, state, content = game
+    assignee = next(iter(content.characters))
+    excluded = next(c for c in content.characters.values() if c.name != assignee)
+    oid = db.create_secret_order(state, assignee, "原令", "原内容", [])
+    title = "密令修订" * 20
+    body = f"查明此事，对{excluded.name}保密。" + "细节" * 200
+
+    assert db.update_secret_order_by_id(state, oid, title, body)
+
+    import json
+    row = db.conn.execute(
+        "SELECT title, content, excluded_names FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["title"] == title
+    assert row["content"] == body
+    assert excluded.name in json.loads(row["excluded_names"])
+
+
+def test_update_by_id_refreshes_assignee_only_brief_after_restore(game):
+    db, state, _ = game
+    oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
+    refreshed = []
+
+    assert db.update_secret_order_by_id(
+        state, oid, "新标题", "新内容",
+        registry=type("Registry", (), {"refresh": lambda _self, name: refreshed.append(name)})(),
+    )
+
+    source = db.conn.execute(
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert refreshed == ["保签官"]
+
+    # The durable brief, rather than a live registry cache, is the restore
+    # boundary.  A reopened save must project the revised order to its assignee.
+    path = db.path
+    content = db.content
+    db.close()
+    from ming_sim.db import GameDB
+    restored = GameDB(path, content)
+    restored_state = restored.load_state()
+    knowledge = restored.get_character_knowledge(restored_state, "保签官")
+    source = restored.conn.execute(
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert any(
+        item["title"] == "新标题" and item["body"] == "新内容"
+        for item in knowledge["events"]
+    )
+    restored.close()
+
+
+def test_update_by_id_keeps_assignee_brief_identical_to_persisted_order(game):
+    """专用密令简报须使用数据库接受后的标题。"""
+    db, state, _ = game
+    oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
+    requested_title = "超过密令数据库标题二十字上限的更新版本标题甲乙丙"
+
+    assert db.update_secret_order_by_id(state, oid, requested_title, "新内容")
+
+    order = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    source = db.conn.execute(
+        "SELECT title, body FROM secret_order_briefs WHERE order_id=?", (oid,)
+    ).fetchone()
+    assert dict(source) == {"title": order["title"], "body": order["content"]}
+
+
+def test_creation_brief_uses_persisted_truncated_title(game):
+    db, state, _ = game
+    requested = "超过密令数据库标题二十字上限的初始版本标题甲乙丙"
+    oid = db.create_secret_order(state, "保签官", requested, "密查内容", [])
+
+    order = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    source = db.conn.execute("SELECT title FROM secret_order_briefs WHERE order_id=?", (oid,)).fetchone()
+    assert source["title"] == order["title"]
 
 
 def test_update_by_id_noop_on_non_active(game):

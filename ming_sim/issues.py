@@ -4991,6 +4991,34 @@ def apply_issue_tracker_output(
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
         if not resolve_condition and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
+        # A structured roster is an item-level contract.  In particular a
+        # mapping is not an iterable roster: iterating it would persist its
+        # keys (\"character_id\", \"tier\") as phantom participants.
+        roster_input = next(
+            (ni.get(key) for key in ("participant_roster", "participants", "participant_names", "actors")
+             if ni.get(key) is not None),
+            None,
+        )
+        if roster_input is not None:
+            try:
+                if not isinstance(roster_input, (list, tuple)):
+                    raise ValueError("participant_roster 须为列表")
+                for participant in roster_input:
+                    if isinstance(participant, str):
+                        if not participant.strip():
+                            raise ValueError("participant_roster 人名不得为空")
+                        continue
+                    if not isinstance(participant, dict):
+                        raise ValueError("participant_roster 每项须为对象或人名")
+                    if not str(participant.get("character_id") or participant.get("name") or "").strip():
+                        raise ValueError("participant_roster 每项须有 character_id")
+                    tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
+                    if tier not in {"主办", "协办", "知情"}:
+                        raise ValueError(f"participant_roster tier 非法：{tier}")
+            except ValueError as exc:
+                applied_new.append({"rejected": True, "category": "invalid_participant_roster",
+                                    "reason": str(exc), "item": ni, "title": title})
+                continue
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
@@ -5011,6 +5039,10 @@ def apply_issue_tracker_output(
             region_hint=str(ni.get("region_hint") or ""),
             faction_hint=str(ni.get("faction_hint") or ""),
             tags=tags,
+            # Keep ADR 0053's structured roster intact.  insert_issue writes the
+            # compatibility name list and the durable roster together; reducing
+            # dict entries to str(dict) creates phantom character names.
+            participants=roster_input or [],
             ongoing_effects=ongoing_eff,
             cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
             cancel_cost=cancel_cost,
@@ -7322,6 +7354,7 @@ def apply_score_extraction(
             continue
         raw_id = item.get("order_id")
         sim_note = str(item.get("sim_note") or item.get("result") or "").strip()
+        disclosed = item.get("disclosed") is True
         if raw_id is None or not sim_note:
             applied_secret_orders.append({"order_id": raw_id, "rejected": True,
                                           "category": "invalid_enum",
@@ -7354,8 +7387,35 @@ def apply_score_extraction(
                 period=state.period,
                 commit=commit_now,
             )
+            if disclosed:
+                # Disclosure is the only promotion from the assignee-only
+                # brief into a public knowledge event (#883).
+                # Cross-turn dedupe: disclosed is a state (prompt) not a monthly
+                # event — re-true each month must not mint another public row.
+                disclosure_prefix = f"secret_order_disclosure:{real_id}:"
+                # LIKE treats `_`/`%` as wildcards; escape the literal prefix
+                # (same ESCAPE idiom as db.py iter_budget_items / get_fiscal_config).
+                like_prefix = (
+                    disclosure_prefix
+                    .replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                already_disclosed = db.conn.execute(
+                    "SELECT 1 FROM character_knowledge_events "
+                    "WHERE character_name='' AND source_id LIKE ? ESCAPE '\\' LIMIT 1",
+                    (f"{like_prefix}%",),
+                ).fetchone()
+                if already_disclosed is None:
+                    db.record_public_knowledge_event(
+                        state, str(order["title"]), sim_note,
+                        source_id=f"{disclosure_prefix}{state.turn}",
+                        commit=commit_now,
+                    )
             print(f"[secret_order] 推演副作用 id={real_id} note={sim_note[:60]!r}")
-            applied_secret_orders.append({"order_id": real_id, "sim_note": sim_note})
+            applied_secret_orders.append({
+                "order_id": real_id, "sim_note": sim_note, "disclosed": disclosed,
+            })
         except Exception as exc:
             applied_secret_orders.append({"order_id": real_id, "rejected": True, "reason": str(exc)})
 

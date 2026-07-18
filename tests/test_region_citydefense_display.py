@@ -6,6 +6,8 @@ region_report(危情概览) / region_detail(inspect) 没带 → 看不见城防�
 
 from __future__ import annotations
 
+import pytest
+
 
 def _city_region(db):
     return db.conn.execute("SELECT id, name FROM regions WHERE city_level>0 LIMIT 1").fetchone()
@@ -28,3 +30,18 @@ def test_region_detail_shows_city_level_and_cannon(game):
     det = db.region_detail(r["name"])
     assert "城市等级" in det              # 详情带城市等级
     assert "城防大炮6门" in det           # 带城防大炮门数
+
+
+@pytest.mark.parametrize(
+    ("level", "label"),
+    ((1, "简陋"), (3, "坚固"), (5, "雄城")),
+)
+def test_region_detail_uses_the_discrete_city_defense_scale(game, level, label):
+    db, _, _ = game
+    region = _city_region(db)
+    db.conn.execute("UPDATE regions SET city_level=? WHERE id=?", (level, region["id"]))
+    db.conn.commit()
+
+    detail = db.region_detail(region["name"], qualitative=True)
+
+    assert f"城防{label}" in detail
