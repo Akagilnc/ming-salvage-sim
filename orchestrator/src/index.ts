@@ -40,6 +40,7 @@ export {
   configureProgressBroadcast,
   countJudgeDispositions,
   countSeverityFromFindings,
+  emitExitProgress,
   emitJudgeProgress,
   emitLandingProgress,
   emitMergeProgress,

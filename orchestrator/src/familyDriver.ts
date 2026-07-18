@@ -77,7 +77,10 @@ import {
 } from "./family/moduleDeclaration.js";
 import { shouldReclaimFamilyHost } from "./hostReclaim.js";
 import { logDriverStage } from "./stageLog.js";
-import { configureProgressBroadcast } from "./progressBroadcast.js";
+import {
+  configureProgressBroadcast,
+  emitExitProgress,
+} from "./progressBroadcast.js";
 import {
   decisionGateParkStopSummary,
   infraFailureStopSummary,
@@ -1230,6 +1233,18 @@ export async function runFamilyDriver(
     clonePath: familyClonePath,
   });
   if (familyScene.kind === "corrupted") {
+    const stopSummary = infraFailureStopSummary({
+      summary: familyScene.reason,
+      repairHint:
+        "repair or clear the resident family ledger/worksite before re-entry",
+    });
+    // #1007: family driver early fail after configureProgressBroadcast.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "resume_state_invalid",
       familyBase: options.familyBase,
@@ -1237,11 +1252,7 @@ export async function runFamilyDriver(
         reason: "resume state invalid",
         diagnosis: familyScene.reason,
       },
-      stopSummary: infraFailureStopSummary({
-        summary: familyScene.reason,
-        repairHint:
-          "repair or clear the resident family ledger/worksite before re-entry",
-      }),
+      stopSummary,
       children: [],
     });
   }
@@ -1260,6 +1271,18 @@ export async function runFamilyDriver(
   const admitted = admitRouteFromEnv();
   if (admitted.kind === "stop") {
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
+    const stopSummary = infraFailureStopSummary({
+      summary: `${admitted.escalation.reason}: ${diagnosis}`,
+      repairHint:
+        "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
+    });
+    // #1007: route preflight fail — dual-write terminal.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_config_invalid",
       familyBase: options.familyBase,
@@ -1267,11 +1290,7 @@ export async function runFamilyDriver(
         reason: admitted.escalation.reason,
         diagnosis,
       },
-      stopSummary: infraFailureStopSummary({
-        summary: `${admitted.escalation.reason}: ${diagnosis}`,
-        repairHint:
-          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
-      }),
+      stopSummary,
       children: [],
     });
   }
@@ -1289,15 +1308,23 @@ export async function runFamilyDriver(
       const diagnosis =
         `root epic #${options.epicIssue} is blocked by open upstream issue(s): ` +
         err.openBlockers.map((n) => `#${n}`).join(", ");
+      const stopSummary = decisionGateParkStopSummary({
+        summary: err.message,
+        repairHint:
+          "close or unblock the root epic blocked_by dependencies, then re-feed",
+      });
+      // #1007: root epic blocked_by park — dual-write park+terminal (notify).
+      emitExitProgress({
+        epic: options.epicIssue,
+        status: "parked",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return {
         status: "parked",
         familyBase: options.familyBase,
         escalation: { reason: err.message, diagnosis },
-        stopSummary: decisionGateParkStopSummary({
-          summary: err.message,
-          repairHint:
-            "close or unblock the root epic blocked_by dependencies, then re-feed",
-        }),
+        stopSummary,
         children: [],
       };
     }
@@ -1306,6 +1333,18 @@ export async function runFamilyDriver(
     // already (durable class) + typed decision gate; not infra_failure /
     // issue_metadata_unavailable (deterministic bad data / exhausted durable).
     if (isGithubAuthFailure(err)) {
+      const stopSummary = decisionGateParkStopSummary({
+        summary: `GitHub authentication required: ${diagnosis}`,
+        repairHint:
+          "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+      });
+      // #1007: GitHub auth park — dual-write park+terminal (notify).
+      emitExitProgress({
+        epic: options.epicIssue,
+        status: "parked",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return {
         status: "parked",
         familyBase: options.familyBase,
@@ -1313,24 +1352,28 @@ export async function runFamilyDriver(
           reason: "GitHub authentication required",
           diagnosis,
         },
-        stopSummary: decisionGateParkStopSummary({
-          summary: `GitHub authentication required: ${diagnosis}`,
-          repairHint:
-            "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
-        }),
+        stopSummary,
         children: [],
       };
     }
     // #942 / #934 ID-001: metadata read failure is issue_metadata_unavailable,
     // not coder_rec_invalid (staffing/route mark class).
+    const metaStop = infraFailureStopSummary({
+      summary: diagnosis,
+      repairHint: "repair GitHub metadata access and rerun",
+    });
+    // #1007: metadata fail — dual-write terminal.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: metaStop.reason,
+      gateSummary: metaStop.summary,
+    });
     return failedFamilyResult({
       cause: "issue_metadata_unavailable",
       familyBase: options.familyBase,
       escalation: { reason: "issue metadata unavailable", diagnosis },
-      stopSummary: infraFailureStopSummary({
-        summary: diagnosis,
-        repairHint: "repair GitHub metadata access and rerun",
-      }),
+      stopSummary: metaStop,
       children: [],
     });
   }
@@ -1338,6 +1381,14 @@ export async function runFamilyDriver(
   // skip inventory. Parent is not a planned runnable slice on this path — do
   // not gate success on parent Coder-Rec validity or worksite creation.
   if (epic.children.length === 0) {
+    // #1007: all-filtered completed early return — dual-write terminal.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "completed",
+      stopReason: "already_done",
+      gateSummary:
+        "family admission skipped every native child; no worksite was created",
+    });
     return {
       status: "completed",
       familyBase: options.familyBase,
@@ -1394,14 +1445,22 @@ export async function runFamilyDriver(
   }
   if (coderRecErrors.length > 0) {
     const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
+    const stopSummary = infraFailureStopSummary({
+      summary: diagnosis,
+      repairHint: "repair every listed owner-authored Coder-Rec before rerun",
+    });
+    // #1007: Coder-Rec admission fail — dual-write terminal.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
-      stopSummary: infraFailureStopSummary({
-        summary: diagnosis,
-        repairHint: "repair every listed owner-authored Coder-Rec before rerun",
-      }),
+      stopSummary,
       children: [],
       ...(epic.admissionSkipped !== undefined
         ? { admissionSkipped: epic.admissionSkipped }
@@ -1413,14 +1472,21 @@ export async function runFamilyDriver(
     // Unreachable: empty errors + parent stop is contradictory, but keep the
     // exhaustiveness net for the type checker.
     const diagnosis = parentCoderRec.escalation.diagnosis;
+    const stopSummary = infraFailureStopSummary({
+      summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
+      repairHint: "repair the owner-authored Coder-Rec before rerun",
+    });
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "coder_rec_invalid",
       familyBase: options.familyBase,
       escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
-      stopSummary: infraFailureStopSummary({
-        summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
-        repairHint: "repair the owner-authored Coder-Rec before rerun",
-      }),
+      stopSummary,
       children: [],
     });
   }
@@ -1548,19 +1614,27 @@ export async function runFamilyDriver(
 }
 
 function routeSmokeFailureResult(
-  options: Pick<FamilyDriverOptions, "familyBase">,
+  options: Pick<FamilyDriverOptions, "familyBase" | "epicIssue">,
   escalation: { readonly reason: string; readonly diagnosis: string },
 ): FamilyRunResult {
+  const stopSummary = infraFailureStopSummary({
+    summary: escalation.diagnosis,
+    repairHint: "repair the selected model×pipe smoke before rerun",
+  });
+  // #1007: shared driver smoke-fail helper dual-writes terminal.
+  emitExitProgress({
+    epic: options.epicIssue,
+    status: "failed",
+    stopReason: stopSummary.reason,
+    gateSummary: stopSummary.summary,
+  });
   return failedFamilyResult({
     // #942 public cause: same smoke-stop as family/single-slice runners
     // (not worktree_prepare_failed — PR #982 C2).
     cause: "route_smoke_failed",
     familyBase: options.familyBase,
     escalation,
-    stopSummary: infraFailureStopSummary({
-      summary: escalation.diagnosis,
-      repairHint: "repair the selected model×pipe smoke before rerun",
-    }),
+    stopSummary,
     children: [],
   });
 }

@@ -42,6 +42,7 @@ const tempDirs: string[] = [];
 afterEach(() => {
   clearProgressBroadcastConfig();
   delete process.env.ORCHESTRATOR_NOTIFY_CMD;
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -360,8 +361,9 @@ describe("#1007 status renderer from progress feed + ledger", () => {
     const text = renderFamilyStatusFromDir(ledgerDir);
     expect(text).toMatch(/#1007/);
     expect(text).toMatch(/#1008/);
-    // station / rounds / verdict
+    // station / rounds / verdict + stage 站位
     expect(text).toMatch(/S6|converged/);
+    expect(text).toMatch(/stage=dispatch/);
     expect(text).toMatch(/rounds?\s*[:=]?\s*2|round 2/i);
     expect(text).toMatch(/park/i);
     expect(text).toMatch(/quota wall on pool grok/);
@@ -1103,5 +1105,368 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
     });
     expect(result.status).toBe("parked");
     expectParkAndTerminal(ledgerDir, { epic: 291 });
+  });
+});
+
+describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write", () => {
+  it("parkQuotaWaitForReset emits park + terminal progress (P1)", async () => {
+    const { parkQuotaWaitForReset } = await import(
+      "../../src/quotaParkRelay.js"
+    );
+    const { QuotaWaitForResetError } = await import("../../src/quotaProbe.js");
+    const ledgerDir = tempLedger("progress-1007-quota-");
+    configureProgressBroadcast({ ledgerDir, epic: 1007 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const resetAt = new Date("2026-07-08T16:10:00.000Z");
+    const err = new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "quota limited (429); wait for reset",
+      },
+      applied: {
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          reason: "quota limited (429); wait for reset",
+          step: "S2",
+          ts: "2026-07-08T12:00:00.000Z",
+          resetAt: resetAt.toISOString(),
+        },
+      },
+      pool: "zai",
+    });
+    const ledger: import("../../src/types.js").LedgerEntry[] = [];
+    const result = await parkQuotaWaitForReset({
+      step: "S2",
+      err,
+      ledger,
+      // undefined stateDir → no durable write; still must dual-write progress.
+      stateDir: undefined,
+      sessionId: "sess-quota-1007",
+      backend: {} as import("../../src/types.js").Backend,
+      resolveBranchHEAD: async () => "abc",
+      hashPrompt: async () => "hash",
+    });
+    expect(result.status).toBe("parked");
+    expectParkAndTerminal(ledgerDir, { epic: 1007 });
+    const parks = readProgressEvents(ledgerDir).filter((e) => e.kind === "park");
+    expect(parks[0]).toMatchObject({
+      kind: "park",
+      step: "S2",
+      reason: "provider_degraded",
+    });
+  });
+
+  it("escalateTermination decision park (GitHub auth) emits park + terminal (P1/P4)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const ledgerDir = tempLedger("progress-1007-escalate-");
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    type Backend = import("../../src/types.js").Backend;
+    class AuthFailBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState() {
+        return undefined;
+      }
+      async resumeSession(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async fetchIssueMeta(): Promise<never> {
+        throw Object.assign(new Error("HTTP 401: To re-authenticate, please run: gh auth login"), {
+          status: 401,
+        });
+      }
+      async prepareWorktree(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async runStep(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new AuthFailBackend(),
+    });
+    expect(result.status).toBe("parked");
+    expectParkAndTerminal(ledgerDir, { epic: 1000, issue: 1007 });
+  });
+
+  it("errorTermination (metadata throw) emits terminal progress (P3)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const ledgerDir = tempLedger("progress-1007-error-");
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    type Backend = import("../../src/types.js").Backend;
+    class MetaFailBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState() {
+        return undefined;
+      }
+      async resumeSession(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async fetchIssueMeta(): Promise<never> {
+        throw new Error("gh issue view exploded");
+      }
+      async prepareWorktree(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async runStep(): Promise<never> {
+        throw new Error("unreachable");
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new MetaFailBackend(),
+    });
+    expect(result.status).toBe("failed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "failed" &&
+          e.issue === 1007,
+      ),
+    ).toBe(true);
+  });
+
+  it("familyDriver route preflight fail emits terminal progress (P2)", async () => {
+    const { runFamilyDriver } = await import("../../src/familyDriver.js");
+    const ledgerDir = tempLedger("progress-1007-fd-route-");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "definitely-not-a-route-preset");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const result = await runFamilyDriver({
+      epicIssue: 1007,
+      sourceRepo: "/tmp/no-such-source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1007-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/family-prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir,
+      imageName: "img",
+      sh: () => {
+        throw new Error("should not read GitHub after route admission stop");
+      },
+      realBackendFactory: () => {
+        throw new Error("should not clone after route admission stop");
+      },
+    });
+    expect(result.status).toBe("failed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "failed" &&
+          e.epic === 1007,
+      ),
+    ).toBe(true);
+  });
+
+  it("familyDriver root blocked_by park emits park + terminal (P2)", async () => {
+    const { runFamilyDriver } = await import("../../src/familyDriver.js");
+    const ledgerDir = tempLedger("progress-1007-fd-block-");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          {
+            number: 1008,
+            state: "OPEN",
+            labels: [{ name: "ready-for-agent" }],
+          },
+        ]);
+      }
+      // Root epic blocked by open upstream #999 → FamilyRootBlockerError park.
+      if (joined.includes(`issues/1007/dependencies/blocked_by`)) {
+        return JSON.stringify([{ number: 999, state: "OPEN" }]);
+      }
+      if (joined.includes("dependencies/blocked_by")) return "[]";
+      if (joined.includes("issue view")) {
+        return JSON.stringify({
+          number: Number(args[2]),
+          body: "Coder-Rec: terra@med",
+          author: { login: "Akagilnc" },
+        });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+
+    const result = await runFamilyDriver({
+      epicIssue: 1007,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1007-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir,
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        throw new Error("blocked_by park must not create worksite");
+      },
+    });
+    expect(result.status).toBe("parked");
+    expectParkAndTerminal(ledgerDir, { epic: 1007 });
+  });
+
+  it("familyDriver GitHub auth park emits park + terminal (P2)", async () => {
+    const { runFamilyDriver } = await import("../../src/familyDriver.js");
+    const ledgerDir = tempLedger("progress-1007-fd-auth-");
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const result = await runFamilyDriver({
+      epicIssue: 1007,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1007-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir,
+      imageName: "img",
+      sh: () => {
+        throw Object.assign(
+          new Error("HTTP 401: To re-authenticate, please run: gh auth login"),
+          { status: 401 },
+        );
+      },
+      realBackendFactory: () => {
+        throw new Error("auth park must not create worksite");
+      },
+    });
+    expect(result.status).toBe("parked");
+    expectParkAndTerminal(ledgerDir, { epic: 1007 });
+  });
+
+  it("family reconcile fail-closed emits terminal progress (P3)", async () => {
+    const { runFamily } = await import("../../src/family/runner.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-reconcile-");
+    configureProgressBroadcast({ ledgerDir, epic: 291 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        childIssue: 10,
+        status: "merged",
+        familyHeadAfter: "ledger-head",
+      },
+    ];
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "should-not-merge" };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+    } as unknown as FamilyBackend;
+
+    // Live family-base HEAD diverged from ledger末条 → reconcile fail-closed.
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: await makeConvergingChildBackend(),
+      familyBase: "family/291-base",
+      reconcileGit: {
+        liveFamilyHead: async () => "divergent-live-head",
+        familyBaseStartHead: async () => "start-head",
+        childHeadExists: async () => ({ exists: false }),
+        isAncestor: async () => false,
+      },
+    });
+    expect(result.status).toBe("failed");
+    const events = readProgressEvents(ledgerDir);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "failed" &&
+          e.epic === 291,
+      ),
+    ).toBe(true);
   });
 });
