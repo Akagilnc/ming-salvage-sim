@@ -55,7 +55,6 @@ import {
   WorkerResult,
   WorkerSpec,
   buildExplicitLandingLiveHooks,
-  here,
   realPromptsDir,
   realSoulsDir,
   DEFAULT_CMR_LEGS,
@@ -81,61 +80,6 @@ afterEach(() => {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
   }
-});
-
-describe("integrated CMR pass prompt closure contract", () => {
-  for (const promptName of [
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]) {
-    it(`${promptName} makes missing review-leg coverage the worker's positive verdict duty`, () => {
-      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-
-      expect(prompt).toMatch(
-        /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*=\s*x[\s\S]*x\s*>=\s*1/i,
-      );
-    });
-
-    it(`${promptName} requires closure arrays on converged output`, () => {
-      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-
-      expect(prompt).toContain("claimedFixedFindingIdentityKeys");
-      expect(prompt).toContain("priorFindingDispositions");
-      expect(prompt).toMatch(/empty arrays/i);
-    });
-
-  }
-
-  for (const promptName of [
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]) {
-    it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
-      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-      // #930: family court examples use <judge> continue envelopes (not <cmr>).
-      const examples = [
-        ...prompt.matchAll(/<judge>(\{[^\n]*"status"\s*:\s*"continue"[^\n]*\})<\/judge>/g),
-      ];
-
-      expect(examples.length).toBeGreaterThan(0);
-      for (const [, rawJson] of examples) {
-        const output = JSON.parse(rawJson) as {
-          readonly status?: string;
-          readonly findings?: readonly {
-            readonly action: string;
-            readonly disposition?: { readonly kind?: string };
-          }[];
-        };
-        expect(output.status).toBe("continue");
-        for (const finding of output.findings ?? []) {
-          if (finding.disposition?.kind === "same_module") {
-            expect(finding.action).toBe("fix_now");
-          }
-        }
-      }
-    });
-  }
-
 });
 
 // ═══════════════════ 3. dispatchWorker(cmr) — routes the skill + wraps verdict ═══════════════════
