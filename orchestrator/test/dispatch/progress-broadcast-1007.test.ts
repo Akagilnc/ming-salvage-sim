@@ -1,0 +1,566 @@
+/**
+ * #1007 — active progress broadcast: progress.jsonl + stage issue numbers +
+ * status renderer + optional notify hook. Typed signals only; fail-open I/O.
+ */
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  PROGRESS_FILENAME,
+  PROGRESS_SCHEMA_VERSION,
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  countJudgeDispositions,
+  countSeverityFromFindings,
+  emitJudgeProgress,
+  emitParkProgress,
+  emitProgressEvent,
+  emitStageProgress,
+  emitTerminalProgress,
+  emitWaveCloseProgress,
+  progressPath,
+  readProgressEvents,
+  renderFamilyStatus,
+  renderFamilyStatusFromDir,
+  tryAppendProgressEvent,
+  type ProgressEvent,
+} from "../../src/progressBroadcast.js";
+import { logDriverStage } from "../../src/stageLog.js";
+import type { Finding, JudgeFindingDisposition } from "../../src/types.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  clearProgressBroadcastConfig();
+  delete process.env.ORCHESTRATOR_NOTIFY_CMD;
+  vi.restoreAllMocks();
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function tempLedger(prefix = "progress-1007-"): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function readLines(dir: string): string[] {
+  const p = progressPath(dir);
+  if (!existsSync(p)) return [];
+  return readFileSync(p, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
+
+const dispositions: readonly JudgeFindingDisposition[] = [
+  { identityKey: "a|loc|q1", action: "live" },
+  { identityKey: "b|loc|q2", action: "live" },
+  {
+    identityKey: "c|loc|q3",
+    action: "refute",
+    reason: "not_established",
+    evidence: "code does not match claim",
+  },
+  {
+    identityKey: "d|loc|q4",
+    action: "suppress",
+    evidence: "owner batch",
+    ownerRecordPointer: "owner://batch-1",
+  },
+];
+
+const findings: readonly Finding[] = [
+  {
+    severity: "high",
+    category: "correctness",
+    claim_quote: "q1",
+    location: "loc",
+    suggested_fix: "fix",
+    action: "fix_now",
+  },
+  {
+    severity: "high",
+    category: "correctness",
+    claim_quote: "q2",
+    location: "loc",
+    suggested_fix: "fix",
+    action: "fix_now",
+  },
+  {
+    severity: "medium",
+    category: "correctness",
+    claim_quote: "q3",
+    location: "loc",
+    suggested_fix: "fix",
+    action: "fix_now",
+  },
+];
+
+describe("#1007 disposition / severity pure counters", () => {
+  it("maps live→fix_now, refute→refuted, suppress→suppressed", () => {
+    expect(countJudgeDispositions(dispositions)).toEqual({
+      fix_now: 2,
+      refuted: 1,
+      suppressed: 1,
+    });
+  });
+
+  it("counts severity only from typed findings cargo (no invent)", () => {
+    expect(countSeverityFromFindings(findings)).toEqual({
+      critical: 0,
+      high: 2,
+      medium: 1,
+      low: 0,
+      clarity: 0,
+    });
+    expect(countSeverityFromFindings(undefined)).toBeNull();
+    expect(countSeverityFromFindings([])).toEqual({
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      clarity: 0,
+    });
+  });
+});
+
+describe("#1007 progress.jsonl append-only schema", () => {
+  it("appends schema'd stage / judge / park / wave_close / terminal rows", () => {
+    const ledgerDir = tempLedger();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    emitStageProgress({
+      ledgerDir,
+      stage: "dispatch",
+      issue: 1007,
+      epic: 1000,
+      step: "S2",
+      detail: "step=S2",
+    });
+    emitJudgeProgress({
+      ledgerDir,
+      issue: 1007,
+      epic: 1000,
+      step: "S3",
+      round: 1,
+      verdict: "continue",
+      findingDispositions: dispositions,
+      findings,
+      cargoPointer: "ledger://judge/S3",
+    });
+    emitParkProgress({
+      ledgerDir,
+      issue: 1007,
+      epic: 1000,
+      step: "S3",
+      gateSummary: "needs owner ruling on scope",
+      reason: "decision_gate_park",
+    });
+    emitWaveCloseProgress({
+      ledgerDir,
+      epic: 1000,
+      issues: [1007, 1008],
+      wave: 1,
+    });
+    emitTerminalProgress({
+      ledgerDir,
+      epic: 1000,
+      issue: 1007,
+      status: "parked",
+      stopReason: "decision_gate_park",
+    });
+
+    const lines = readLines(ledgerDir);
+    expect(lines).toHaveLength(5);
+    const events = lines.map((l) => JSON.parse(l) as ProgressEvent);
+    expect(events.every((e) => e.v === PROGRESS_SCHEMA_VERSION)).toBe(true);
+    expect(events.map((e) => e.kind)).toEqual([
+      "stage",
+      "judge",
+      "park",
+      "wave_close",
+      "terminal",
+    ]);
+
+    const judge = events[1]!;
+    expect(judge.kind).toBe("judge");
+    if (judge.kind === "judge") {
+      expect(judge.issue).toBe(1007);
+      expect(judge.verdict).toBe("continue");
+      expect(judge.dispositions).toEqual({
+        fix_now: 2,
+        refuted: 1,
+        suppressed: 1,
+      });
+      expect(judge.severity).toEqual({
+        critical: 0,
+        high: 2,
+        medium: 1,
+        low: 0,
+        clarity: 0,
+      });
+      expect(judge.cargoPointer).toBe("ledger://judge/S3");
+      // Finding bodies never enter the feed.
+      expect(JSON.stringify(judge)).not.toMatch(/suggested_fix|claim_quote|q1/);
+    }
+
+    // run.log lines include issue numbers on stage.
+    const stageLine = log.mock.calls.map((c) => String(c[0])).find((s) =>
+      s.includes("[orchestrator:progress]"),
+    );
+    expect(stageLine).toMatch(/#1007/);
+    expect(stageLine).toMatch(/stage/);
+  });
+
+  it("tryAppend fails open when parent dir is missing (no throw, no mkdir invent)", () => {
+    const orphan = join(tmpdir(), `no-such-parent-${Date.now()}`, "leaf");
+    const ok = tryAppendProgressEvent(orphan, {
+      v: PROGRESS_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      kind: "stage",
+      stage: "dispatch",
+      issue: 1,
+      detail: "x",
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("emitProgressEvent swallows append failures (fail-open)", () => {
+    const ledgerDir = tempLedger();
+    // Make ledgerDir a file so mkdir/append fails.
+    rmSync(ledgerDir, { recursive: true, force: true });
+    writeFileSync(ledgerDir, "not-a-dir");
+    expect(() =>
+      emitProgressEvent({
+        ledgerDir,
+        event: {
+          v: PROGRESS_SCHEMA_VERSION,
+          ts: new Date().toISOString(),
+          kind: "stage",
+          stage: "dispatch",
+          issue: 9,
+        },
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("#1007 stage lines carry issue number (#975 debt ④)", () => {
+  it("logDriverStage dual-writes progress when configured, with issue id", () => {
+    const ledgerDir = tempLedger();
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    logDriverStage("dispatch", "step=S2", { issue: 1007 });
+
+    expect(log.mock.calls.map((c) => String(c[0]))).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /\[orchestrator:stage\] dispatch issue #1007 step=S2/,
+        ),
+      ]),
+    );
+    const events = readProgressEvents(ledgerDir);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "stage",
+      stage: "dispatch",
+      issue: 1007,
+      epic: 1000,
+    });
+  });
+
+  it("logDriverStage without issue still prints stage line (no invent)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    logDriverStage("smoke-k", "route=grok-blitz");
+    expect(log.mock.calls[0]?.[0]).toMatch(
+      /\[orchestrator:stage\] smoke-k route=grok-blitz/,
+    );
+  });
+});
+
+describe("#1007 status renderer from progress feed + ledger", () => {
+  it("renders per-issue station / rounds / latest verdict / dispositions / parks", () => {
+    const ledgerDir = tempLedger();
+    emitStageProgress({
+      ledgerDir,
+      stage: "dispatch",
+      issue: 1007,
+      epic: 1000,
+      step: "S2",
+    });
+    emitJudgeProgress({
+      ledgerDir,
+      issue: 1007,
+      epic: 1000,
+      step: "S3",
+      round: 1,
+      verdict: "continue",
+      findingDispositions: dispositions,
+      findings,
+    });
+    emitStageProgress({
+      ledgerDir,
+      stage: "dispatch",
+      issue: 1007,
+      epic: 1000,
+      step: "S5",
+    });
+    emitJudgeProgress({
+      ledgerDir,
+      issue: 1007,
+      epic: 1000,
+      step: "S6",
+      round: 2,
+      verdict: "converged",
+      findingDispositions: [],
+    });
+    emitStageProgress({
+      ledgerDir,
+      stage: "dispatch",
+      issue: 1008,
+      epic: 1000,
+      step: "S2",
+    });
+    emitParkProgress({
+      ledgerDir,
+      issue: 1008,
+      epic: 1000,
+      step: "S2",
+      gateSummary: "quota wall on pool grok",
+      reason: "decision_gate_park",
+    });
+    emitWaveCloseProgress({
+      ledgerDir,
+      epic: 1000,
+      issues: [1007],
+      wave: 1,
+    });
+    // family ledger confirms merge (status consumes feed + ledger).
+    writeFileSync(
+      join(ledgerDir, "family-ledger.jsonl"),
+      `${JSON.stringify({
+        childIssue: 1007,
+        status: "merged",
+        event: "merged",
+      })}\n`,
+    );
+
+    const text = renderFamilyStatusFromDir(ledgerDir);
+    expect(text).toMatch(/#1007/);
+    expect(text).toMatch(/#1008/);
+    // station / rounds / verdict
+    expect(text).toMatch(/S6|converged/);
+    expect(text).toMatch(/rounds?\s*[:=]?\s*2|round 2/i);
+    expect(text).toMatch(/park/i);
+    expect(text).toMatch(/quota wall on pool grok/);
+    // disposition counts from latest judge (converged → zeros) or prior
+    expect(text).toMatch(/merged/i);
+
+    const structured = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+      familyLedgerPath: join(ledgerDir, "family-ledger.jsonl"),
+    });
+    const issue1007 = structured.issues.find((i) => i.issue === 1007);
+    const issue1008 = structured.issues.find((i) => i.issue === 1008);
+    expect(issue1007).toMatchObject({
+      issue: 1007,
+      latestStep: "S6",
+      latestVerdict: "converged",
+      judgeRounds: 2,
+      merged: true,
+      parked: false,
+    });
+    expect(issue1008).toMatchObject({
+      issue: 1008,
+      parked: true,
+      parkSummary: "quota wall on pool grok",
+    });
+  });
+
+  it("does not invent status when progress feed is empty", () => {
+    const ledgerDir = tempLedger();
+    const structured = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(structured.issues).toEqual([]);
+    expect(renderFamilyStatusFromDir(ledgerDir)).toMatch(/no progress/i);
+  });
+});
+
+describe("#1007 optional notify hook (default off, fail-open)", () => {
+  it("does not invoke notify when env unset", () => {
+    const spawn = vi.fn();
+    emitParkProgress({
+      ledgerDir: tempLedger(),
+      issue: 1,
+      gateSummary: "x",
+      reason: "decision_gate_park",
+      notifySpawn: spawn,
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("invokes configured notify command on park / terminal (not on stage)", () => {
+    process.env.ORCHESTRATOR_NOTIFY_CMD = "true";
+    const calls: string[] = [];
+    const spawn = (
+      command: string,
+      _args: readonly string[],
+      _opts: {
+        readonly env: NodeJS.ProcessEnv;
+        readonly detached: boolean;
+        readonly stdio: "ignore";
+      },
+    ) => {
+      calls.push(command);
+      return { unref() {} };
+    };
+    const ledgerDir = tempLedger();
+
+    emitStageProgress({
+      ledgerDir,
+      stage: "dispatch",
+      issue: 1,
+      step: "S2",
+      notifySpawn: spawn,
+    });
+    expect(calls).toEqual([]);
+
+    emitParkProgress({
+      ledgerDir,
+      issue: 1,
+      gateSummary: "gate",
+      reason: "decision_gate_park",
+      notifySpawn: spawn,
+    });
+    expect(calls).toEqual(["true"]);
+
+    emitTerminalProgress({
+      ledgerDir,
+      status: "failed",
+      stopReason: "infra_failure",
+      notifySpawn: spawn,
+    });
+    expect(calls).toEqual(["true", "true"]);
+  });
+
+  it("notify spawn failure does not throw", () => {
+    process.env.ORCHESTRATOR_NOTIFY_CMD = "true";
+    const spawn = vi.fn(() => {
+      throw new Error("spawn boom");
+    });
+    expect(() =>
+      emitParkProgress({
+        ledgerDir: tempLedger(),
+        issue: 1,
+        gateSummary: "gate",
+        notifySpawn: spawn,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("#1007 PROGRESS_FILENAME constant", () => {
+  it("is progress.jsonl under ledgerDir", () => {
+    expect(PROGRESS_FILENAME).toBe("progress.jsonl");
+    expect(progressPath("/tmp/ledger")).toBe(join("/tmp/ledger", "progress.jsonl"));
+  });
+});
+
+describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
+  it("emits issue-numbered dispatch stage before worker legs", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ledgerDir = tempLedger("progress-1007-entry-");
+    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+
+    type Backend = import("../../src/types.js").Backend;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type ResumeState = import("../../src/types.js").ResumeState;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class ScriptedBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState(): Promise<ResumeState | undefined> {
+        return undefined;
+      }
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(
+        issueNumber: number,
+      ): Promise<WorktreeHandle> {
+        const path = join(ledgerDir, `wt-${issueNumber}`);
+        return {
+          path,
+          branch: `feat/${issueNumber}`,
+          base: "main",
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        // Judge seat: converge immediately.
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1007,
+      backend: new ScriptedBackend(),
+    });
+    expect(result.status === "completed" || result.status === "parked" || result.status === "failed").toBe(
+      true,
+    );
+
+    const stageLines = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((s) => s.includes("[orchestrator:stage]"));
+    expect(stageLines.some((s) => /issue #1007/.test(s))).toBe(true);
+
+    const events = readProgressEvents(ledgerDir);
+    const stages = events.filter((e) => e.kind === "stage");
+    expect(stages.some((e) => e.kind === "stage" && e.issue === 1007)).toBe(
+      true,
+    );
+  });
+});

@@ -55,6 +55,13 @@ import {
 import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
+  configureProgressBroadcast,
+  emitJudgeProgress,
+  emitParkProgress,
+  emitTerminalProgress,
+  getProgressBroadcastConfig,
+} from "./progressBroadcast.js";
+import {
   withMechanicalRetry,
   type MechanicalRetryOptions,
 } from "./dispatchRetry.js";
@@ -2517,7 +2524,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
   // (resume truth), reuse the worktree, and continue from the recorded
   // breakpoint — no re-cut from S0, no re-running done steps.
-  logDriverStage("reconcile", `issue #${issueNumber}`);
+  logDriverStage("reconcile", undefined, { issue: issueNumber });
+  // #1007: single-slice progress feed defaults to child stateDir once known;
+  // family runner may already have configured the durable family ledgerDir.
+  {
+    const existing = getProgressBroadcastConfig();
+    if (existing.ledgerDir === undefined && scene.kind === "resident") {
+      const residentStateDir = scene.state.stateDir;
+      if (
+        typeof residentStateDir === "string" &&
+        residentStateDir.length > 0
+      ) {
+        configureProgressBroadcast({ ledgerDir: residentStateDir });
+      }
+    }
+  }
   let resumeState: ResumeState | undefined =
     scene.kind === "resident" ? scene.state : undefined;
   const recordedRouteDegradations = new Set(
@@ -2978,7 +2999,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         let meta: IssueMeta;
         try {
           // #884: admission = S0 input gate / live issue metadata fetch.
-          logDriverStage("admission", `issue #${issueNumber}`);
+          logDriverStage("admission", undefined, {
+            issue: issueNumber,
+          });
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
           // #934 ID-003: GitHub auth needs external human login → typed decision
@@ -3093,6 +3116,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
         // soon as the worktree exists so later error terminations persist.
         stateDir = deriveStateDir(worktree.path, issueNumber);
+        // #1007: bind progress feed to child ledger when family has not already.
+        {
+          const existing = getProgressBroadcastConfig();
+          if (existing.ledgerDir === undefined) {
+            configureProgressBroadcast({ ledgerDir: stateDir });
+          }
+        }
         break;
       }
 
@@ -3106,10 +3136,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // #924: S2 establishes a coder session; S5 rounds resume it (same
         // model). #925: S3 establishes a judge session; S6 rounds resume it.
         // Crash/escalate `resumeFor` still wins when set.
-        if (!dispatchStageLogged) {
-          logDriverStage("dispatch", `step=${step}`);
-          dispatchStageLogged = true;
-        }
+        // #1007 / #975 ④: every productive step gets an issue-numbered stage line
+        // (and progress.jsonl row when feed is configured). First entry also
+        // flips dispatchStageLogged for any callers that still gate on it.
+        logDriverStage("dispatch", `step=${step}`, {
+          issue: issueNumber,
+          step,
+        });
+        dispatchStageLogged = true;
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -3838,6 +3872,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               lastOutput = output;
               break;
             }
+            // #1007: echo typed judge tri-state + disposition counts (no prose).
+            {
+              const judgeRound =
+                ledger.filter((e) => e.step === "S3" || e.step === "S6")
+                  .length + 1;
+              emitJudgeProgress({
+                issue: issueNumber,
+                step,
+                round: judgeRound,
+                verdict: output.status,
+                findingDispositions: output.findingDispositions,
+                findings: output.findings,
+                cargoPointer:
+                  typeof output.fixPacketBody === "string" &&
+                  output.fixPacketBody.length > 0
+                    ? `ledger://issue-${issueNumber}/${step}/fixPacketBody`
+                    : null,
+              });
+            }
             // Apply continue dispositions via the shared projection helper
             // (same helper resume rebuild uses — F2 single open-set seam).
             if (output.status === "continue") {
@@ -4184,11 +4237,38 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
+        // #1007: terminal broadcast (fail-open).
+        emitTerminalProgress({
+          issue: issueNumber,
+          status: "failed",
+          stopReason: handoffStopSummary.reason,
+        });
         return failedRunResult({
           cause: "runner_internal_error",
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
+        });
+      }
+
+      // #1007: park / completed terminal echo (typed stop reason only).
+      if (decision.status === "parked") {
+        emitParkProgress({
+          issue: issueNumber,
+          step,
+          gateSummary: handoffStopSummary.summary,
+          reason: handoffStopSummary.reason,
+        });
+        emitTerminalProgress({
+          issue: issueNumber,
+          status: "parked",
+          stopReason: handoffStopSummary.reason,
+        });
+      } else {
+        emitTerminalProgress({
+          issue: issueNumber,
+          status: "completed",
+          stopReason: handoffStopSummary.reason,
         });
       }
 

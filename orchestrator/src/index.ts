@@ -31,6 +31,43 @@ export type {
   DispatchWorkerWithMonitorOutcome,
   LegacyDispatchBackend,
 } from "./dispatchWorker.js";
+// ── #1007 active progress broadcast (typed signals; fail-open) ──────────────
+export {
+  PROGRESS_FILENAME,
+  PROGRESS_NOTIFY_ENV,
+  PROGRESS_SCHEMA_VERSION,
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  countJudgeDispositions,
+  countSeverityFromFindings,
+  emitJudgeProgress,
+  emitLandingProgress,
+  emitMergeProgress,
+  emitParkProgress,
+  emitProgressEvent,
+  emitShipProgress,
+  emitStageProgress,
+  emitTerminalProgress,
+  emitWaveCloseProgress,
+  formatDriverStageLine,
+  formatProgressLogLine,
+  getProgressBroadcastConfig,
+  progressPath,
+  readProgressEvents,
+  renderFamilyStatus,
+  renderFamilyStatusFromDir,
+  tryAppendProgressEvent,
+} from "./progressBroadcast.js";
+export type {
+  FamilyStatusSnapshot,
+  IssueProgressSnapshot,
+  ProgressDispositionCounts,
+  ProgressEvent,
+  ProgressEventKind,
+  ProgressSeverityCounts,
+  NotifySpawn,
+} from "./progressBroadcast.js";
+
 // ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
 export {
   TELEMETRY_FILENAME,
