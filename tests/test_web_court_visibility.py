@@ -24,8 +24,8 @@ def _active_ming_minister(db, content) -> str:
     raise AssertionError("基底盘面无 active 的大明大臣")
 
 
-def test_active_ming_minister_visible(game):
-    db, _state, content = game
+def test_active_ming_minister_visible(read_game):
+    db, _state, content = read_game
     name = _active_ming_minister(db, content)
     assert visible_in_court(content.characters[name], db) is True
 
@@ -124,9 +124,9 @@ def test_offstage_former_minister_in_talent_pool(game):
     assert visible_in_court(content.characters[name], db) is False
 
 
-def test_active_minister_not_in_talent_pool(game):
+def test_active_minister_not_in_talent_pool(read_game):
     """在朝（active）大臣不进在野池——人才池只补 offstage 这一漏面。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _active_ming_minister(db, content)
     assert in_talent_pool(content.characters[name], db, state.year, state.period) is False
 
@@ -181,9 +181,9 @@ def test_same_year_future_month_debut_excluded_from_talent_pool(game):
         ch.debut_year, ch.debut_month = orig
 
 
-def test_consort_excluded_from_court(game):
+def test_consort_excluded_from_court(read_game):
     """后宫不算朝堂大臣，DB active 也不入列。"""
-    db, _state, content = game
+    db, _state, content = read_game
     consort = next(
         (n for n, c in content.characters.items()
          if getattr(c, "office_type", "") == "后宫"),
@@ -290,11 +290,11 @@ def _enemy_active_name(db, content) -> str:
     pytest.skip("基底盘面无 active 外藩人物")
 
 
-def test_enemy_active_character_cannot_be_summoned(game):
+def test_enemy_active_character_cannot_be_summoned(read_game):
     """非大明势力（后金/蒙古/朝鲜/流寇）即便 active 也不可召见——皇帝召的是大明朝廷命官，
     不能召对敌酋（如皇太极）。can_summon 是 summon_minister 工具链共用闸，集中守此一处（#125）。
     现状 bug：can_summon 只查 status，active 外藩按名召直接放行。"""
-    db, state, content = game
+    db, state, content = read_game
     sess = _bare_session(db)
     enemy = _enemy_active_name(db, content)
     assert db.get_character_status(enemy)[0] == "active"  # active 也拒
@@ -323,9 +323,9 @@ def test_summon_power_check_uses_db_not_content(game):
     assert ok is True, f"DB 已归明却被内存值误拒：{reason}"
 
 
-def test_normal_ming_minister_still_summonable(game):
+def test_normal_ming_minister_still_summonable(read_game):
     """回归：正常大明 active 大臣不受 #125 power 闸影响，照常可召。"""
-    db, state, content = game
+    db, state, content = read_game
     sess = _bare_session(db)
     name = _active_ming_minister(db, content)
     ok, _ = sess.can_summon(content.characters[name])

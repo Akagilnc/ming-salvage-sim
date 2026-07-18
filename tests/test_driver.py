@@ -317,10 +317,10 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
         ch.office = old_office
 
 
-def test_cli_state_prints_board(game, capsys):
+def test_cli_state_prints_board(read_game, capsys):
     """`state` 子命令打印当前盘面（含纪年），返回码 0。"""
-    db, state, content = game
-    rc = driver.main(["state"], game=game)
+    db, state, content = read_game
+    rc = driver.main(["state"], game=read_game)
     out = capsys.readouterr().out
     assert rc == 0
     assert str(state.year) in out
@@ -372,10 +372,10 @@ def test_cli_settle_envelope_persists_narrative(game, tmp_path):
     assert cannon == 3
 
 
-def test_cli_dump_prints_regions(game, capsys):
+def test_cli_dump_prints_regions(read_game, capsys):
     """`dump` 打印盘面快照，含地区行（地区 id 出现在输出里），返回码 0。"""
-    db, state, content = game
-    rc = driver.main(["dump"], game=game)
+    db, state, content = read_game
+    rc = driver.main(["dump"], game=read_game)
     out = capsys.readouterr().out
     assert rc == 0
     assert "shanxi" in out

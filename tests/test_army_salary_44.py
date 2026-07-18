@@ -82,13 +82,13 @@ def test_army_needed_non_ming_no_pay(read_game):
     assert army_needed(row) == 0
 
 
-def test_defected_army_to_ming_owes_salary_not_free(game):
+def test_defected_army_to_ming_owes_salary_not_free(read_game):
     """#44 ship-pre cmr R1（codex high）：原非明军经 owner_power 翻成 ming（倒戈/招安，军务 extractor
     prompt 明确要求写归属）后，salary_rate<=0（非明军 content 默认 0）不得让 army_needed 返 0 =
     零饷白嫖军——这正是 #44 已经募兵入口（_coerce_new_salary_rate 默认 1.5）+ 迁移入口
     （_backfill_salary_rate）堵住、但经 runtime 易主漏网的同一 exploit。army_needed 对
     ming + manpower>0 + rate<=0 锚定 1.5 → 应发>0。"""
-    db, state, _ = game
+    db, state, _ = read_game
     src = db.conn.execute(
         "SELECT * FROM armies WHERE owner_power!='ming' AND manpower>0 ORDER BY manpower DESC LIMIT 1"
     ).fetchone()
