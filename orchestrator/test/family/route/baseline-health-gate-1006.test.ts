@@ -34,6 +34,10 @@ import { formatExecFailureOutput } from "../../../src/execFailureOutput.js";
 import { FAMILY_LEDGER_FILENAME } from "../../../src/family/realFamilyBackend.js";
 import { isFamilyLedgerEntryShape } from "../../../src/family/ledger.js";
 import type { ResolvedModelRoute } from "../../../src/modelRoutes.js";
+import {
+  clearProgressBroadcastConfig,
+  readProgressEvents,
+} from "../../../src/progressBroadcast.js";
 import { PUBLIC_FAILED_CAUSES } from "../../../src/publicResult.js";
 import { SPAWNED_WORKER_ENV } from "../../../src/realBackend.js";
 import { runFamilyDriver, type Sh } from "../../../src/familyDriver.js";
@@ -68,6 +72,7 @@ function track(p: string): string {
 }
 afterEach(() => {
   vi.unstubAllEnvs();
+  clearProgressBroadcastConfig();
   while (cleanups.length > 0) {
     const p = cleanups.pop();
     if (p !== undefined) rmSync(p, { recursive: true, force: true });
@@ -772,6 +777,17 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
       rows.some(
         (r) =>
           r.status === "baseline_health_failed" && r.event === "baseline_health_failed",
+      ),
+    ).toBe(true);
+
+    // #1009 SP-M1: baseline_health stop dual-writes terminal failed progress.
+    const progress = readProgressEvents(ledgerDir);
+    expect(
+      progress.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "failed" &&
+          e.epic === 1006,
       ),
     ).toBe(true);
   });

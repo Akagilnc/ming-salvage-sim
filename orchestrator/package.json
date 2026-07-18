@@ -7,6 +7,7 @@
   "scripts": {
     "postinstall": "node scripts/apply-sandcastle-cancel-patch.mjs",
     "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
+    "test:fast": "tsc -p tsconfig.test.json --noEmit && vitest run --project fast",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",

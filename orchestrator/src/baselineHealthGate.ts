@@ -27,6 +27,7 @@
 
 import { shWithClock } from "./externalCall.js";
 import { formatExecFailureOutput } from "./execFailureOutput.js";
+import { gitExitStatus, isFileNotFound } from "./fsErrors.js";
 import {
   provisionNodeModules,
   resolveTemplateProjectDir,
@@ -422,13 +423,7 @@ export async function runBaselineFullTestsInWorkerContainer(
     return { ok: true };
   } catch (err) {
     const output = formatExecFailureOutput(err);
-    const exitCode =
-      err !== null &&
-      typeof err === "object" &&
-      "status" in err &&
-      typeof (err as { status?: unknown }).status === "number"
-        ? ((err as { status: number }).status as number)
-        : 1;
+    const exitCode = gitExitStatus(err) ?? 1;
     const failedTests = extractFailedTestPaths(output);
     const infra = isInfraExecFailure(err, output);
     return {
@@ -447,12 +442,8 @@ export async function runBaselineFullTestsInWorkerContainer(
  * failure text is docker-tooling-shaped so a suite exit never rides along.
  */
 function isInfraExecFailure(err: unknown, output: string): boolean {
-  if (
-    err !== null &&
-    typeof err === "object" &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "ENOENT"
-  ) {
+  // ENOENT spawn (docker/npm missing) — reuse shared FS absence predicate.
+  if (isFileNotFound(err)) {
     return true;
   }
   if (matchesInfraToolingOutput(output)) {
@@ -460,13 +451,7 @@ function isInfraExecFailure(err: unknown, output: string): boolean {
   }
   // Docker CLI: 125 = client/daemon/config; 126 = contained command cannot invoke.
   // Production argv is always `docker run …`; suite reds exit 1 via npm/vitest.
-  const status =
-    err !== null &&
-    typeof err === "object" &&
-    "status" in err &&
-    typeof (err as { status?: unknown }).status === "number"
-      ? ((err as { status: number }).status as number)
-      : undefined;
+  const status = gitExitStatus(err);
   if (
     (status === 125 || status === 126) &&
     /\bdocker\b/i.test(output) &&

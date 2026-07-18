@@ -110,7 +110,9 @@ export function countSeverityFromFindings(
   findings: ReadonlyArray<Finding> | undefined,
 ): ProgressSeverityCounts | null {
   if (findings === undefined) return null;
-  const counts: ProgressSeverityCounts = {
+  const counts: {
+    -readonly [K in keyof ProgressSeverityCounts]: number;
+  } = {
     critical: 0,
     high: 0,
     medium: 0,
@@ -126,9 +128,7 @@ export function countSeverityFromFindings(
       sev === "low" ||
       sev === "clarity"
     ) {
-      (counts as { -readonly [K in keyof ProgressSeverityCounts]: number })[
-        sev
-      ] += 1;
+      counts[sev] += 1;
     }
   }
   return counts;
@@ -374,8 +374,9 @@ export function formatProgressLogLine(event: ProgressEvent): string {
       return `${base} terminal${issueTag(event.issue)}${epicTag(event.epic)} status=${event.status}${reason}`;
     }
     default: {
-      const _never: never = event;
-      return `${base} ${String((_never as ProgressEvent).kind)}`;
+      const _exhaustive: never = event;
+      void _exhaustive;
+      return base;
     }
   }
 }
