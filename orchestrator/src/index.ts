@@ -280,7 +280,11 @@ export type {
   CoderRosterEntry,
 } from "./coderRoster.js";
 // ── #919 / #926 one advanceCoder execution path (slice + family) ────────────
-export { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
+export {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+} from "./advanceCoderEffect.js";
 export type {
   AdvanceCoderEffectResult,
   AdvanceCoderProbe,

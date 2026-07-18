@@ -165,3 +165,56 @@ export async function executeAdvanceCoderSuggestion(input: {
     },
   };
 }
+
+/**
+ * Dual status/event audit fields for family ledger advance rows.
+ * Shared by online-review fixer + family CMR coderFix courts (#919 / #1002).
+ * Callers spread court-only extras (phase / cmrPass) on top — no framework.
+ */
+export function familyAdvanceCoderAuditFields(
+  effect: Extract<AdvanceCoderEffectResult, { kind: "stay_put" | "advanced" }>,
+  suggestion: string,
+): {
+  readonly status: "coder_advance" | "coder_advance_stay_put";
+  readonly event: "coder_advance" | "coder_advance_stay_put";
+  readonly reason: string;
+  readonly message: string | undefined;
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  readonly advanceCoder: string;
+  readonly ts: string;
+} {
+  return {
+    status: effect.audit.event,
+    event: effect.audit.event,
+    reason: effect.kind === "stay_put" ? effect.reason : "coder_advance",
+    message: effect.audit.state_summary,
+    fromModelId: effect.audit.fromModelId,
+    toModelId: effect.audit.toModelId,
+    advanceCoder: suggestion.trim(),
+    ts: effect.audit.ts,
+  };
+}
+
+/**
+ * Latest successful `coder_advance` target slug from a ledger scan
+ * (newest-first). Ignores `coder_advance_stay_put`. Shared re-hold shape for
+ * single-slice / online-review sticky rebuild (#926 / #1002).
+ */
+export function latestCoderAdvanceToSlug(
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly status?: string;
+    readonly toModelId?: string;
+  }>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const row = ledger[i]!;
+    const isAdvance =
+      row.event === "coder_advance" || row.status === "coder_advance";
+    if (isAdvance && typeof row.toModelId === "string" && row.toModelId.length > 0) {
+      return row.toModelId;
+    }
+  }
+  return undefined;
+}
