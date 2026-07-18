@@ -127,6 +127,8 @@ _ABSTRACT_AT_PREFIX = (
 )
 # Chinese abstract scores use complete numeral shapes only — never a free
 # ``[十百…]+`` run that swallows idioms (``十分出众`` / ``一尘不染``).
+# Bare adjacency stays Arabic-only; Chinese scores need a connector/verb path
+# (``约七十`` / ``只有三十``) so bare ``一`` / ``十`` inside prose stay lawful.
 _CHINESE_SCORE_BODY = (
     r"(?:一百(?:零[零〇一二两三四五六七八九])?"
     r"|[二三四五六七八九]十[零〇一二两三四五六七八九]?"
@@ -134,25 +136,14 @@ _CHINESE_SCORE_BODY = (
     r"|十(?!分)"  # bare 十 = 10 after a connector; never ``十分`` idiom
     r"|[零〇一二两三四五六七八九])"
 )
-_ABSTRACT_SCORE_MODIFIERS = ("左右", "上下", "有余", "余")
-_ABSTRACT_SCORE_MODIFIER_PATTERN = "|".join(_ABSTRACT_SCORE_MODIFIERS)
 _ABSTRACT_NUMBER_START = r"[-+]?\d"
 _ABSTRACT_SCORE_NUMBER = (
     rf"(?:"
     rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
     rf"|{_CHINESE_SCORE_BODY}"
     rf")"
-    rf"(?!\d|[零〇一二两三四五六七八九十百])"
-    rf"(?:\s*(?:{_ABSTRACT_SCORE_MODIFIER_PATTERN}))?"
-    rf"(?!(?:\s*(?:{_ABSTRACT_SCORE_MODIFIER_PATTERN}))?\s*(?:{_COUNTABLE_FACT_UNITS}))"
-)
-# A bare Chinese score must be a complete standalone token.  The CJK boundary
-# preserves both idioms and countable facts (``一尘不染`` / ``八十人``), while
-# an abstract axis followed by an otherwise unqualified token (``能力八十``)
-# is the same P4 violation as its Arabic form.
-_BARE_CHINESE_SCORE_RE = re.compile(
-    rf"(?<![第\d零〇一二两三四五六七八九十百]){_CHINESE_SCORE_BODY}"
-    rf"(?:\s*(?:分|%|{_ABSTRACT_SCORE_MODIFIER_PATTERN}))?(?![\d\u3400-\u9fff])"
+    rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
+    rf"(?:\s*(?:左右|上下))?"
 )
 
 
@@ -169,12 +160,9 @@ def _has_unqualified_abstract_score(fragment: str) -> bool:
     if not axis:
         return False
     tail = fragment[axis.end():]
-    # The invariant is about *bare numeric scores*.  Complete token boundaries
-    # keep Chinese idioms and unit-qualified counts out of this score class.
-    return bool(
-        re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))", tail)
-        or _BARE_CHINESE_SCORE_RE.search(tail)
-    )
+    # The invariant is about *bare numeric scores*.  Chinese ideoms such as
+    # ``操守一尘不染`` are not scores merely because they neighbour an axis.
+    return bool(re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))", tail))
 _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"
@@ -259,7 +247,7 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
         # Band substitution needs a machine int; Chinese numeral scores fall
         # through to the shared rejector instead of inventing a parser.
         raw = str(value).strip()
-        for suffix in (*_ABSTRACT_SCORE_MODIFIERS, "分", "%"):
+        for suffix in ("左右", "上下", "分", "%"):
             if raw.endswith(suffix):
                 raw = raw[: -len(suffix)].strip()
         if "/" in raw:

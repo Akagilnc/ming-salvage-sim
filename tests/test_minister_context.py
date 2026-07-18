@@ -753,7 +753,7 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
 def test_historical_context_rejects_adjacent_abstract_values_at_every_history_seam(game):
     """邸报、章节记忆、read_past_report、search_memories 都拒绝邻接裸值。"""
     db, state, content = game
-    injected = "忠诚值88；能力八十；民心值73；进度评分73/100；欠饷约三月。"
+    injected = "忠诚值88；能力评分98；民心值73；进度评分73/100；欠饷约三月。"
     state.turn = max(2, int(state.turn))
     db.get_turn_report = lambda _turn: injected
     db.list_chapter_memories = lambda **_kwargs: [
@@ -779,7 +779,7 @@ def test_historical_context_rejects_adjacent_abstract_values_at_every_history_se
     )
     for text in rendered:
         assert "已略去" in text or "欠饷约三月" in text
-        assert not re.search(r"(?:忠诚值88|能力八十|民心值73|进度评分73/100)", text)
+        assert not re.search(r"(?:忠诚值88|能力评分98|民心值73|进度评分73/100)", text)
 
 
 def test_p4_guard_redacts_comparator_score_without_erasing_countable_facts():
