@@ -171,19 +171,6 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function resolveExplicitGrokBin(bin: string): GrokProbeTarget {
-  const previous = process.env.GROK_BIN;
-  process.env.GROK_BIN = bin;
-  try {
-    const target = resolveGrokProbeTarget();
-    if (!target) throw new Error(`GROK_BIN did not resolve: ${bin}`);
-    return target;
-  } finally {
-    if (previous === undefined) delete process.env.GROK_BIN;
-    else process.env.GROK_BIN = previous;
-  }
-}
-
 function requirePinnedHostTarget(
   skip: (note?: string) => never,
 ): Extract<GrokProbeTarget, { kind: "host" }> {
@@ -198,11 +185,7 @@ function requirePinnedHostTarget(
       `[#964] unavailable: host grok is not ${GROK_FAIL_FAST_PIN} (${bin}: ${versionLabel})`,
     );
   }
-  const target = resolveExplicitGrokBin(bin);
-  if (target.kind !== "host") {
-    return skip(`[#964] unavailable: GROK_BIN did not resolve to host target (${bin})`);
-  }
-  return target;
+  return { kind: "host", bin, version };
 }
 
 function runHeadlessEmptyAuthProbe(
