@@ -552,6 +552,13 @@ def create_minister_agent(
         if secret_brief:
             monthly_block_parts.append(secret_brief)
         monthly_block_parts.append(recommendation_brief)
+        if projected_roster and not use_roster_tool:
+            monthly_block_parts.append(
+                "【已授权在朝名册】\n" + "\n".join(
+                    f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
+                    for row in projected_roster
+                )
+            )
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,

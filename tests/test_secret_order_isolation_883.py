@@ -995,8 +995,7 @@ def test_976_stage_confirm_pin_provenance_not_max_held_user(game):
 
     assert sec_status == "withheld"
     # Confirm is not secret-origin bloodline — must not steal the pin.
-    assert conf_status != "withheld" or mid_confirm != mid_sec
-    assert conf_status in ("released", "private", "held", "withheld")
+    assert conf_status != "withheld"
     # Critical: oral decree never enters shared knowledge.
     assert db.conn.execute(
         "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
@@ -1339,7 +1338,7 @@ def test_976_production_tools_non_create_no_pure_public_auto_pin(game):
 
 
 def test_976_production_session_tool_path_progress_not_shared(game):
-    """生产 session tool 记进展：承办人同人路径，无 pin 不得把口谕投进共享源。
+    """生产 session tool 记进展：无结构 pin 不从密嘱字面猜 provenance。
 
     tools 仅 own-order；口谕 held 在承办人名下。无 pin → settle release = private
     （S3 参与即知），永不进 character_knowledge_sources。跨人 shared 泄漏仅 DB
@@ -1516,7 +1515,7 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
 
 
 def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypatch):
-    """生产 extract 催办/记进展：无新正文动作不钉 pin（与 tools 同口径）。"""
+    """生产 extract 催办/记进展：仅 update/显式 pin 才 classified，late chat 不猜字面。"""
     import json as _json
     import types
     from types import SimpleNamespace

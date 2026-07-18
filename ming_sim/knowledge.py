@@ -265,7 +265,7 @@ def _world(
     # an intermediate all-world snapshot.
     report_builders = {
         "treasury": lambda: db.treasury_report(state),
-        "military": lambda: db.army_report(limit=10),
+        "military": lambda: db.army_report(limit=30),
         "regional": lambda: db.region_report(limit=10),
         "personnel": lambda: db.faction_report(audience=True),
         "construction": lambda: db.buildings_report(qualitative=True),

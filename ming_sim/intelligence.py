@@ -27,6 +27,10 @@ def _vacancy_statement(rows: Iterable[Mapping[str, Any]], query: str) -> str:
             part and part in text for part in str(row.get("jurisdiction") or "").split("、")
         ) or str(row.get("region_id") or "") in text]
     if not matches:
+        if any(word in text for word in ("督抚", "官缺")):
+            vacancies = [row for row in rows if not row.get("holder_name")]
+            matches = vacancies or rows
+    if not matches:
         return "近臣暂未查到与所问相符的督抚官缺。"
     return "".join(
         f"{row['office_title']}{'现由' + str(row['holder_name']) + '任事。' if row.get('holder_name') else '当前虚悬。'}"
@@ -42,7 +46,7 @@ def _query_domain(query: str) -> str:
         return "bandits"
     if any(word in text for word in ("军情", "敌情", "边情", "兵势", "战事")):
         return "military"
-    if any(word in text for word in ("巡抚", "总督", "官缺", "虚悬", "在任")):
+    if any(word in text for word in ("巡抚", "总督", "督抚", "官缺", "虚悬", "在任")):
         return "office"
     return ""
 

@@ -46,6 +46,15 @@ def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(ga
     )
 
 
+def test_generic_office_queries_return_current_vacancies(game):
+    db, _state, _content = game
+
+    for query in ("督抚官缺如何？", "有哪些官缺？"):
+        statement = build_return_report(db, query)["statement"]
+        assert "陕西巡抚当前虚悬" in statement
+        assert "三边总督当前虚悬" in statement
+
+
 def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatch):
     db, _state, _content = game
     monkeypatch.setattr(db, "army_report", lambda **_: "辽镇兵额12000，欠饷25月，士气低迷")

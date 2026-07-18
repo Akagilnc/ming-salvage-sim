@@ -41,13 +41,14 @@ def test_r4_hu_tingyan_loader_and_db_preserve_non_holder_seed(read_game):
     db, _state, _content = read_game
 
     row = db.conn.execute(
-        "SELECT office, office_type, status FROM characters WHERE name=?", ("胡廷宴",)
+        "SELECT office, office_type, status, seed_guilt FROM characters WHERE name=?", ("胡廷宴",)
     ).fetchone()
-    assert dict(row) == {
+    assert {key: row[key] for key in ("office", "office_type", "status")} == {
         "office": "原三边总督,革职候勘",
         "office_type": "督抚",
         "status": "dismissed",
     }
+    assert __import__("json").loads(row["seed_guilt"]) == _by_name()["胡廷宴"].seed_guilt
 
 
 def test_r4_named_characters_debut_in_historical_order(game):
