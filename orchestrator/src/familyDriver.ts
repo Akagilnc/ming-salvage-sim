@@ -55,6 +55,7 @@ import {
 } from "./admissionPreflight.js";
 import {
   admitBaselineHealth,
+  NOOP_BASELINE_FIX_ATTEMPT,
   runBaselineFullTestsInWorkerContainer,
   type BaselineFixAttempt,
   type BaselineFullTestResult,
@@ -878,8 +879,11 @@ export interface FamilyDriverOptions {
    */
   readonly baselineFullTestRunner?: BaselineFullTestRunner;
   /**
-   * #1006 — optional one-round baseline fix (owner shape: red → fix once →
-   * recheck). Absence ⇒ fail-closed on first red (报错 path, also accepted).
+   * #1006 — one-round baseline fix (owner shape: red → fix once → recheck).
+   * Production always wires a one-shot hook: inject a real attempt, or leave
+   * unset to use {@link NOOP_BASELINE_FIX_ATTEMPT} (attempted:false → fail-closed
+   * 报错 path; never invents green). Auto LLM fixer is out of this slice —
+   * the seam is present so a later slice can inject without rewiring admission.
    */
   readonly baselineFixAttempt?: BaselineFixAttempt;
 }
@@ -1555,9 +1559,9 @@ export async function runFamilyDriver(
   });
   const baseline = await admitBaselineHealth({
     runFullTests: baselineRunner,
-    ...(options.baselineFixAttempt !== undefined
-      ? { tryFix: options.baselineFixAttempt }
-      : {}),
+    // Always wire the one-shot path (owner: 红 → 一轮 fixer 或报错). Default
+    // NOOP returns attempted:false → fail-closed without inventing green.
+    tryFix: options.baselineFixAttempt ?? NOOP_BASELINE_FIX_ATTEMPT,
   });
   if (baseline.kind === "stop") {
     await recordBaselineHealthFailed(familyBackend, {

@@ -24,7 +24,10 @@ import { fileURLToPath } from "node:url";
 import {
   admitBaselineHealth,
   buildBaselineContainerFullTestArgv,
+  formatBaselineExecFailureOutput,
   formatBaselineHealthFailurePackage,
+  NOOP_BASELINE_FIX_ATTEMPT,
+  runBaselineFullTestsInWorkerContainer,
   type BaselineFullTestResult,
 } from "../../../src/baselineHealthGate.js";
 import { FAMILY_LEDGER_FILENAME } from "../../../src/family/realFamilyBackend.js";
@@ -303,6 +306,95 @@ describe("#1006 pure baseline health gate", () => {
     expect(pkg).toMatch(/single pre-fix ticket|前置修复票|file one/i);
     expect(pkg).toMatch(/family base|baseline/i);
   });
+
+  it("red → tryFix attempted:false → stop without second full run (noop fail-closed)", async () => {
+    let runs = 0;
+    let fixes = 0;
+    const admitted = await admitBaselineHealth({
+      runFullTests: async () => {
+        runs += 1;
+        return {
+          ok: false,
+          exitCode: 1,
+          output: "FAIL once.test.ts",
+          failedTests: ["once.test.ts"],
+        };
+      },
+      tryFix: async () => {
+        fixes += 1;
+        return { attempted: false, summary: "noop — no auto fixer this slice" };
+      },
+    });
+    expect(admitted.kind).toBe("stop");
+    expect(runs).toBe(1);
+    expect(fixes).toBe(1);
+    if (admitted.kind === "stop") {
+      expect(admitted.fixAttempts).toBe(0);
+      expect(admitted.failure.output).toContain("once.test.ts");
+    }
+  });
+
+  it("NOOP_BASELINE_FIX_ATTEMPT reports attempted:false (production default 报错 path)", async () => {
+    const r = await NOOP_BASELINE_FIX_ATTEMPT({
+      ok: false,
+      exitCode: 1,
+      output: "FAIL x.test.ts",
+      failedTests: ["x.test.ts"],
+    });
+    expect(r.attempted).toBe(false);
+    expect(r.summary ?? "").toMatch(/not wired|fail-closed|报错|auto-fixer/i);
+  });
+});
+
+describe("#1006 exec failure capture (message+stdout+stderr)", () => {
+  it("formatBaselineExecFailureOutput keeps vitest FAIL body from stdout", () => {
+    const vitestStdout =
+      " FAIL  test/dispatch/grok-mid-run-auth-964.test.ts > stdin seam\n" +
+      "Failed to read '/dev/stdin': os error 6\n";
+    const err = Object.assign(new Error("Command failed: docker run …"), {
+      status: 1,
+      stdout: vitestStdout,
+      stderr: "npm warn deprecated foo\n",
+    });
+    const output = formatBaselineExecFailureOutput(err);
+    expect(output).toContain("Command failed");
+    expect(output).toContain("stderr:");
+    expect(output).toContain("npm warn deprecated foo");
+    expect(output).toContain("stdout:");
+    expect(output).toContain("grok-mid-run-auth-964");
+    expect(output).toContain("/dev/stdin");
+  });
+
+  it("runBaselineFullTestsInWorkerContainer maps thrown vitest-shaped stdout into failedTests", async () => {
+    const vitestStdout =
+      " FAIL  test/dispatch/grok-mid-run-auth-964.test.ts > stdin seam\n" +
+      "Failed to read '/dev/stdin': os error 6\n";
+    const err = Object.assign(new Error("Command failed: docker run …"), {
+      status: 1,
+      stdout: vitestStdout,
+      stderr: "",
+    });
+    const result = await runBaselineFullTestsInWorkerContainer(
+      {
+        imageName: "ming-orchestrator-coder:test",
+        workingRepo: "/clones/family-1006",
+        familyBase: "family/1006",
+        verifyCwd: "/clones/family-1006/orchestrator",
+      },
+      () => {
+        throw err;
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("grok-mid-run-auth-964");
+    expect(result.output).toContain("/dev/stdin");
+    // FAIL lives on stdout — must not be dropped when only .message is read.
+    expect(result.failedTests).toEqual(
+      expect.arrayContaining(["test/dispatch/grok-mid-run-auth-964.test.ts"]),
+    );
+  });
 });
 
 describe("#1006 worker-container full-test argv (env parity)", () => {
@@ -331,6 +423,34 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     // Must not be a bare host-side npm invocation without docker.
     expect(argv[0]).not.toBe("npm");
   });
+
+  it("aligns worker-class env: OPENCLAW_SESSION + HOME=/home/agent + user agent", () => {
+    const argv = buildBaselineContainerFullTestArgv({
+      imageName: "ming-orchestrator-coder:latest",
+      workingRepo: "/clones/family-1006",
+      familyBase: "family/1006",
+      verifyCwd: "/clones/family-1006/orchestrator",
+    });
+    // SPAWNED_WORKER_ENV parity + sandcastle HOME default (no full sc.run agent).
+    expect(argv).toContain("-e");
+    expect(argv).toContain("OPENCLAW_SESSION=1");
+    expect(argv).toContain("HOME=/home/agent");
+    expect(argv).toContain("--user");
+    expect(argv).toContain("agent");
+  });
+
+  it("shell-escapes paths with spaces via shared shellEscape (not a private quoter)", () => {
+    const argv = buildBaselineContainerFullTestArgv({
+      imageName: "ming-orchestrator-coder:latest",
+      workingRepo: "/clones/family 1006",
+      familyBase: "family/1006",
+      verifyCwd: "/clones/family 1006/orchestrator",
+    });
+    const remoteCmd = argv[argv.length - 1] ?? "";
+    // shellEscape quotes tokens that contain whitespace.
+    expect(remoteCmd).toContain("'/clones/family 1006'");
+    expect(remoteCmd).toMatch(/git -C .+ checkout --quiet/);
+  });
 });
 
 describe("#1006 public cause + ledger vocabulary", () => {
@@ -357,6 +477,7 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     const ledgerDir = track(mkdtempSync(join(tmpdir(), "baseline-ledger-red-")));
     let childBackend: TrackingChildBackend | undefined;
     let fanOutBeforeGate = 0;
+    let fixHookCalls = 0;
 
     const result = await runFamilyDriver({
       epicIssue: 1006,
@@ -389,12 +510,19 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
           "Failed to read '/dev/stdin': os error 6",
         failedTests: ["test/dispatch/grok-mid-run-auth-964.test.ts"],
       }),
+      // Production always wires a one-shot hook; tests may inject. Prove the
+      // admission path invokes it once then fail-closes (no fan-out).
+      baselineFixAttempt: async () => {
+        fixHookCalls += 1;
+        return { attempted: false, summary: "test noop" };
+      },
     });
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
       expect(result.cause).toBe("baseline_health_failed");
     }
+    expect(fixHookCalls).toBe(1);
     expect(result.escalation?.diagnosis).toMatch(/grok-mid-run-auth-964|stdin/i);
     expect(result.escalation?.diagnosis).toMatch(/pre-fix|前置|ticket|issue/i);
     expect(result.stopSummary.repairHint ?? "").toMatch(/pre-fix|前置|ticket|baseline/i);
@@ -416,6 +544,51 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
           r.status === "baseline_health_failed" && r.event === "baseline_health_failed",
       ),
     ).toBe(true);
+  });
+
+  it("base full red without injected fix → production NOOP hook still fail-closes (no fan-out)", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const source = makeSourceRepo();
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "baseline-ledger-noop-")));
+    let childBackend: TrackingChildBackend | undefined;
+
+    const result = await runFamilyDriver({
+      epicIssue: 1006,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1006",
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "ming-orchestrator-coder:test",
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => {
+        childBackend = new TrackingChildBackend(clone);
+        return childBackend;
+      },
+      familyBackendFactory: (clone, startHead) =>
+        controlledFamilyBackend(
+          clone,
+          startHead,
+          ledgerDir,
+          "ming-orchestrator-coder:test",
+        ),
+      baselineFullTestRunner: async () => ({
+        ok: false,
+        exitCode: 1,
+        output: "FAIL baseline-only.test.ts\n",
+        failedTests: ["baseline-only.test.ts"],
+      }),
+      // omit baselineFixAttempt → driver must still wire NOOP one-shot path
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.cause).toBe("baseline_health_failed");
+    }
+    expect(childBackend?.fanOutCalls ?? 0).toBe(0);
   });
 
   it("base full green → fan-out proceeds (success path not blocked)", async () => {
