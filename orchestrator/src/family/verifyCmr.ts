@@ -110,6 +110,7 @@ import {
 } from "../judgeStation.js";
 import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
+import { emitJudgeProgress } from "../progressBroadcast.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -1943,6 +1944,18 @@ async function runIntegratedCmrPass(input: {
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.advanceCoder : undefined;
+  // #1007 R5: typed family CMR judge land → progress feed (no prose).
+  // Same helper as single-slice; step is pass-scoped (not S3/S6 seat id).
+  if (judgeTraffic.kind === "judge") {
+    emitJudgeProgress({
+      epic: familyIssue ?? null,
+      issue: familyIssue ?? null,
+      step: `cmr:${pass}`,
+      verdict: judgeTraffic.status,
+      findingDispositions: judgeDispositionsForLedger,
+      findings: judgeTraffic.findings,
+    });
+  }
   // S3: skippedLegs must not drop on kind:judge (cargo rides).
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"

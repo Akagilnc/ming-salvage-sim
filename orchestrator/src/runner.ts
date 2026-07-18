@@ -3672,6 +3672,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   resolveBranchHEAD,
                   hashPrompt: (promptFile, s) =>
                     hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
                 });
               } catch (writeErr) {
                 return await errorTermination(
@@ -3737,6 +3738,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   resolveBranchHEAD,
                   hashPrompt: (promptFile, s) =>
                     hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
                 });
               } catch (writeErr) {
                 return await errorTermination(
@@ -3772,6 +3774,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   true,
                 ),
                 now: relayNow(),
+                issue: issueNumber,
               });
             } catch (writeErr) {
               return await errorTermination(
