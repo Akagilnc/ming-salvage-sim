@@ -57,6 +57,15 @@ import {
 import { parkOrRelayQuotaWall } from "../quotaParkRelay.js";
 import { MAX_RELAY_HANDOFFS } from "../relayDispatch.js";
 import { logDriverStage } from "../stageLog.js";
+import {
+  configureProgressBroadcast,
+  emitLandingProgress,
+  emitMergeProgress,
+  emitParkProgress,
+  emitShipProgress,
+  emitTerminalProgress,
+  emitWaveCloseProgress,
+} from "../progressBroadcast.js";
 import { isAnyStepId, isStepId } from "../types.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
@@ -1183,7 +1192,14 @@ async function ensureLandingForResume(input: {
       ? { billingPoolSlots: input.billingPoolSlots }
       : {}),
   });
-  if (landing.ok) return undefined;
+  if (landing.ok) {
+    // #1007: landing success echo.
+    emitLandingProgress({
+      epic: input.familyIssue,
+      pr: input.prUrl,
+    });
+    return undefined;
+  }
   // family/914 CR — single durable exit (recordLandingActionFailure); not dual-
   // written park/abort next to verifyCmr.
   const recorded = await recordLandingActionFailure(
@@ -1512,6 +1528,23 @@ export async function runFamily(
   // A durable family sidecar is shared across restarts, so it needs an
   // invocation-scoped identity just like the single-slice runner.
   const runId = mintRunId();
+  // #1007: bind progress feed to family durable ledgerDir when resolvable.
+  {
+    let familyLedgerDir: string | undefined;
+    try {
+      familyLedgerDir = familyBackend.resolveTelemetryDir?.({
+        runId,
+      } as import("../types.js").DispatchContext);
+    } catch {
+      familyLedgerDir = undefined;
+    }
+    if (familyLedgerDir !== undefined && familyLedgerDir.length > 0) {
+      configureProgressBroadcast({
+        ledgerDir: familyLedgerDir,
+        epic: input.epic.issue,
+      });
+    }
+  }
   // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
   // No env slot overrides, no interactive continue.
   const admitted = input.admittedRoute === undefined
@@ -2030,6 +2063,13 @@ export async function runFamily(
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
+    // #1007: family terminal echo (typed status + stop reason only).
+    emitTerminalProgress({
+      epic: epic.issue,
+      status,
+      stopReason: stopSummary.reason,
+    });
+
     // #942 CR R2 S3: status:"failed" always carries a mandatory ID-001 cause.
     if (status === "failed") {
       return attachDiagnostics(
@@ -2074,6 +2114,19 @@ export async function runFamily(
       return { issue: c.issue, status: "skipped" as const };
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
+    // #1007: park + terminal (typed gate summary; no worker prose parse).
+    emitParkProgress({
+      issue: parked.issue,
+      epic: epic.issue,
+      gateSummary: parked.escalation.diagnosis || parked.escalation.reason,
+      reason: "decision_gate_park",
+    });
+    emitTerminalProgress({
+      issue: parked.issue,
+      epic: epic.issue,
+      status: "parked",
+      stopReason: "decision_gate_park",
+    });
     return {
       status: "parked",
       familyBase,
@@ -2368,7 +2421,11 @@ export async function runFamily(
     // #938: rethrow-first deleted — keep every sibling outcome.
     logDriverStage(
       "dispatch",
-      `wave n=${wave.length} issues=${wave.map((c) => c.issue).join(",")}`,
+      `wave n=${wave.length}`,
+      {
+        issues: wave.map((c) => c.issue),
+        epic: epic.issue,
+      },
     );
     for (const child of wave) attempted.add(child.issue);
     const settled = await Promise.allSettled(
@@ -2581,10 +2638,22 @@ export async function runFamily(
         familyHead = mergeResult.familyHead;
         waveMergedAny = true;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
+        // #1007: merge echo (typed issue only).
+        emitMergeProgress({
+          issue: r.issue,
+          epic: epic.issue,
+          childHead: mergeResult.familyHead,
+        });
       } else {
         recordWaveSibling(r);
       }
     }
+
+    // #1007: wave close after serial merge drain (issues that ran this wave).
+    emitWaveCloseProgress({
+      epic: epic.issue,
+      issues: ran.map((r) => r.issue),
+    });
 
     // ── #604 slice 5: a CHILD decision escalation PARKS the family (stop-wave) ───
     // A child that returned `"escalated"` hit a product/design题. Record an
@@ -2829,6 +2898,12 @@ export async function runFamily(
     preFinalFamilyHead,
   );
   if (shippedRecord !== undefined) {
+    // #1007: ship checkpoint echo (typed pr + head only).
+    emitShipProgress({
+      epic: epic.issue,
+      pr: shippedRecord.pr,
+      familyHead: shippedRecord.familyHeadAfter,
+    });
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((child) =>
       ledgerMerged.has(child.issue)

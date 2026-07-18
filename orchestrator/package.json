@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
+    "status": "node --experimental-strip-types src/familyStatusCli.ts",
     "rebake": "bash image/build.sh",
     "rebake:no-cache": "bash image/build.sh --no-cache"
   },
