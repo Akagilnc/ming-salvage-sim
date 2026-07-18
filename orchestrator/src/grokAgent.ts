@@ -170,13 +170,16 @@ export function grokAgent(
         command:
           `prompt_file=$(mktemp); ` +
           `cleanup_prompt() { rm -f "$prompt_file"; }; ` +
-          `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; cleanup_prompt; kill -s "$signal" 0; }; ` +
+          `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; ` +
+          `if [ -n "$grok_pid" ]; then kill -s "$signal" "$grok_pid" 2>/dev/null; wait "$grok_pid" 2>/dev/null; fi; ` +
+          `cleanup_prompt; kill -s "$signal" "$$"; }; ` +
           `trap cleanup_prompt EXIT; ` +
           `trap 'relay_signal HUP' HUP; trap 'relay_signal INT' INT; trap 'relay_signal TERM' TERM; ` +
           `cat > "$prompt_file"; ` +
-          `grok --prompt-file "$prompt_file" --output-format streaming-json` +
+          `(exec env --default-signal=HUP,INT,TERM grok --prompt-file "$prompt_file" --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
-          `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}`,
+          `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}) & ` +
+          `grok_pid=$!; wait "$grok_pid"`,
         stdin: prompt,
       };
     },
