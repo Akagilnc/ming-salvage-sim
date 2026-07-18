@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
-from tests.section_rejection_helpers import rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 
 def _valid_power_id(db):

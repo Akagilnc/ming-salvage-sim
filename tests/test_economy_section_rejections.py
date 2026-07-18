@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import partial
 
 from driver import run_settle
-from tests.section_rejection_helpers import rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows
 
 ECO_REJ = "economy_moves_rejections"
 

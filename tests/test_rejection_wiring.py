@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from driver import run_settle
-from tests.section_rejection_helpers import rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows
 from tests.conftest import active_ming_character
 
 

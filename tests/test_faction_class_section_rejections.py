@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from driver import run_settle
-from tests.section_rejection_helpers import rejection_rows as _rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 FACTION_REJ_SECTION = "faction_delta_rejections"
 CLASS_REJ_SECTION = "class_delta_rejections"

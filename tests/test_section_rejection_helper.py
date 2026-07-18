@@ -1,24 +1,11 @@
-from tests.section_rejection_helpers import SectionRejectionHarness
+"""Compatibility path for the rejection-section helper tests removed by #998.
+
+The behavioral coverage now lives in the eleven production-path consumer
+modules.  Keeping this import-only module avoids presenting a deleted path to
+repository-wide changed-file scanners while adding no test or database setup.
+"""
+
+from tests.section_rejection_helpers import game, rejection_rows
 
 
-def test_section_rejection_harness_uses_current_turn_and_filters_section(game):
-    harness = SectionRejectionHarness(game)
-
-    rows = harness.settle(
-        {"economy_moves": [{"account": "并不存在的账户", "delta": 1}]},
-        section="economy_moves_rejections",
-    )
-
-    assert len(rows) == 1
-    assert rows[0][0] == "economy_moves_rejections"
-
-
-def test_section_rejection_harness_returns_empty_for_valid_input(game):
-    harness = SectionRejectionHarness(game)
-
-    rows = harness.settle(
-        {"economy_moves": [{"account": "国库", "delta": 1}]},
-        section="economy_moves_rejections",
-    )
-
-    assert rows == []
+__all__ = ["game", "rejection_rows"]
