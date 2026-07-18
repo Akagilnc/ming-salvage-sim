@@ -181,8 +181,8 @@ deliberately NO validator machinery (owner ruling 2026-07-11):
   — collectively "the judge"; #923). terra does not review.
 - **Coding/fix seats follow the owner's current route order** (2026-07-18:
   sol-low across coder/coderFix/fixer; judge-nameable bench sol@med/sol@high
-  via the roster — coderFix advance is live, the fixer-seat channel is
-  #1002).
+  via the roster — repair-seat advanceCoder is live for coderFix and
+  online-review fixer, including ledger sticky re-hold on re-entry (#1002)).
 - If sol ever holds a fixing seat, the floor reviewer for its output is
   cross-family (opus).
 
