@@ -47,9 +47,11 @@ let progressConfig: ProgressBroadcastConfig = {};
  * Install / merge process-level progress feed config.
  *
  * Lifecycle: process-global for one orchestration entry (family driver or
- * single-slice runner binds `ledgerDir` as soon as it is known). Tests must
- * call {@link clearProgressBroadcastConfig} between cases — production does
- * not clear on family exit (next entry re-binds / merges).
+ * single-slice runner binds `ledgerDir` as soon as it is known). Standalone
+ * `runOrchestrator` clears then rebinds so a later single-slice entry cannot
+ * keep writing into a prior family ledger (#1017). Family children inherit the
+ * family binding (no clear). Tests must call
+ * {@link clearProgressBroadcastConfig} between cases.
  */
 export function configureProgressBroadcast(
   cfg: ProgressBroadcastConfig,
@@ -57,7 +59,11 @@ export function configureProgressBroadcast(
   progressConfig = { ...progressConfig, ...cfg };
 }
 
-/** Clear process-level config (tests / isolation). */
+/**
+ * Clear process-level config.
+ * Used by tests for isolation and by standalone `runOrchestrator` entry so
+ * each single-slice invocation owns its feed (#1017).
+ */
 export function clearProgressBroadcastConfig(): void {
   progressConfig = {};
 }

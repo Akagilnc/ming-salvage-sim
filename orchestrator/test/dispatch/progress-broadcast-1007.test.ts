@@ -28,6 +28,7 @@ import {
   emitStageProgress,
   emitTerminalProgress,
   emitWaveCloseProgress,
+  getProgressBroadcastConfig,
   progressPath,
   readProgressEvents,
   renderFamilyStatus,
@@ -610,8 +611,9 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
   it("emits issue-numbered stage + judge + terminal progress rows", async () => {
     const { runOrchestrator } = await import("../../src/runner.js");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const ledgerDir = tempLedger("progress-1007-entry-");
-    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    // Worktree parent; standalone rebinds progress to sibling `.ledger-N` (#1017).
+    const workParent = tempLedger("progress-1007-entry-");
+    const stateDir = join(workParent, ".ledger-1007");
 
     type Backend = import("../../src/types.js").Backend;
     type IssueMeta = import("../../src/types.js").IssueMeta;
@@ -643,7 +645,7 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
       async prepareWorktree(
         issueNumber: number,
       ): Promise<WorktreeHandle> {
-        const path = join(ledgerDir, `wt-${issueNumber}`);
+        const path = join(workParent, `wt-${issueNumber}`);
         return {
           path,
           branch: `feat/${issueNumber}`,
@@ -684,7 +686,7 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
       .filter((s) => s.includes("[orchestrator:stage]"));
     expect(stageLines.some((s) => /issue #1007/.test(s))).toBe(true);
 
-    const events = readProgressEvents(ledgerDir);
+    const events = readProgressEvents(stateDir);
     const stages = events.filter((e) => e.kind === "stage");
     expect(stages.some((e) => e.kind === "stage" && e.issue === 1007)).toBe(
       true,
@@ -712,8 +714,8 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
     const { runOrchestrator } = await import("../../src/runner.js");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
-    const ledgerDir = tempLedger("progress-1007-judge-esc-");
-    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    const workParent = tempLedger("progress-1007-judge-esc-");
+    const stateDir = join(workParent, ".ledger-1007");
 
     type Backend = import("../../src/types.js").Backend;
     type IssueMeta = import("../../src/types.js").IssueMeta;
@@ -744,7 +746,7 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
       }
       async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
         return {
-          path: join(ledgerDir, `wt-${issueNumber}`),
+          path: join(workParent, `wt-${issueNumber}`),
           branch: `feat/${issueNumber}`,
           base: "main",
         };
@@ -776,7 +778,7 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
     expect(result.status).toBe("parked");
     void log;
 
-    const events = readProgressEvents(ledgerDir);
+    const events = readProgressEvents(stateDir);
     expect(
       events.some(
         (e) =>
@@ -785,7 +787,18 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
           e.verdict === "escalate",
       ),
     ).toBe(true);
-    expectParkAndTerminal(ledgerDir, { epic: 1000, issue: 1007 });
+    // Standalone feed has no epic; pin park+terminal rows on issue alone.
+    expect(
+      events.some((e) => e.kind === "park" && e.issue === 1007),
+    ).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "parked" &&
+          e.issue === 1007,
+      ),
+    ).toBe(true);
   });
 
   it("resident durable completed replay emits terminal progress", async () => {
@@ -846,6 +859,180 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
           e.stopReason === "already_done",
       ),
     ).toBe(true);
+  });
+});
+
+describe("#1017 P2: standalone rebinds progress ledger; family child inherits", () => {
+  it("after family config, standalone run writes progress to its own stateDir not the old family ledger", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const familyLedger = tempLedger("progress-1017-fam-");
+    const workParent = tempLedger("progress-1017-standalone-");
+    // Simulate prior same-process family driver binding.
+    configureProgressBroadcast({ ledgerDir: familyLedger, epic: 1000 });
+
+    type Backend = import("../../src/types.js").Backend;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type ResumeState = import("../../src/types.js").ResumeState;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class StandaloneBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState(): Promise<ResumeState | undefined> {
+        return undefined;
+      }
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
+        return {
+          path: join(workParent, `wt-${issueNumber}`),
+          branch: `feat/${issueNumber}`,
+          base: "main",
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1017,
+      backend: new StandaloneBackend(),
+    });
+    expect(
+      result.status === "completed" ||
+        result.status === "parked" ||
+        result.status === "failed",
+    ).toBe(true);
+
+    const standaloneStateDir = join(workParent, ".ledger-1017");
+    expect(readLines(familyLedger)).toHaveLength(0);
+    const events = readProgressEvents(standaloneStateDir);
+    expect(events.some((e) => e.kind === "stage" && e.issue === 1017)).toBe(
+      true,
+    );
+    expect(getProgressBroadcastConfig().ledgerDir).toBe(standaloneStateDir);
+    expect(getProgressBroadcastConfig().epic).toBeUndefined();
+  });
+
+  it("family child keeps already-configured family ledgerDir (does not rebind to child stateDir)", async () => {
+    const { runOrchestrator } = await import("../../src/runner.js");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const familyLedger = tempLedger("progress-1017-inherit-");
+    const workParent = tempLedger("progress-1017-child-wt-");
+    configureProgressBroadcast({ ledgerDir: familyLedger, epic: 1000 });
+
+    type Backend = import("../../src/types.js").Backend;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type ResumeState = import("../../src/types.js").ResumeState;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class FamilyChildBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState(): Promise<ResumeState | undefined> {
+        return undefined;
+      }
+      async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
+        return {
+          path: join(workParent, `wt-${issueNumber}`),
+          branch: `feat/${issueNumber}`,
+          base: "main",
+        };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {
+        return;
+      }
+      async pushBranch(): Promise<void> {
+        return;
+      }
+      async openPullRequest(): Promise<{ url: string }> {
+        return { url: "https://example.test/pr/1" };
+      }
+      async cleanupWorktree(): Promise<void> {
+        return;
+      }
+    }
+
+    const result = await runOrchestrator({
+      issueNumber: 1017,
+      backend: new FamilyChildBackend(),
+      family: {
+        parentIssue: 1000,
+        familyBase: "family/1000",
+        mergedBlockers: [],
+      },
+    });
+    expect(
+      result.status === "completed" ||
+        result.status === "parked" ||
+        result.status === "failed",
+    ).toBe(true);
+
+    const childStateDir = join(workParent, ".ledger-1017");
+    expect(existsSync(progressPath(childStateDir))).toBe(false);
+    const events = readProgressEvents(familyLedger);
+    expect(events.some((e) => e.kind === "stage" && e.issue === 1017)).toBe(
+      true,
+    );
+    expect(getProgressBroadcastConfig().ledgerDir).toBe(familyLedger);
+    expect(getProgressBroadcastConfig().epic).toBe(1000);
   });
 });
 
@@ -1360,9 +1547,9 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
 
   it("escalateTermination decision park (GitHub auth) emits park + terminal (P1/P4)", async () => {
     const { runOrchestrator } = await import("../../src/runner.js");
-    const ledgerDir = tempLedger("progress-1007-escalate-");
-    configureProgressBroadcast({ ledgerDir, epic: 1000 });
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    // Pre-worktree standalone: no stateDir yet — progress is log-only until
+    // bind (#1017 clears any prior process feed at standalone entry).
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -1408,14 +1595,29 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
       backend: new AuthFailBackend(),
     });
     expect(result.status).toBe("parked");
-    expectParkAndTerminal(ledgerDir, { epic: 1000, issue: 1007 });
+    const progressLines = log.mock.calls.map((c) => String(c[0]));
+    expect(
+      progressLines.some(
+        (s) =>
+          s.includes("[orchestrator:progress]") &&
+          s.includes("park") &&
+          s.includes("issue #1007"),
+      ),
+    ).toBe(true);
+    expect(
+      progressLines.some(
+        (s) =>
+          s.includes("[orchestrator:progress]") &&
+          s.includes("terminal") &&
+          s.includes("status=parked") &&
+          s.includes("issue #1007"),
+      ),
+    ).toBe(true);
   });
 
   it("errorTermination (metadata throw) emits terminal progress (P3)", async () => {
     const { runOrchestrator } = await import("../../src/runner.js");
-    const ledgerDir = tempLedger("progress-1007-error-");
-    configureProgressBroadcast({ ledgerDir, epic: 1000 });
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -1459,13 +1661,14 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
       backend: new MetaFailBackend(),
     });
     expect(result.status).toBe("failed");
-    const events = readProgressEvents(ledgerDir);
+    const progressLines = log.mock.calls.map((c) => String(c[0]));
     expect(
-      events.some(
-        (e) =>
-          e.kind === "terminal" &&
-          e.status === "failed" &&
-          e.issue === 1007,
+      progressLines.some(
+        (s) =>
+          s.includes("[orchestrator:progress]") &&
+          s.includes("terminal") &&
+          s.includes("status=failed") &&
+          s.includes("issue #1007"),
       ),
     ).toBe(true);
   });
@@ -1816,10 +2019,9 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
 
   it("stopForCoderRecTightRoutePolicy emits terminal progress (nit pin)", async () => {
     const { runOrchestrator } = await import("../../src/runner.js");
-    const ledgerDir = tempLedger("progress-1007-coder-rec-");
-    configureProgressBroadcast({ ledgerDir, epic: 1000 });
+    // S0 Coder-Rec tight stop is pre-worktree — log dual-write only (#1017).
     vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -1852,7 +2054,7 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
       }
       async prepareWorktree(issueNumber: number): Promise<WorktreeHandle> {
         return {
-          path: join(ledgerDir, `wt-${issueNumber}`),
+          path: join(tmpdir(), `wt-${issueNumber}`),
           branch: `feat/${issueNumber}`,
           base: "main",
         };
@@ -1873,13 +2075,14 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
       backend: new TightCoderRecBackend(),
     });
     expect(result.status).toBe("failed");
-    const events = readProgressEvents(ledgerDir);
+    const progressLines = log.mock.calls.map((c) => String(c[0]));
     expect(
-      events.some(
-        (e) =>
-          e.kind === "terminal" &&
-          e.status === "failed" &&
-          e.issue === 1007,
+      progressLines.some(
+        (s) =>
+          s.includes("[orchestrator:progress]") &&
+          s.includes("terminal") &&
+          s.includes("status=failed") &&
+          s.includes("issue #1007"),
       ),
     ).toBe(true);
   });
