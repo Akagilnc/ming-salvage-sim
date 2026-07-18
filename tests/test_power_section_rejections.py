@@ -13,13 +13,7 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
-
-
-def _rejection_rows(db, turn):
-    return db.conn.execute(
-        "SELECT section, reason, category, source FROM rejection_reports"
-        " WHERE turn=? ORDER BY id", (turn,)
-    ).fetchall()
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows
 
 
 def _valid_power_id(db):

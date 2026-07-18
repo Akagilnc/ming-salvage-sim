@@ -13,15 +13,15 @@ from pathlib import Path
 import pytest
 
 from driver import run_settle
+from tests.section_rejection_helpers import rejection_rows
 from tests.conftest import active_ming_character
 
 
 def _rejection_rows(db, turn):
     try:
-        return db.conn.execute(
-            "SELECT section, reason, category, source, attempt FROM rejection_reports"
-            " WHERE turn=? ORDER BY id", (turn,)
-        ).fetchall()
+        return rejection_rows(
+            db, turn, columns="section, reason, category, source, attempt"
+        )
     except Exception:
         return []
 
