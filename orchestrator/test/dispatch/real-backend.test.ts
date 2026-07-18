@@ -26,7 +26,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import * as telemetry from "../../src/telemetry.js";
 import {
   agentForSlug,
   attributeFailure,
@@ -69,6 +68,7 @@ import type {
 } from "../../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
+import * as telemetry from "../../src/telemetry.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import * as scRuntime from "@ai-hero/sandcastle";
@@ -934,20 +934,15 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     expect(existsSync(secondHome)).toBe(true);
   });
 
-  it("constructs successfully against the checked-in absolute prompts/ dir", () => {
-    expect(
-      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
-    ).not.toThrow();
-  });
-
-  it("does not calculate telemetry fingerprints during construction", () => {
+  it("constructs without calculating telemetry fingerprints against the checked-in dirs", () => {
     const configure = vi.spyOn(
       telemetry,
       "configureTelemetryFromWorkerImage",
     );
 
-    new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir });
-
+    expect(
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
+    ).not.toThrow();
     expect(configure).not.toHaveBeenCalled();
   });
 
@@ -957,7 +952,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     ).toThrow(/must be an ABSOLUTE path/);
   });
 
-  it("throws on an absolute promptsDir that does not exist", () => {
+  it("rejects missing prompt or soul dependencies before clone", () => {
     expect(
       () =>
         new StubCloneBackend({
@@ -965,34 +960,26 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
-  });
 
-  it("dir-exists-but-missing-souls throws with the missing filenames", () => {
-    // Use a real existing dir (mkdtemp) that has no soul files inside.
-    // Ctor must reject before any clone/git work (validateSoulsDir runs early).
+    // Constructor wiring must run soulsDir validation before clone/git work.
     const badSouls = mkdtempSync(join(tmpdir(), "dir-exists-missing-souls-"));
-    expect(() =>
-      new StubCloneBackend({
-        ...baseOpts,
-        promptsDir: realPromptsDir,
-        soulsDir: badSouls,
-      }),
-    ).toThrow(/missing required soul file\(s\):/);
-    let msg = "";
+    let message = "";
     try {
       new StubCloneBackend({
         ...baseOpts,
         promptsDir: realPromptsDir,
         soulsDir: badSouls,
       });
-    } catch (e: any) {
-      msg = String(e?.message ?? e);
+    } catch (error: any) {
+      message = String(error?.message ?? error);
     }
-    expect(msg).toMatch(/cmr\.md/);
-    expect(msg).toMatch(/verify\.md/);
-    expect(msg).not.toMatch(/output_protocol\.md/);
-    expect(msg).toMatch(/All of \[/);
+    expect(message).toMatch(/missing required soul file\(s\):/);
+    expect(message).toMatch(/cmr\.md/);
+    expect(message).toMatch(/verify\.md/);
+    expect(message).not.toMatch(/output_protocol\.md/);
+    expect(message).toMatch(/All of \[/);
   });
+
 });
 
 describe("RealBackend reviewer output contract", () => {
@@ -1204,20 +1191,6 @@ describe("RealBackend reviewer output contract", () => {
         ],
       }),
     ).not.toThrow();
-  });
-
-  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const backend = new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 445,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-reviewer-"),
-    });
 
     const decoded = backend.probeDecodeOutput(reviewerSpec, {
       findingsCount: 1,
@@ -1242,8 +1215,6 @@ describe("RealBackend reviewer output contract", () => {
       priorFindingDispositions: [],
     });
 
-    // #925: S3/S6 decode projects residual open-count cargo onto judge form;
-    // findings rows (incl. disposition_reason) remain opaque cargo.
     expect(
       decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
     ).toBe("legacy fallback should not win");

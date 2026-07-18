@@ -178,36 +178,62 @@ const HEADLESS_PRINT_ARGS = [
   "bypassPermissions",
 ] as const;
 
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+type HeadlessProbeResult = {
   status: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
   combined: string;
   elapsedMs: number;
-} {
+};
+
+function runHostPipeProbe(
+  bin: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): HeadlessProbeResult {
+  const t0 = Date.now();
+  const result = spawnSync("/bin/bash", [
+    "-c",
+    'bin=$1; shift; exec "$bin" "$@" < <(printf "%s\\n" "$PROBE_INPUT")',
+    "grok-headless-probe",
+    bin,
+    ...args,
+  ], {
+    encoding: "utf8",
+    env: { ...env, PROBE_INPUT: "ping" },
+    timeout: timeoutMs,
+    maxBuffer: 2 * 1024 * 1024,
+    killSignal: "SIGKILL",
+  });
+  const timedOut =
+    result.error?.message?.includes("TIMEDOUT") === true ||
+    result.signal === "SIGTERM" ||
+    result.signal === "SIGKILL";
+  return {
+    status: result.status,
+    signal: result.signal,
+    timedOut,
+    combined: `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+    elapsedMs: Date.now() - t0,
+  };
+}
+
+function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): HeadlessProbeResult {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
   const t0 = Date.now();
   if (target.kind === "host") {
-    const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
-      encoding: "utf8",
-      input: "ping\n",
+    // Node child_process uses a socketpair for `input`; grok re-opens
+    // /dev/stdin and Linux rejects opening that socket with ENXIO. Production
+    // workers receive stdin through docker/podman -i, which presents a pipe.
+    // Build the same fd shape here instead of testing a Node-only artifact.
+    return runHostPipeProbe(
+      target.bin,
+      HEADLESS_PRINT_ARGS,
       env,
-      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-      killSignal: "SIGKILL",
-    });
-    const timedOut =
-      r.error?.message?.includes("TIMEDOUT") === true ||
-      r.signal === "SIGTERM" ||
-      r.signal === "SIGKILL";
-    return {
-      status: r.status,
-      signal: r.signal,
-      timedOut,
-      combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
-      elapsedMs: Date.now() - t0,
-    };
+      HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+    );
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
@@ -391,13 +417,32 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
   it(
     "live headless empty-auth fails fast before timeout (no device-auth hang)",
     () => {
+      const pidDir = mkDir("964-timeout-child-");
+      const pidFile = join(pidDir, "pid");
+      const hang = runHostPipeProbe(
+        "/bin/sh",
+        ["-c", 'echo $$ > "$PID_FILE"; exec sleep 60'],
+        { ...process.env, PID_FILE: pidFile },
+        250,
+      );
+      expect(hang.timedOut).toBe(true);
+      const childPid = Number(readFileSync(pidFile, "utf8").trim());
+      let childAlive = true;
+      try {
+        process.kill(childPid, 0);
+      } catch (error: any) {
+        if (error?.code !== "ESRCH") throw error;
+        childAlive = false;
+      }
+      expect(childAlive, `timed-out probe child ${childPid} must be reaped`).toBe(false);
+
       // #964 AC: real worker print shape + empty credentials must not enter
       // interactive device-code wait. Pin 0.2.102 is the production hang fix;
       // this probe exercises a real binary (host pin or baked image pin).
-      // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
+      // Only this live portion skips when no eligible binary is available; the
+      // timeout/reap guard above is environment-independent and always runs.
       const target = resolveGrokProbeTarget();
       if (!target) {
-        // Loud skip reason — CI with rebaked image / host pin should not hit this.
         console.warn(
           `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN ` +
             `and no docker image with that pin (set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
