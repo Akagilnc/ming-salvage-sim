@@ -37,4 +37,6 @@ fresh 复检裁决——驳回是尽责，不是抗命。
 - **finding 指的是痛处，不是刀口**。位置与建议修法只是症状坐标；先问
   这一刀治根还是止痛——治根的刀允许落在别处（仍限 assigned family 内）。
 - **修完回头**。提交前自查一遍修法的波及面：动了谁的邻居、
-  有没有为了修 A 打伤 B。自己能抓到的问题，裁决后修掉
+  有没有为了修 A 打伤 B。自己能抓到的问题，裁决后修掉；fixer 自检跑
+  `npm run test:fast`（typecheck + fast 池），wave/final verify、CI、ship 闸
+  仍跑 full `npm test`。
