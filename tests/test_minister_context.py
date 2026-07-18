@@ -380,6 +380,13 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game, monke
         if c.office_type not in ("后宫", "宗藩")
     ]
     first, second = ministers[:2]
+    roster = db.current_court_roster_rows(state)
+    assert len(roster) <= 100
+    visible_roster_row = next(row for row in roster if row["office_type"] == first.office_type)
+    hidden_roster_row = next(
+        row for row in roster
+        if row["office_type"] != first.office_type and row["name"] != second.name
+    )
     projections = {
         first.name: {
             "world": {"role": f"只给{first.name}的职位事实", "secret": "不可知密报"},
@@ -420,6 +427,8 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game, monke
     assert "参与事项" in first_rendered
     assert f"只给{second.name}的职位事实" not in first_rendered
     assert "不可知密报" in first_rendered
+    assert visible_roster_row["name"] in first_rendered
+    assert hidden_roster_row["name"] not in first_rendered
     assert f"只给{first.name}的职位事实" not in second_rendered
     assert "不可知密报" not in second_rendered
 

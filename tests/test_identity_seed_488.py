@@ -17,7 +17,6 @@ def test_identity_and_seed_guilt_are_loaded_from_roster_and_seeded(game):
     assert row["faction"] == "皇党"
     assert row["identity"] == 95
     assert json.loads(row["seed_guilt"]) == {"crime": "无", "severity": "无"}
-    assert json.loads(row["seed_guilt"]) == content.characters["王承恩"].seed_guilt
 
     温 = db.conn.execute(
         "SELECT faction, identity, seed_guilt FROM characters WHERE name=?", ("温体仁",)
@@ -71,6 +70,7 @@ def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(
     assert row["identity"] == content.characters["魏忠贤"].identity
     assert json.loads(row["seed_guilt"]) == content.characters["魏忠贤"].seed_guilt
     assert inserted["identity"] == content.characters["王承恩"].identity
+    assert json.loads(inserted["seed_guilt"]) == content.characters["王承恩"].seed_guilt
     restored.close()
 
 
