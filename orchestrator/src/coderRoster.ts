@@ -44,7 +44,7 @@ export class CoderRecError extends Error {
 }
 
 /** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-11.1";
+export const CODER_ROSTER_VERSION = "2026-07-18.1";
 
 /**
  * Eligible coder models (model × pool × aliases). Keep in sync with
@@ -77,6 +77,18 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     slug: "gpt-5.6-sol",
     pool: "codex",
     aliases: ["sol@med+fast", "gpt-5.6-sol"],
+  },
+  {
+    id: "sol@low",
+    slug: "gpt-5.6-sol-low",
+    pool: "codex",
+    aliases: ["gpt-5.6-sol-low"],
+  },
+  {
+    id: "sol@high",
+    slug: "gpt-5.6-sol-high",
+    pool: "codex",
+    aliases: ["gpt-5.6-sol-high"],
   },
   {
     id: "sonnet-5",
