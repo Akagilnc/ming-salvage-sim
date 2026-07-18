@@ -65,7 +65,6 @@ system             -- 规则层直接写入
 ### `chat_messages`
 
 每轮召对逐条落库（`append_chat_message`），不丢进程重启。
-按`(minister_name, turn)`分组，供月末 chat_memory_extractor 使用。
 
 ### `secret_orders`
 
@@ -99,14 +98,6 @@ system             -- 规则层直接写入
   │       payload：turn + directives + decree_text + narrative + applied + extractor_output(applied view)
   │       输出：memories[] JSON → _write_llm_memories() → upsert_event_memory()
   │
-  └─ 3. extract_all_chat_memories()                [memories.py]
-          遍历当月所有召对大臣（db.get_chat_messages_for_turn）
-          每个大臣独立调用 extract_chat_memories_for_minister()
-            └─ agent：chat_memory_extractor（prompts/chat_memory_extractor.md）
-               payload：turn + minister_name + chat_history
-               输出：memories[] → source_kind强制=chat_message, source_id=大臣名:turn
-               限制：每大臣每回合 ≤ 3 条，importance≤2自动设expires_turn=turn+6
-
   以上完成后：prune_event_memories_for_turn(per_subject=3)
     -- 同主体同回合超过3条时按importance降序删低价值的
 ```
@@ -115,8 +106,6 @@ system             -- 规则层直接写入
 
 ```
 step 4  record_event_memories_from_resolution   （规则层）
-step 5  extract_all_chat_memories               （chat_memory agent）
-        ← 紧随落库之后，当月chat_messages已全量入库
 ```
 
 ---
@@ -253,13 +242,6 @@ secret_orders_for_sim = {
 # - 披露事件（source_id 前缀 secret_order_disclosure:）是简报升公开知识的唯一通道
 ```
 
-完结/失败密令**不**在此出现；它们通过 `chat_message` 来源的 `event_memory` 进入 `relevant_memories`。
-
-### 密令不重复进记忆
-
-`chat_memory_extractor.md` 提示词明确：
-> 密令（已由 `issue_secret_order` tool 独立落库）不重复写入记忆，除非对话中有额外承诺或情报值得记录。
-
 ---
 
 ## 六、已打通 / 已确认的边界
@@ -267,11 +249,8 @@ secret_orders_for_sim = {
 | 关注点 | 状态 | 位置 |
 |--------|------|------|
 | chat_messages 逐条持久化 | ✅ | `db.append_chat_message` |
-| 月末chat提取不漏大臣 | ✅ | `get_chat_messages_for_turn` 按minister分组 |
-| chat提取单大臣失败不阻断 | ✅ | `extract_all_chat_memories` try/except |
 | 规则层 + LLM层不重复source | ✅ | UNIQUE(subject_type,subject_id,event_type,source_kind,source_id) upsert |
-| 密令不进event_memory（active阶段） | ✅ | #883：分组只进 personnel_secret rail；公共 simulator 不预读；提示词禁止重复 |
-| 密令结案后可通过chat记忆追溯 | ✅ | chat_message来源的event_memory中有结果叙述 |
+| 密令及其派生不进共享 memory | ✅ | #883：专用密令简报结构隔离；披露事件是唯一公开化通道 |
 | 注入不破前缀缓存 | ✅ | 全部走user message，不进system prompt |
 | 时间查绕过衰减 | ✅ | `ignore_expiry=True` 路径 |
 | 每月per_subject剪枝防膨胀 | ✅ | `prune_event_memories_for_turn(per_subject=3)` |
@@ -287,8 +266,5 @@ secret_orders_for_sim = {
 2. **密令active上限20条**：超限直接报错，不降级。
    若玩家密令积压多，大臣会看到报错提示，需先结案旧令。
 
-3. **chat提取时机**：月末颁诏后才提取chat记忆，当月召对内容当月无法被推演引用。
-   召对记忆下月才进入relevant_memories，有1回合滞后。
-
-4. **prune per_subject=3**：同主体同回合只保3条，可能剪掉次要但有效的事件记忆。
+3. **prune per_subject=3**：同主体同回合只保3条，可能剪掉次要但有效的事件记忆。
    importance评分对此有保护（高importance优先保留）。
