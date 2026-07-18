@@ -69,7 +69,13 @@ import {
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
-import { executeAdvanceCoderSuggestion } from "../advanceCoderEffect.js";
+import {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+  type AdvanceRepairSeat,
+} from "../advanceCoderEffect.js";
+import { lookupCoderRosterEntry } from "../coderRoster.js";
 import {
   applyRelayBatonToRoute,
   modelRouteFingerprint,
@@ -110,6 +116,7 @@ import {
 } from "../judgeStation.js";
 import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
+import { emitJudgeProgress } from "../progressBroadcast.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -266,6 +273,34 @@ export interface VerifyCmrResult {
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
   return { ok: false, ran: true, failedStatus: status };
+}
+
+/**
+ * #1002 / #1017 — rebuild one sticky repair seat from the latest successful
+ * family-ledger `coder_advance` scoped to that seat (not stay_put, not the
+ * other court). Online-review uses `fixer` (S10); CMR uses `coderFix` (S5).
+ * Courts must not cross-bleed on process re-entry.
+ */
+function reholdRepairSeatFromFamilyLedger(
+  route: ResolvedModelRoute,
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly status?: string;
+    readonly toModelId?: string;
+    readonly advanceSeat?: string;
+  }>,
+  seat: AdvanceRepairSeat,
+  step: "S5" | "S10",
+): { readonly route: ResolvedModelRoute; readonly reheldSlug?: string } {
+  const advancedTo = latestCoderAdvanceToSlug(ledger, seat);
+  if (advancedTo === undefined) return { route };
+  const advanced = lookupCoderRosterEntry(advancedTo);
+  const slug = advanced?.slug ?? advancedTo;
+  if (route.slots[seat] === slug) return { route, reheldSlug: slug };
+  return {
+    route: applyRelayBatonToRoute(route, { slug }, step, { slots: [seat] }),
+    reheldSlug: slug,
+  };
 }
 
 async function runFamilyVerifyOrAbort(input: {
@@ -1106,6 +1141,35 @@ function familyOnlineReviewLoopFailureStopSummary(
   });
 }
 
+/**
+ * Assignability smoke for family advanceCoder courts (online-review fixer /
+ * integrated CMR coderFix). Fail → stay_put via executeAdvanceCoderSuggestion;
+ * never terminal. Shared to avoid twin probe bodies (#919 / #1002 DRY).
+ */
+async function probeFamilyAdvanceRoute(
+  candidate: ResolvedModelRoute,
+  cliVersion: string,
+): Promise<
+  | { readonly ok: true; readonly route: ResolvedModelRoute }
+  | { readonly ok: false; readonly reason: string }
+> {
+  try {
+    const smoked = await smokeRouteModels(candidate, async () => ({
+      cliVersion,
+    }));
+    const failure = routeSmokeFailure(smoked);
+    if (failure !== undefined) {
+      return { ok: false, reason: failure };
+    }
+    return { ok: true, route: smoked };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
@@ -1146,10 +1210,11 @@ export async function runFamilyOnlineReviewLoop(input: {
     };
   }
   // F2: do not put sticky baton pool on baseCtx — each dispatch scopes by slot.
+  // modelRoute is intentionally omitted here and injected per-dispatch so
+  // #1002 advanceCoder sticky fixer rewrites are visible to the next seat.
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
-    modelRoute,
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -1168,8 +1233,61 @@ export async function runFamilyOnlineReviewLoop(input: {
       kind,
     });
 
+  /**
+   * #1002 — online-review continue + advanceCoder rewrites the **fixer** repair
+   * seat (same effect topology as CMR coderFix; never terminal).
+   */
+  const applyOnlineReviewAdvanceCoder = async (
+    suggestion: string,
+  ): Promise<void> => {
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion,
+      currentSlug: modelRoute.slots.fixer,
+      route: modelRoute,
+      applySlug: (route, slug) =>
+        applyRelayBatonToRoute(route, { slug }, "S10", { slots: ["fixer"] }),
+      probe: (candidate) =>
+        probeFamilyAdvanceRoute(candidate, "online-review-advance"),
+    });
+    modelRoute = effect.route;
+    if (effect.kind === "stay_put" || effect.kind === "advanced") {
+      await input.familyBackend.appendFamilyLedger({
+        ...familyAdvanceCoderAuditFields(effect, suggestion, "fixer"),
+      });
+      console.info(
+        effect.kind === "advanced"
+          ? `[family] #1002 advanceCoder → ${effect.toSlug} ` +
+              `(fixer) from ${effect.fromSlug}`
+          : `[family] #1002 advanceCoder stay-put (${effect.reason}): ` +
+              `kept ${modelRoute.slots.fixer}; suggestion=${effect.suggestion}`,
+      );
+    }
+  };
+
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
   const familyLedger = await input.familyBackend.readFamilyLedger();
+  // #1002 / #1017 — rebuild sticky **fixer** from latest family ledger
+  // coder_advance scoped to advanceSeat:"fixer" (not stay_put, not CMR
+  // coderFix advances on the same ledger). Process re-entry keeps the
+  // advanced online-review repair seat without re-suggestion.
+  {
+    const beforeFixer = modelRoute.slots.fixer;
+    const reheld = reholdRepairSeatFromFamilyLedger(
+      modelRoute,
+      familyLedger,
+      "fixer",
+      "S10",
+    );
+    modelRoute = reheld.route;
+    if (
+      reheld.reheldSlug !== undefined &&
+      beforeFixer !== reheld.reheldSlug
+    ) {
+      console.info(
+        `[family] #1002 re-hold sticky fixer from ledger coder_advance → ${reheld.reheldSlug}`,
+      );
+    }
+  }
   const shipTriggeredAt = shipLedgerTriggeredAtFromFamilyLedger(
     familyLedger,
     prUrl,
@@ -1273,9 +1391,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       const verifyPool = poolForKind("verify");
       const result = await dispatchOrAbort(
         input.familyBackend,
-        verifyWorkerSpec(input.resolvedRoute),
+        verifyWorkerSpec(modelRoute),
         {
           ...baseCtx,
+          modelRoute,
           onlineReviewRound: round,
           ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
         },
@@ -1332,13 +1451,24 @@ export async function runFamilyOnlineReviewLoop(input: {
           ),
         };
       }
+      // #1002: continue disposition + advanceCoder rewrites fixer before fix
+      // dispatch (same never-terminal contract as CMR/single-slice courts).
+      const verifyOut = result.output;
+      if (
+        !verifyOut.converged &&
+        verifyOut.terminalState !== "decision_gate_raised" &&
+        typeof verifyOut.advanceCoder === "string" &&
+        verifyOut.advanceCoder.trim().length > 0
+      ) {
+        await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
+      }
       return {
         kind: "rawReviewerArtifacts",
         artifacts: reviewerArtifactPointers(
           reviewerMonitorHandle,
           result.sessionId,
         ),
-        verify: result.output,
+        verify: verifyOut,
       };
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
@@ -1350,9 +1480,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       const fixerPool = poolForKind("fixer");
       const result = await dispatchOrAbort(
         input.familyBackend,
-        fixerWorkerSpec(input.resolvedRoute),
+        fixerWorkerSpec(modelRoute),
         {
           ...baseCtx,
+          modelRoute,
           ...(fixerPool !== undefined ? { billingPool: fixerPool } : {}),
         },
         landing,
@@ -1943,6 +2074,18 @@ async function runIntegratedCmrPass(input: {
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.advanceCoder : undefined;
+  // #1007 R5: typed family CMR judge land → progress feed (no prose).
+  // Same helper as single-slice; step is pass-scoped (not S3/S6 seat id).
+  if (judgeTraffic.kind === "judge") {
+    emitJudgeProgress({
+      epic: familyIssue ?? null,
+      issue: familyIssue ?? null,
+      step: `cmr:${pass}`,
+      verdict: judgeTraffic.status,
+      findingDispositions: judgeDispositionsForLedger,
+      findings: judgeTraffic.findings,
+    });
+  }
   // S3: skippedLegs must not drop on kind:judge (cargo rides).
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"
@@ -2218,38 +2361,19 @@ async function runIntegratedCmrPass(input: {
           applyRelayBatonToRoute(route, { slug }, "S5", {
             slots: ["coderFix"],
           }),
-        probe: async (candidate) => {
-          try {
-            const smoked = await smokeRouteModels(candidate, async () => ({
-              cliVersion: "family-advance",
-            }));
-            const failure = routeSmokeFailure(smoked);
-            if (failure !== undefined) {
-              return { ok: false as const, reason: failure };
-            }
-            return { ok: true as const, route: smoked };
-          } catch (err) {
-            return {
-              ok: false as const,
-              reason: err instanceof Error ? err.message : String(err),
-            };
-          }
-        },
+        probe: (candidate) =>
+          probeFamilyAdvanceRoute(candidate, "family-advance"),
       });
       activeRoute = effect.route;
       if (effect.kind === "stay_put" || effect.kind === "advanced") {
         await familyBackend.appendFamilyLedger({
-          status: effect.audit.event,
-          event: effect.audit.event,
+          ...familyAdvanceCoderAuditFields(
+            effect,
+            advanceSuggestion,
+            "coderFix",
+          ),
           phase: ledgerPhase,
           cmrPass: pass,
-          reason:
-            effect.kind === "stay_put" ? effect.reason : "coder_advance",
-          message: effect.audit.state_summary,
-          fromModelId: effect.audit.fromModelId,
-          toModelId: effect.audit.toModelId,
-          advanceCoder: advanceSuggestion,
-          ts: effect.audit.ts,
         });
         console.info(
           effect.kind === "advanced"
@@ -2574,6 +2698,30 @@ export async function runVerifyCmr(
       stopSummary,
     });
     return stageGate("cmr_failed");
+  }
+
+  // #1002 / #1017 C2 — rebuild sticky **coderFix** from latest family ledger
+  // coder_advance scoped to advanceSeat:"coderFix" (not stay_put, not online-
+  // review fixer advances). Process re-entry after CMR advance must keep the
+  // advanced repair seat without re-suggestion.
+  {
+    const familyLedgerForRoute = await familyBackend.readFamilyLedger();
+    const beforeSlug = resolvedRoute.slots.coderFix;
+    const reheld = reholdRepairSeatFromFamilyLedger(
+      resolvedRoute,
+      familyLedgerForRoute,
+      "coderFix",
+      "S5",
+    );
+    resolvedRoute = reheld.route;
+    if (
+      reheld.reheldSlug !== undefined &&
+      beforeSlug !== reheld.reheldSlug
+    ) {
+      console.info(
+        `[family] #1002 re-hold sticky coderFix from ledger coder_advance → ${reheld.reheldSlug}`,
+      );
+    }
   }
 
   // #961 / ADR 0139: incremental Integrated Correctness checkpoint — full-strength

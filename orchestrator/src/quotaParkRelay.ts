@@ -21,6 +21,7 @@ import {
   renderEphemeralRelayBrief,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
+import { emitExitProgress } from "./progressBroadcast.js";
 import type {
   Backend,
   LedgerEntry,
@@ -130,6 +131,13 @@ export async function parkQuotaWaitForReset(opts: {
     promptFile: string | undefined,
     step: SliceStepId,
   ) => Promise<string>;
+  /** Single-slice ticket id for progress attribution. */
+  readonly issue?: number | null;
+  /**
+   * When false, caller owns park+terminal progress dual-write (family
+   * `buildParkResult`). Default true keeps single-slice helper-owned emit.
+   */
+  readonly emitProgress?: boolean;
 }): Promise<RunResult> {
   const { err, step, ledger, stateDir, sessionId, backend } = opts;
   const ledgerEntry: QuotaWaitForResetLedgerEvent =
@@ -174,15 +182,27 @@ export async function parkQuotaWaitForReset(opts: {
     ledgerEntry.resetAt !== undefined
       ? ` (resetAt ${ledgerEntry.resetAt})`
       : "";
+  const stopSummary = {
+    reason: "provider_degraded" as const,
+    summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
+    repairHint:
+      "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+  };
+  // #1007: shared park helper emits park+terminal (fail-open; call sites cannot
+  // forget). Family sets emitProgress:false and dual-writes once via buildParkResult.
+  if (opts.emitProgress !== false) {
+    emitExitProgress({
+      issue: opts.issue ?? null,
+      step,
+      status: "parked",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+  }
   return {
     status: "parked",
     stepLedger: ledger,
-    stopSummary: {
-      reason: "provider_degraded",
-      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
-      repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
-    },
+    stopSummary,
   };
 }
 
@@ -222,6 +242,13 @@ export async function parkOrRelayQuotaWall(opts: {
   readonly parkThresholdMs?: number;
   readonly now: Date;
   readonly state_summary?: string;
+  /** Single-slice ticket id for progress attribution. */
+  readonly issue?: number | null;
+  /**
+   * When false, park path skips helper progress emit (family owns dual-write).
+   * Default true.
+   */
+  readonly emitProgress?: boolean;
 }): Promise<ParkOrRelayQuotaWallOutcome> {
   const {
     err,
@@ -231,6 +258,12 @@ export async function parkOrRelayQuotaWall(opts: {
     sessionId,
     backend,
   } = opts;
+  const parkProgressOpts = {
+    ...(opts.issue !== undefined ? { issue: opts.issue } : {}),
+    ...(opts.emitProgress !== undefined
+      ? { emitProgress: opts.emitProgress }
+      : {}),
+  };
   const disposition = err.disposition;
   if (disposition.kind !== "wait_for_reset") {
     // Defensive: QuotaWaitForResetError constructor already requires this.
@@ -245,6 +278,7 @@ export async function parkOrRelayQuotaWall(opts: {
         backend,
         resolveBranchHEAD: opts.resolveBranchHEAD,
         hashPrompt: opts.hashPrompt,
+        ...parkProgressOpts,
       }),
     };
   }
@@ -297,6 +331,7 @@ export async function parkOrRelayQuotaWall(opts: {
       backend,
       resolveBranchHEAD: opts.resolveBranchHEAD,
       hashPrompt: opts.hashPrompt,
+      ...parkProgressOpts,
     }),
   };
 }

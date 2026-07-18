@@ -181,8 +181,8 @@ deliberately NO validator machinery (owner ruling 2026-07-11):
   — collectively "the judge"; #923). terra does not review.
 - **Coding/fix seats follow the owner's current route order** (2026-07-18:
   sol-low across coder/coderFix/fixer; judge-nameable bench sol@med/sol@high
-  via the roster — coderFix advance is live, the fixer-seat channel is
-  #1002).
+  via the roster — repair-seat advanceCoder is live for coderFix and
+  online-review fixer, including ledger sticky re-hold on re-entry (#1002)).
 - If sol ever holds a fixing seat, the floor reviewer for its output is
   cross-family (opus).
 
@@ -237,17 +237,24 @@ for the reason.
 | --- | --- |
 | `run.log` | route lineup echo, per-phase progress, final JSON result |
 | `~/.sc-orchestrator/family-<EPIC>-ledger/family-ledger.jsonl` | append-only family events (`worker_dispatched`, `merged`, `cmr_*`, parks) |
+| `.../family-<EPIC>-ledger/progress.jsonl` | #1007 active progress feed (issue-numbered stage / judge / park / merge / ship / terminal) |
 | `.../family-<EPIC>-ledger/worker-logs/S*.log` | live worker output (tail these) |
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
+
+**Status command (#1007):** from `orchestrator/`,
+`npm run status -- ~/.sc-orchestrator/family-<EPIC>-ledger` renders per-issue
+station / rounds / latest judge verdict / disposition counts / parks from
+`progress.jsonl` (+ merge markers from `family-ledger.jsonl`). No hand-scanning
+`steps.jsonl`. Optional desktop notify: set `ORCHESTRATOR_NOTIFY_CMD` (default
+off) — fires on park / terminal only; fail-open.
 
 **Truth sources per layer (2026-07-18 monitoring-misread lesson):** the family
 ledger above records FAMILY-station events only (merger / integrated CMR /
 verify / parks). Per-child single-slice truth lives in the iso clone:
 `<iso>/.sandcastle/worktrees/.ledger-<issue>/steps.jsonl` (authoritative step
 outcomes) plus `.ledger-<issue>/worker-logs/*.result.json` and `S*.log`.
-Launcher stage lines carry NO issue id — five children each dispatching S2
-print five identical `dispatch step=S2` lines (observability debt, #975).
+Stage lines and `progress.jsonl` now carry issue numbers (#1007 / #975 debt ④).
 During a wave the family branch tip does NOT move: children merge serially
 only after the whole wave settles (`Promise.allSettled` barrier) — a static
 family tip is expected behavior, not a stall signal.
@@ -500,14 +507,23 @@ Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 
 ## Checks
 
-`npm test` first runs the `tsconfig.test.json` compile gate (same check as
-`npm run typecheck:test`) before Vitest. That TypeScript lane checks all of
-`test/**`, so every test fixture and mock must satisfy the current production
-contracts before the behavioral suite runs.
+ADR 0140 splits the canonical test entry into two obligations:
 
-Repository CI now runs orchestrator `npm test` as its own job, in addition to
+| command | what runs | who uses it |
+| --- | --- | --- |
+| `npm run test:fast` | `tsconfig.test.json` typecheck + Vitest **fast** project (pure logic / unit) | coder / fixer 交卷自检 |
+| `npm test` | same typecheck + **all** Vitest projects (fast + heavy) | wave/final verify, CI, ship gate |
+
+Heavy (real process / real sandcastle SO / e2e-class tax) is classified by
+mechanical path/name conventions plus a harness-nature scan in
+`vitest.config.ts` — not a hand-curated smoke list. Both scripts run the
+TypeScript compile gate first (`npm run typecheck:test` equivalent) over all of
+`test/**`, so every fixture and mock must satisfy current production contracts
+before the behavioral suite runs.
+
+Repository CI runs orchestrator full `npm test` as its own job, in addition to
 the Python engine and web jobs. This README does not assert which jobs the
-GitHub ruleset marks as required, so still run `npm test` locally before
+GitHub ruleset marks as required; still run full `npm test` locally before
 merging orchestrator changes. Individually-green branches can still combine
 into a red main across cross-slice seams; the integrated gates exist precisely
 for that.
@@ -525,7 +541,7 @@ replacement Actions and Sandcastle controls land.
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
 | worker looks hung | host silence is observational only (#937) — no idle kill / PID-tree; capacity/quota walls still park or relay via durable ledger + ephemeral baton brief (no `.relay-focus.md`); completion is clean exit + legal sidecar (#928) | wait for process exit / typed outcome; on explicit 429/capacity use the existing park/relay owner; never invent hang-kill from log quiet |
-| `parked: no usable completeness review legs` / `cross-vendor jury floor not met` | container legs' prose / unanchored output rejected by LEG-level admissibility — extra-constitutional (ADR 0141), not a transient | don't blind-retry the same shape; land #1005, or hand-run the integrated CMR and answer the gate with its verdict |
+| historical content-shape CMR parks (pre-#1005 / ADR 0141) | older monorepo paths could void prose / unanchored leg paper and park under content-shape gates; those strings and gates are **gone** after ADR 0141 / #1005 (presence = exit0 + non-empty stdout only). Live parks are decision-gate / dirty-target / real transport death — never "prose is illegal paper" | do not blind-retry the same prose shape; if transports are dead, hand-run the integrated CMR and answer the gate with its verdict |
 | `parked: completeness target is not a clean committed snapshot` | untracked runtime droppings in the iso clone | quarantine by `mv` (see Target hygiene), answer the gate, re-ignite |
 | startup smoke `CLI version changed from X to Y` on an optional leg | host↔container CLI version drift invalidating the recorded smoke | re-ignition refreshes the recorded version; an OPTIONAL leg blocking launch is #846-class degrade debt |
 | every slice in a wave red on the SAME test | inherited baseline defect fanned out N ways — each fixer repairs it independently, merger later reconciles N same-shape patches | pre-fix the family base first (#1006 gate); container-env-only reds exist (GitHub-CI-green ≠ container-green, e.g. `/dev/stdin` os error 6) |

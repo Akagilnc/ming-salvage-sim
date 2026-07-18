@@ -124,10 +124,15 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "online_review_round_retrigger",
   "worker_dispatched",
   "route_degraded",
-  /** #919 — judge advanceCoder executed on family coderFix seat. */
+  /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
   "coder_advance",
-  /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+  /** #919 / #1002 — judge advanceCoder unusable; stay on current repair seat. */
   "coder_advance_stay_put",
+  /**
+   * #1006 — admission baseline health gate: family-base full suite red before
+   * fan-out (durable audit; not an unblock fact).
+   */
+  "baseline_health_failed",
 ] as const;
 
 /** Element type of {@link FAMILY_LEDGER_STATUS_VALUES}. */
@@ -213,6 +218,8 @@ export interface FamilyLedgerEntry {
    *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
    *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
    *     seat audit (applied vs stay-put).
+   *   - `"baseline_health_failed"` — #1006 admission full-suite red on family
+   *     base before fan-out (audit only).
    */
   readonly status: FamilyLedgerStatus;
   /**
@@ -275,7 +282,9 @@ export interface FamilyLedgerEntry {
     /** #919 — paired with status coder_advance. */
     | "coder_advance"
     /** #919 — paired with status coder_advance_stay_put. */
-    | "coder_advance_stay_put";
+    | "coder_advance_stay_put"
+    /** #1006 — paired with status baseline_health_failed. */
+    | "baseline_health_failed";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -405,6 +414,12 @@ export interface FamilyLedgerEntry {
    * (coder_advance* audit rows). Not an unblock field.
    */
   readonly toModelId?: string;
+  /**
+   * #1002 / #1017 — which repair seat this coder_advance* row applied to
+   * (`coderFix` family CMR vs `fixer` online-review). Sticky rebuild must
+   * scope by this field so courts do not cross-bleed on the shared family ledger.
+   */
+  readonly advanceSeat?: "coderFix" | "fixer";
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */
@@ -766,7 +781,10 @@ export interface IntegratedCmrResult {
   readonly findingsCount?: number;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
-  /** CMR leg slugs that actually produced a usable review this pass. */
+  /**
+   * CMR leg slugs present this pass (ADR 0141: transport success = exit 0 +
+   * non-empty raw stdout). Soft cargo only — content shape is never a gate.
+   */
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
