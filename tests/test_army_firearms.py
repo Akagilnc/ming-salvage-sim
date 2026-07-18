@@ -143,9 +143,9 @@ def test_army_detail_shows_firearm_cannon(game):
     assert "随军大炮3" in detail
 
 
-def test_army_report_shows_firearm_and_cannon(game):
+def test_army_report_shows_firearm_and_cannon(read_game):
     """army_report(list_armies 警讯)带火器 + 随军大炮(炮)，read 摘要面闭环（CMR codexC）。"""
-    db, _, _ = game
+    db, _, _ = read_game
     rpt = db.army_report(limit=8)
     assert "火器" in rpt
     assert "炮" in rpt
@@ -227,9 +227,9 @@ def test_apply_army_delta_chinese_keys(game):
     assert row["cannon_equipment"] == 5
 
 
-def test_simulator_payload_includes_firearm(game):
+def test_simulator_payload_includes_firearm(read_game):
     """喂 simulator 的军表必须带火器/大炮列，否则 LLM 看不见、软判无从谈起。"""
-    db, state, _ = game
+    db, state, _ = read_game
     from ming_sim.simulation import build_simulator_payload
     payload = build_simulator_payload(state, db, "", "")
     armies = payload.get("armies") or {}

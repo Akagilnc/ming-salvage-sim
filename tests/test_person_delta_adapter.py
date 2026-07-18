@@ -2015,11 +2015,11 @@ def test_simulator_court_roster_is_active_only_dismissed_in_talent_pool(game):
     assert name in pool_names, "被削籍者应在人才名单 offstage_ministers（可起复）"
 
 
-def test_talent_pool_ming_noncourt_only(game):
+def test_talent_pool_ming_noncourt_only(read_game):
     """5b r8（gemini-R5，roster-scope coverage-drift）：人才池 offstage_ministers 须与 court_roster
     同口径含 power_id='ming' AND office_type!='后宫'。否则后金/流寇（offstage bandits 如李自成）漏进，
     被当「可起复的大明官」给裁判/玩家看（违 ADR 决定10：池=皇帝可起复的大明官）。"""
-    db, state, content = game
+    db, state, content = read_game
     payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
     pool = payload["offstage_ministers"]
     pidx = pool["cols"].index("power_id")
@@ -2276,10 +2276,10 @@ def test_pending_dismiss_rejects_vassal_prince(game):
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
 
-def test_extractor_active_ministers_ming_noncourt_only(game):
+def test_extractor_active_ministers_ming_noncourt_only(read_game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
-    db, state, content = game
+    db, state, content = read_game
     payload = _extractor_context_payload(db, state, narrative="", decree_text="")
     am = payload["active_ministers"]
     pidx = am["cols"].index("power_id")
