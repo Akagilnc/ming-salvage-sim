@@ -26,12 +26,12 @@
  */
 
 import { shWithClock } from "./externalCall.js";
+import { formatExecFailureOutput } from "./execFailureOutput.js";
 import {
   provisionNodeModules,
   resolveTemplateProjectDir,
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
-import { shellEscape } from "./shellEscape.js";
 
 /** Infra (tooling/deps) vs suite (product tests) — diagnosis/hint branch. */
 export type BaselineFailureClass = "infra" | "suite";
@@ -248,13 +248,11 @@ export interface BaselineContainerFullTestRequest {
 export function buildBaselineContainerFullTestArgv(
   req: BaselineContainerFullTestRequest,
 ): string[] {
-  // Checkout family base then run the project's canonical full entry.
+  // Host {@link ensureBaselineWorksiteReady} already checked out familyBase on
+  // the bind-mounted worksite — do not re-checkout inside the container (DRY;
+  // #1006 CR N1). Container only runs the project's canonical full entry.
   // `npm test` is the orchestrator full gate (typecheck + vitest run).
   // Deps are host-provisioned before this container starts (installDeps class).
-  const remoteCmd = [
-    `git -C ${shellEscape(req.workingRepo)} checkout --quiet ${shellEscape(req.familyBase)}`,
-    "npm test",
-  ].join(" && ");
   return [
     "docker",
     "run",
@@ -274,39 +272,16 @@ export function buildBaselineContainerFullTestArgv(
     req.imageName,
     "bash",
     "-lc",
-    remoteCmd,
+    "npm test",
   ];
 }
 
 /**
  * Capture execFileSync-style failure detail: message + stdout + stderr.
- *
- * Node's `Command failed: …` message alone drops the locatable reason —
- * vitest puts FAIL bodies on **stdout**, noise often on stderr. Same shape as
- * family verify's summarizeError (codex R3): keep BOTH streams labeled.
+ * Re-export of shared {@link formatExecFailureOutput} (single source with
+ * family verify summarizeError).
  */
-export function formatBaselineExecFailureOutput(err: unknown): string {
-  const parts: string[] = [];
-  if (err instanceof Error) {
-    parts.push(err.message);
-  } else if (err != null) {
-    parts.push(String(err));
-  }
-  if (err !== null && typeof err === "object") {
-    const e = err as { stdout?: unknown; stderr?: unknown };
-    const stderr = streamText(e.stderr).trim();
-    const stdout = streamText(e.stdout).trim();
-    if (stderr.length > 0) parts.push(`stderr:\n${stderr}`);
-    if (stdout.length > 0) parts.push(`stdout:\n${stdout}`);
-  }
-  return parts.join("\n");
-}
-
-function streamText(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (v instanceof Buffer) return v.toString("utf8");
-  return "";
-}
+export const formatBaselineExecFailureOutput = formatExecFailureOutput;
 
 /**
  * Heuristic failed-test path extraction from vitest / jest-ish output.

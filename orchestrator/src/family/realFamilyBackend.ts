@@ -41,6 +41,7 @@
  */
 
 import { shWithClock } from "../externalCall.js";
+import { formatExecFailureOutput } from "../execFailureOutput.js";
 import { gitExitStatus, isFileNotFound } from "../fsErrors.js";
 import {
   appendFileSync,
@@ -3970,31 +3971,12 @@ function summarizeError(
 ): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
   // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
-  // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only
-  // `.message` drops it, so the ledger could not name WHY verify went red,
-  // breaking decision 3④/5 "reason locatable from the ledger alone" (agy R1).
-  let detail = err instanceof Error ? err.message : String(err);
-  if (err !== null && typeof err === "object") {
-    const e = err as { stderr?: unknown; stdout?: unknown };
-    // Append BOTH streams (labeled), not just the first non-empty one: some tools
-    // put warnings/noise on stderr and the actual failure body on stdout (tsc/
-    // vitest do), so taking stderr-OR-stdout would drop the locatable reason
-    // (codex R3). The 600-char tail below keeps the trailing end where the real
-    // failure lands.
-    const stderr = decodeChildOutput(e.stderr);
-    const stdout = decodeChildOutput(e.stdout);
-    if (stderr.length > 0) detail += `\nstderr: ${stderr}`;
-    if (stdout.length > 0) detail += `\nstdout: ${stdout}`;
-  }
+  // output (the locatable reason) is on `.stderr` / `.stdout`. Shared capture
+  // keeps BOTH streams labeled (formatExecFailureOutput; codex R3 / #1006 DRY).
+  // The 600-char tail keeps the trailing end where the real failure lands.
+  const detail = formatExecFailureOutput(err);
   const tail = detail.length > 600 ? detail.slice(-600) : detail;
   return `family verify (${phase}) failed: ${tail}`;
-}
-
-/** Decode an execFileSync `stderr`/`stdout` field (string | Buffer | undefined) to trimmed text. */
-function decodeChildOutput(v: unknown): string {
-  if (typeof v === "string") return v.trim();
-  if (v instanceof Buffer) return v.toString("utf8").trim();
-  return "";
 }
 
 /**
