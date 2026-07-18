@@ -1,3 +1,4 @@
+import "./sandcastleCancelSeam.js"; // #1010 choke-point: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { z } from "zod";
 
