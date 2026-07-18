@@ -1,3 +1,4 @@
+// @vitest-pool heavy
 /**
  * #884 — external-call clocks only (S8).
  * Retry policy lives in #879 legTransientRetry — not re-tested as a platform here.
