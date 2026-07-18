@@ -5218,11 +5218,11 @@ class GameDB:
             held = ""
             if str(row["controlled_by"]) != "ming":
                 held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
-            defense = f"、城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
+            defense = f"，城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
             parts.append(
-                f"{row['name']}{held}：{_public_support_description(row['public_support'])}、"
-                f"{_unrest_description(row['unrest'])}、"
-                f"粮情{qualitative_band(row['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}、"
+                f"{row['name']}{held}：{_public_support_description(row['public_support'])}，"
+                f"{_unrest_description(row['unrest'])}，"
+                f"粮情{qualitative_band(row['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}，"
                 f"税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
             )
         return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ming_sim.models import CourtContext
-from ming_sim.context import character_context_with_db
+from ming_sim.context import character_context, character_context_with_db
 from ming_sim.context import _faction_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
@@ -275,6 +275,16 @@ def test_minister_context_is_characterized_without_abstract_numbers(game):
     assert str(minister.identity) not in rendered
     assert "阴谋" in rendered
     assert "立场深浅未著" in rendered or "阴谋能力未详" in rendered
+
+
+def test_character_context_does_not_repeat_intrigue_label(game):
+    _db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+
+    rendered = character_context(minister)
+
+    assert "阴谋能力未详" in rendered
+    assert "阴谋阴谋" not in rendered
 
 
 def test_character_and_faction_zero_scores_use_lowest_qualitative_bucket():
