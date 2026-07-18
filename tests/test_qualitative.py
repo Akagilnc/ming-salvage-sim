@@ -54,6 +54,25 @@ def test_qualitative_audience_text_rejects_compound_and_adverbial_raw_axes():
         assert "已略去" in qualitative_audience_text(injected), injected
 
 
+def test_qualitative_audience_text_preserves_scaled_countable_facts():
+    from ming_sim.qualitative import qualitative_audience_text
+
+    for fact in (
+        "军力约3万人",
+        "财力约70万两",
+        "兵势约2千人",
+        "影响力约4百艘",
+        "军势约30000人",
+    ):
+        assert qualitative_audience_text(fact) == fact
+
+    for abstract_score in ("忠诚约70", "能力约70%", "民心约七十"):
+        rendered = qualitative_audience_text(abstract_score)
+        assert rendered != abstract_score
+        assert "70" not in rendered
+        assert "七十" not in rendered
+
+
 def test_safe_historical_text_rejects_nearby_raw_axis_variants():
     for injected in (
         "忠诚已达98分", "忠诚提高到98", "势力提升至70", "能力只有30分", "民心跌至20",

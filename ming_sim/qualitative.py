@@ -91,8 +91,11 @@ _ABSTRACT_AXIS_PATTERN = "|".join(
      "morale", "training", "equipment", "firearm_equipment", "mobility",
      "military_pressure", "gentry_resistance", "progress"]
 )
-# Military / fiscal countable units after a number stay lawful (``一营`` / ``三千人``).
-_COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年|营|哨|队|支|标"
+# A countable fact ends in a physical unit.  Chinese magnitude markers may
+# precede that unit (``3万人`` / ``70万两``), but never make a bare score
+# countable by themselves (``忠诚约70万`` remains an abstract value).
+_PHYSICAL_COUNTABLE_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年|营|哨|队|支|标|两"
+_COUNTABLE_FACT_TAIL = rf"(?:[十百千万亿]\s*)*(?:{_PHYSICAL_COUNTABLE_UNITS})"
 # Qualitative band words may sit between an axis and a raw score
 # (``民心堪忧15分``).  Keep them optional and axis-local so countable facts
 # with unrelated intervening prose stay lawful.
@@ -142,7 +145,7 @@ _ABSTRACT_SCORE_NUMBER = (
     rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%|\s*分)?"
     rf"|{_CHINESE_SCORE_BODY}"
     rf")"
-    rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_UNITS}))"
+    rf"(?!\d|[零〇一二两三四五六七八九十百]|\s*(?:{_COUNTABLE_FACT_TAIL}))"
     rf"(?:\s*(?:左右|上下))?"
 )
 
@@ -162,7 +165,7 @@ def _has_unqualified_abstract_score(fragment: str) -> bool:
     tail = fragment[axis.end():]
     # The invariant is about *bare numeric scores*.  Chinese ideoms such as
     # ``操守一尘不染`` are not scores merely because they neighbour an axis.
-    return bool(re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))", tail))
+    return bool(re.search(rf"[-+]?\d+(?:\.\d+)?(?!\d|\s*(?:{_COUNTABLE_FACT_TAIL}))", tail))
 _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
     rf"(?:(?:{_ABSTRACT_BAND_WORD})\s*)?"

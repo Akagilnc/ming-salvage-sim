@@ -19,6 +19,7 @@ from ming_sim.context import _faction_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
     build_court_brief,
+    build_character_knowledge_brief,
     build_last_gazette_brief,
     build_memory_brief,
     build_region_brief,
@@ -815,6 +816,23 @@ def test_p4_guard_drops_only_unsafe_fragment_when_score_cannot_be_bucketed():
     assert "已略去" in rendered
     assert "欠饷二十五月" in rendered
     assert "十二万两" in rendered
+
+
+def test_public_knowledge_render_preserves_scaled_countable_facts(game):
+    """Public-event facts survive the production knowledge build/render seam."""
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    body = "京营军力约3万人；太仓财力约70万两；此人忠诚约70。"
+    db.record_public_knowledge_event(
+        state, "京营与太仓实数", body, source_id=f"test:scaled-countables:{state.turn}",
+    )
+
+    rendered = build_character_knowledge_brief(minister, _ctx(game))
+
+    assert "军力约3万人" in rendered
+    assert "财力约70万两" in rendered
+    assert "忠诚约70" not in rendered
+    assert "忠诚可靠" in rendered
 
 
 def test_secret_order_tool_preserves_long_title_without_formal_cap(game):
