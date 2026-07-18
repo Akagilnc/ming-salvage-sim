@@ -11,8 +11,9 @@ import ming_sim.mindreading as mindreading
 from ming_sim.agents import create_mindreading_agent
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.mindreading import (
-    build_mindreading_payload,
+    build_mindreading_materials,
     build_scouting_precision_payload,
+    generate_mindreading_payload,
     is_inner_court_attendant,
 )
 from ming_sim.models import LLMConfig
@@ -26,6 +27,15 @@ class _SpyMindreadingAgent:
     def run(self, material):
         self.inputs.append(json.loads(material))
         return SimpleNamespace(content=self.text)
+
+
+def _generate(db, state, reader, target, reply, model=None, **kwargs):
+    materials = build_mindreading_materials(
+        db, state, reader, target, reply, **kwargs,
+    )
+    return materials, generate_mindreading_payload(
+        materials, object(), mindreading_agent=model or _SpyMindreadingAgent(),
+    )
 
 
 def test_reader_is_selected_by_inner_court_post_not_name(game):
@@ -70,13 +80,13 @@ def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monk
 
     monkeypatch.setattr(mindreading, "intelligence_precision", shared_precision)
     db, state, content = game
-    reading = build_mindreading_payload(
+    materials = build_mindreading_materials(
         db, state, content.characters["王承恩"], content.characters["温体仁"],
-        "臣愿肩起此事。", mindreading_agent=_SpyMindreadingAgent(),
+        "臣愿肩起此事。",
         target_factor=0.5, channel_factor=1.0,
     )
 
-    assert reading["precision"] == "隐约"
+    assert materials["precision"] == "隐约"
     assert build_scouting_precision_payload(0.5, 1.0) == {
         "source": "锦衣卫查探预留", "precision": "隐约",
     }
@@ -89,18 +99,19 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
     target = content.characters["温体仁"]
     db.record_public_knowledge_event(state, "旧闻", "内廷听闻此人旧日行止。")
     model = _SpyMindreadingAgent("近臣低声说，这话尚未说尽。")
+    reply = "  臣先奏：忠诚=98。\n次陈军务，不敢删节。  "
 
-    payload = build_mindreading_payload(
-        db, state, reader, target, "臣愿肩起此事，不敢旁贷。", mindreading_agent=model,
-    )
+    materials, payload = _generate(db, state, reader, target, reply, model)
 
     assert len(model.inputs) == 1
     material = model.inputs[0]
     assert set(material) == {"当轮回话", "党账", "君臣账", "底案", "近臣自身见闻"}
-    assert material["当轮回话"] == "臣愿肩起此事，不敢旁贷。"
+    assert material["当轮回话"] == reply
     assert any(item["title"] == "旧闻" for item in material["近臣自身见闻"])
     assert payload["truths"]["潜台词"] == model.text
     assert payload["reply_text"] == material["当轮回话"]
+    assert "工心计" in material["底案"]
+    assert "案情分量：无" in material["底案"]
     rendered = json.dumps(material, ensure_ascii=False)
     assert "identity" not in rendered
     assert "loyalty" not in rendered
@@ -120,9 +131,7 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     db.conn.commit()
     model = _SpyMindreadingAgent()
 
-    payload = build_mindreading_payload(
-        db, state, reader, target, "臣有本奏。", mindreading_agent=model,
-    )
+    _materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
 
     material = model.inputs[0]
     assert "名义党派：皇党" in material["党账"]
@@ -135,9 +144,8 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
 
 
 def test_runtime_uses_existing_model_config_factory(game, monkeypatch):
-    db, state, content = game
+    _db, _state, _content = game
     runtime_config = object()
-    db.llm_config = runtime_config
     model = _SpyMindreadingAgent()
     seen = []
     monkeypatch.setattr(
@@ -146,15 +154,15 @@ def test_runtime_uses_existing_model_config_factory(game, monkeypatch):
         lambda config: seen.append(config) or model,
     )
 
-    build_mindreading_payload(
-        db, state, content.characters["王承恩"], content.characters["温体仁"], "臣有本奏。"
+    generate_mindreading_payload(
+        {"truths": {}, "reader_context": {}}, runtime_config,
     )
 
     assert seen == [runtime_config]
 
 
 def test_reply_is_an_explicit_pipeline_input():
-    signature = inspect.signature(build_mindreading_payload)
+    signature = inspect.signature(build_mindreading_materials)
     assert signature.parameters["minister_reply"].default is inspect.Parameter.empty
 
 
@@ -168,37 +176,19 @@ def test_reader_eligibility_uses_current_db_office_after_reassignment(game):
     db.conn.commit()
 
     with pytest.raises(ValueError, match="御前近臣"):
-        build_mindreading_payload(
+        build_mindreading_materials(
             db, state, reader, content.characters["温体仁"], "臣有本奏。",
-            mindreading_agent=_SpyMindreadingAgent(),
         )
-
-
-def test_mindreading_model_input_and_payload_keep_p4_boundary(game):
-    db, state, content = game
-    reader = content.characters["王承恩"]
-    db.record_public_knowledge_event(state, "民心值：73", "忠诚评分98，内廷已知。")
-    model = _SpyMindreadingAgent()
-
-    payload = build_mindreading_payload(
-        db, state, reader, content.characters["温体仁"],
-        "臣自陈忠诚=98，能力: 12，愿为君分忧。", mindreading_agent=model,
-    )
-
-    material = json.dumps(model.inputs[0], ensure_ascii=False)
-    assert "民心值：73" not in material
-    assert "忠诚评分98" not in material
-    assert "忠诚=98" not in material
-    assert "能力: 12" not in material
-    assert "已略去" in material
-    assert "已略去" in payload["reply_text"]
 
 
 def test_empty_model_text_fails_without_keyword_fallback(game):
     db, state, content = game
+    materials = build_mindreading_materials(
+        db, state, content.characters["王承恩"], content.characters["温体仁"],
+        "臣愿肩起此事。",
+    )
 
     with pytest.raises(LLMUnavailable, match="模型返回空文本"):
-        build_mindreading_payload(
-            db, state, content.characters["王承恩"], content.characters["温体仁"],
-            "臣愿肩起此事。", mindreading_agent=_SpyMindreadingAgent(""),
+        generate_mindreading_payload(
+            materials, object(), mindreading_agent=_SpyMindreadingAgent(""),
         )

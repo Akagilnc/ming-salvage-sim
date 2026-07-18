@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping
 
 from ming_sim.agents import create_mindreading_agent
 from ming_sim.exceptions import LLMUnavailable
+from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import Character
 from ming_sim.qualitative import identity_band, qualitative_band, safe_historical_text
 
@@ -87,8 +88,6 @@ def _seed_guilt_text(character: object) -> str:
     severity = str(guilt.get("severity") or "无")
     if crime == "无" and severity == "无":
         return "底案未见坐实之事。"
-    if severity == "无":
-        return "底案未见可坐实之罪，另有品性记录。"
     return f"底案留有{crime}（案情分量：{severity}）。"
 
 
@@ -106,27 +105,20 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     return {"heard": heard[-20:]}
 
 
-def _safe_reply_text(minister_reply: object) -> str:
-    """Keep the explicit reply seam inside the P4 presentation boundary."""
-    return safe_historical_text(minister_reply, "大臣回话")
-
-
-def build_mindreading_payload(
+def build_mindreading_materials(
     db: Any,
     state: Any,
     reader: Character,
     target: Character,
     minister_reply: str,
     *,
-    mindreading_agent: Any = None,
     target_factor: float = 1.0,
     channel_factor: float = 1.0,
 ) -> Dict[str, object]:
-    """生成一轮召对后的低声旁白 payload。
+    """锁内组装读心所需的纯材料，不调用模型。
 
-    ``minister_reply`` 是显式流水线输入；调用方可先把它流式交给玩家，
-    再把同一正文传入本函数。目标侧 identity/seed_guilt 与君臣 loyalty
-    分开读，identity/loyalty 的机器值只在此处转成定性词。
+    ``minister_reply`` 是已经完成的大臣回话原文；除空白判定外不做任何
+    解析或改写，锁外模型与最终 payload 都消费同一份原文。
     """
     current_reader: object = reader
     if hasattr(db, "conn"):
@@ -140,7 +132,6 @@ def build_mindreading_payload(
         raise ValueError("读心 payload 只能由御前近臣位生成")
     if not str(minister_reply or "").strip():
         raise ValueError("读心 payload 需要显式的大臣回话正文")
-    safe_reply = _safe_reply_text(minister_reply)
 
     current_target: object = target
     if hasattr(db, "conn"):
@@ -158,25 +149,6 @@ def build_mindreading_payload(
     party_truth = f"名义党派：{faction}；对本党的认同：{identity_band(identity)}。"
     loyalty_truth = f"对君的真心：{qualitative_band(loyalty, _LOYALTY_BANDS)}。"
     guilt_truth = _seed_guilt_text(current_target)
-    materials = {
-        "当轮回话": safe_reply,
-        "党账": party_truth,
-        "君臣账": loyalty_truth,
-        "底案": guilt_truth,
-        "近臣自身见闻": reader_context["heard"],
-    }
-    agent = mindreading_agent
-    if agent is None:
-        llm_config = getattr(db, "llm_config", None)
-        if llm_config is None:
-            raise LLMUnavailable("当前会话没有可用的模型配置")
-        agent = create_mindreading_agent(llm_config)
-    result = agent.run(json.dumps(materials, ensure_ascii=False))
-    subtext = getattr(result, "content", None)
-    if not isinstance(subtext, str) or not subtext.strip():
-        raise LLMUnavailable("模型返回空文本")
-    subtext = subtext.strip()
-
     return {
         "reader": reader.name,
         "target": target.name,
@@ -187,10 +159,49 @@ def build_mindreading_payload(
             "党账": party_truth,
             "君臣账": loyalty_truth,
             "底案": guilt_truth,
+        },
+        "reply_text": minister_reply,
+    }
+
+
+def generate_mindreading_payload(
+    materials: Mapping[str, object],
+    llm_config: object,
+    *,
+    mindreading_agent: Any = None,
+) -> Dict[str, object]:
+    """仅凭纯材料生成尾随旁白；不得读取 DB 或会话状态。"""
+    truths = materials.get("truths")
+    reader_context = materials.get("reader_context")
+    if not isinstance(truths, Mapping) or not isinstance(reader_context, Mapping):
+        raise ValueError("读心材料缺少真相投影或近臣见闻")
+    model_materials = {
+        "当轮回话": materials.get("reply_text"),
+        "党账": truths.get("党账"),
+        "君臣账": truths.get("君臣账"),
+        "底案": truths.get("底案"),
+        "近臣自身见闻": reader_context.get("heard", []),
+    }
+    agent = mindreading_agent
+    if agent is None:
+        if llm_config is None:
+            raise LLMUnavailable("当前会话没有可用的模型配置")
+        agent = create_mindreading_agent(llm_config)
+    subtext = extract_agent_text(agent.run(json.dumps(model_materials, ensure_ascii=False)))
+    if not subtext:
+        raise LLMUnavailable("模型返回空文本")
+
+    return {
+        "reader": materials.get("reader"),
+        "target": materials.get("target"),
+        "source": materials.get("source"),
+        "precision": materials.get("precision"),
+        "reader_context": dict(reader_context),
+        "truths": {
+            "党账": truths.get("党账"),
+            "君臣账": truths.get("君臣账"),
+            "底案": truths.get("底案"),
             "潜台词": subtext,
         },
-        # Keep this boundary local to the returned payload: callers may retain
-        # the raw streamed reply separately, but this player-facing object may
-        # only contain the sanitized form.
-        "reply_text": _safe_reply_text(safe_reply),
+        "reply_text": materials.get("reply_text"),
     }

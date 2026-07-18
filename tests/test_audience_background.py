@@ -623,28 +623,37 @@ def test_nonstream_audience_returns_mindreading_from_completed_reply(game, monke
     sentinel = {"truths": {"潜台词": "他愿担责，却仍留了一层余地。"}}
     seen = {}
 
-    def injected_builder(db_arg, state_arg, reader, target, minister_reply):
+    def injected_generator(materials, llm_config):
+        acquired = web_game._runtime_write_gate().acquire(blocking=False)
+        if acquired:
+            web_game._runtime_write_gate().release()
+        turn = db.get_last_active_chat_turn(minister_name, state.turn)
         seen.update(
-            db=db_arg,
-            state=state_arg,
-            reader=reader.name,
-            target=target.name,
-            reply=minister_reply,
+            reader=materials["reader"], target=materials["target"],
+            reply=materials["reply_text"], llm_config=llm_config,
+            gate_released=acquired,
+            durable=bool(turn and turn["minister_message_id"]),
+            can_undo=db.can_undo_last_chat_turn(minister_name, state.turn),
+            pending_count=web_game._pending_writes_count,
         )
         return sentinel
 
-    monkeypatch.setattr(web_module, "build_mindreading_payload", injected_builder)
+    monkeypatch.setattr(web_module, "generate_mindreading_payload", injected_generator)
 
     payload = web_game.chat(minister_name, "户部钱粮如何？")
 
     assert payload["mindreading"] == sentinel
     assert seen == {
-        "db": db,
-        "state": state,
         "reader": "曹化淳",
         "target": minister_name,
         "reply": "臣愿担责。",
+        "llm_config": web_game.session.llm_config,
+        "gate_released": True,
+        "durable": True,
+        "can_undo": True,
+        "pending_count": 0,
     }
+    assert not any(key.startswith("_mindreading_") for key in payload)
 
 
 def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatch):
@@ -656,11 +665,11 @@ def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatc
     sentinel = {"truths": {"潜台词": "这句担责是在向皇爷表明心迹。"}}
     calls = []
 
-    def build_after_reply(_db, _state, _reader, _target, reply):
-        calls.append((reply, minister_agent.completed.is_set()))
+    def build_after_reply(materials, _llm_config):
+        calls.append((materials["reply_text"], minister_agent.completed.is_set()))
         return sentinel
 
-    monkeypatch.setattr(web_module, "build_mindreading_payload", build_after_reply)
+    monkeypatch.setattr(web_module, "generate_mindreading_payload", build_after_reply)
 
     events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
 
@@ -678,13 +687,38 @@ def test_stream_mindreading_failure_keeps_completed_minister_reply(game, monkeyp
     db, state, content = game
     minister_name = "毕自严"
     web_game = _web_game(db, state, content, _FakeAgent())
+    started = threading.Event()
+    release = threading.Event()
+    observed = {}
 
-    def failed_reading(*_args):
+    def failed_reading(_materials, _llm_config):
+        gate_released = web_game._runtime_write_gate().acquire(blocking=False)
+        if gate_released:
+            web_game._runtime_write_gate().release()
+        turn = db.get_last_active_chat_turn(minister_name, state.turn)
+        observed.update(
+            gate_released=gate_released,
+            minister_message_id=int(turn["minister_message_id"] or 0) if turn else 0,
+            can_undo=db.can_undo_last_chat_turn(minister_name, state.turn),
+            pending_count=web_game._pending_writes_count,
+            history=list(web_game.chat_history[minister_name]),
+        )
+        started.set()
+        assert release.wait(1.0)
         raise LLMUnavailable("读心后端不可用")
 
-    monkeypatch.setattr(web_module, "build_mindreading_payload", failed_reading)
+    monkeypatch.setattr(web_module, "generate_mindreading_payload", failed_reading)
 
-    events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
+    stream = web_game.chat_stream(minister_name, "辽饷如何？")
+    events = [next(stream), next(stream)]
+    assert started.wait(1.0)
+    assert observed["gate_released"] is True
+    assert observed["minister_message_id"] > 0
+    assert observed["can_undo"] is True
+    assert observed["pending_count"] == 0
+    assert observed["history"][-1] == {"role": "minister", "content": "臣遵旨。"}
+    release.set()
+    events.append(next(stream))
 
     assert events[:-1] == [
         {"type": "delta", "content": "臣"},
@@ -699,6 +733,7 @@ def test_stream_mindreading_failure_keeps_completed_minister_reply(game, monkeyp
         "role": "minister", "content": "臣遵旨。",
     }
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    assert not any(key.startswith("_mindreading_") for key in payload)
 
 
 class _RaisingActionSession(_FakeSession):
