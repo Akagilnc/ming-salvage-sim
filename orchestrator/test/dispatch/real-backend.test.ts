@@ -68,6 +68,7 @@ import type {
 } from "../../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
+import * as telemetry from "../../src/telemetry.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import * as scRuntime from "@ai-hero/sandcastle";
@@ -933,10 +934,16 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     expect(existsSync(secondHome)).toBe(true);
   });
 
-  it("constructs successfully against the checked-in absolute prompts/ dir", () => {
+  it("constructs without calculating telemetry fingerprints against the checked-in dirs", () => {
+    const configure = vi.spyOn(
+      telemetry,
+      "configureTelemetryFromWorkerImage",
+    );
+
     expect(
       () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
     ).not.toThrow();
+    expect(configure).not.toHaveBeenCalled();
   });
 
   it("throws on a relative promptsDir", () => {
@@ -945,7 +952,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     ).toThrow(/must be an ABSOLUTE path/);
   });
 
-  it("throws on an absolute promptsDir that does not exist", () => {
+  it("rejects missing prompt or soul dependencies before clone", () => {
     expect(
       () =>
         new StubCloneBackend({
@@ -953,6 +960,24 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
+
+    // Constructor wiring must run soulsDir validation before clone/git work.
+    const badSouls = mkdtempSync(join(tmpdir(), "dir-exists-missing-souls-"));
+    let message = "";
+    try {
+      new StubCloneBackend({
+        ...baseOpts,
+        promptsDir: realPromptsDir,
+        soulsDir: badSouls,
+      });
+    } catch (error: any) {
+      message = String(error?.message ?? error);
+    }
+    expect(message).toMatch(/missing required soul file\(s\):/);
+    expect(message).toMatch(/cmr\.md/);
+    expect(message).toMatch(/verify\.md/);
+    expect(message).not.toMatch(/output_protocol\.md/);
+    expect(message).toMatch(/All of \[/);
   });
 
 });
@@ -1166,6 +1191,33 @@ describe("RealBackend reviewer output contract", () => {
         ],
       }),
     ).not.toThrow();
+
+    const decoded = backend.probeDecodeOutput(reviewerSpec, {
+      findingsCount: 1,
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/runner.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition_reason: "legacy fallback should not win",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "runner review/fix loop",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same finding recurs in this scope",
+          },
+        },
+      ],
+      priorFindingDispositions: [],
+    });
+
+    expect(
+      decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
+    ).toBe("legacy fallback should not win");
   });
 
   // #604 correctness r2 (C3): the standalone reviewer disposition schema is
