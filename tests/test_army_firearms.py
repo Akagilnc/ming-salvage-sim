@@ -164,10 +164,10 @@ def test_fresh_seed_wires_firearm_not_all_zero(content):
                 os.remove(f)
 
 
-def test_create_army_cannon_nonint_rejected_not_crash(game):
+def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     """建军时 cannon_equipment 给非 int(如"几门")→ 逐项拒收留痕,不抛崩也不再
     静默兜底 0（旧语义被 cmr S2 r1「在场即须合法」取代——静默 0=伪造军备）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, [{
         "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
         "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",

@@ -109,8 +109,8 @@ def test_new_army_maintenance_key_ignored(game):
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_y'").fetchone() is not None
 
 
-def test_new_army_still_requires_manpower(game):
-    db, state, _ = game
+def test_new_army_still_requires_manpower(read_game):
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, [{
         "id": "qin_army_z", "name": "无兵营", "owner_power": "ming",
     }])
@@ -118,10 +118,10 @@ def test_new_army_still_requires_manpower(game):
     assert db.conn.execute("SELECT id FROM armies WHERE id='qin_army_z'").fetchone() is None
 
 
-def test_new_army_inf_manpower_rejected_not_crash(game):
+def test_new_army_inf_manpower_rejected_not_crash(read_game):
     # int(float("inf")) 抛 OverflowError（不在 (TypeError,ValueError) 内）→ _new_army_historically_applied
     # 须捕，否则崩建军。inf manpower 应逐项拒收留痕、不崩。
-    db, state, _ = game
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, [{
         "id": "inf_army", "name": "无穷营", "owner_power": "ming", "manpower": float("inf"),
     }])

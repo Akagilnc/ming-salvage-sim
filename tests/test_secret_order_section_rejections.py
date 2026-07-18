@@ -111,10 +111,10 @@ def _active_order_id(db):
     return row[0] if row else None
 
 
-def test_update_valid_active_order_applies_no_reject(game):
+def test_update_valid_active_order_applies_no_reject(read_game):
     """正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，
     sim_note 真写入、零拒收行。"""
-    db, state, content = game
+    db, state, content = read_game
     turn = state.turn
     oid = _active_order_id(db)
     if oid is None:

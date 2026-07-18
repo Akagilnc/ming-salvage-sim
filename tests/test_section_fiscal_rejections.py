@@ -140,9 +140,9 @@ def test_remove_central_human_loss_rate_stem_rejected_as_loss_pair(game):
     assert db.get_fiscal_config()[key] == before
 
 
-def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(game):
+def test_direct_remove_central_human_loss_rate_stem_refuses_loss_pair(read_game):
     """db.remove_fiscal_item 自身也要拒绝 stem 形态的中央损耗率配置。"""
-    db, _, _ = game
+    db, _, _ = read_game
     key = "central_taicang_human_loss_rate"
     before = db.get_fiscal_config()[key]
 

@@ -395,14 +395,14 @@ def test_db_resolve_power_id_authoritative(game):
     assert db.resolve_power_id(ghost2) == "ming"
 
 
-def test_vassal_prince_secret_order_rejected(game, monkeypatch):
+def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
     """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
     import asyncio
     import pytest
     from types import SimpleNamespace
     from fastapi import HTTPException
     from web_app import SecretOrderRequest
-    db, state, content = game
+    db, state, content = read_game
     name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
     if name is None:
         pytest.skip("基底盘面无宗藩人物")
