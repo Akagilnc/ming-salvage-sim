@@ -1444,6 +1444,40 @@ function latestLedgerStopSummary(
   return undefined;
 }
 
+/** #1019 — family may redispatch past a durable terminal (not completed / corrupt). */
+function familyMayRedispatchTerminal(
+  input: Pick<RunInput, "family" | "familyEscalationAnswer">,
+  plan: {
+    readonly terminalStatus?: "completed" | "parked" | "failed";
+    readonly terminalCause?: string;
+  },
+): boolean {
+  if (input.family === undefined) return false;
+  if (plan.terminalStatus === undefined || plan.terminalStatus === "completed") {
+    return false;
+  }
+  if (plan.terminalCause === "resume_state_invalid") return false;
+  // Failed children always redispatch inside a family run.
+  if (plan.terminalStatus === "failed") return true;
+  // Parked / failed with a family-carried answer: skip terminal replay.
+  return input.familyEscalationAnswer !== undefined;
+}
+
+/** #1019 — map family answer cargo into a dispatch EscalationAnswerEvent. */
+function familyAnswerToEscalationEvent(
+  answer: NonNullable<RunInput["familyEscalationAnswer"]>,
+  fallbackStep: SliceStepId = "S2",
+): EscalationAnswerEvent {
+  return {
+    event: "escalation_answered",
+    answer: answer.answer,
+    source: answer.source ?? "human",
+    forStep: (answer.forStep ?? fallbackStep) as SliceStepId,
+    ...(answer.note !== undefined ? { note: answer.note } : {}),
+    ...(answer.sessionId !== undefined ? { sessionId: answer.sessionId } : {}),
+  };
+}
+
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
@@ -1509,16 +1543,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   if (scene.kind === "resident" && input.repairIntent === undefined) {
     const earlyPlan = planResume(scene.state.ledger);
     if (earlyPlan.terminalStatus !== undefined) {
-      const familyRedispatchFailed =
-        earlyPlan.terminalStatus === "failed" &&
-        input.family !== undefined &&
-        earlyPlan.terminalCause !== "resume_state_invalid";
-      const familyAnswerRedispatch =
-        input.family !== undefined &&
-        input.familyEscalationAnswer !== undefined &&
-        earlyPlan.terminalStatus !== "completed" &&
-        earlyPlan.terminalCause !== "resume_state_invalid";
-      if (!familyRedispatchFailed && !familyAnswerRedispatch) {
+      if (!familyMayRedispatchTerminal(input, earlyPlan)) {
         const worktree = scene.state.worktree;
         const ledger = earlyPlan.priorLedger;
         if (earlyPlan.terminalStatus === "failed") {
@@ -2676,18 +2701,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // planResume inject; plan.escalationAnswer overwrites this when present.
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined =
     input.familyEscalationAnswer !== undefined
-      ? {
-          event: "escalation_answered",
-          answer: input.familyEscalationAnswer.answer,
-          source: input.familyEscalationAnswer.source ?? "human",
-          forStep: (input.familyEscalationAnswer.forStep ?? "S2") as SliceStepId,
-          ...(input.familyEscalationAnswer.note !== undefined
-            ? { note: input.familyEscalationAnswer.note }
-            : {}),
-          ...(input.familyEscalationAnswer.sessionId !== undefined
-            ? { sessionId: input.familyEscalationAnswer.sessionId }
-            : {}),
-        }
+      ? familyAnswerToEscalationEvent(input.familyEscalationAnswer)
       : undefined;
   // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
   let resumeMonitorHandle:
@@ -2891,19 +2905,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #955 r7: only real agent dispatch rows — bookkeeping/audit events
     // (session_continuity_lost, worker_monitor_spawned, …) also carry step +
     // sessionId but must not resurrect a dropped id after r5 identity loss.
-    // #1019: family failed / answer redispatch must NOT revive a dead session
-    // lineage from a prior terminal — force a fresh worker session (history stays).
-    const familyFailedRedispatch =
-      plan.terminalStatus === "failed" &&
-      input.family !== undefined &&
-      plan.terminalCause !== "resume_state_invalid";
-    const familyAnswerRedispatch =
-      input.family !== undefined &&
-      input.familyEscalationAnswer !== undefined &&
-      plan.terminalStatus !== undefined &&
-      plan.terminalStatus !== "completed" &&
-      plan.terminalCause !== "resume_state_invalid";
-    if (!familyFailedRedispatch && !familyAnswerRedispatch) {
+    // #1019: family redispatch must NOT revive a dead session lineage from a
+    // prior terminal — force a fresh worker session (history stays).
+    const familyRedispatch = familyMayRedispatchTerminal(input, plan);
+    if (!familyRedispatch) {
       for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
         const entry = plan.priorLedger[i]!;
         if (isBookkeepingEntry(entry)) continue;
@@ -2924,8 +2929,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
     // #955 r7: same bookkeeping exclusion as coder rebuild above.
-    // #1019: same fresh-session rule as coder on family failed/answer redispatch.
-    if (!familyFailedRedispatch && !familyAnswerRedispatch) {
+    // #1019: same fresh-session rule as coder on family redispatch.
+    if (!familyRedispatch) {
       for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
         const entry = plan.priorLedger[i]!;
         if (isBookkeepingEntry(entry)) continue;
@@ -2955,16 +2960,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       //
       // #1019: family children redispatch prior S8(failed) productively (keep
       // failure history). resume_state_invalid still fails closed.
-      const familyRedispatchFailed =
-        plan.terminalStatus === "failed" &&
-        input.family !== undefined &&
-        plan.terminalCause !== "resume_state_invalid";
-      const familyAnswerRedispatch =
-        input.family !== undefined &&
-        input.familyEscalationAnswer !== undefined &&
-        plan.terminalStatus !== "completed" &&
-        plan.terminalCause !== "resume_state_invalid";
-      if (!familyRedispatchFailed && !familyAnswerRedispatch) {
+      if (!familyMayRedispatchTerminal(input, plan)) {
         if (plan.terminalStatus === "failed") {
           const reason =
             plan.terminalCause === "resume_state_invalid"
@@ -3027,19 +3023,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ) ?? "S0";
       resumeFor = undefined;
       if (input.familyEscalationAnswer !== undefined) {
-        resumedEscalationAnswer = {
-          event: "escalation_answered",
-          answer: input.familyEscalationAnswer.answer,
-          source: input.familyEscalationAnswer.source ?? "human",
-          forStep: (input.familyEscalationAnswer.forStep ??
-            (isValidStepId(step) ? step : "S2")) as SliceStepId,
-          ...(input.familyEscalationAnswer.note !== undefined
-            ? { note: input.familyEscalationAnswer.note }
-            : {}),
-          ...(input.familyEscalationAnswer.sessionId !== undefined
-            ? { sessionId: input.familyEscalationAnswer.sessionId }
-            : {}),
-        };
+        resumedEscalationAnswer = familyAnswerToEscalationEvent(
+          input.familyEscalationAnswer,
+          isValidStepId(step) ? step : "S2",
+        );
       }
     } else {
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
