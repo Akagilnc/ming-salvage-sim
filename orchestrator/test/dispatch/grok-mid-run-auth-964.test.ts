@@ -22,7 +22,14 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,7 +56,7 @@ import type {
   MergeRequest,
   MergeResult,
 } from "../../src/family/types.js";
-import { grokAgent } from "../../src/grokAgent.js";
+import { grokAgent, shellEscape } from "../../src/grokAgent.js";
 import {
   resolveRouteModels,
   routeSmokeEntries,
@@ -164,7 +171,23 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
+function resolveExplicitGrokBin(bin: string): GrokProbeTarget {
+  const previous = process.env.GROK_BIN;
+  process.env.GROK_BIN = bin;
+  try {
+    const target = resolveGrokProbeTarget();
+    if (!target) throw new Error(`GROK_BIN did not resolve: ${bin}`);
+    return target;
+  } finally {
+    if (previous === undefined) delete process.env.GROK_BIN;
+    else process.env.GROK_BIN = previous;
+  }
+}
+
+function runHeadlessEmptyAuthProbe(
+  target: GrokProbeTarget,
+  pathOverride?: string,
+): {
   status: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
@@ -173,13 +196,18 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
   const env = emptyAuthEnv(emptyHome);
+  if (pathOverride !== undefined) env.PATH = pathOverride;
   const built = grokAgent("grok-4.5", { captureSessions: false }).buildPrintCommand({
     prompt: "ping\n",
     dangerouslySkipPermissions: true,
   });
   const t0 = Date.now();
   if (target.kind === "host") {
-    const r = spawnSync("sh", ["-c", built.command], {
+    const selectedCommand = built.command.replace(
+      "grok --prompt-file",
+      `${shellEscape(target.bin)} --prompt-file`,
+    );
+    const r = spawnSync("sh", ["-c", selectedCommand], {
       encoding: "utf8",
       input: built.stdin,
       env,
@@ -416,6 +444,31 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     },
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
+
+  it("live GROK_BIN target remains authoritative when PATH has no grok", () => {
+    const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
+    if (!bin || !hostGrokVersion(bin).includes(GROK_FAIL_FAST_PIN)) return;
+
+    const result = runHeadlessEmptyAuthProbe(resolveExplicitGrokBin(bin), "/usr/bin:/bin");
+    expect(result.status, result.combined).not.toBe(0);
+    expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
+  });
+
+  it("live GROK_BIN target wins over a different grok on PATH", () => {
+    const bin = process.env.GROK_BIN?.trim() || whichBinary("grok");
+    if (!bin || !hostGrokVersion(bin).includes(GROK_FAIL_FAST_PIN)) return;
+
+    const decoyDir = mkDir("964-decoy-grok-");
+    const decoy = join(decoyDir, "grok");
+    writeFileSync(decoy, "#!/bin/sh\necho WRONG_GROK >&2\nexit 77\n");
+    chmodSync(decoy, 0o755);
+    const result = runHeadlessEmptyAuthProbe(
+      resolveExplicitGrokBin(bin),
+      `${decoyDir}:/usr/bin:/bin`,
+    );
+    expect(result.combined).not.toContain("WRONG_GROK");
+    expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
+  });
 
   it("route-smoke bare-ping keeps the same headless shape (startup auth not rewritten)", () => {
     const built = barePingArgv(
