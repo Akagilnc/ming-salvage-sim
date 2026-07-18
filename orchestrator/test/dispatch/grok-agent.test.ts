@@ -49,6 +49,7 @@ function transportEnv(
   binDir: string,
   staging: string,
   pathOut: string,
+  childPidOut: string,
   extra: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
   return {
@@ -56,6 +57,7 @@ function transportEnv(
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
     TMPDIR: staging,
     GROK_PROMPT_PATH_OUT: pathOut,
+    GROK_CHILD_PID_OUT: childPidOut,
     // Harness-only: default off so a polluted parent env cannot hang normal-exit cases.
     GROK_HOLD_OPEN: "0",
     ...extra,
@@ -66,7 +68,7 @@ function fakeGrokPath(binDir: string): string {
   const path = join(binDir, "grok");
   writeFileSync(
     path,
-    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then while :; do :; done; fi\nexit 0\n",
+    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nprintf '%s' \"$$\" > \"$GROK_CHILD_PID_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then exec sleep 30; fi\nexit 0\n",
     "utf8",
   );
   chmodSync(path, 0o755);
@@ -98,6 +100,7 @@ describe("#807 grokAgent AgentProvider", () => {
     const bin = join(root, "bin");
     const staging = join(root, "staging");
     const pathOut = join(root, "prompt-path");
+    const childPidOut = join(root, "child-pid");
     mkdirSync(bin);
     mkdirSync(staging);
     fakeGrokPath(bin);
@@ -108,8 +111,8 @@ describe("#807 grokAgent AgentProvider", () => {
       dangerouslySkipPermissions: true,
     });
     const result = await new Promise<{ stdout: string; code: number | null }>((resolve) => {
-      const child = spawn("bash", ["-c", built.command], {
-        env: transportEnv(bin, staging, pathOut),
+      const child = spawn("sh", ["-c", built.command], {
+        env: transportEnv(bin, staging, pathOut, childPidOut),
         stdio: ["pipe", "pipe", "pipe"],
       });
       let stdout = "";
@@ -132,6 +135,7 @@ describe("#807 grokAgent AgentProvider", () => {
       const bin = join(root, "bin");
       const staging = join(root, "staging");
       const pathOut = join(root, "prompt-path");
+      const childPidOut = join(root, "child-pid");
       mkdirSync(bin);
       mkdirSync(staging);
       fakeGrokPath(bin);
@@ -139,18 +143,23 @@ describe("#807 grokAgent AgentProvider", () => {
         prompt: "sensitive worker context",
         dangerouslySkipPermissions: true,
       });
-      const child = spawn("bash", ["-c", built.command], {
-        detached: true,
-        env: transportEnv(bin, staging, pathOut, { GROK_HOLD_OPEN: "1" }),
+      const child = spawn("sh", ["-c", built.command], {
+        env: transportEnv(bin, staging, pathOut, childPidOut, {
+          GROK_HOLD_OPEN: "1",
+        }),
         stdio: ["pipe", "ignore", "ignore"],
       });
+      const sentinel = spawn("sleep", ["30"], { stdio: "ignore" });
       child.stdin.end(built.stdin);
       const pid = child.pid!;
+      const sentinelPid = sentinel.pid!;
+      let grokPid: number | undefined;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await expect
           .poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 })
           .toMatch(/^.+$/);
+        grokPid = Number(readFileSync(childPidOut, "utf8"));
         const closed = new Promise<{
           code: number | null;
           signal: NodeJS.Signals | null;
@@ -159,7 +168,7 @@ describe("#807 grokAgent AgentProvider", () => {
             resolve({ code, signal: closeSignal });
           });
         });
-        process.kill(-pid, signal);
+        process.kill(pid, signal);
         const result = await Promise.race([
           closed,
           new Promise<never>((_resolve, reject) => {
@@ -171,22 +180,37 @@ describe("#807 grokAgent AgentProvider", () => {
         ]);
         expect(result).toEqual({ code: null, signal });
         expect(readdirSync(staging)).toEqual([]);
-        await expect
-          .poll(() => {
-            try {
-              process.kill(-pid, 0);
-              return true;
-            } catch {
-              return false;
-            }
-          }, { timeout: 2_000 })
-          .toBe(false);
+        for (const endedPid of [pid, grokPid]) {
+          await expect
+            .poll(() => {
+              try {
+                process.kill(endedPid, 0);
+                return true;
+              } catch {
+                return false;
+              }
+            }, { timeout: 2_000 })
+            .toBe(false);
+        }
+        expect(() => process.kill(sentinelPid, 0)).not.toThrow();
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
         try {
-          process.kill(-pid, "SIGKILL");
+          process.kill(pid, "SIGKILL");
         } catch {
           // Expected once the process group has exited; failure cleanup only.
+        }
+        if (grokPid !== undefined) {
+          try {
+            process.kill(grokPid, "SIGKILL");
+          } catch {
+            // Expected once relay has reaped the Grok child.
+          }
+        }
+        try {
+          process.kill(sentinelPid, "SIGKILL");
+        } catch {
+          // Sentinel cleanup after the survival assertion.
         }
       }
     },
