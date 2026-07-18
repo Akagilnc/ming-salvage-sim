@@ -564,3 +564,275 @@ describe("#1007 real-entry: runOrchestrator stage lines carry issue id", () => {
     );
   });
 });
+
+describe("#1007 first ship + family early-return park/terminal progress", () => {
+  it("recordShipped emits ship progress (first successful ship, not only resume echo)", async () => {
+    const { recordShipped } = await import("../../src/family/ledger.js");
+    const ledgerDir = tempLedger("progress-1007-ship-");
+    configureProgressBroadcast({ ledgerDir, epic: 1007 });
+
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+    const appended: FamilyLedgerEntry[] = [];
+    const backend = {
+      async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+        appended.push(entry);
+      },
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return appended;
+      },
+    } as FamilyBackend;
+
+    await recordShipped(backend, {
+      pr: "https://gh.test/pr/1007",
+      familyHeadAfter: "ship-head-1",
+    });
+
+    const ships = readProgressEvents(ledgerDir).filter((e) => e.kind === "ship");
+    expect(ships).toHaveLength(1);
+    expect(ships[0]).toMatchObject({
+      kind: "ship",
+      epic: 1007,
+      pr: "https://gh.test/pr/1007",
+      familyHead: "ship-head-1",
+    });
+    expect(appended).toHaveLength(1);
+    expect(appended[0]?.status).toBe("shipped");
+  });
+
+  it("prior family decision escalation re-entry emits park + terminal progress", async () => {
+    const { runFamily } = await import("../../src/family/runner.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-prior-park-");
+    configureProgressBroadcast({ ledgerDir, epic: 291 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type Backend = import("../../src/types.js").Backend;
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class ChildBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState() {
+        return undefined;
+      }
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(
+        issueNumber: number,
+        base: string,
+      ): Promise<WorktreeHandle> {
+        return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        reason: "cmr needs human disposition",
+        escalationKind: "decision",
+        familyHeadAfter: "head-park",
+      },
+    ];
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "should-not-merge" };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+    } as unknown as FamilyBackend;
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+    expect(result.status).toBe("parked");
+
+    const events = readProgressEvents(ledgerDir);
+    expect(events.some((e) => e.kind === "park")).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "parked" &&
+          e.epic === 291,
+      ),
+    ).toBe(true);
+  });
+
+  it("unanswered child decision park re-entry emits park + terminal progress", async () => {
+    const { runFamily } = await import("../../src/family/runner.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../src/family/landing.js"
+    );
+    const ledgerDir = tempLedger("progress-1007-child-park-");
+    configureProgressBroadcast({ ledgerDir, epic: 291 });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    type Backend = import("../../src/types.js").Backend;
+    type FamilyBackend = import("../../src/family/types.js").FamilyBackend;
+    type FamilyLedgerEntry = import("../../src/family/types.js").FamilyLedgerEntry;
+    type IssueMeta = import("../../src/types.js").IssueMeta;
+    type StepOutput = import("../../src/types.js").StepOutput;
+    type StepSpec = import("../../src/types.js").StepSpec;
+    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
+
+    class ChildBackend implements Backend {
+      async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
+      }
+      async findResumeState() {
+        return undefined;
+      }
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      }
+      async prepareWorktree(
+        issueNumber: number,
+        base: string,
+      ): Promise<WorktreeHandle> {
+        return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
+      }
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+      async writeLedger(): Promise<void> {}
+    }
+
+    const ledger: FamilyLedgerEntry[] = [
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        childIssue: 11,
+        reason: "product decision required",
+        diagnosis: "unclear optional vs required field",
+        escalationKind: "decision",
+        sessionId: "child-11-session",
+        familyHeadAfter: "head-child-park",
+      },
+    ];
+    const familyBackend = {
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "should-not-merge" };
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return ledger;
+      },
+      resolveTelemetryDir() {
+        return ledgerDir;
+      },
+    } as unknown as FamilyBackend;
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 291,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+    expect(result.status).toBe("parked");
+
+    const events = readProgressEvents(ledgerDir);
+    const parks = events.filter((e) => e.kind === "park");
+    expect(parks.some((e) => e.issue === 11 && e.epic === 291)).toBe(true);
+    expect(
+      events.some(
+        (e) =>
+          e.kind === "terminal" &&
+          e.status === "parked" &&
+          e.issue === 11 &&
+          e.epic === 291,
+      ),
+    ).toBe(true);
+  });
+});

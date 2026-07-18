@@ -295,6 +295,16 @@ async function decideFamilyQuotaWall(opts: {
     escalation?: { readonly reason: string; readonly diagnosis: string },
   ): Promise<FamilyQuotaWallDecision> => {
     const children = await familyChildrenSnapshot(opts);
+    // #1007: quota / relay-admission park (all barrier.kind==="park" early returns).
+    emitFamilyExitProgress({
+      epic: opts.epicIssue,
+      status: "parked",
+      stopReason: stopSummary.reason,
+      gateSummary:
+        escalation?.diagnosis ??
+        escalation?.reason ??
+        stopSummary.summary,
+    });
     return {
       kind: "park",
       result: {
@@ -685,6 +695,41 @@ function familyHeadMetadata(input: {
       sources,
     },
   };
+}
+
+/**
+ * #1007: park/terminal progress for family exits that bypass finalize() /
+ * finalizeDecisionPark() (early re-entry parks, landing/merger/online-review
+ * parks, quota wall parks). Parked → park + terminal; failed/completed → terminal.
+ * Fail-open (emit helpers never throw into the main flow).
+ */
+function emitFamilyExitProgress(input: {
+  readonly epic: number;
+  readonly issue?: number | null;
+  readonly status: "completed" | "parked" | "failed";
+  readonly stopReason?: string | null;
+  readonly gateSummary?: string | null;
+}): void {
+  if (input.status === "parked") {
+    const gate =
+      typeof input.gateSummary === "string" && input.gateSummary.trim().length > 0
+        ? input.gateSummary.trim()
+        : typeof input.stopReason === "string" && input.stopReason.trim().length > 0
+          ? input.stopReason.trim()
+          : "parked";
+    emitParkProgress({
+      epic: input.epic,
+      issue: input.issue ?? null,
+      gateSummary: gate,
+      reason: input.stopReason ?? null,
+    });
+  }
+  emitTerminalProgress({
+    epic: input.epic,
+    issue: input.issue ?? null,
+    status: input.status,
+    stopReason: input.stopReason ?? null,
+  });
 }
 
 function familyStopSummary(input: {
@@ -1208,6 +1253,13 @@ async function ensureLandingForResume(input: {
     { phase: "final", familyHeadAfter: input.familyHeadAfter },
   );
   if (recorded.kind === "park") {
+    // #1007: landing park early-return (bypasses finalize).
+    emitFamilyExitProgress({
+      epic: input.familyIssue,
+      status: "parked",
+      stopReason: recorded.stopSummary.reason,
+      gateSummary: recorded.stopSummary.summary,
+    });
     return {
       status: "parked",
       familyBase: input.familyBase,
@@ -1219,6 +1271,13 @@ async function ensureLandingForResume(input: {
         : {}),
     };
   }
+  // #1007: landing hard-fail early-return.
+  emitFamilyExitProgress({
+    epic: input.familyIssue,
+    status: "failed",
+    stopReason: recorded.stopSummary.reason,
+    gateSummary: recorded.stopSummary.summary,
+  });
   return failedFamilyResult({
     cause: "landing_worker_failed",
     familyBase: input.familyBase,
@@ -1741,6 +1800,13 @@ export async function runFamily(
         decisionGatePark: decisionPark,
       });
       if (publicStatus === "failed") {
+        // #1007: prior escalation re-entry terminal (bypasses finalize).
+        emitFamilyExitProgress({
+          epic: input.epic.issue,
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: escalationPayload.reason,
+        });
         return failedFamilyResult({
           cause: "runner_internal_error",
           familyBase,
@@ -1750,6 +1816,13 @@ export async function runFamily(
           children,
         });
       }
+      // #1007: prior decision escalation re-entry park (bypasses finalize).
+      emitFamilyExitProgress({
+        epic: input.epic.issue,
+        status: "parked",
+        stopReason: stopSummary.reason,
+        gateSummary: escalationPayload.reason,
+      });
       return {
         status: "parked",
         familyBase,
@@ -1860,6 +1933,25 @@ export async function runFamily(
         return { issue: c.issue, status: "skipped" as const };
       });
       const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
+      const childParkStop = familyStopSummary({
+        status: "parked",
+        familyBase,
+        ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
+          ? { familyHead: first.familyHeadAfter }
+          : {}),
+        children,
+        escalationReason,
+        decisionGatePark: true,
+      });
+      // #1007: unanswered child decision park re-entry (bypasses finalizeDecisionPark).
+      emitFamilyExitProgress({
+        epic: epic.issue,
+        issue: first.childIssue,
+        status: "parked",
+        stopReason: childParkStop.reason,
+        gateSummary:
+          first.diagnosis ?? first.reason ?? escalationReason,
+      });
       return {
         status: "parked",
         familyBase,
@@ -1872,16 +1964,7 @@ export async function runFamily(
             first.diagnosis ??
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
         },
-        stopSummary: familyStopSummary({
-          status: "parked",
-          familyBase,
-          ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
-            ? { familyHead: first.familyHeadAfter }
-            : {}),
-          children,
-          escalationReason,
-          decisionGatePark: true,
-        }),
+        stopSummary: childParkStop,
         children,
       };
     }
@@ -2599,6 +2682,14 @@ export async function runFamily(
             escalationKind: "decision",
             phase: "wave",
           });
+          // #1007: merger decision park early-return (bypasses finalizeDecisionPark).
+          emitFamilyExitProgress({
+            epic: epic.issue,
+            issue: r.issue,
+            status: "parked",
+            stopReason: stopSummary.reason,
+            gateSummary: escalation.diagnosis ?? escalation.reason,
+          });
           return attachDiagnostics({
             status: "parked",
             familyBase,
@@ -2994,6 +3085,13 @@ export async function runFamily(
         });
       }
       if (terminal.status === "parked") {
+        // #1007: online-review parked on shipped-resume (bypasses finalize).
+        emitFamilyExitProgress({
+          epic: epic.issue,
+          status: "parked",
+          stopReason: terminal.stopSummary.reason,
+          gateSummary: terminal.stopSummary.summary,
+        });
         return {
           status: "parked",
           familyBase,
@@ -3002,6 +3100,13 @@ export async function runFamily(
           children,
         };
       }
+      // #1007: online-review hard-fail on shipped-resume.
+      emitFamilyExitProgress({
+        epic: epic.issue,
+        status: "failed",
+        stopReason: terminal.stopSummary.reason,
+        gateSummary: terminal.stopSummary.summary,
+      });
       return failedFamilyResult({
         cause: terminal.cause,
         familyBase,
@@ -3177,6 +3282,14 @@ export async function runFamily(
               stopSummary: terminal.stopSummary,
             });
           }
+          // #1007: online-review park/fail on open-shipped re-entry (returned later
+          // without finalize — emit here at construction).
+          emitFamilyExitProgress({
+            epic: epic.issue,
+            status: terminal.status === "parked" ? "parked" : "failed",
+            stopReason: terminal.stopSummary.reason,
+            gateSummary: terminal.stopSummary.summary,
+          });
           openShippedTerminal =
             terminal.status === "parked"
               ? {

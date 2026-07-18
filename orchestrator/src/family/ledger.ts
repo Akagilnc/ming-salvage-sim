@@ -30,6 +30,7 @@ import {
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
+import { emitShipProgress } from "../progressBroadcast.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -1094,6 +1095,12 @@ export async function recordShipped(
         }),
     }) as FamilyLedgerEntry,
   );
+  // #1007: first successful ship must echo progress (resume path also echoes;
+  // missing here left the only ship event on re-entry, not the open).
+  emitShipProgress({
+    pr,
+    familyHead: familyHeadAfter,
+  });
 }
 
 /**
