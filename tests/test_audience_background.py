@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
 import web_app as web_module
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import ChatTurnResult, GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from web_app import WebGame
@@ -650,14 +651,16 @@ def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatc
     """流式回话先出，完成事件再携带以完整回话生成的近臣读心。"""
     db, state, content = game
     minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣愿", "担责。"]))
+    minister_agent = _FakeAgent(chunks=["臣愿", "担责。"])
+    web_game = _web_game(db, state, content, minister_agent)
     sentinel = {"truths": {"潜台词": "这句担责是在向皇爷表明心迹。"}}
+    calls = []
 
-    monkeypatch.setattr(
-        web_module,
-        "build_mindreading_payload",
-        lambda _db, _state, _reader, _target, reply: sentinel if reply == "臣愿担责。" else {},
-    )
+    def build_after_reply(_db, _state, _reader, _target, reply):
+        calls.append((reply, minister_agent.completed.is_set()))
+        return sentinel
+
+    monkeypatch.setattr(web_module, "build_mindreading_payload", build_after_reply)
 
     events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
 
@@ -665,22 +668,37 @@ def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatc
         {"type": "delta", "content": "臣愿"},
         {"type": "delta", "content": "担责。"},
     ]
+    assert calls == [("臣愿担责。", True)]
     assert events[-1]["type"] == "done"
     assert events[-1]["payload"]["mindreading"] == sentinel
 
 
-def test_stream_audience_rejects_empty_mindreading_builder_payload(game, monkeypatch):
-    """真实 web 完成 seam 对空壳 builder 必须响亮失败，防止接线退化成假绿。"""
+def test_stream_mindreading_failure_keeps_completed_minister_reply(game, monkeypatch):
+    """读心尾随失败只进显式错误字段，不回滚已流式完成的大臣回话。"""
     db, state, content = game
     minister_name = "毕自严"
     web_game = _web_game(db, state, content, _FakeAgent())
-    monkeypatch.setattr(web_module, "build_mindreading_payload", lambda *_args: {})
+
+    def failed_reading(*_args):
+        raise LLMUnavailable("读心后端不可用")
+
+    monkeypatch.setattr(web_module, "build_mindreading_payload", failed_reading)
 
     events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
 
-    assert events[-1]["type"] == "error"
-    assert "读心 payload" in events[-1]["message"]
-    assert all(event["type"] != "done" for event in events)
+    assert events[:-1] == [
+        {"type": "delta", "content": "臣"},
+        {"type": "delta", "content": "遵旨。"},
+    ]
+    assert events[-1]["type"] == "done"
+    payload = events[-1]["payload"]
+    assert payload["answer"] == "臣遵旨。"
+    assert payload["mindreading"] is None
+    assert "读心后端不可用" in payload["mindreading_error"]
+    assert web_game.chat_history[minister_name][-1] == {
+        "role": "minister", "content": "臣遵旨。",
+    }
+    assert db.can_undo_last_chat_turn(minister_name, state.turn)
 
 
 class _RaisingActionSession(_FakeSession):

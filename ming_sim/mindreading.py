@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Mapping
 
+from ming_sim.agents import create_mindreading_agent
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import Character
 from ming_sim.qualitative import identity_band, qualitative_band, safe_historical_text
 
@@ -85,6 +87,8 @@ def _seed_guilt_text(character: object) -> str:
     severity = str(guilt.get("severity") or "无")
     if crime == "无" and severity == "无":
         return "底案未见坐实之事。"
+    if severity == "无":
+        return "底案未见可坐实之罪，另有品性记录。"
     return f"底案留有{crime}（案情分量：{severity}）。"
 
 
@@ -107,62 +111,6 @@ def _safe_reply_text(minister_reply: object) -> str:
     return safe_historical_text(minister_reply, "大臣回话")
 
 
-def _infer_subtext(
-    minister_reply: str,
-    *,
-    identity: int,
-    loyalty: int,
-    seed_guilt: str,
-    reader_context: Mapping[str, object],
-) -> str:
-    """Turn the three truth sources into a small, deterministic soft reading.
-
-    This is deliberately a content seam rather than a truth calculator: the
-    durable axes only anchor the kind of suspicion, while the reply supplies
-    the observable cue and the reader's heard history supplies its point of
-    view.  The result is qualitative prose, never a score dump.
-    """
-    reply = str(minister_reply).strip()
-    if any(word in reply for word in ("推给", "归咎", "责任", "同僚")):
-        cue = "把责任往旁人身上移"
-    elif any(word in reply for word in ("奉公", "忠心", "效死", "担责")):
-        cue = "先把忠顺的话说满"
-    else:
-        cue = "话说得周全，却留着可转圜的余地"
-
-    guilt_hint = "底案暂未坐实"
-    if "无(" in seed_guilt or "污点" in seed_guilt or "合谋" in seed_guilt:
-        guilt_hint = "旧日品性上的阴影仍在"
-    elif seed_guilt and "无" not in seed_guilt:
-        guilt_hint = "旧案的阴影尚未散尽"
-
-    if identity < 40 and loyalty >= 60:
-        axis_hint = "党账淡而君臣账较真"
-    elif identity >= 60 and loyalty < 40:
-        axis_hint = "党账深而君臣账偏冷"
-    elif loyalty >= 60:
-        axis_hint = "对君尚有可托之处"
-    elif loyalty < 40:
-        axis_hint = "对君的真心不甚牢靠"
-    else:
-        axis_hint = "党君两面都还隔着一层"
-
-    heard = reader_context.get("heard") or []
-    # Archive projections are appended after the event ledger, so prefer an
-    # actual witnessed item over a derived gazette when both exist.
-    firsthand = [
-        item for item in heard
-        if isinstance(item, Mapping) and item.get("title") not in {"邸报", "朝局旧闻"}
-    ]
-    if firsthand:
-        latest = firsthand[-1]
-        title = str(latest.get("title") or "旧闻") if isinstance(latest, Mapping) else "旧闻"
-        view_hint = f"近臣又想起听来的「{title}」"
-    else:
-        view_hint = "近臣眼下只凭当面这句话作判断"
-    return f"{cue}；{axis_hint}，{guilt_hint}。{view_hint}。"
-
-
 def build_mindreading_payload(
     db: Any,
     state: Any,
@@ -170,6 +118,7 @@ def build_mindreading_payload(
     target: Character,
     minister_reply: str,
     *,
+    mindreading_agent: Any = None,
     target_factor: float = 1.0,
     channel_factor: float = 1.0,
 ) -> Dict[str, object]:
@@ -205,14 +154,29 @@ def build_mindreading_payload(
     identity = int(_character_field(current_target, "identity") or 0)
     loyalty = int(_character_field(current_target, "loyalty") or 0)
     faction = str(_character_field(current_target, "faction") or "未明党籍")
-    if identity < 40 and loyalty >= 60:
-        relation = "忠而不党"
-    elif identity >= 60 and loyalty < 40:
-        relation = "党而不忠"
-    else:
-        relation = "党君两账未见明显分裂"
-
     reader_context = _reader_context(db, state, reader)
+    party_truth = f"名义党派：{faction}；对本党的认同：{identity_band(identity)}。"
+    loyalty_truth = f"对君的真心：{qualitative_band(loyalty, _LOYALTY_BANDS)}。"
+    guilt_truth = _seed_guilt_text(current_target)
+    materials = {
+        "当轮回话": safe_reply,
+        "党账": party_truth,
+        "君臣账": loyalty_truth,
+        "底案": guilt_truth,
+        "近臣自身见闻": reader_context["heard"],
+    }
+    agent = mindreading_agent
+    if agent is None:
+        llm_config = getattr(db, "llm_config", None)
+        if llm_config is None:
+            raise LLMUnavailable("当前会话没有可用的模型配置")
+        agent = create_mindreading_agent(llm_config)
+    result = agent.run(json.dumps(materials, ensure_ascii=False))
+    subtext = getattr(result, "content", None)
+    if not isinstance(subtext, str) or not subtext.strip():
+        raise LLMUnavailable("模型返回空文本")
+    subtext = subtext.strip()
+
     return {
         "reader": reader.name,
         "target": target.name,
@@ -220,20 +184,10 @@ def build_mindreading_payload(
         "precision": intelligence_precision(target_factor, channel_factor),
         "reader_context": reader_context,
         "truths": {
-            "党账": (
-                f"名义党派：{faction}；"
-                f"对本党的认同：{identity_band(identity)}；"
-                f"{_seed_guilt_text(current_target)}"
-            ),
-            "君臣账": f"对君的真心：{qualitative_band(loyalty, _LOYALTY_BANDS)}。",
-            "关系判断": relation,
-            "潜台词": _infer_subtext(
-                safe_reply,
-                identity=identity,
-                loyalty=loyalty,
-                seed_guilt=str(_character_field(current_target, "seed_guilt") or ""),
-                reader_context=reader_context,
-            ),
+            "党账": party_truth,
+            "君臣账": loyalty_truth,
+            "底案": guilt_truth,
+            "潜台词": subtext,
         },
         # Keep this boundary local to the returned payload: callers may retain
         # the raw streamed reply separately, but this player-facing object may
