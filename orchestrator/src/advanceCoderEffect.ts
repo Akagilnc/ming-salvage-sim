@@ -1,11 +1,12 @@
 /**
- * #919 / #926 / #930 — one advanceCoder execution path for both courts.
+ * #919 / #926 / #930 / #1002 — one advanceCoder execution path for all courts.
  *
  * Topology law lives here once:
  *   resolveAdvanceCoderSuggestion → applySlug → optional probe → advanced | stay_put | noop
  *
  * Callers own only: audit persistence + sticky seat state. Never terminal on
- * bad advance (slice S3/S6 and family CMR continue share this contract).
+ * bad advance. Courts differ only in which repair seat `applySlug` rewrites
+ * (single-slice coderFix / family coderFix / online-review fixer — #1002).
  */
 
 import {
@@ -59,9 +60,10 @@ export type AdvanceCoderProbe = (
 /**
  * Execute a judge `advanceCoder` suggestion against one seat's current slug.
  *
- * `applySlug` is the only court difference:
- *   - single-slice S3/S6 → rewrite coder + coderFix
- *   - family CMR continue → rewrite coderFix only
+ * `applySlug` is the only court difference (repair seats only — #1002 07-18):
+ *   - single-slice S3/S6 → rewrite coderFix
+ *   - family CMR continue → rewrite coderFix
+ *   - online-review continue → rewrite fixer
  */
 export async function executeAdvanceCoderSuggestion(input: {
   readonly suggestion: string;

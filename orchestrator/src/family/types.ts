@@ -124,9 +124,9 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "online_review_round_retrigger",
   "worker_dispatched",
   "route_degraded",
-  /** #919 — judge advanceCoder executed on family coderFix seat. */
+  /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
   "coder_advance",
-  /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+  /** #919 / #1002 — judge advanceCoder unusable; stay on current repair seat. */
   "coder_advance_stay_put",
 ] as const;
 

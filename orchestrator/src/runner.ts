@@ -75,6 +75,7 @@ import {
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
   relaySlotForSingleSliceWallStep,
+  applyRelayBatonToRoute,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
@@ -1664,9 +1665,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
-    // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
+    // #926 / #1002: judge-advanced repair seat holds against Coder-Rec
+    // withCoderSlot dual-rewrite of coderFix. Implement seat (coder) stays.
     if (stickyJudgeAdvanceCoderSlug !== undefined) {
-      return holdCoderSticky(stickyJudgeAdvanceCoderSlug);
+      if (modelRoute.slots.coderFix !== stickyJudgeAdvanceCoderSlug) {
+        const admitted = admitRelayBaton(
+          modelRoute,
+          { slug: stickyJudgeAdvanceCoderSlug },
+          "S5",
+        );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
+      }
+      return undefined;
     }
     // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
     const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
@@ -1793,20 +1814,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   /**
-   * #926 / #919 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
-   * Shared topology via {@link executeAdvanceCoderSuggestion}; this court only
-   * owns bookkeeping + sticky state. Never terminals for roster unusability.
+   * #926 / #919 / #1002 — execute a judge `advanceCoder` suggestion (or stay-put
+   * + audit). Shared topology via {@link executeAdvanceCoderSuggestion}; this
+   * court only owns bookkeeping + sticky state. Never terminals for roster
+   * unusability. #1002 07-18: rewrite **coderFix** repair seat only (S2 already
+   * delivered; rewriting coder is unreachable speculative generality).
    */
   const applyJudgeAdvanceCoder = async (
     suggestion: string,
     forStep: "S3" | "S6",
   ): Promise<void> => {
-    const currentSlug = modelRoute.slots.coder;
+    const currentSlug = modelRoute.slots.coderFix;
     const effect = await executeAdvanceCoderSuggestion({
       suggestion,
       currentSlug,
       route: modelRoute,
-      applySlug: (route, slug) => withCoderSlot(route, slug),
+      applySlug: (route, slug) =>
+        applyRelayBatonToRoute(route, { slug }, "S5", { slots: ["coderFix"] }),
       probe: probeRouteSmoke,
     });
 
@@ -1830,18 +1854,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    // advanced — hold sticky seat; retire prior coder session; follow billing pool.
+    // advanced — hold sticky repair seat; retire prior coder session (S5 model
+    // changed); billing pool follows the repair seat.
     modelRoute = effect.route;
     stickyJudgeAdvanceCoderSlug = effect.toSlug;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Candidate already smoked — skip the next ensureRouteSmoke gate.
     routeSmokeChecked = true;
-    // New coder: fresh session (memory = worktree git history + ledger only).
+    // New repair seat: fresh session (cannot resume across model change).
     coderSessionId = undefined;
     coderSessionModel = undefined;
-    // Billing pool follows the new seat (same as Coder-Rec slot change).
     currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coder),
+      poolForModelRef(modelRoute.slots.coderFix),
     );
 
     await persistAdvanceBookkeeping(
@@ -2885,18 +2909,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
 
-    // #926 — rebuild judge-advanced sticky seat from the latest successful
-    // coder_advance row (before resource-relay, which still wins when present).
-    // #934 R7 F3: re-admit tight after sticky re-hold.
+    // #926 / #1002 — rebuild judge-advanced sticky **coderFix** seat from the
+    // latest successful coder_advance row (before resource-relay, which still
+    // wins when present). #934 R7 F3: re-admit tight after sticky re-hold.
     for (let i = resumeLedger.length - 1; i >= 0; i--) {
       const row = resumeLedger[i]!;
       if (row.event === "coder_advance" && typeof row.toModelId === "string") {
         const advanced = lookupCoderRosterEntry(row.toModelId);
         const slug = advanced?.slug ?? row.toModelId;
         stickyJudgeAdvanceCoderSlug = slug;
-        const held = holdCoderSticky(slug);
-        if (held?.kind === "stop") {
-          return await stopForCoderRecTightRoutePolicy(held.escalation);
+        if (modelRoute.slots.coderFix !== slug) {
+          const admitted = admitRelayBaton(modelRoute, { slug }, "S5");
+          if (admitted.kind === "stop") {
+            return await stopForCoderRecTightRoutePolicy(admitted.escalation);
+          }
+          modelRoute = admitted.route;
+          stepSpecs = stepSpecsForRoute(modelRoute);
+          routeSmokeChecked = false;
         }
         break;
       }

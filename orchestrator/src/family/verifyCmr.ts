@@ -1146,10 +1146,11 @@ export async function runFamilyOnlineReviewLoop(input: {
     };
   }
   // F2: do not put sticky baton pool on baseCtx — each dispatch scopes by slot.
+  // modelRoute is intentionally omitted here and injected per-dispatch so
+  // #1002 advanceCoder sticky fixer rewrites are visible to the next seat.
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
-    modelRoute,
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -1167,6 +1168,60 @@ export async function runFamilyOnlineReviewLoop(input: {
         : {}),
       kind,
     });
+
+  /**
+   * #1002 — online-review continue + advanceCoder rewrites the **fixer** repair
+   * seat (same effect topology as CMR coderFix; never terminal).
+   */
+  const applyOnlineReviewAdvanceCoder = async (
+    suggestion: string,
+  ): Promise<void> => {
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion,
+      currentSlug: modelRoute.slots.fixer,
+      route: modelRoute,
+      applySlug: (route, slug) =>
+        applyRelayBatonToRoute(route, { slug }, "S10", { slots: ["fixer"] }),
+      probe: async (candidate) => {
+        try {
+          const smoked = await smokeRouteModels(candidate, async () => ({
+            cliVersion: "online-review-advance",
+          }));
+          const failure = routeSmokeFailure(smoked);
+          if (failure !== undefined) {
+            return { ok: false as const, reason: failure };
+          }
+          return { ok: true as const, route: smoked };
+        } catch (err) {
+          return {
+            ok: false as const,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
+      },
+    });
+    modelRoute = effect.route;
+    if (effect.kind === "stay_put" || effect.kind === "advanced") {
+      await input.familyBackend.appendFamilyLedger({
+        status: effect.audit.event,
+        event: effect.audit.event,
+        reason:
+          effect.kind === "stay_put" ? effect.reason : "coder_advance",
+        message: effect.audit.state_summary,
+        fromModelId: effect.audit.fromModelId,
+        toModelId: effect.audit.toModelId,
+        advanceCoder: suggestion.trim(),
+        ts: effect.audit.ts,
+      });
+      console.info(
+        effect.kind === "advanced"
+          ? `[family] #1002 advanceCoder → ${effect.toSlug} ` +
+              `(fixer) from ${effect.fromSlug}`
+          : `[family] #1002 advanceCoder stay-put (${effect.reason}): ` +
+              `kept ${modelRoute.slots.fixer}; suggestion=${effect.suggestion}`,
+      );
+    }
+  };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
   const familyLedger = await input.familyBackend.readFamilyLedger();
@@ -1273,9 +1328,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       const verifyPool = poolForKind("verify");
       const result = await dispatchOrAbort(
         input.familyBackend,
-        verifyWorkerSpec(input.resolvedRoute),
+        verifyWorkerSpec(modelRoute),
         {
           ...baseCtx,
+          modelRoute,
           onlineReviewRound: round,
           ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
         },
@@ -1332,13 +1388,24 @@ export async function runFamilyOnlineReviewLoop(input: {
           ),
         };
       }
+      // #1002: continue disposition + advanceCoder rewrites fixer before fix
+      // dispatch (same never-terminal contract as CMR/single-slice courts).
+      const verifyOut = result.output;
+      if (
+        !verifyOut.converged &&
+        verifyOut.terminalState !== "decision_gate_raised" &&
+        typeof verifyOut.advanceCoder === "string" &&
+        verifyOut.advanceCoder.trim().length > 0
+      ) {
+        await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
+      }
       return {
         kind: "rawReviewerArtifacts",
         artifacts: reviewerArtifactPointers(
           reviewerMonitorHandle,
           result.sessionId,
         ),
-        verify: result.output,
+        verify: verifyOut,
       };
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
@@ -1350,9 +1417,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       const fixerPool = poolForKind("fixer");
       const result = await dispatchOrAbort(
         input.familyBackend,
-        fixerWorkerSpec(input.resolvedRoute),
+        fixerWorkerSpec(modelRoute),
         {
           ...baseCtx,
+          modelRoute,
           ...(fixerPool !== undefined ? { billingPool: fixerPool } : {}),
         },
         landing,

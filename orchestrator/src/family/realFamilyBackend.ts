@@ -4234,6 +4234,10 @@ export function parseVerifyOutcome(
     parsed.terminalState === "decision_gate_raised"
       ? parsed.terminalState
       : undefined;
+  const advanceCoder =
+    typeof parsed.advanceCoder === "string" && parsed.advanceCoder.trim().length > 0
+      ? parsed.advanceCoder.trim()
+      : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
     converged: parsed.converged,
@@ -4250,6 +4254,7 @@ export function parseVerifyOutcome(
       : {}),
     ...(terminalState !== undefined ? { terminalState } : {}),
     ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
+    ...(advanceCoder !== undefined ? { advanceCoder } : {}),
   };
   return candidate;
 }

@@ -566,7 +566,8 @@ export interface RouteDegradedEvent {
 }
 
 /**
- * #926 — judge `advanceCoder` executed: coder slot switched; prior session retired.
+ * #926 / #1002 — judge `advanceCoder` executed: repair seat switched (coderFix /
+ * fixer); prior repair session retired when the model changed.
  * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
  */
 export interface CoderAdvanceEvent {
@@ -579,7 +580,7 @@ export interface CoderAdvanceEvent {
 }
 
 /**
- * #926 — judge `advanceCoder` target unusable: stay on the current coder.
+ * #926 / #1002 — judge `advanceCoder` target unusable: stay on the current repair seat.
  * Never a terminal — result returns to the judge desk on the normal continue path.
  */
 export interface CoderAdvanceStayPutEvent {
@@ -1260,6 +1261,13 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
+  /**
+   * #1002 — optional roster suggestion on continue: runner rewrites the online
+   * review **fixer** repair seat via executeAdvanceCoderSuggestion (same
+   * advanced/stay_put/noop topology as single-slice/family coderFix). Never a
+   * terminal fate signal.
+   */
+  readonly advanceCoder?: string;
 }
 
 /**
