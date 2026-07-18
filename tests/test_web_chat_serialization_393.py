@@ -239,7 +239,7 @@ def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transf
     runtime.suggestions_for = lambda character: []
     runtime.can_undo_last_chat = lambda minister_name: False
 
-    payload, _tail_context = runtime._chat_stream_payload(
+    payload = runtime._chat_stream_payload(
         assignee.name, "密令如下：查户部旧账", 0, {}, state.turn, lambda _delta: None,
     )
 

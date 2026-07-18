@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 import time
@@ -8,9 +7,8 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
-import web_app as web_module
 from ming_sim.exceptions import LLMUnavailable
-from ming_sim.session import ChatTurnResult, GameSession
+from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from web_app import WebGame
 
@@ -247,7 +245,7 @@ def test_stream_tool_staged_secret_order_merges_minister_reply(game):
     )
     web_game = _web_game(db, state, content, agent)
 
-    payload, _tail_context = web_game._chat_stream_payload(
+    payload = web_game._chat_stream_payload(
         minister_name,
         "密令如下：密查辽饷去向，三月内回奏，不可声张。",
         chat_turn_id=0,
@@ -300,7 +298,7 @@ def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, mo
     web_game.session.apply_cli_conversation_actions = types.MethodType(
         GameSession.apply_cli_conversation_actions, web_game.session)
 
-    payload, _tail_context = web_game._chat_stream_payload(
+    payload = web_game._chat_stream_payload(
         minister_name,
         "准了",
         chat_turn_id=0,
@@ -337,7 +335,7 @@ def test_stream_secret_order_tool_blocked_in_recovery_window(game):
         _FakeAgent([ToolExec("secret_order", f"__secret_order__{tool_payload}")]),
     )
 
-    payload, _tail_context = web_game._chat_stream_payload(
+    payload = web_game._chat_stream_payload(
         minister_name,
         "密令如下：恢复窗新令",
         chat_turn_id=0,
@@ -357,7 +355,7 @@ def test_stream_secret_order_plain_tool_result_does_not_stage_empty_candidate(ga
     agent = _FakeAgent([ToolExec("secret_order", "密令 #1 状态：active。")])
     web_game = _web_game(db, state, content, agent)
 
-    payload, _tail_context = web_game._chat_stream_payload(
+    payload = web_game._chat_stream_payload(
         minister_name,
         "查一下密令进展。",
         chat_turn_id=0,
@@ -610,117 +608,6 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game):
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
     assert row["status"] == "failed"
-
-
-def test_compat_audience_entries_do_not_wait_for_mindreading_tail(game, monkeypatch):
-    """兼容入口只返回已落稳的回话；读心尾随由场景编排入口负责。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    web_game.session.chat = lambda *_args, **_kwargs: ChatTurnResult(answer="臣愿担责。")
-    db.conn.execute("UPDATE characters SET office='司礼监随堂' WHERE name='王承恩'")
-    db.conn.execute("UPDATE characters SET office='御前近臣' WHERE name='曹化淳'")
-    db.conn.commit()
-    calls = []
-
-    def forbidden_tail(*_args):
-        calls.append("called")
-        raise AssertionError("compat entry waited for mindreading")
-
-    monkeypatch.setattr(web_module, "generate_mindreading_payload", forbidden_tail)
-    monkeypatch.setattr(web_module, "get_game", lambda: web_game)
-    monkeypatch.setattr(web_module, "_require_active_minister", lambda _name: None)
-
-    chat_payload = web_game.chat(minister_name, "户部钱粮如何？")
-    secret_payload = asyncio.run(web_module.api_create_secret_order(
-        "徐光启", web_module.SecretOrderRequest(title="密查", content="暗查仓场"),
-    ))
-
-    assert calls == []
-    for payload in (chat_payload, secret_payload):
-        assert payload["answer"] == "臣愿担责。"
-        assert payload["mindreading"] is None
-        assert payload["mindreading_error"] == ""
-
-
-def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatch):
-    """流式回话先出，完成事件再携带以完整回话生成的近臣读心。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    minister_agent = _FakeAgent(chunks=["臣愿", "担责。"])
-    web_game = _web_game(db, state, content, minister_agent)
-    sentinel = {"truths": {"潜台词": "这句担责是在向皇爷表明心迹。"}}
-    calls = []
-
-    def build_after_reply(materials, _llm_config):
-        calls.append((materials["reply_text"], minister_agent.completed.is_set()))
-        return sentinel
-
-    monkeypatch.setattr(web_module, "generate_mindreading_payload", build_after_reply)
-
-    events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
-
-    assert events[:-1] == [
-        {"type": "delta", "content": "臣愿"},
-        {"type": "delta", "content": "担责。"},
-    ]
-    assert calls == [("臣愿担责。", True)]
-    assert events[-1]["type"] == "done"
-    assert events[-1]["payload"]["mindreading"] == sentinel
-
-
-def test_stream_mindreading_failure_keeps_completed_minister_reply(game, monkeypatch):
-    """读心尾随失败只进显式错误字段，不回滚已流式完成的大臣回话。"""
-    db, state, content = game
-    minister_name = "毕自严"
-    web_game = _web_game(db, state, content, _FakeAgent())
-    started = threading.Event()
-    release = threading.Event()
-    observed = {}
-
-    def failed_reading(_materials, _llm_config):
-        gate_released = web_game._runtime_write_gate().acquire(blocking=False)
-        if gate_released:
-            web_game._runtime_write_gate().release()
-        turn = db.get_last_active_chat_turn(minister_name, state.turn)
-        observed.update(
-            gate_released=gate_released,
-            minister_message_id=int(turn["minister_message_id"] or 0) if turn else 0,
-            can_undo=db.can_undo_last_chat_turn(minister_name, state.turn),
-            pending_count=web_game._pending_writes_count,
-            history=list(web_game.chat_history[minister_name]),
-        )
-        started.set()
-        assert release.wait(1.0)
-        raise LLMUnavailable("读心后端不可用")
-
-    monkeypatch.setattr(web_module, "generate_mindreading_payload", failed_reading)
-
-    stream = web_game.chat_stream(minister_name, "辽饷如何？")
-    events = [next(stream), next(stream)]
-    assert started.wait(1.0)
-    assert observed["gate_released"] is True
-    assert observed["minister_message_id"] > 0
-    assert observed["can_undo"] is True
-    assert observed["pending_count"] == 0
-    assert observed["history"][-1] == {"role": "minister", "content": "臣遵旨。"}
-    release.set()
-    events.append(next(stream))
-
-    assert events[:-1] == [
-        {"type": "delta", "content": "臣"},
-        {"type": "delta", "content": "遵旨。"},
-    ]
-    assert events[-1]["type"] == "done"
-    payload = events[-1]["payload"]
-    assert payload["answer"] == "臣遵旨。"
-    assert payload["mindreading"] is None
-    assert "读心后端不可用" in payload["mindreading_error"]
-    assert web_game.chat_history[minister_name][-1] == {
-        "role": "minister", "content": "臣遵旨。",
-    }
-    assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    assert not any(key.startswith("_mindreading_") for key in payload)
 
 
 class _RaisingActionSession(_FakeSession):
