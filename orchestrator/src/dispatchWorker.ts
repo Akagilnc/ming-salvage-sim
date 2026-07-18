@@ -19,18 +19,16 @@
  *     control flow consumes without changing route()/validate().
  */
 
-import { shWithClock } from "./externalCall.js";
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { ensureRegularFileForBindMount } from "./fsErrors.js";
+import { ensureGitInfoExclude } from "./gitInfoExclude.js";
 import {
   isJudgeSeat,
   materializeLandingFixPacketBody,
@@ -157,25 +155,8 @@ function retentionForKind(kind: WorkerKind): WorkerContextRetention {
 }
 
 function ensureGitExcluded(worktreePath: string, pattern: string): void {
-  try {
-    const excludePath = shWithClock(
-      "git",
-      ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
-      { stage: "dispatch:git-exclude" },
-    );
-    if (excludePath.length === 0) return;
-    const resolvedPath = resolve(worktreePath, excludePath);
-    mkdirSync(join(resolvedPath, ".."), { recursive: true });
-    const existing = existsSync(resolvedPath)
-      ? readFileSync(resolvedPath, "utf8")
-      : "";
-    if (!existing.split(/\r?\n/).includes(pattern)) {
-      appendFileSync(resolvedPath, `${existing.endsWith("\n") || existing.length === 0 ? "" : "\n"}${pattern}\n`);
-    }
-  } catch {
-    // Best effort only: the file is still useful to the worker even if this is
-    // a non-git fixture path. Real git worktrees get the exclude entry.
-  }
+  // Shared best-effort info/exclude write (#1014 DRY).
+  ensureGitInfoExclude(worktreePath, pattern);
 }
 
 function writeFixFindingsLandingFile(
