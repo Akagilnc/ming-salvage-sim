@@ -94,6 +94,7 @@ import {
 } from "./family/moduleDeclaration.js";
 import { shouldReclaimFamilyHost } from "./hostReclaim.js";
 import { logDriverStage } from "./stageLog.js";
+import { configureProgressBroadcast } from "./progressBroadcast.js";
 import {
   decisionGateParkStopSummary,
   infraFailureStopSummary,
@@ -1236,12 +1237,20 @@ export async function runFamilyDriver(
   const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
 
+  // #1007: bind progress feed for the whole family driver (stage + status).
+  configureProgressBroadcast({
+    ledgerDir: options.ledgerDir,
+    epic: options.epicIssue,
+  });
+
   // #936 / #934 ID-005: Scene Recovery FIRST — resident family durable truth
   // before route admission, GitHub metadata, smoke, or clone/worksite. Terminal
   // completed/failed replay with zero external calls; corrupted residue fails
   // loud and preserves the scene. Typed fresh only when ledger AND worksite
   // residue (clone / start-head) are both absent.
-  logDriverStage("recovery", `family scene epic #${options.epicIssue}`);
+  logDriverStage("recovery", `family scene epic #${options.epicIssue}`, {
+    epic: options.epicIssue,
+  });
   const home = options.home ?? homedir();
   const familyClonePath = clonePathFor(
     home,

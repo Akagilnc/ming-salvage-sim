@@ -237,17 +237,24 @@ for the reason.
 | --- | --- |
 | `run.log` | route lineup echo, per-phase progress, final JSON result |
 | `~/.sc-orchestrator/family-<EPIC>-ledger/family-ledger.jsonl` | append-only family events (`worker_dispatched`, `merged`, `cmr_*`, parks) |
+| `.../family-<EPIC>-ledger/progress.jsonl` | #1007 active progress feed (issue-numbered stage / judge / park / merge / ship / terminal) |
 | `.../family-<EPIC>-ledger/worker-logs/S*.log` | live worker output (tail these) |
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
+
+**Status command (#1007):** from `orchestrator/`,
+`npm run status -- ~/.sc-orchestrator/family-<EPIC>-ledger` renders per-issue
+station / rounds / latest judge verdict / disposition counts / parks from
+`progress.jsonl` (+ merge markers from `family-ledger.jsonl`). No hand-scanning
+`steps.jsonl`. Optional desktop notify: set `ORCHESTRATOR_NOTIFY_CMD` (default
+off) — fires on park / terminal only; fail-open.
 
 **Truth sources per layer (2026-07-18 monitoring-misread lesson):** the family
 ledger above records FAMILY-station events only (merger / integrated CMR /
 verify / parks). Per-child single-slice truth lives in the iso clone:
 `<iso>/.sandcastle/worktrees/.ledger-<issue>/steps.jsonl` (authoritative step
 outcomes) plus `.ledger-<issue>/worker-logs/*.result.json` and `S*.log`.
-Launcher stage lines carry NO issue id — five children each dispatching S2
-print five identical `dispatch step=S2` lines (observability debt, #975).
+Stage lines and `progress.jsonl` now carry issue numbers (#1007 / #975 debt ④).
 During a wave the family branch tip does NOT move: children merge serially
 only after the whole wave settles (`Promise.allSettled` barrier) — a static
 family tip is expected behavior, not a stall signal.
