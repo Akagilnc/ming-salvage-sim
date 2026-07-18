@@ -429,7 +429,13 @@ describe("#970 / #1019 — true child answer without parked resume → fresh red
           e.childIssue === 883 && e.reason === "child_answer_fresh_redispatch",
       ),
     ).toBe(true);
-    // Must not stay stuck as terminal-replay-only fail-closed.
-    expect(result.status).not.toBe("parked");
+    // Fresh redispatch must actually run coder S2 (not terminal-replay-only).
+    expect(
+      singleSliceBackend.runStepCalls.some(
+        (c) => c.issue === 883 && c.step === "S2",
+      ),
+    ).toBe(true);
+    expect(result.status).toBe("completed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
   });
 });
