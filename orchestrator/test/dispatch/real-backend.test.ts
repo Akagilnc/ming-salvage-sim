@@ -1,20 +1,6 @@
-/**
- * Unit tests for the PURE host-side logic of the real Backend (#256).
- *
- * Scope (per #256 acceptance criteria): only the zero-container, zero-LLM logic
- * — gh-snapshot parsing, auth-mount path construction, model-slug mapping,
- * per-step sessionId extraction (seam extension), resume error classification,
- * and failedStep attribution
- * (codex#3). The real container / real-LLM / real-gh paths are #256
- * MANUAL smoke and are NOT exercised here.
- *
- * These imports load `@ai-hero/sandcastle` (side-effect-free) but never start a
- * container, so the suite runs in the same zero-infra harness as the fake-Backend
- * step control-flow tests.
- */
-
-import { dirname, join } from "node:path";
 import {
+  dirname,
+  join,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -22,11 +8,15 @@ import {
   rmSync,
   readFileSync,
   writeFileSync,
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import {
+  homedir,
+  tmpdir,
+  fileURLToPath,
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
   agentForSlug,
   attributeFailure,
   branchForIssue,
@@ -58,101 +48,36 @@ import {
   SANDBOX_SKILLS_DIR,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
-  type GhBlockedBy,
-  type GhIssueJson,
-} from "../../src/realBackend.js";
-import type {
+  GhBlockedBy,
+  GhIssueJson,
   StepOutput,
   StepSpec,
   WorktreeHandle,
-} from "../../src/types.js";
-import type * as sc from "@ai-hero/sandcastle";
-import { resolveRouteModels } from "../../src/modelRoutes.js";
-import * as telemetry from "../../src/telemetry.js";
-// NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
-// brief); S1's `extractAgentBrief` is the surviving brief reader.
-import * as scRuntime from "@ai-hero/sandcastle";
-import { StructuredOutputError } from "@ai-hero/sandcastle";
-import {
+  sc,
+  resolveRouteModels,
+  telemetry,
+  scRuntime,
+  StructuredOutputError,
   DECISION_GATE_TAG,
   RECEIPT_MAX_RETRIES,
   decisionGateSignalSchema,
   isReceiptRecoveryFailure,
   workerReceiptSchema,
-} from "../../src/receiptRecovery.js";
-import {
   CODER_RECEIPT_TAG,
   coderStationReceiptSchema,
   judgeStationReceiptSchema,
   JUDGE_RECEIPT_TAG,
-} from "../../src/stationReceiptContracts.js";
-import {
   runScriptedStructuredOutput,
-  type ScriptedAgent,
-} from "../helpers/scripted-sandcastle-run.js";
-
-/** #924 production coder no-gate / completed envelope (traffic + cargo siblings). */
-const CODER_COMPLETED_ENVELOPE = {
-  station: "coder" as const,
-  status: "completed" as const,
-  committed: true,
-  commitsAdded: 1,
-};
-
-const CODER_NO_COMMIT_ENVELOPE = {
-  station: "coder" as const,
-  status: "completed" as const,
-  committed: false,
-  commitsAdded: 0,
-};
-
-const CODER_ESCALATE_ENVELOPE = {
-  station: "coder" as const,
-  status: "escalate" as const,
-  reason: "owner choice",
-  diagnosis: "contract fork",
-  committed: false,
-  commitsAdded: 0,
-};
-
-type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
-
-function agentRunResult({
-  stdout,
-  commits = [],
-  sessionId,
-  output,
-}: {
-  readonly stdout: string;
-  readonly commits?: ReadonlyArray<{ sha: string }>;
-  readonly sessionId: string;
-  readonly output?: unknown;
-}): AgentRunResult {
-  // #928: do not feed completionSignal — completion is exit + legal sidecar.
-  return {
-    branch: "test-agent-branch",
-    stdout,
-    commits: [...commits],
-    iterations: [{ sessionId }],
-    ...(output !== undefined ? { output } : {}),
-  } as AgentRunResult;
-}
-
-/** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
-const tempHomes: string[] = [];
-
-function tempHome(prefix = "rb-home-748-"): string {
-  const home = mkdtempSync(join(tmpdir(), prefix));
-  tempHomes.push(home);
-  return home;
-}
-
-function cleanupTempHomes(): void {
-  while (tempHomes.length > 0) {
-    const home = tempHomes.pop();
-    if (home !== undefined) rmSync(home, { recursive: true, force: true });
-  }
-}
+  ScriptedAgent,
+  CODER_COMPLETED_ENVELOPE,
+  CODER_NO_COMMIT_ENVELOPE,
+  CODER_ESCALATE_ENVELOPE,
+  AgentRunResult,
+  agentRunResult,
+  tempHomes,
+  tempHome,
+  cleanupTempHomes,
+} from "./real-backend.shared.js";
 
 afterEach(cleanupTempHomes);
 afterEach(() => vi.restoreAllMocks());

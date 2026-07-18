@@ -1,10 +1,7 @@
-/**
- * #959 — captureToHost must land via same-volume temp + integrity + atomic
- * rename swap. Mid-transfer failure must not poison an existing host session;
- * concurrent same-slug captures must never leave a mixed directory.
- */
-import { execFile } from "node:child_process";
+import { vi } from "vitest";
+
 import {
+  execFile,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,14 +10,23 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { BindMountSandboxHandle } from "@ai-hero/sandcastle";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-/** When true, host tar-extract succeeds then throws (mid-transfer inject). */
-let failAfterHostExtract = false;
+  tmpdir,
+  join,
+  BindMountSandboxHandle,
+  afterEach,
+  describe,
+  expect,
+  it,
+  faultState,
+  makeGrokSessionStorage,
+  grokSessionAtomicReplaceTestInject,
+  tempDirs,
+  tmp,
+  oldBackupNames,
+  localHandleWithStdin,
+  seedSandboxSession,
+  seedHostSession,
+} from "./grok-session-atomic-959.shared.js";
 
 vi.mock("../../src/externalCall.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/externalCall.js")>();
@@ -32,106 +38,20 @@ vi.mock("../../src/externalCall.js", async (importOriginal) => {
       opts: Parameters<typeof actual.execFileAsyncWithTimeout>[2],
     ) => {
       const result = await actual.execFileAsyncWithTimeout(file, args, opts);
-      if (failAfterHostExtract && opts.stage === "grok-session:tar-extract") {
+      if (faultState.failAfterHostExtract && opts.stage === "grok-session:tar-extract") {
         throw new Error("injected mid-transfer failure after extract");
       }
       return result;
     },
   };
 });
-
-// Import after vi.mock so captureToHost's dynamic import of externalCall sees the mock.
-const {
-  makeGrokSessionStorage,
-  grokSessionAtomicReplaceTestInject,
-} = await import("../../src/grokSessionStorage.js");
-
-const tempDirs: string[] = [];
-function tmp(prefix: string): string {
-  const d = mkdtempSync(join(tmpdir(), prefix));
-  tempDirs.push(d);
-  return d;
-}
 afterEach(() => {
-  failAfterHostExtract = false;
+  faultState.failAfterHostExtract = false;
   grokSessionAtomicReplaceTestInject.reset();
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop()!, { recursive: true, force: true });
   }
 });
-
-/** Leftover `.<sessionId>.old-*` backups under a cwd bucket (Standards S1). */
-function oldBackupNames(bucketDir: string, sessionId: string): string[] {
-  if (!existsSync(bucketDir)) return [];
-  return readdirSync(bucketDir).filter(
-    (n) => n.startsWith(`.${sessionId}.old-`) || n.includes(`.old-`),
-  );
-}
-/** Local-shell sandbox handle — same pattern as grok-resume.test.ts. */
-function localHandleWithStdin(worktreePath: string): BindMountSandboxHandle {
-  return {
-    worktreePath,
-    exec: (
-      command: string,
-      options?: {
-        onLine?: (line: string) => void;
-        cwd?: string;
-        sudo?: boolean;
-        stdin?: string;
-      },
-    ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
-      new Promise((resolve) => {
-        const child = execFile(
-          "bash",
-          ["-c", command],
-          { cwd: options?.cwd ?? worktreePath, maxBuffer: 64 * 1024 * 1024 },
-          (err, stdout, stderr) => {
-            const code = err ? ((err as { code?: number }).code ?? 1) : 0;
-            resolve({
-              stdout: String(stdout),
-              stderr: String(stderr),
-              exitCode: typeof code === "number" ? code : 1,
-            });
-          },
-        );
-        if (options?.stdin !== undefined) {
-          child.stdin?.write(options.stdin);
-        }
-        child.stdin?.end();
-      }),
-    copyFileIn: async () => {},
-    copyFileOut: async () => {},
-    close: async () => {},
-  };
-}
-
-function seedSandboxSession(
-  sandboxFs: string,
-  sbxSessions: string,
-  sandboxCwd: string,
-  sessionId: string,
-  files: Record<string, string>,
-): void {
-  const dir = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
-  mkdirSync(dir, { recursive: true });
-  for (const [name, body] of Object.entries(files)) {
-    writeFileSync(join(dir, name), body);
-  }
-}
-
-function seedHostSession(
-  hostRoot: string,
-  hostCwd: string,
-  sessionId: string,
-  files: Record<string, string>,
-): string {
-  const dir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
-  mkdirSync(dir, { recursive: true });
-  for (const [name, body] of Object.entries(files)) {
-    writeFileSync(join(dir, name), body);
-  }
-  return dir;
-}
 
 describe("#959 captureToHost atomic temp+swap", () => {
 

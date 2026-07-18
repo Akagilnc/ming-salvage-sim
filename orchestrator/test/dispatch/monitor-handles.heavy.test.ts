@@ -1,22 +1,15 @@
-/**
- * #684 / #937 — monitor handles at unified worker dispatch.
- * Process ownership = exact ChildProcess / process-group; silence is
- * observational only (no idle kill / PID-tree / spawn-ack wall clock).
- */
-
-import { spawn } from "node:child_process";
 import {
+  spawn,
   existsSync,
   mkdtempSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-
-import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
-import {
+  tmpdir,
+  join,
+  describe,
+  expect,
+  it,
+  dispatchWorkerWithMonitor,
   dispatchMonitoredCliWorker,
   monitorHandleFromLedger,
   poolIdForWorker,
@@ -24,8 +17,6 @@ import {
   silenceWholeMinutes,
   terminateSpawnedChild,
   validateMonitorHandle,
-} from "../../src/workerMonitor.js";
-import type {
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
@@ -33,36 +24,9 @@ import type {
   WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
-} from "../../src/types.js";
-
-function baseHandle(
-  overrides: Partial<WorkerMonitorHandle> &
-    Pick<WorkerMonitorHandle, "pid" | "logPath">,
-): WorkerMonitorHandle {
-  return {
-    poolId: "grok/composer",
-    stepId: "S7",
-    dispatchedAt: new Date().toISOString(),
-    instanceId: "test-instance",
-    ...overrides,
-  };
-}
-
-function sleepWorker(
-  logDir: string,
-  poolId: string,
-  stepId: string,
-): ReturnType<typeof dispatchMonitoredCliWorker> {
-  return dispatchMonitoredCliWorker({
-    command: process.platform === "win32" ? "ping" : "sleep",
-    args: process.platform === "win32" ? ["-n", "600"] : ["600"],
-    logDir,
-    poolId,
-    stepId,
-    logBasename: `${stepId}.log`,
-    readInstanceId: () => `test-instance-${stepId}`,
-  });
-}
+  baseHandle,
+  sleepWorker,
+} from "./monitor-handles.shared.js";
 
 describe("#684/#937 worker monitor handles", () => {
   it("dispatchMonitoredCliWorker yields a valid handle without spawn-ack timeout", async () => {

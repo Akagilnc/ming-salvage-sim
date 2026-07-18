@@ -1,29 +1,19 @@
-/**
- * #291 Unit B — the family DRIVER's pure assembly pieces (no container, no live
- * GitHub): epic-read from `gh`, FamilyEpic build, local family-base cut.
- *
- *   - buildFamilyEpic:      compose the FamilyEpic from children + blocked_by edges.
- *   - readFamilyEpic:       the gh-read end-to-end with an injected `sh`.
- *   - cutFamilyBase:        the LOCAL family-base cut on a real temp clone +
- *                           idempotent resume reuse.
- *   - runIntegratedCmr legacy seam: the RealFamilyBackend's per-method default
- *     throws — #335 routes the real `ak-cross-m-review` as the CONTAINER cmr
- *     WORKER via `dispatchWorker`, so the legacy per-method path is a guarded
- *     bypass (a throw, never a silent fabricated pass).
- */
-
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const realPromptsDir = join(here, "..", "..", "..", "prompts");
-const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
-
 import {
+  execFileSync,
+  mkdtempSync,
+  rmSync,
+  tmpdir,
+  dirname,
+  join,
+  fileURLToPath,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
+  here,
+  realPromptsDir,
+  realSoulsDir,
   buildFamilyEpic,
   cutFamilyBase,
   discoverSubprojects,
@@ -32,15 +22,13 @@ import {
   inferVerifyCwd,
   parseSubIssueAdmission,
   readFamilyEpic,
-  type Sh,
-} from "../../../src/familyDriver.js";
-import { RealFamilyBackend } from "../../../src/family/realFamilyBackend.js";
-import type { GhBlockedBy } from "../../../src/realBackend.js";
+  Sh,
+  RealFamilyBackend,
+  GhBlockedBy,
+  git,
+  cleanups,
+} from "./driver-assembly.shared.js";
 
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-}
-const cleanups: string[] = [];
 afterEach(() => {
   while (cleanups.length > 0) {
     const p = cleanups.pop();

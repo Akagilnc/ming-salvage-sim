@@ -1,101 +1,45 @@
-/**
- * #937 — unified worker dispatch terminal shape.
- *
- * Acceptance:
- *   - unified worker dispatch real entry proves #934 ID-004, ID-006
- *   - public ignition/driver seams prove #934 ID-007, ID-008, ID-015, ID-016
- *
- * Seams (real production paths only):
- *   - dispatchRetry.withMechanicalRetry / MAX_DISPATCH_ATTEMPTS / backoff
- *   - dispatchWorkerWithMonitor + terminateSpawnedChild
- *   - renderEphemeralRelayBrief + canRelayHandoff / MAX_RELAY_HANDOFFS
- *   - parkOrRelayQuotaWall (no focus file)
- */
-
 import {
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-import {
+  tmpdir,
+  join,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
   DISPATCH_RETRY_BACKOFF_MS,
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
-} from "../../src/dispatchRetry.js";
-import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
-import { resolveCoderRecOrder } from "../../src/coderRoster.js";
-import { DEFAULT_PARK_THRESHOLD_MS } from "../../src/quotaPoolTable.js";
-import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
-import { parkOrRelayQuotaWall } from "../../src/quotaParkRelay.js";
-import {
+  dispatchWorkerWithMonitor,
+  resolveCoderRecOrder,
+  DEFAULT_PARK_THRESHOLD_MS,
+  QuotaWaitForResetError,
+  parkOrRelayQuotaWall,
   MAX_RELAY_HANDOFFS,
   canRelayHandoff,
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
-} from "../../src/relayDispatch.js";
-
-/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
-const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-import { terminateSpawnedChild } from "../../src/workerMonitor.js";
-import type {
+  RELAY_FOCUS_FILENAME,
+  terminateSpawnedChild,
   Backend,
   CliMonitorSpawnSpec,
   WorkerResult,
   WorkerSpec,
-} from "../../src/types.js";
+  tempDirs,
+  coderSpec,
+  quotaWallError,
+} from "./unified-worker-dispatch-937.shared.js";
 
-const tempDirs: string[] = [];
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-function coderSpec(): WorkerSpec {
-  return {
-    id: "S2",
-    kind: "coder",
-    role: "coder",
-    host: "codex",
-    session: "fresh",
-    contextRetention: "retain",
-    promptFile: "coder.md",
-    maxIter: 1,
-    model: "grok-4.5",
-    soul: "coder",
-    toolchain: [],
-  } as WorkerSpec;
-}
-
-function quotaWallError(now: Date, resetAt: Date): QuotaWaitForResetError {
-  return new QuotaWaitForResetError({
-    disposition: {
-      kind: "wait_for_reset",
-      pool: "grok",
-      resetAt,
-      reason: "quota limited",
-    },
-    applied: {
-      ledgerEntry: {
-        event: "quota_wait_for_reset",
-        pool: "grok",
-        resetAt: resetAt.toISOString(),
-        reason: "quota limited",
-        step: "S2",
-        workerPid: 1,
-        ts: now.toISOString(),
-      },
-    },
-    pool: "grok"
-  });
-}
 
 describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
   it("POSITIVE: process-root budget is 6 attempts with five 15s intervals", () => {
