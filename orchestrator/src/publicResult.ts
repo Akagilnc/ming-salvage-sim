@@ -20,6 +20,8 @@ export const PUBLIC_FAILED_CAUSES = [
   "route_config_invalid",
   "coder_rec_invalid",
   "route_smoke_failed",
+  /** #1006 — family base full suite red at admission before fan-out. */
+  "baseline_health_failed",
   "clone_failed",
   "worktree_prepare_failed",
   "issue_metadata_unavailable",
