@@ -2146,11 +2146,14 @@ export async function runFamily(
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
-    // #1007: family terminal echo (typed status + stop reason only).
-    emitTerminalProgress({
+    // #1007: family exit progress. Parked finalize must emit park+terminal
+    // (same contract as emitFamilyExitProgress early-return parks); completed/
+    // failed emit terminal only.
+    emitFamilyExitProgress({
       epic: epic.issue,
       status,
       stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
     });
 
     // #942 CR R2 S3: status:"failed" always carries a mandatory ID-001 cause.
