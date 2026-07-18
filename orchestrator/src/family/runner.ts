@@ -974,26 +974,49 @@ async function runChild(
             .reverse()
             .find((entry) => entry.step === forStep)?.sessionId
         : undefined;
-    if (
+    // #1019 CodeRabbit: old answer must not bind a new decision session.
+    const answerSessionId =
+      typeof escalationAnswer.sessionId === "string"
+        ? escalationAnswer.sessionId.trim()
+        : "";
+    const staleAnswerForNewSession =
+      canInjectInPlace &&
+      typeof parkedSessionId === "string" &&
+      parkedSessionId.length > 0 &&
+      answerSessionId.length > 0 &&
+      answerSessionId !== parkedSessionId;
+    if (staleAnswerForNewSession) {
+      // New gate (different sessionId) — do not inject, do not carry answer cargo.
+    } else if (
       canInjectInPlace &&
       typeof parkedSessionId === "string" &&
       parkedSessionId.length > 0
     ) {
-      const answerEntry: PersistentLedgerEntry = {
-        step: forStep!,
-        sessionId: escalationAnswer.sessionId ?? parkedSessionId,
-        prompt_hash: "family-answer",
-        branchHEAD: resumeState!.worktree.branch,
-        ts: new Date().toISOString(),
-        event: "escalation_answered",
-        forStep: forStep!,
-        answer: escalationAnswer.answer,
-        source: "human",
-        ...(escalationAnswer.note !== undefined
-          ? { note: escalationAnswer.note }
-          : {}),
-      } as PersistentLedgerEntry;
-      await singleSliceBackend.writeLedger(answerEntry, resumeState!.stateDir);
+      // Skip re-write when this forStep already carries the same answer text
+      // (planResume will consume the existing escalation_answered row).
+      const alreadyConsumed = resumeState!.ledger.some(
+        (e) =>
+          e.event === "escalation_answered" &&
+          e.forStep === forStep &&
+          e.answer === escalationAnswer.answer,
+      );
+      if (!alreadyConsumed) {
+        const answerEntry: PersistentLedgerEntry = {
+          step: forStep!,
+          sessionId: escalationAnswer.sessionId ?? parkedSessionId,
+          prompt_hash: "family-answer",
+          branchHEAD: resumeState!.worktree.branch,
+          ts: new Date().toISOString(),
+          event: "escalation_answered",
+          forStep: forStep!,
+          answer: escalationAnswer.answer,
+          source: escalationAnswer.source ?? "human",
+          ...(escalationAnswer.note !== undefined
+            ? { note: escalationAnswer.note }
+            : {}),
+        } as PersistentLedgerEntry;
+        await singleSliceBackend.writeLedger(answerEntry, resumeState!.stateDir);
+      }
     } else {
       // Missing resume / failed terminal / park without sessionId → #1019
       // fresh redispatch with answer cargo (not fail-closed).
