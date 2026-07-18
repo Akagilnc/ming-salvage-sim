@@ -57,9 +57,12 @@ import {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-  RELAY_FOCUS_FILENAME,
   writeRoutePreset,
 } from "./relay.shared.js";
+import {
+  expectNoRelayFocusFile,
+  RELAY_FOCUS_FILENAME,
+} from "../helpers/relayFocus.js";
 
 describe("#937 free-log relay parse surface deleted (ID-007/016)", () => {
   it("production module no longer exports parseRelayTag", async () => {
@@ -911,7 +914,7 @@ describe("#686 state_summary ledger + ephemeral relay brief (#937)", () => {
     expect(body).toContain("luna@med");
     expect(body).toContain("clear reds then 收口");
     // NEGATIVE: no worktree focus file is produced
-    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(tmp);
   });
 
   it("resume can continue from any baton interrupt via ledger", () => {
@@ -1192,7 +1195,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       (e) => e.event === "relay_baton_handoff",
     );
     expect(handoff).toBeUndefined();
-    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(tmp);
     // Only the wall-hit model was dispatched (no relay baton re-entry).
     expect(coderModels.every((m) => m === "grok-4.5")).toBe(true);
     expect(coderFails).toBeGreaterThanOrEqual(1);
@@ -2043,7 +2046,7 @@ describe("#686 R2 production seams", () => {
       expect(coderModels).not.toContain("sonnet");
       // No reviewer/ship after the refused baton (only the one coder attempt).
       expect(productiveKinds.filter((k) => k !== "coder")).toEqual([]);
-      expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+      expectNoRelayFocusFile(dir);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

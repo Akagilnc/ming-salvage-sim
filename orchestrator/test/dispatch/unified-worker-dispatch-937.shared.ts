@@ -36,8 +36,6 @@ import {
   buildRelayHandoffLedgerEntry,
 } from "../../src/relayDispatch.js";
 
-const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-
 import { terminateSpawnedChild } from "../../src/workerMonitor.js";
 
 import type {
@@ -114,7 +112,6 @@ export {
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
-  RELAY_FOCUS_FILENAME,
   terminateSpawnedChild,
   Backend,
   CliMonitorSpawnSpec,

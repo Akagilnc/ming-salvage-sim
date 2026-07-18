@@ -57,7 +57,6 @@ import {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-  RELAY_FOCUS_FILENAME,
   writeRoutePreset,
 } from "./relay.shared.js";
 

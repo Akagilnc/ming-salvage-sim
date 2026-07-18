@@ -24,7 +24,6 @@ import {
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
-  RELAY_FOCUS_FILENAME,
   terminateSpawnedChild,
   Backend,
   CliMonitorSpawnSpec,
@@ -34,6 +33,7 @@ import {
   coderSpec,
   quotaWallError,
 } from "./unified-worker-dispatch-937.shared.js";
+import { expectNoRelayFocusFile } from "../helpers/relayFocus.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -140,7 +140,7 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(brief).toContain("half wired");
     expect(brief).toContain("terra@med");
     expect(brief).toContain("finish AC");
-    expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(dir);
   });
 
   it("POSITIVE: handoff max is 7 completed; the 8th is forbidden (ID-008)", () => {
@@ -211,7 +211,7 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(outcome.nextBaton.modelId).toBe("grok-4.5");
     expect(outcome.nextBaton.pool).toBe("cursor");
     expect(outcome.relayBrief).toMatch(/cursor/);
-    expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(dir);
   });
 
   it("NEGATIVE: no-wrap-around when only earlier roster seats are live → park", async () => {
@@ -263,7 +263,7 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
 
     // No later roster seat with a live pool → park (not wrap to grok).
     expect(outcome.kind).toBe("park");
-    expect(existsSync(join(dir, RELAY_FOCUS_FILENAME))).toBe(false);
+    expectNoRelayFocusFile(dir);
   });
 });
 

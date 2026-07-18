@@ -70,8 +70,6 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 
-const RELAY_FOCUS_FILENAME = ".relay-focus.md";
-
 function writeRoutePreset(name: string, slots: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "relay-preset-"));
   const path = join(dir, "route-presets.json");
@@ -153,6 +151,5 @@ export {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-  RELAY_FOCUS_FILENAME,
   writeRoutePreset,
 };

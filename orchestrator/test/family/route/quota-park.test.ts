@@ -15,7 +15,6 @@ import {
   familyShipWorkerSpec,
   QuotaWaitForResetError,
   DEFAULT_PARK_THRESHOLD_MS,
-  RELAY_FOCUS_FILENAME,
   CoderRecError,
   applyRelayBatonToRoute,
   familyRelaySlotsForWall,
