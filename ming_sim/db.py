@@ -11268,8 +11268,7 @@ class GameDB:
     def get_secret_orders_by_keywords(
         self, keywords: List[str], limit: int = 5, current_turn: int = 0
     ) -> List[Dict[str, object]]:
-        """检索进行中（active）密令，tags LIKE 匹配，供推演 secret_orders 字段注入。
-        完结/失败密令靠 event_memory（chat_message 来源）进入 relevant_memories，不在此返回。"""
+        """检索进行中（active）密令，tags LIKE 匹配，供推演 secret_orders 字段注入。"""
         if not keywords:
             return self.list_secret_orders(status="active")[:limit]
         like_clauses = " OR ".join(["tags LIKE ?" for _ in keywords])
@@ -11301,21 +11300,6 @@ class GameDB:
             }
             for r in rows
         ]
-
-    # ----- chat_messages 补充查询 -----
-
-    def get_chat_messages_for_turn(self, turn: int) -> Dict[str, List[Dict[str, str]]]:
-        """查当月所有召对，按大臣分组，供 chat_memory agent 按人提取。"""
-        rows = self.conn.execute(
-            "SELECT minister_name, role, content FROM chat_messages WHERE turn = ? ORDER BY id",
-            (int(turn),),
-        ).fetchall()
-        result: Dict[str, List[Dict[str, str]]] = {}
-        for row in rows:
-            result.setdefault(row["minister_name"], []).append(
-                {"role": row["role"], "content": row["content"]}
-            )
-        return result
 
     # ── 调试用通用 CRUD（仅限白名单核心表）──────────────────────
     # 表名 → 主键列。只暴露核心几张，防误删元数据/日志表。
