@@ -1,7 +1,8 @@
 /**
  * #1014 — provision iso must git-exclude orchestrator operational sidecars
- * (.ledger-star-slash + .sandcastle/) so family final CMR dirty-pin does not
- * hard-stop on runner-owned droppings. True dirty still hard-stops.
+ * (.ledger-star-slash + .sandcastle/) so family final CMR dirty-pin porcelain
+ * (`git status --untracked-files=all`) does not list runner-owned droppings.
+ * True dirty still appears in porcelain (CMR hard-stop consumes that signal).
  *
  * No md content-pin tests.
  */
@@ -153,15 +154,22 @@ describe("#1014 iso operational sidecar git excludes", () => {
       "{}\n",
     );
 
+    // Assert porcelain only — CMR hard-stop reads this same signal.
     expect(porcelainAll(iso)).toBe("");
 
-    // True dirty: non-sidecar untracked file → still hard-stops CMR pin.
+    // True dirty: non-sidecar untracked file → still appears in porcelain.
     writeFileSync(join(iso, "stray-untracked.txt"), "oops\n");
     expect(porcelainAll(iso)).toMatch(/stray-untracked\.txt/);
 
-    // True dirty: tracked content change → still hard-stops.
+    // True dirty: tracked content change → still appears in porcelain.
     rmSync(join(iso, "stray-untracked.txt"));
     writeFileSync(join(iso, "README"), "mutated\n");
     expect(porcelainAll(iso)).toMatch(/README/);
+  });
+
+  it("ensureIsoOperationalExcludes throws when info/exclude cannot be written (fail-closed)", () => {
+    // Non-git path: rev-parse fails → throw-through, not silent swallow.
+    const notARepo = trackTemp("iso-1014-nongit-");
+    expect(() => ensureIsoOperationalExcludes(notARepo)).toThrow();
   });
 });
