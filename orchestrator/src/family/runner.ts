@@ -909,7 +909,7 @@ function lastChildHandoffStatus(
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     if (entry.step !== "S8") continue;
-    const status = (entry as { handoffStatus?: string }).handoffStatus;
+    const status = entry.handoffStatus;
     if (status === "completed" || status === "parked" || status === "failed") {
       return status;
     }
@@ -923,9 +923,10 @@ function lastChildEscalationKind(
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     if (entry.step !== "S8") continue;
-    const kind = (entry as { escalationKind?: string }).escalationKind;
+    const kind = entry.escalationKind;
+    // Align with lastChildHandoffStatus: skip invalid/empty kinds and keep
+    // scanning older S8 rows; only return when a non-empty kind is found.
     if (typeof kind === "string" && kind.length > 0) return kind;
-    return undefined;
   }
   return undefined;
 }
@@ -1910,15 +1911,15 @@ export async function runFamily(
     }
     // #1019: child-bound answers without a family park row (mixed-wave drop /
     // human answered from progress) still feed runChild for redispatch.
-    const ledgerMergedForAnswers = mergedSet(initialFamilyLedger);
+    // One mergedSet for answer-feed skip + unanswered early-exit children map.
+    const ledgerMerged = mergedSet(initialFamilyLedger);
     for (const child of epic.children) {
-      if (ledgerMergedForAnswers.has(child.issue)) continue;
+      if (ledgerMerged.has(child.issue)) continue;
       if (parkedChildAnswers.has(child.issue)) continue;
       const bound = latestChildBoundAnswer(initialFamilyLedger, child.issue);
       if (bound !== undefined) parkedChildAnswers.set(child.issue, bound);
     }
     if (unanswered.length > 0) {
-      const ledgerMerged = mergedSet(initialFamilyLedger);
       const first = unanswered[0]!;
       // #604 F8: an UNANSWERED parked child re-entered before the wave loop must
       // map child status to internal `"escalated"` (decision-gate park payload),
