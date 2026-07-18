@@ -417,13 +417,32 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
   it(
     "live headless empty-auth fails fast before timeout (no device-auth hang)",
     () => {
+      const pidDir = mkDir("964-timeout-child-");
+      const pidFile = join(pidDir, "pid");
+      const hang = runHostPipeProbe(
+        "/bin/sh",
+        ["-c", 'echo $$ > "$PID_FILE"; exec sleep 60'],
+        { ...process.env, PID_FILE: pidFile },
+        250,
+      );
+      expect(hang.timedOut).toBe(true);
+      const childPid = Number(readFileSync(pidFile, "utf8").trim());
+      let childAlive = true;
+      try {
+        process.kill(childPid, 0);
+      } catch (error: any) {
+        if (error?.code !== "ESRCH") throw error;
+        childAlive = false;
+      }
+      expect(childAlive, `timed-out probe child ${childPid} must be reaped`).toBe(false);
+
       // #964 AC: real worker print shape + empty credentials must not enter
       // interactive device-code wait. Pin 0.2.102 is the production hang fix;
       // this probe exercises a real binary (host pin or baked image pin).
-      // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
+      // Only this live portion skips when no eligible binary is available; the
+      // timeout/reap guard above is environment-independent and always runs.
       const target = resolveGrokProbeTarget();
       if (!target) {
-        // Loud skip reason — CI with rebaked image / host pin should not hit this.
         console.warn(
           `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN ` +
             `and no docker image with that pin (set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
@@ -446,25 +465,6 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
       // Well under the wall — hang regression would burn the full timeout.
       expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
-
-      const pidDir = mkDir("964-timeout-child-");
-      const pidFile = join(pidDir, "pid");
-      const hang = runHostPipeProbe(
-        "/bin/sh",
-        ["-c", 'echo $$ > "$PID_FILE"; exec sleep 60'],
-        { ...process.env, PID_FILE: pidFile },
-        250,
-      );
-      expect(hang.timedOut).toBe(true);
-      const childPid = Number(readFileSync(pidFile, "utf8").trim());
-      let childAlive = true;
-      try {
-        process.kill(childPid, 0);
-      } catch (error: any) {
-        if (error?.code !== "ESRCH") throw error;
-        childAlive = false;
-      }
-      expect(childAlive, `timed-out probe child ${childPid} must be reaped`).toBe(false);
     },
     HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
   );
