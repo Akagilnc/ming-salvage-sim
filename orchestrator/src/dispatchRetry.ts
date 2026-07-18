@@ -12,8 +12,11 @@
  * returned so the caller's existing durable-abort path handles it (no new
  * supervisor, no new stop-reason field).
  *
- * This layer reads ONLY the outcome discriminant (`result.kind`) — never the
- * worker's self-reported content.
+ * This layer classifies process-level outcomes for mechanical retry:
+ * primarily the outcome discriminant (`result.kind`), plus durable host-FS
+ * (EISDIR-class) classification on throw / failed `reason` (#1012) so the same
+ * host path is not re-dispatched. It never reads worker self-reported content
+ * for judgment — that belongs to the next fresh reviewer pass.
  */
 
 import type { ChildProcess } from "node:child_process";
