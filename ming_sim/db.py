@@ -10425,22 +10425,33 @@ class GameDB:
                 out.append(mid)
         return out
 
-    def _registered_secret_origin_message_ids(self) -> set:
-        """All durable oral-decree chat-turn message ids.
+    def _secret_origin_message_protection(self) -> Dict[int, bool]:
+        """Canonical release-ban map for oral-decree chat-turn messages.
 
-        The brief records the user message that caused classification.  A
+        Pending and retryable-failed secret actions retain the stage-time pin
+        until they are committed or explicitly dropped.  The brief takes over
+        that pin once classification succeeds.  A
         completed ``chat_turns`` row is the structural provenance for the full
         exchange, so its paired minister reply belongs to the same secret
         bloodline.  Release must never project either side into shared tracks.
+
+        ``True`` means a durable brief owns the bloodline; ``False`` means a
+        pending/retry pin still owns it.  This distinction is load-bearing for
+        replies bound to a chat turn after classification: release is the first
+        seam that can see and park those durable descendants as ``withheld``.
         """
-        out: set = set()
+        out: Dict[int, bool] = {}
         try:
-            rows = self.conn.execute(
+            brief_rows = self.conn.execute(
                 "SELECT origin_chat_message_ids FROM secret_order_briefs"
+            ).fetchall()
+            pending_rows = self.conn.execute(
+                "SELECT payload_json FROM pending_actions "
+                "WHERE kind='secret_order' AND status IN ('pending','failed')"
             ).fetchall()
         except sqlite3.OperationalError:
             return out
-        for row in rows:
+        for row in brief_rows:
             raw = row["origin_chat_message_ids"] if row is not None else "[]"
             try:
                 parsed = json.loads(raw or "[]")
@@ -10454,7 +10465,17 @@ class GameDB:
                 except (TypeError, ValueError):
                     continue
                 if mid > 0:
-                    out.add(mid)
+                    out[mid] = True
+        for row in pending_rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            mid = self._parse_origin_chat_message_id(payload)
+            if mid is not None:
+                out.setdefault(mid, False)
         if out:
             placeholders = ",".join("?" for _ in out)
             try:
@@ -10466,13 +10487,18 @@ class GameDB:
             except sqlite3.OperationalError:
                 turns = []
             for turn in turns:
+                durable = any(
+                    out.get(int(raw), False)
+                    for raw in (turn["user_message_id"], turn["minister_message_id"])
+                    if raw is not None
+                )
                 for raw in (turn["user_message_id"], turn["minister_message_id"]):
                     try:
                         mid = int(raw)
                     except (TypeError, ValueError):
                         continue
                     if mid > 0:
-                        out.add(mid)
+                        out[mid] = bool(out.get(mid, False) or durable)
         return out
 
     def _withhold_origin_chat_messages(
@@ -10578,8 +10604,9 @@ class GameDB:
         }
         if name_filter:
             name_set.add(name_filter)
-        exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
-        exclude |= self._registered_secret_origin_message_ids()
+        explicit_exclude = set(self._coerce_positive_message_ids(exclude_message_ids))
+        protection = self._secret_origin_message_protection()
+        exclude = explicit_exclude | set(protection)
         try:
             if name_set:
                 placeholders = ",".join("?" for _ in name_set)
@@ -10603,11 +10630,14 @@ class GameDB:
         for row in rows:
             mid = int(row["id"])
             if mid in exclude:
-                # Origin bloodline must never leave held via release — park withheld.
-                self.conn.execute(
-                    "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
-                    (mid,),
-                )
+                # Live pending/failed pins stay held so drop can make a later
+                # release eligible. Durable descendants and caller-explicit
+                # exclusions park permanently.
+                if mid in explicit_exclude or protection.get(mid, False):
+                    self.conn.execute(
+                        "UPDATE chat_messages SET knowledge_status='withheld' WHERE id=?",
+                        (mid,),
+                    )
                 continue
             minister = str(row["minister_name"] or "").strip()
             content = str(row["content"] or "")

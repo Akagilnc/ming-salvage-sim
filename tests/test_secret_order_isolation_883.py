@@ -1606,6 +1606,98 @@ def _view_text(db, state, name: str) -> str:
     )
 
 
+def _stage_new_secret(db, state, minister_name: str, marker: str) -> tuple[int, int]:
+    mid = db.append_chat_message(minister_name, state.turn, "user", marker)
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建",
+        minister_name=minister_name, target_id=None,
+        payload={
+            "title": marker[:20], "content": marker, "assignee": minister_name,
+            "tags": [], "deadline_months": 0,
+            "excluded_names": [], "excluded_offices": [],
+        },
+    )
+    return mid, pid
+
+
+def test_976_pending_secret_pin_survives_partial_commit_same_minister(game):
+    """尚未确认的密令口谕不得被同臣另一密令的局部提交放行。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    marker_a = "待确认甲密：暗查内库亏空-A976"
+    marker_b = "已确认乙密：密访京营虚额-B976"
+
+    mid_a, pending_a = _stage_new_secret(db, state, assignee.name, marker_a)
+    reply_a = "臣已领会甲密，容臣拟妥章程再请圣裁。"
+    mid_a_reply = db.append_chat_message(
+        assignee.name, state.turn, "minister", reply_a,
+    )
+    chat_turn_a = db.create_chat_turn(state, assignee.name, "pending-secret-a", 0)
+    db.update_chat_turn_messages(
+        chat_turn_a, user_message_id=mid_a, minister_message_id=mid_a_reply,
+    )
+    mid_b, pending_b = _stage_new_secret(db, state, assignee.name, marker_b)
+
+    applied = db.commit_pending_actions(
+        state, minister_name=assignee.name, action_ids={pending_b}, content=content,
+    )
+
+    assert [item["id"] for item in applied] == [pending_b]
+    assert _ks(db, mid_b) == "withheld"
+    assert _ks(db, mid_a) in ("held", "withheld")
+    assert _ks(db, mid_a_reply) in ("held", "withheld")
+    assert _shared_source_count(db, mid_a) == 0
+    assert _shared_source_count(db, mid_a_reply) == 0
+    assert all(marker_a not in body for body in _shared_bodies(db))
+    assert all(reply_a not in body for body in _shared_bodies(db))
+
+    # 明确拒绝后，pin 退出可重试生命周期；下一次既有 release 可按公开召对投轨。
+    assert db.drop_pending_actions_for_minister(
+        state.turn, assignee.name, action_ids={pending_a},
+    ) == 1
+    db.release_held_audience_knowledge()
+    assert _ks(db, mid_a) == "released"
+    assert _ks(db, mid_a_reply) == "released"
+    assert _shared_source_count(db, mid_a) == 1
+    assert _shared_source_count(db, mid_a_reply) == 1
+
+
+def test_976_retryable_failed_secret_pin_stays_withheld_during_other_commit(game):
+    """落库失败仍可原对话重试，故 pin 在失败生命周期内继续禁行。"""
+    db, state, content = game
+    assignee = _active_ministers(db, content)[0]
+    failed_marker = "失败可重试甲密：暗查不存在案卷-A976"
+    committed_marker = "已确认乙密：密访仓场亏空-B976"
+
+    mid_failed = db.append_chat_message(
+        assignee.name, state.turn, "user", failed_marker,
+    )
+    failed_id = db.stage_pending_action(
+        state.turn, kind="secret_order", action="更新",
+        minister_name=assignee.name, target_id=999999,
+        payload={
+            "title": "暗查不存在案卷", "content": failed_marker,
+            "origin_chat_message_id": mid_failed,
+        },
+    )
+    assert db.commit_pending_actions(
+        state, minister_name=assignee.name, action_ids={failed_id}, content=content,
+    ) == []
+    assert db.list_failed_secret_order_actions(assignee.name)[0]["id"] == failed_id
+
+    mid_committed, committed_id = _stage_new_secret(
+        db, state, assignee.name, committed_marker,
+    )
+    assert db.commit_pending_actions(
+        state, minister_name=assignee.name, action_ids={committed_id}, content=content,
+    )
+
+    assert _ks(db, mid_committed) == "withheld"
+    assert _ks(db, mid_failed) in ("held", "withheld")
+    assert _shared_source_count(db, mid_failed) == 0
+    assert all(failed_marker not in body for body in _shared_bodies(db))
+
+
 def test_976_rt01_two_secret_orders_different_assignees_no_cross_track(game):
     """红队① must：双密令跨接令者 — create(A) 不得把 B 的 held 口谕/应答投进共享库。
 
