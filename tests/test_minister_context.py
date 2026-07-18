@@ -608,32 +608,38 @@ def test_inspect_treasury_ledger_respects_treasury_knowledge_domain(game):
     assert "1234567" not in rendered
 
 
-def test_final_minister_context_rejects_injected_abstract_values(game):
-    """最终 instructions seam 不得把抽象分数重新带回上下文。"""
-    db, _state, content = game
-    db.conn.execute("UPDATE regions SET public_support=41, unrest=73")
-    db.conn.execute("UPDATE armies SET firearm_equipment=58 WHERE owner_power='ming'")
+def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
+    """真实军情回奏不得因火器裸值连带吞掉同军合法事实。"""
+    db, state, content = game
+    army = db.conn.execute(
+        "SELECT id, name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    db.conn.execute(
+        "UPDATE armies SET firearm_equipment=30, cannon_equipment=0, "
+        "supply=60, morale=60, arrears=30 WHERE id=?",
+        (army["id"],),
+    )
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    captured = {}
+    minister = next(
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+    )
 
-    def fake_agent(**kwargs):
-        captured.update(kwargs)
-        return kwargs
+    db.persist_return_report(state, minister.name, "请查访各镇欠饷军情如何？")
+    knowledge = db.get_character_knowledge(state, minister.name)
+    report = next(
+        item["body"] for item in knowledge["events"]
+        if str(item.get("source_id") or "").startswith("near_minister:")
+    )
+    fact = next(part for part in report.split("；") if army["name"] in part)
 
-    ctx = _ctx(game)
-    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
-    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
-         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
-         patch("ming_sim.registry._ctx", return_value=content), \
-         patch("ming_sim.registry._skills_for", return_value=None), \
-         patch("ming_sim.registry.build_minister_tools", return_value=[]):
-        create_minister_agent(minister, cfg, ctx, db)
-
-    rendered = "\n".join(captured["instructions"])
-    for pattern in ("民心41", "动乱73", "火器58", "皇威41", "进度41/100"):
-        assert pattern not in rendered
-    assert "火器" in rendered and any(word in rendered for word in ("短缺", "尚可", "精良"))
+    assert not re.search(r"火器\s*[:：]?\s*30(?:\D|$)", fact)
+    assert "火器：简陋" in fact
+    assert "炮0门" in fact
+    assert "补给：尚可" in fact
+    assert "士气：尚稳" in fact
+    assert "欠饷" in fact
+    assert "已略去" not in fact
 
 
 def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
