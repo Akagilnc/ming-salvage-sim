@@ -81,9 +81,13 @@ export function ensureGitInfoExclude(repoPath: string, pattern: string): void {
   }
 }
 
-/** Provision-time exclude for iso operational sidecars (#1014). */
+/**
+ * Provision-time exclude for iso operational sidecars (#1014).
+ * Throw-through: AC1 requires patterns present after provision — fail closed
+ * so callers never mark the working repo ready without the excludes written.
+ */
 export function ensureIsoOperationalExcludes(repoPath: string): void {
   for (const pattern of ISO_OPERATIONAL_GIT_EXCLUDE_PATTERNS) {
-    ensureGitInfoExclude(repoPath, pattern);
+    appendGitInfoExclude(repoPath, pattern);
   }
 }
