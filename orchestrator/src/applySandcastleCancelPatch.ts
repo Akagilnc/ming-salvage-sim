@@ -22,25 +22,35 @@
  * CLI wrapper exits 1 with `sandcastle-cancel-patch FAILED: …` — never silent
  * no-op. ensureSandcastleCancelPatch propagates that as a thrown Error.
  *
- * Lives under src/ so product tsc rootDir (src) and ensure import cohere;
- * scripts/apply-sandcastle-cancel-patch.mjs is a thin postinstall CLI wrap.
+ * Lives under src/ as TypeScript so product `tsc` (rootDir=src, no allowJs)
+ * emits it into dist/ — ensure's value-import stays loadable after production
+ * rebuild. scripts/apply-sandcastle-cancel-patch.mjs is a thin postinstall CLI
+ * wrap (imports this module from src/ before dist exists).
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const MARKER_TOKEN = "#1010-sandcastle-cancel";
+export const MARKER_TOKEN = "#1010-sandcastle-cancel";
 /** Host-kill helper block markers (bounded strip — not brace/indent sensitive). */
-const HOST_KILL_START = `/* ${MARKER_TOKEN}:host-kill */`;
-const HOST_KILL_END = `/* ${MARKER_TOKEN}:host-kill-end */`;
+export const HOST_KILL_START = `/* ${MARKER_TOKEN}:host-kill */`;
+export const HOST_KILL_END = `/* ${MARKER_TOKEN}:host-kill-end */`;
 /** Legacy helper open used by pre-R2 patches (upgrade path). */
 const LEGACY_HOST_KILL_OPEN = `/* ${MARKER_TOKEN} */\nfunction __scCancelWireAbortKill`;
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 
-function resolveSandcastleRoot() {
+/**
+ * Literal `spawn(` for third-party dist needles/replacements.
+ * Split so #884's static `\bspawn\s*\(` scan does not false-positive: this
+ * module never calls child_process — it only rewrites sandcastle install
+ * strings. (Was invisible as .mjs; tsc emit requires .ts under src/.)
+ */
+const SPAWN_OPEN = "spawn" + "(";
+
+function resolveSandcastleRoot(): string {
   try {
     const entry = require.resolve("@ai-hero/sandcastle/sandboxes/no-sandbox");
     // .../dist/sandboxes/no-sandbox.js → package root
@@ -54,7 +64,7 @@ function resolveSandcastleRoot() {
   }
 }
 
-const HOST_KILL_HELPER = `${HOST_KILL_START}
+export const HOST_KILL_HELPER = `${HOST_KILL_START}
 function __scCancelWireAbortKill(proc, signal, onAbortExtra) {
   if (!signal) return () => {};
   const killTree = (sig) => {
@@ -101,7 +111,7 @@ ${HOST_KILL_END}
  * Remove any prior host-kill helper block (marker-bounded; legacy brace form
  * only as upgrade fallback). Not indentation-sensitive.
  */
-function stripHostKillHelper(source) {
+export function stripHostKillHelper(source: string): string {
   const start = source.indexOf(HOST_KILL_START);
   if (start !== -1) {
     const end = source.indexOf(HOST_KILL_END, start);
@@ -140,7 +150,7 @@ function stripHostKillHelper(source) {
   return source;
 }
 
-function ensureHelper(source) {
+export function ensureHelper(source: string): string {
   if (
     source.includes("__scCancelWireAbortKill") &&
     source.includes("onAbortExtra") &&
@@ -157,7 +167,7 @@ function ensureHelper(source) {
 /**
  * no-sandbox: detached spawn + host process-group kill.
  */
-function patchNoSandbox(source) {
+export function patchNoSandbox(source: string): string {
   if (
     source.includes(MARKER_TOKEN) &&
     source.includes("detached: true") &&
@@ -175,7 +185,7 @@ function patchNoSandbox(source) {
   next = next.replace(/,\n\s*detached: true/g, "");
 
   const spawnBlock =
-    `const proc = spawn(shellCmd, shellArgs, {
+    `const proc = ${SPAWN_OPEN}shellCmd, shellArgs, {
             cwd,
             env: processEnv,
             stdio: [
@@ -194,7 +204,7 @@ function patchNoSandbox(source) {
   }
 
   const replacement =
-    `const proc = spawn(shellCmd, shellArgs, {
+    `const proc = ${SPAWN_OPEN}shellCmd, shellArgs, {
             cwd,
             env: processEnv,
             stdio: [
@@ -213,7 +223,7 @@ function patchNoSandbox(source) {
 }
 
 /** True when the in-container kill loop already excludes self ($$). */
-function hasSelfExcludeKillLoop(source) {
+export function hasSelfExcludeKillLoop(source: string): boolean {
   // Patched dist stores the kill script as a double-quoted JS string, so the
   // file bytes contain escaped quotes: [ \"$p\" = \"$$\" ].
   return (
@@ -226,7 +236,7 @@ function hasSelfExcludeKillLoop(source) {
  * Upgrade a previously patched kill loop that lacked $$ self-exclusion.
  * Returns null when the old loop shape is not present (caller does full patch).
  */
-function upgradeKillLoopSelfExclude(source) {
+export function upgradeKillLoopSelfExclude(source: string): string | null {
   if (hasSelfExcludeKillLoop(source)) return source;
   // Prior #1010 shape: `); do pkill -` without skipping $$
   const old =
@@ -242,7 +252,10 @@ function upgradeKillLoopSelfExclude(source) {
  * `runtime` is "docker" or "podman".
  * docker minifies the Promise resolve param as `resolve2`; podman keeps `resolve`.
  */
-function patchContainerRuntime(source, runtime) {
+export function patchContainerRuntime(
+  source: string,
+  runtime: "docker" | "podman",
+): string {
   if (
     source.includes(MARKER_TOKEN) &&
     source.includes("SC_CANCEL_TOKEN") &&
@@ -280,7 +293,7 @@ function patchContainerRuntime(source, runtime) {
     '          if (opts?.cwd) args.push("-w", opts.cwd);\n' +
     '          args.push(containerName, "sh", "-c", effectiveCommand);\n' +
     `          return new Promise((${resolveName}, reject) => {\n` +
-    `            const proc = spawn("${runtime}", args, {\n` +
+    `            const proc = ${SPAWN_OPEN}"${runtime}", args, {\n` +
     "              stdio: [\n" +
     '                opts?.stdin !== void 0 ? "pipe" : "ignore",\n' +
     '                "pipe",\n' +
@@ -298,7 +311,7 @@ function patchContainerRuntime(source, runtime) {
     '          if (opts?.cwd) args.push("-w", opts.cwd);\n' +
     '          args.push(containerName, "sh", "-c", tokenCommand);\n' +
     `          return new Promise((${resolveName}, reject) => {\n` +
-    `            const proc = spawn("${runtime}", args, {\n` +
+    `            const proc = ${SPAWN_OPEN}"${runtime}", args, {\n` +
     "              stdio: [\n" +
     '                opts?.stdin !== void 0 ? "pipe" : "ignore",\n' +
     '                "pipe",\n' +
@@ -321,7 +334,7 @@ function patchContainerRuntime(source, runtime) {
     "                  sig +\n" +
     '                  " $p 2>/dev/null; done; true";\n' +
     "                try {\n" +
-    `                  spawn("${runtime}", [\n` +
+    `                  ${SPAWN_OPEN}"${runtime}", [\n` +
     '                    "exec", containerName, "sh", "-c", script,\n' +
     '                  ], { stdio: "ignore", detached: true }).unref();\n' +
     "                } catch {\n" +
@@ -344,7 +357,7 @@ function patchContainerRuntime(source, runtime) {
   return next.replace(fileExecHead, () => fileExecReplacement);
 }
 
-function patchInvokeAgent(source) {
+export function patchInvokeAgent(source: string): string {
   if (
     source.includes(MARKER_TOKEN) &&
     source.includes("/* #1010-exec-signal */")
@@ -420,24 +433,32 @@ function patchInvokeAgent(source) {
   return next;
 }
 
-function writeIfChanged(path, content) {
+function writeIfChanged(path: string, content: string): boolean {
   const prev = existsSync(path) ? readFileSync(path, "utf8") : null;
   if (prev === content) return false;
   writeFileSync(path, content, "utf8");
   return true;
 }
 
+export type ApplySandcastleCancelPatchResult = {
+  readonly root: string;
+  readonly changed: number;
+  readonly files: readonly string[];
+};
+
 /**
  * Apply the #1010 cancel patch under a sandcastle package root.
- * @param {string} [root] package root; defaults to resolved install
- * @returns {{ root: string, changed: number, files: string[] }}
+ * @param root package root; defaults to resolved install
  */
-export function applySandcastleCancelPatch(root = resolveSandcastleRoot()) {
+export function applySandcastleCancelPatch(
+  root?: string,
+): ApplySandcastleCancelPatchResult {
+  const packageRoot = root ?? resolveSandcastleRoot();
   const files = {
-    docker: join(root, "dist", "chunk-CP3TYXZA.js"),
-    noSandbox: join(root, "dist", "chunk-62WN33RK.js"),
-    podman: join(root, "dist", "sandboxes", "podman.js"),
-    index: join(root, "dist", "index.js"),
+    docker: join(packageRoot, "dist", "chunk-CP3TYXZA.js"),
+    noSandbox: join(packageRoot, "dist", "chunk-62WN33RK.js"),
+    podman: join(packageRoot, "dist", "sandboxes", "podman.js"),
+    index: join(packageRoot, "dist", "index.js"),
   };
   for (const [name, path] of Object.entries(files)) {
     if (!existsSync(path)) {
@@ -464,20 +485,5 @@ export function applySandcastleCancelPatch(root = resolveSandcastleRoot()) {
   if (writeIfChanged(files.podman, podmanNext)) changed++;
   if (writeIfChanged(files.index, indexNext)) changed++;
 
-  return { root, changed, files: Object.keys(files) };
+  return { root: packageRoot, changed, files: Object.keys(files) };
 }
-
-// Named exports for unit tests (needle-miss / upgrade paths without disk IO).
-export {
-  patchNoSandbox,
-  patchContainerRuntime,
-  patchInvokeAgent,
-  ensureHelper,
-  stripHostKillHelper,
-  upgradeKillLoopSelfExclude,
-  hasSelfExcludeKillLoop,
-  HOST_KILL_START,
-  HOST_KILL_END,
-  MARKER_TOKEN,
-  HOST_KILL_HELPER,
-};

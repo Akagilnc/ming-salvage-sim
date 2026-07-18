@@ -10,8 +10,12 @@
  * child_process spawn. That keeps #884's sole external-call chokepoint intact
  * and avoids preloading `externalCall`/`spawn` during vitest setup (which
  * would break tests that mock `node:child_process`).
+ *
+ * Apply is TypeScript so product `tsc` emits it into dist/ (no allowJs) —
+ * production load of dist/ensureSandcastleCancelPatch.js must resolve the
+ * sibling apply module without MODULE_NOT_FOUND.
  */
-import { applySandcastleCancelPatch } from "./applySandcastleCancelPatch.mjs";
+import { applySandcastleCancelPatch } from "./applySandcastleCancelPatch.js";
 
 let applied = false;
 
