@@ -553,12 +553,13 @@ def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game
 
     secret_turn = db.create_chat_turn(state, assignee.name, "secret-turn-976", 0)
     mid_origin = db.append_chat_message(assignee.name, state.turn, "user", origin)
-    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
     db.update_chat_turn_messages(
-        secret_turn, user_message_id=mid_origin, minister_message_id=mid_ack,
+        secret_turn, user_message_id=mid_origin,
     )
     oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
+    mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    db.update_chat_turn_messages(secret_turn, minister_message_id=mid_ack)
 
     public_turn = db.create_chat_turn(state, assignee.name, "public-turn-976", 0)
     mid_public_q = db.append_chat_message(assignee.name, state.turn, "user", public_q)
