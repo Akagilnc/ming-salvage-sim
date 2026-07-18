@@ -29,7 +29,7 @@ import {
   patchNoSandbox,
   stripHostKillHelper,
   upgradeKillLoopSelfExclude,
-} from "../../src/applySandcastleCancelPatch.mjs";
+} from "../../src/applySandcastleCancelPatch.js";
 import { ensureSandcastleCancelPatch } from "../../src/ensureSandcastleCancelPatch.js";
 
 const TMP_PREFIX = "sc-patch-apply-1010-";
@@ -164,30 +164,16 @@ describe("#1010 apply patch fail-loud (needle-miss / missing package)", () => {
 
   it("CLI postinstall wrap exits 1 on missing package (real entry)", () => {
     const root = scratch();
-    // Point apply at a missing root via env is not wired — invoke node -e that
-    // imports the CLI module's export and simulates main failure path by
-    // spawning the thin script under a cwd without node_modules sandcastle
-    // is fragile. Instead: run apply through node -e and assert non-zero via
-    // an explicit process.exit wrapper matching the CLI contract.
     const script = join(
       process.cwd(),
       "scripts",
       "apply-sandcastle-cancel-patch.mjs",
     );
     expect(existsSync(script)).toBe(true);
-    // Direct real-entry: node -e import apply with bad root, mirror CLI exit.
-    const probe = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        `import { applySandcastleCancelPatch } from ${JSON.stringify(
-          join(process.cwd(), "src/applySandcastleCancelPatch.mjs"),
-        )}; try { applySandcastleCancelPatch(${JSON.stringify(
-          root,
-        )}); process.exit(0); } catch (e) { process.stderr.write("sandcastle-cancel-patch FAILED: " + (e instanceof Error ? e.message : String(e)) + "\\n"); process.exit(1); }`,
-      ],
-      { encoding: "utf8" },
-    );
+    // Real thin CLI entry: optional argv[2] = package root (fail-loud path).
+    const probe = spawnSync(process.execPath, [script, root], {
+      encoding: "utf8",
+    });
     expect(probe.status).toBe(1);
     expect(probe.stderr).toMatch(/sandcastle-cancel-patch FAILED:/);
   });
@@ -298,5 +284,36 @@ describe("#1010 patch upgrade: $$ self-exclude in place + helper strip", () => {
     expect(next).toContain("execAbortController");
     expect(next).toContain("fireExecAbort(new AgentIdleTimeoutError");
     expect(next).toContain("signal: execAbortController.signal");
+  });
+});
+
+describe("#1010 product dist load path (tsc emit)", () => {
+  it("npx tsc emits apply + ensure; dist ensure import is not MODULE_NOT_FOUND", () => {
+    const cwd = process.cwd();
+    const tsc = spawnSync("npx", ["tsc", "-p", "tsconfig.json"], {
+      encoding: "utf8",
+      cwd,
+    });
+    expect(tsc.status, tsc.stdout + tsc.stderr).toBe(0);
+
+    const applyJs = join(cwd, "dist", "applySandcastleCancelPatch.js");
+    const ensureJs = join(cwd, "dist", "ensureSandcastleCancelPatch.js");
+    expect(existsSync(applyJs)).toBe(true);
+    expect(existsSync(ensureJs)).toBe(true);
+
+    // Production path: load emitted ensure (which value-imports emitted apply).
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `import { ensureSandcastleCancelPatch } from ${JSON.stringify(
+          ensureJs,
+        )}; ensureSandcastleCancelPatch(); process.stdout.write("dist-ensure-ok\\n");`,
+      ],
+      { encoding: "utf8", cwd },
+    );
+    expect(probe.status, probe.stdout + probe.stderr).toBe(0);
+    expect(probe.stderr).not.toMatch(/MODULE_NOT_FOUND|Cannot find module/);
+    expect(probe.stdout).toMatch(/dist-ensure-ok/);
   });
 });
