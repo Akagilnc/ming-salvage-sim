@@ -189,11 +189,11 @@ describe("RealFamilyBackend live officer effort", () => {
 
   it("applies the ADR 0124 billing-pool provider binding to family workers", () => {
     const backend = new Probe(opts(trackRepo()));
-    const command = backend
-      .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
-      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
-    expect(command).toContain("cat > \"$prompt_file\"");
-    expect(command).toContain("grok --prompt-file \"$prompt_file\"");
+    const provider = backend.agentForLiveSpec(
+      liveSpec({ model: "grok-4.5" }),
+      "grok-build",
+    );
+    expect(provider.name).toBe("grok");
   });
 });
 

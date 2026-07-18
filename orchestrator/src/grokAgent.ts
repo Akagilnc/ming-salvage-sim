@@ -170,7 +170,7 @@ export function grokAgent(
         command:
           `prompt_file=$(mktemp); ` +
           `cleanup_prompt() { rm -f "$prompt_file"; }; ` +
-          `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; cleanup_prompt; kill -s "$signal" "$$"; }; ` +
+          `relay_signal() { signal="$1"; trap - EXIT HUP INT TERM; cleanup_prompt; kill -s "$signal" 0; }; ` +
           `trap cleanup_prompt EXIT; ` +
           `trap 'relay_signal HUP' HUP; trap 'relay_signal INT' INT; trap 'relay_signal TERM' TERM; ` +
           `cat > "$prompt_file"; ` +
