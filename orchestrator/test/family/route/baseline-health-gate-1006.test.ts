@@ -421,9 +421,11 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(wIdx).toBeGreaterThan(-1);
     expect(argv[wIdx + 1]).toBe("/clones/family-1006/orchestrator");
     // Command runs inside the container image — never host `npm test` alone.
+    // familyBase checkout is host-side only (ensureBaselineWorksiteReady); no
+    // second container-side git checkout on the bind mount (#1006 CR N1).
     const joined = argv.join(" ");
     expect(joined).toMatch(/npm test|npm run test/);
-    expect(joined).toContain("family/1006");
+    expect(joined).not.toMatch(/git\b.*\bcheckout\b/);
     // Must not be a bare host-side npm invocation without docker.
     expect(argv[0]).not.toBe("npm");
   });
@@ -443,17 +445,21 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(argv).toContain("agent");
   });
 
-  it("shell-escapes paths with spaces via shared shellEscape (not a private quoter)", () => {
+  it("bind-mounts worksite paths with spaces as docker argv (no container checkout)", () => {
     const argv = buildBaselineContainerFullTestArgv({
       imageName: "ming-orchestrator-coder:latest",
       workingRepo: "/clones/family 1006",
       familyBase: "family/1006",
       verifyCwd: "/clones/family 1006/orchestrator",
     });
-    const remoteCmd = argv[argv.length - 1] ?? "";
-    // shellEscape quotes tokens that contain whitespace.
-    expect(remoteCmd).toContain("'/clones/family 1006'");
-    expect(remoteCmd).toMatch(/git -C .+ checkout --quiet/);
+    const vIdx = argv.indexOf("-v");
+    expect(argv[vIdx + 1]).toBe(
+      "/clones/family 1006:/clones/family 1006",
+    );
+    const wIdx = argv.indexOf("-w");
+    expect(argv[wIdx + 1]).toBe("/clones/family 1006/orchestrator");
+    // Host already checked out familyBase — remote cmd is pure full suite.
+    expect(argv[argv.length - 1]).toBe("npm test");
   });
 });
 
