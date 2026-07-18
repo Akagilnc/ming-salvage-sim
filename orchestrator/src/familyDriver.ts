@@ -1261,7 +1261,16 @@ export async function runFamilyDriver(
       familyScene.ledger,
       options.familyBase,
     );
-    if (terminal !== undefined) return terminal;
+    if (terminal !== undefined) {
+      // #1007: durable terminal replay must self-describe this invocation's feed.
+      emitExitProgress({
+        epic: options.epicIssue,
+        status: terminal.status,
+        stopReason: terminal.stopSummary?.reason,
+        gateSummary: terminal.stopSummary?.summary,
+      });
+      return terminal;
+    }
   }
 
   // #936 / #934 ID-002: route Admission/Preflight BEFORE any GitHub metadata
