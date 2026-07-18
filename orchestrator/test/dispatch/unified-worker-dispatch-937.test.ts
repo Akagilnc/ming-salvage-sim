@@ -1,105 +1,45 @@
-/**
- * #937 — unified worker dispatch terminal shape.
- *
- * Acceptance:
- *   - unified worker dispatch real entry proves #934 ID-004, ID-006
- *   - public ignition/driver seams prove #934 ID-007, ID-008, ID-015, ID-016
- *
- * Seams (real production paths only):
- *   - dispatchRetry.withMechanicalRetry / MAX_DISPATCH_ATTEMPTS / backoff
- *   - dispatchWorkerWithMonitor + terminateSpawnedChild
- *   - renderEphemeralRelayBrief + canRelayHandoff / MAX_RELAY_HANDOFFS
- *   - parkOrRelayQuotaWall (no focus file)
- */
-
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { expectNoRelayFocusFile } from "../helpers/relayFocus.js";
-
-import {
+  tmpdir,
+  join,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
   DISPATCH_RETRY_BACKOFF_MS,
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
-} from "../../src/dispatchRetry.js";
-import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
-import { resolveCoderRecOrder } from "../../src/coderRoster.js";
-import { DEFAULT_PARK_THRESHOLD_MS } from "../../src/quotaPoolTable.js";
-import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
-import { parkOrRelayQuotaWall } from "../../src/quotaParkRelay.js";
-import {
+  dispatchWorkerWithMonitor,
+  resolveCoderRecOrder,
+  DEFAULT_PARK_THRESHOLD_MS,
+  QuotaWaitForResetError,
+  parkOrRelayQuotaWall,
   MAX_RELAY_HANDOFFS,
   canRelayHandoff,
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
-} from "../../src/relayDispatch.js";
-
-import {
-  RECEIPT_MAX_RETRIES,
-  workerReceiptOutput,
-  coderReceiptOutput,
-} from "../../src/receiptRecovery.js";
-import { coderStationReceiptSchema } from "../../src/stationReceiptContracts.js";
-import { terminateSpawnedChild } from "../../src/workerMonitor.js";
-import type {
+  terminateSpawnedChild,
   Backend,
   CliMonitorSpawnSpec,
   WorkerResult,
   WorkerSpec,
-} from "../../src/types.js";
+  tempDirs,
+  coderSpec,
+  quotaWallError,
+} from "./unified-worker-dispatch-937.shared.js";
+import { expectNoRelayFocusFile } from "../helpers/relayFocus.js";
 
-const tempDirs: string[] = [];
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-function coderSpec(): WorkerSpec {
-  return {
-    id: "S2",
-    kind: "coder",
-    role: "coder",
-    host: "codex",
-    session: "fresh",
-    contextRetention: "retain",
-    promptFile: "coder.md",
-    maxIter: 1,
-    model: "grok-4.5",
-    soul: "coder",
-    toolchain: [],
-  } as WorkerSpec;
-}
-
-function quotaWallError(now: Date, resetAt: Date): QuotaWaitForResetError {
-  return new QuotaWaitForResetError({
-    disposition: {
-      kind: "wait_for_reset",
-      pool: "grok",
-      resetAt,
-      reason: "quota limited",
-    },
-    applied: {
-      ledgerEntry: {
-        event: "quota_wait_for_reset",
-        pool: "grok",
-        resetAt: resetAt.toISOString(),
-        reason: "quota limited",
-        step: "S2",
-        workerPid: 1,
-        ts: now.toISOString(),
-      },
-    },
-    pool: "grok"
-  });
-}
 
 describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
   it("POSITIVE: process-root budget is 6 attempts with five 15s intervals", () => {
@@ -153,54 +93,6 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(result.kind).toBe("completed");
   });
 
-  it("POSITIVE: production attach expression maps resumeCapable→maxRetries (ID-004/#955)", async () => {
-    // Production attach (realBackend.outputFor / family resumeCapableForSpec):
-    //   resumeCapable = resumeCapableForSlug(model, pool)
-    //   workerReceiptOutput(..., resumeCapable) → maxRetries 0|RECEIPT_MAX_RETRIES
-    const { resumeCapableForSlug } = await import("../../src/modelRegistry.js");
-    const { readFileSync: readSrc } = await import("node:fs");
-    const realBackendSrc = readSrc(
-      join(import.meta.dirname, "../../src/realBackend.ts"),
-      "utf8",
-    );
-    const familySrc = readSrc(
-      join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
-      "utf8",
-    );
-    const recoverySrc = readSrc(
-      join(import.meta.dirname, "../../src/receiptRecovery.ts"),
-      "utf8",
-    );
-    expect(realBackendSrc).toMatch(/resumeCapableForSlug\(/);
-    expect(realBackendSrc).toMatch(/coderReceiptOutput\([\s\S]*resumeCapable/);
-    expect(familySrc).toMatch(/resumeCapableForSpec\(/);
-    expect(familySrc).toMatch(/coderReceiptOutput\([\s\S]*this\.resumeCapableForSpec/);
-    expect(recoverySrc).toMatch(
-      /maxRetries:\s*resumeCapable\s*\?\s*RECEIPT_MAX_RETRIES\s*:\s*0/,
-    );
-
-    const attachFor = (model: string) => {
-      const resumeCapable = resumeCapableForSlug(model);
-      return coderReceiptOutput(
-        coderStationReceiptSchema(),
-        "coder",
-        resumeCapable,
-      );
-    };
-    // #955: grok is resume-capable (sessionStorage) → SO maxRetries = RECEIPT_MAX_RETRIES
-    expect(attachFor("grok-4.5")).toMatchObject({
-      tag: "coder",
-      maxRetries: RECEIPT_MAX_RETRIES,
-    });
-    expect(attachFor("gpt-5.6-terra")).toMatchObject({
-      tag: "coder",
-      maxRetries: RECEIPT_MAX_RETRIES,
-    });
-    // Incapable provider (agy, no sessionStorage) → maxRetries 0
-    expect(attachFor("agy")).toMatchObject({ tag: "coder", maxRetries: 0 });
-    expect(resumeCapableForSlug("agy")).toBe(false);
-  });
-
   it("NEGATIVE: QuotaWaitForResetError does not burn onAttempt durable budget", async () => {
     const attempts: number[] = [];
     let calls = 0;
@@ -226,76 +118,6 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     ).rejects.toBeInstanceOf(QuotaWaitForResetError);
     expect(calls).toBe(1);
     expect(attempts).toEqual([]);
-  });
-});
-
-describe("#937 unified worker dispatch — ID-006 process ownership", () => {
-  it("POSITIVE: adoption-record failure terminates exact ChildProcess handle", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-adopt-"));
-    tempDirs.push(dir);
-    const backend = {
-      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
-        command: process.execPath,
-        args: ["-e", "setTimeout(() => {}, 60_000)"],
-        logDir: dir,
-        poolId: "zai",
-        stepId: "S2",
-        readInstanceId: () => "test-instance",
-      }),
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      }),
-    } as unknown as Backend;
-
-    const killed: number[] = [];
-    await expect(
-      dispatchWorkerWithMonitor(backend, coderSpec(), {}, undefined, {
-        onMonitorHandleSpawned: async () => {
-          throw new Error("adoption persist failed");
-        },
-        monitorDeps: {
-          readInstanceId: () => "test-instance",
-          killPid: (pid, signal) => {
-            killed.push(pid);
-            try {
-              process.kill(pid, signal);
-            } catch {
-              // group signal may fail in restricted sandboxes
-            }
-          },
-          sleepMs: async () => {},
-        },
-      }),
-    ).rejects.toThrow(/adoption persist failed/);
-    expect(killed.length).toBeGreaterThan(0);
-  });
-
-  it("NEGATIVE: free-log relay tags never become a host fate throw", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-nofate-"));
-    tempDirs.push(dir);
-    writeFileSync(
-      join(dir, "S2.log"),
-      '<relay>{"decision_gate":{"state_summary":"ask human"}}</relay>\n',
-    );
-    const backend = {
-      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
-        command: process.platform === "win32" ? "cmd" : "true",
-        args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
-        logDir: dir,
-        poolId: "zai",
-        stepId: "S2",
-        readInstanceId: () => "test-instance",
-      }),
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      }),
-    } as unknown as Backend;
-
-    await expect(
-      dispatchWorkerWithMonitor(backend, coderSpec(), {}),
-    ).resolves.toMatchObject({ result: { kind: "completed" } });
   });
 });
 
@@ -329,169 +151,6 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
     expect(countRelayHandoffsInLedger(seven)).toBe(7);
     expect(canRelayHandoff(seven)).toBe(false);
     expect(canRelayHandoff(seven.slice(0, 6))).toBe(true);
-  });
-
-  it("POSITIVE: long-lived silent child is never host-killed (ID-007)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-long-silence-"));
-    tempDirs.push(dir);
-    const killed: number[] = [];
-    const backend = {
-      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
-        // Stay alive well past former idle tiers (10/30 min) — compressed via
-        // instant sleepMs inject; real wall is process exit only.
-        command: process.execPath,
-        args: ["-e", "setTimeout(() => {}, 200)"],
-        logDir: dir,
-        poolId: "zai",
-        stepId: "S2",
-        readInstanceId: () => "test-instance-long",
-      }),
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      }),
-    } as unknown as Backend;
-
-    const outcome = await dispatchWorkerWithMonitor(
-      backend,
-      coderSpec(),
-      {},
-      undefined,
-      {
-        monitorDeps: {
-          readInstanceId: () => "test-instance-long",
-          killPid: (pid) => killed.push(pid),
-          // No idle poll path remains — sleepMs is only used by terminateSpawnedChild.
-          sleepMs: async () => {},
-        },
-      },
-    );
-    expect(outcome.result.kind).toBe("completed");
-    expect(killed).toEqual([]);
-  });
-
-  it("POSITIVE: public runOrchestrator — long quiet CLI worker completes without host kill (ID-007)", async () => {
-    // #937 AC: public ignition/driver proof — not only the helper.
-    // Production wire: runOrchestrator → dispatchWorkerWithMonitor → CLI spawn.
-    // Silence must never invent host kill; process exit alone yields completed.
-    const { runOrchestrator } = await import("../../src/runner.js");
-    const { skeletonReviewLoopWorkerResult } = await import(
-      "../../src/reviewLoopOutcome.js"
-    );
-    type IssueMeta = import("../../src/types.js").IssueMeta;
-    type WorktreeHandle = import("../../src/types.js").WorktreeHandle;
-    type PersistentLedgerEntry = import("../../src/types.js").PersistentLedgerEntry;
-    type StepOutput = import("../../src/types.js").StepOutput;
-    type WorkerSpec = import("../../src/types.js").WorkerSpec;
-
-    const dir = mkdtempSync(join(tmpdir(), "orch-937-public-silence-"));
-    tempDirs.push(dir);
-    const worktree: WorktreeHandle = {
-      branch: "feat/937-public-silence",
-      base: "main",
-      path: dir,
-    };
-    const cliExitCodes: Array<number | null> = [];
-    const processKillSpy = vi.spyOn(process, "kill").mockImplementation(
-      ((_pid: number, _sig?: NodeJS.Signals | number) => true) as typeof process.kill,
-    );
-
-    const backend = {
-      async smokeModelRoute(route: never): Promise<never> {
-        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
-        return smokeRouteModels(route as never, async () => ({
-          cliVersion: "test",
-        })) as never;
-      },
-      async findResumeState(): Promise<undefined> {
-        return undefined;
-      },
-      async resumeSession(): Promise<StepOutput> {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      },
-      async fetchIssueMeta(n: number): Promise<IssueMeta> {
-        return {
-          number: n,
-          isReadyForAgent: true,
-          hasSubIssues: false,
-          isClosed: false,
-          openBlockedBy: [],
-          body: "Coder-Rec: grok-4.5",
-        };
-      },
-      async prepareWorktree(): Promise<WorktreeHandle> {
-        return worktree;
-      },
-      async runStep(): Promise<StepOutput> {
-        return { kind: "coder", committed: true, commitsAdded: 1 };
-      },
-      async writeLedger(_entry: PersistentLedgerEntry): Promise<void> {},
-      // Only S2 takes the monitored CLI path (long quiet child); other agent
-      // seats fall through to dispatchWorker so the public run can complete.
-      resolveCliMonitorDispatch: (
-        spec: WorkerSpec,
-      ): CliMonitorSpawnSpec | undefined => {
-        if (spec.id !== "S2") return undefined;
-        return {
-          command: process.execPath,
-          // Quiet wall well past former idle tiers; host must wait for exit only.
-          args: ["-e", "setTimeout(() => {}, 250)"],
-          logDir: dir,
-          poolId: "grok-build",
-          stepId: "S2",
-          readInstanceId: () => "public-silence-instance",
-        };
-      },
-      awaitMonitoredCliWorker: async (
-        _handle: unknown,
-        exitCode: number | null,
-      ): Promise<WorkerResult> => {
-        cliExitCodes.push(exitCode);
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      },
-      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.id === "S2") {
-          // Must not be used for S2 when CLI path is active.
-          return {
-            kind: "failed",
-            reason: "S2 must use resolveCliMonitorDispatch path",
-          };
-        }
-        if (spec.id === "S3" || spec.kind === "reviewer" || spec.role === "verify") {
-          return {
-            kind: "completed",
-            output: { kind: "judge", status: "converged" },
-          };
-        }
-        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-        if (skeleton !== undefined) return skeleton;
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      },
-    } as unknown as Backend;
-
-    try {
-      const result = await runOrchestrator({
-        issueNumber: 937,
-        backend,
-        now: () => new Date("2026-07-10T12:00:00.000Z"),
-      });
-      expect(result.status).toBe("completed");
-      // Quiet child exited 0 on its own — not signal-killed (exitCode null).
-      expect(cliExitCodes).toContain(0);
-      expect(cliExitCodes.every((c) => c === 0)).toBe(true);
-      // Host never process.kill'd the quiet worker for silence (ID-007).
-      // Adoption-failure is the only remaining host-kill seam; this path had none.
-      const killArgs = processKillSpy.mock.calls.map((c) => c[1]);
-      expect(killArgs.every((sig) => sig === undefined || sig === 0)).toBe(true);
-    } finally {
-      processKillSpy.mockRestore();
-    }
   });
 
   it("POSITIVE: parkOrRelayQuotaWall prefers same-model other live pool first (ID-008)", async () => {
@@ -1011,21 +670,6 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
 });
 
 describe("#937 ID-015 / ID-016 delete boundaries", () => {
-  it("NEGATIVE: terminateSpawnedChild is a no-op when the child already exited", async () => {
-    const { spawn } = await import("node:child_process");
-    const child = spawn(
-      process.platform === "win32" ? "cmd" : "true",
-      process.platform === "win32" ? ["/c", "exit", "0"] : [],
-      { stdio: "ignore" },
-    );
-    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    const killPid = vi.fn();
-    await terminateSpawnedChild(child, {
-      killPid,
-      sleepMs: async () => {},
-    });
-    expect(killPid).not.toHaveBeenCalled();
-  });
 
   it("POSITIVE: production surface deletes idle-kill + free-log fate machinery", async () => {
     const monitor = await import("../../src/workerMonitor.js");
