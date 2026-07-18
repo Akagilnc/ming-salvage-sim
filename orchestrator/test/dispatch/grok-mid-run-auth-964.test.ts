@@ -169,6 +169,9 @@ function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
   delete env.XAI_API_KEY;
   delete env.GROK_API_KEY;
   delete env.XAI_KEY;
+  // Transport harness flags must never leak into the live auth probe.
+  delete env.GROK_HOLD_OPEN;
+  delete env.GROK_PROMPT_PATH_OUT;
   return env;
 }
 
@@ -220,7 +223,8 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   }
   // Docker: empty HOME mount; do NOT pass empty XAI_API_KEY= (empty string is
   // treated as present credentials → 401, not the native "Not signed in" path).
-  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  // Entrypoint is /bin/sh so the production buildPrintCommand shell (mktemp/cat/
+  // trap/grok) runs end-to-end; image default is sleep-infinity.
   const r = spawnSync(
     "docker",
     [
