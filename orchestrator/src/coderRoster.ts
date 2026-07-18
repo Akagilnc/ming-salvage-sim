@@ -82,13 +82,11 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     id: "sol@low",
     slug: "gpt-5.6-sol-low",
     pool: "codex",
-    aliases: ["gpt-5.6-sol-low"],
   },
   {
     id: "sol@high",
     slug: "gpt-5.6-sol-high",
     pool: "codex",
-    aliases: ["gpt-5.6-sol-high"],
   },
   {
     id: "sonnet-5",
