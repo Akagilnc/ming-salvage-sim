@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
+    "test:fast": "tsc -p tsconfig.test.json --noEmit && vitest run --config vitest.fast.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
