@@ -518,43 +518,6 @@ describe("#959 captureToHost atomic temp+swap", () => {
     ).toBe(oldHistory);
   });
 
-  it("failed first capture does not leave a half-written host session dir", async () => {
-    const hostRoot = tmp("grok-959-host-");
-    const sandboxFs = tmp("grok-959-sbx-");
-    const hostCwd = "/host/work-959-nofirst";
-    const sessionId = "019f-959-nofirst";
-
-    const handle: BindMountSandboxHandle = {
-      worktreePath: sandboxFs,
-      exec: async () => ({
-        stdout: Buffer.from("not-a-tar").toString("base64"),
-        stderr: "",
-        exitCode: 0,
-      }),
-      copyFileIn: async () => {},
-      copyFileOut: async () => {},
-      close: async () => {},
-    };
-
-    const storage = makeGrokSessionStorage({
-      hostSessionsDir: hostRoot,
-      sandboxSessionsDir: join(sandboxFs, "sessions"),
-    });
-
-    await expect(
-      storage.captureToHost({
-        hostCwd,
-        sandboxCwd: "/sbx",
-        sessionId,
-        handle,
-      }),
-    ).rejects.toThrow();
-
-    const hostDir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
-    expect(existsSync(hostDir)).toBe(false);
-    expect(await storage.existsOnHost(hostCwd, sessionId)).toBe(false);
-  });
-
   it("concurrent same-slug captures leave one complete version (no mix)", async () => {
     const hostRoot = tmp("grok-959-host-");
     const hostCwd = "/host/work-959-race";

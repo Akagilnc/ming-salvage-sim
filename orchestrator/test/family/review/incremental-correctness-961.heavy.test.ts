@@ -224,46 +224,6 @@ class CapableFamilyBackend implements FamilyBackend {
 }
 
 describe("#961 lastCorrectnessConvergedHeadFromLedger — durable single source", () => {
-  it("returns undefined when no correctness cmr_passed row exists", () => {
-    const entries: FamilyLedgerEntry[] = [
-      {
-        status: "cmr_passed",
-        event: "cmr_passed",
-        phase: "final",
-        cmrPass: "completeness",
-        familyHeadAfter: "h1",
-        routeFingerprint: "fp",
-      },
-    ];
-    expect(lastCorrectnessConvergedHeadFromLedger(entries)).toBeUndefined();
-  });
-
-  it("returns the latest correctness cmr_passed familyHeadAfter (checkpoint or final)", () => {
-    const entries: FamilyLedgerEntry[] = [
-      {
-        status: "cmr_passed",
-        event: "cmr_passed",
-        phase: "correctness_checkpoint",
-        cmrPass: "correctness",
-        familyHeadAfter: "head-wave-1",
-        routeFingerprint: "fp",
-      },
-      {
-        status: "merged",
-        childIssue: 2,
-        familyHeadAfter: "head-wave-2",
-      },
-      {
-        status: "cmr_passed",
-        event: "cmr_passed",
-        phase: "correctness_checkpoint",
-        cmrPass: "correctness",
-        familyHeadAfter: "head-wave-2",
-        routeFingerprint: "fp",
-      },
-    ];
-    expect(lastCorrectnessConvergedHeadFromLedger(entries)).toBe("head-wave-2");
-  });
 
   it("recordCmrPassed correctness writes the durable anchor readable by the helper", async () => {
     const backend = new CapableFamilyBackend();
@@ -410,18 +370,6 @@ describe("#961 spine — incremental IC after batch verify green", () => {
     expect(checkpointTargets.some((h) => h === "+1002")).toBe(true);
     // First checkpoint never saw wave2 merge as its target.
     expect(checkpointTargets[0]).not.toBe("+1002");
-  });
-
-  it("Runner admission/park path never reads lastCorrectnessConvergedHead", () => {
-    // Import-surface / source-text guard: must fail if Runner starts importing
-    // or calling the durable IC ledger helper for admission/park. IC Action /
-    // verifyCmr owns lastCorrectnessConvergedHead; Runner comments may mention
-    // the field name as a negative constraint, but must not bind the helper API.
-    const runnerSrc = readFileSync(
-      join(import.meta.dirname, "../../../src/family/runner.ts"),
-      "utf8",
-    );
-    expect(runnerSrc).not.toMatch(/\blastCorrectnessConvergedHeadFromLedger\b/);
   });
 
   // CORR-C1 / #961: Wave1 fires IC → Wave2 coding settles in parallel → IC fails

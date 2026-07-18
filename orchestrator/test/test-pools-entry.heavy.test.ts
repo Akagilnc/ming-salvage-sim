@@ -3,13 +3,16 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("canonical fast entry tax guard (#990)", () => {
-  it("fails when a real-process fixture is forced into fast", () => {
+  it.each([
+    "test/fixtures/fast-tax-probe.ts",
+    "test/fixtures/fast-tax-import-original-probe.ts",
+  ])("fails when real-process fixture %s is forced into fast", (fixture) => {
     expect(() =>
       execFileSync("npm", ["run", "test:fast"], {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          VITEST_FAST_GUARD_FIXTURE: "test/fixtures/fast-tax-probe.ts",
+          VITEST_FAST_GUARD_FIXTURE: fixture,
         },
         encoding: "utf8",
         stdio: "pipe",
