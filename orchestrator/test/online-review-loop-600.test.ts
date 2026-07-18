@@ -423,6 +423,60 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     );
   });
 
+  it("#1016: reviewThreads GraphQL query closes 4 outer scopes (brace-balanced, not +1 extra })", () => {
+    // Real ship post-#985: gh api graphql rejects a query with one extra trailing `}`.
+    // Nesting is query / repository / pullRequest / reviewThreads (pageInfo + nodes self-close).
+    // Known-good literal (independent of production join): 6 opens / 6 closes.
+    const expectedQuery =
+      "query($owner:String!,$name:String!,$number:Int!,$first:Int!,$after:String){" +
+      "repository(owner:$owner,name:$name){" +
+      "pullRequest(number:$number){" +
+      "reviewThreads(first:$first,after:$after){" +
+      "pageInfo{endCursor hasNextPage}" +
+      "nodes{id isResolved}" +
+      "}}}}";
+    let capturedQuery: string | undefined;
+    const sh: Sh = (_file, args) => {
+      const queryArg = args.find((a) => a.startsWith("query="));
+      if (queryArg !== undefined) {
+        capturedQuery = queryArg.slice("query=".length);
+      }
+      return JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { endCursor: "c1", hasNextPage: false },
+                nodes: [{ id: "PRRT_ok", isResolved: false }],
+              },
+            },
+          },
+        },
+      });
+    };
+    // nodesFields without nested braces so outer close count is unambiguous.
+    const nodes = paginateReviewThreadNodes(sh, "o/r", 42, "id isResolved");
+    expect(nodes).toHaveLength(1);
+    expect(capturedQuery).toBe(expectedQuery);
+    const query = capturedQuery!;
+    const open = (query.match(/\{/g) ?? []).length;
+    const close = (query.match(/\}/g) ?? []).length;
+    expect(open).toBe(close);
+    // nodes self-close contributes 1 trailing `}` + 4 outer closers = 5 consecutive.
+    // Pre-#1016 bug appended a 5th outer closer → 6 consecutive (and open !== close).
+    expect((query.match(/\}+$/)?.[0] ?? "").length).toBe(5);
+  });
+
+  it("#1016: GraphQL errors on reviewThreads still fail closed (no silent 0 threads)", () => {
+    const sh: Sh = () =>
+      JSON.stringify({
+        errors: [{ message: "Expected end of document, found }" }],
+      });
+    expect(() =>
+      paginateReviewThreadNodes(sh, "o/r", 42, "id isResolved"),
+    ).toThrow(/GraphQL reviewThreads errors/);
+  });
+
   it("pollPrReviewState threads use GraphQL top comment id distinct from threadNodeId (#600 r7)", () => {
     const calls: string[] = [];
     const sh = ghFixture({ calls });
