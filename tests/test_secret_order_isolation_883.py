@@ -541,26 +541,46 @@ def test_976_pure_public_minister_reply_released_after_settle(game):
     assert row is not None and reply in (row["body"] or "")
 
 
-def test_976_assignee_ack_without_origin_remains_public_on_secret_create(game):
-    """#976：只有 explicit origin 行分流；应答不凭接令者身份改判。"""
+def test_976_secret_chat_turn_withholds_both_sides_but_public_turn_survives(game):
+    """#976：密令血缘跟随完整召对轮，纯公开召对仍进共享轨。"""
     db, state, content = game
     assignee, other = _active_ministers(db, content)[:2]
     origin = "着尔密访国丈家产，勿使外廷知。"
     ack = "臣领密旨，即暗中查办，不敢外泄。"
     extracted = "暗访国丈家产虚实"
+    public_q = "京营今日操练如何？"
+    public_reply = "回陛下，京营操练如常。"
 
-    db.append_chat_message(assignee.name, state.turn, "user", origin)
+    secret_turn = db.create_chat_turn(state, assignee.name, "secret-turn-976", 0)
+    mid_origin = db.append_chat_message(assignee.name, state.turn, "user", origin)
     mid_ack = db.append_chat_message(assignee.name, state.turn, "minister", ack)
+    db.update_chat_turn_messages(
+        secret_turn, user_message_id=mid_origin, minister_message_id=mid_ack,
+    )
     oid = db.create_secret_order(state, assignee.name, "密查国丈", extracted, [])
     assert oid > 0
 
-    assert db.conn.execute(
-        "SELECT knowledge_status FROM chat_messages WHERE id=?", (mid_ack,)
-    ).fetchone()["knowledge_status"] == "released"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id=?",
-        (f"chat_message:{mid_ack}",),
-    ).fetchone()[0] == 1
+    public_turn = db.create_chat_turn(state, assignee.name, "public-turn-976", 0)
+    mid_public_q = db.append_chat_message(assignee.name, state.turn, "user", public_q)
+    mid_public_reply = db.append_chat_message(
+        assignee.name, state.turn, "minister", public_reply,
+    )
+    db.update_chat_turn_messages(
+        public_turn,
+        user_message_id=mid_public_q,
+        minister_message_id=mid_public_reply,
+    )
+    db.release_held_audience_knowledge()
+
+    statuses = {
+        row["id"]: row["knowledge_status"]
+        for row in db.conn.execute(
+            "SELECT id, knowledge_status FROM chat_messages WHERE id IN (?,?,?,?)",
+            (mid_origin, mid_ack, mid_public_q, mid_public_reply),
+        ).fetchall()
+    }
+    assert statuses[mid_origin] == statuses[mid_ack] == "withheld"
+    assert statuses[mid_public_q] == statuses[mid_public_reply] == "released"
     brief = db.conn.execute(
         "SELECT body FROM secret_order_briefs WHERE order_id=?", (oid,)
     ).fetchone()
@@ -573,6 +593,15 @@ def test_976_assignee_ack_without_origin_remains_public_on_secret_create(game):
     assert ack not in other_text
     assert origin not in other_text
     assert extracted not in other_text
+    shared_text = " ".join(
+        row["body"] or ""
+        for row in db.conn.execute(
+            "SELECT body FROM character_knowledge_sources WHERE source_id IN (?,?)",
+            (f"chat_message:{mid_public_q}", f"chat_message:{mid_public_reply}"),
+        ).fetchall()
+    )
+    assert public_q in shared_text
+    assert public_reply in shared_text
 
 
 def test_976_withhold_does_not_yank_old_released_public_user(game):

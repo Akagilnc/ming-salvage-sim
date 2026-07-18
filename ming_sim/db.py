@@ -5703,9 +5703,10 @@ class GameDB:
             parts.append(
                 f"{row['name']}：驻{row['station']}，兵{row['manpower']}，"
                 f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
-                f"{_qualitative_army_stat('supply', row['supply'])}、"
-                f"{_qualitative_army_stat('morale', row['morale'])}、"
-                f"火器{row['firearm_equipment']}、炮{row['cannon_equipment']}、{arr_text}，{row['status']}"
+                f"{_qualitative_army_stat('supply', row['supply'])}，"
+                f"{_qualitative_army_stat('morale', row['morale'])}，"
+                f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}，"
+                f"炮{row['cannon_equipment']}门，{arr_text}，{row['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
@@ -10425,11 +10426,12 @@ class GameDB:
         return out
 
     def _registered_secret_origin_message_ids(self) -> set:
-        """All durable oral-decree message ids recorded on secret_order_briefs.
+        """All durable oral-decree chat-turn message ids.
 
-        Message-level provenance (#976): release must never project these rows
-        into shared/private tracks — withhold is the only legal terminal for
-        secret-origin chat bloodline.
+        The brief records the user message that caused classification.  A
+        completed ``chat_turns`` row is the structural provenance for the full
+        exchange, so its paired minister reply belongs to the same secret
+        bloodline.  Release must never project either side into shared tracks.
         """
         out: set = set()
         try:
@@ -10453,6 +10455,24 @@ class GameDB:
                     continue
                 if mid > 0:
                     out.add(mid)
+        if out:
+            placeholders = ",".join("?" for _ in out)
+            try:
+                turns = self.conn.execute(
+                    f"SELECT user_message_id, minister_message_id FROM chat_turns "
+                    f"WHERE user_message_id IN ({placeholders})",
+                    tuple(sorted(out)),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                turns = []
+            for turn in turns:
+                for raw in (turn["user_message_id"], turn["minister_message_id"]):
+                    try:
+                        mid = int(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if mid > 0:
+                        out.add(mid)
         return out
 
     def _withhold_origin_chat_messages(
