@@ -19,5 +19,10 @@ def test_read_game_exposes_real_opening_board(read_game):
 def test_read_game_rejects_writes(read_game):
     db, _state, _content = read_game
 
-    with pytest.raises(sqlite3.OperationalError, match="readonly"):
-        db.conn.execute("UPDATE armies SET manpower=0")
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            db.conn.execute("UPDATE armies SET manpower=0")
+    finally:
+        db.conn.rollback()
+
+    assert not db.conn.in_transaction

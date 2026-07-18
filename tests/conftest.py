@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import os
 import shutil
 import tempfile
@@ -31,13 +32,9 @@ def content() -> GameContent:
     return c
 
 
-@pytest.fixture(scope="session")
-def read_game(content):
-    """返回共享的真实开局盘面，供不改变 DB/state/content 的纯读测试使用。
-
-    只 seed 一次，并用 SQLite ``query_only`` 把误写变成响亮失败。任何写库路径、
-    会改变 state/content 的路径，或需要验证事务/隔离的测试必须继续使用 ``game``。
-    """
+@contextmanager
+def _opening_game(content):
+    """创建并清理一个与生产开局序列同核的临时盘面。"""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = None
@@ -46,7 +43,6 @@ def read_game(content):
         db.seed_static_data()
         state = db.load_state()
         issues_mod.sync_opening_legacies(db, state)
-        db.conn.execute("PRAGMA query_only = ON")
         yield db, state, content
     finally:
         if db is not None:
@@ -54,6 +50,19 @@ def read_game(content):
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
+
+
+@pytest.fixture(scope="session")
+def read_game(content):
+    """返回共享的真实开局盘面，供不改变 DB/state/content 的纯读测试使用。
+
+    只 seed 一次，并用 SQLite ``query_only`` 把误写变成响亮失败。任何写库路径、
+    会改变 state/content 的路径，或需要验证事务/隔离的测试必须继续使用 ``game``。
+    """
+    with _opening_game(content) as opening:
+        db, _state, _content = opening
+        db.conn.execute("PRAGMA query_only = ON")
+        yield opening
 
 
 @pytest.fixture(autouse=True)
@@ -82,26 +91,8 @@ def game(content):
     被 .gitignore 忽略，干净 checkout / CI 上依赖它的用例大面积 skip 当过=假绿。改走真实新档路径
     （seed_static_data，与生产开局同核）后，CI 无需任何外部 DB 即可跑；且 characters 直接来自
     content（101 全），不被 probe.db 旧档（缺 characters.json 独有的宗藩王等、缩成 58）掩盖。"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    db = None
-    try:
-        db = GameDB(path, content)
-        db.seed_static_data()
-        state = db.load_state()
-        # 与生产开局序列一致（session.py：seed_static_data → load_state → sync_opening_legacies）：补开局
-        # 负面帝国修正 modifiers——metric/economy delta 会查 active legacy modifier 做 %修正，缺则盘面与
-        # 生产不一致、依赖修正的断言对不上（codex #5 r1 high）。不立 issue、不进推演（同生产）。
-        issues_mod.sync_opening_legacies(db, state)
-        yield db, state, content
-    finally:
-        # setup（GameDB/seed/load_state）抛错也清 temp——原 setup 在 try 外，失败绕过 teardown 泄漏
-        # 临时 DB 文件/句柄（cmr #5 r2 coderabbit）。走封装的 db.close() 而非裸 conn.close()（gemini #5）。
-        if db is not None:
-            db.close()
-        for p in (path, f"{path}_agno.db"):
-            if os.path.exists(p):
-                os.remove(p)
+    with _opening_game(content) as opening:
+        yield opening
 
 
 @pytest.fixture
