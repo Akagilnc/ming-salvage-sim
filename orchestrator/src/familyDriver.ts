@@ -1660,16 +1660,26 @@ export async function runFamilyDriver(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: baseline.escalation.diagnosis,
+      // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
+      repairHint: baselineHealthRepairHint(baseline.failure),
+    });
+    // #1007 / #1009: baseline admission fail must dual-write terminal progress
+    // like sibling early exits (fail-open). Residual call-site risk remains
+    // elsewhere — no global exit framework this round.
+    emitExitProgress({
+      epic: options.epicIssue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "baseline_health_failed",
       familyBase: options.familyBase,
       familyHead: familyBaseStartHead,
       escalation: baseline.escalation,
-      stopSummary: infraFailureStopSummary({
-        summary: baseline.escalation.diagnosis,
-        // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
-        repairHint: baselineHealthRepairHint(baseline.failure),
-      }),
+      stopSummary,
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }
