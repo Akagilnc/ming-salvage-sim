@@ -336,25 +336,44 @@ def test_terminal_persistent_chat_finalization_failure_rolls_back_real_turn(game
     monkeypatch.setattr(db, "append_chat_message", fail_minister_write)
     answers = iter([marker])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    received_chat_turn_ids = []
+
+    def chat(_name, _question, chat_turn_id=0):
+        assert chat_turn_id > 0
+        received_chat_turn_ids.append(chat_turn_id)
+        db.persist_return_report(
+            state, character.name, "陕西巡抚可有？", chat_turn_id=chat_turn_id,
+        )
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE ?",
+            (f"%:chat_turn:{chat_turn_id}",),
+        ).fetchone()[0] == 1
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", pending_action_failures=[],
+        )
+
     session = SimpleNamespace(
         db=db,
         state=state,
         content=content,
         temporary_characters=set(),
-        chat=lambda _name, _question, chat_turn_id=0: SimpleNamespace(
-            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
-            registered_minister="", displaced_minister="", court_action="",
-            next_minister="", pending_action_failures=[],
-        ),
+        chat=chat,
     )
 
     with pytest.raises(RuntimeError, match="finalization write failed"):
         term.minister_chat(session, character)
 
-    turn = db.conn.execute("SELECT status FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
+    turn = db.conn.execute("SELECT id, status FROM chat_turns ORDER BY id DESC LIMIT 1").fetchone()
     assert turn["status"] == "failed"
+    assert received_chat_turn_ids == [turn["id"]]
     assert db.conn.execute(
         "SELECT COUNT(*) FROM chat_messages WHERE content=?", (marker,)
+    ).fetchone()[0] == 0
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources WHERE source_id LIKE ?",
+        (f"%:chat_turn:{turn['id']}",),
     ).fetchone()[0] == 0
 
 
