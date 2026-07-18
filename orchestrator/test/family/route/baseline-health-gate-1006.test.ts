@@ -25,6 +25,7 @@ import {
   admitBaselineHealth,
   buildBaselineContainerFullTestArgv,
   classifyBaselineFailure,
+  containerBaselineVerifyCwd,
   formatBaselineHealthFailurePackage,
   NOOP_BASELINE_FIX_ATTEMPT,
   runBaselineFullTestsInWorkerContainer,
@@ -494,6 +495,84 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     );
     // Host already checked out familyBase — remote cmd is pure full suite.
     expect(argv[argv.length - 1]).toBe("npm test");
+  });
+
+  it("maps workingRepo root and nested verifyCwd under worksite (no silent rewrite)", () => {
+    expect(
+      containerBaselineVerifyCwd("/root/.sc/repo", "/root/.sc/repo"),
+    ).toBe("/home/agent/baseline-worksite");
+    expect(
+      containerBaselineVerifyCwd(
+        "/root/.sc/repo",
+        "/root/.sc/repo/orchestrator",
+      ),
+    ).toBe("/home/agent/baseline-worksite/orchestrator");
+    // Lexical .. that still resolves inside hostRoot is fine.
+    expect(
+      containerBaselineVerifyCwd(
+        "/root/.sc/repo",
+        "/root/.sc/repo/orchestrator/../orchestrator",
+      ),
+    ).toBe("/home/agent/baseline-worksite/orchestrator");
+  });
+
+  it("rejects lexical .. escape of workingRepo (no -w outside mount)", () => {
+    // Host: /root/.sc/repo/../other → /root/.sc/other (outside worksite).
+    expect(() =>
+      containerBaselineVerifyCwd(
+        "/root/.sc/repo",
+        "/root/.sc/repo/../other",
+      ),
+    ).toThrow(/verifyCwd.*workingRepo|escapes|outside/i);
+
+    expect(() =>
+      buildBaselineContainerFullTestArgv({
+        imageName: "ming-orchestrator-coder:latest",
+        workingRepo: "/root/.sc/repo",
+        familyBase: "family/1006",
+        verifyCwd: "/root/.sc/repo/../other",
+      }),
+    ).toThrow(/verifyCwd|escapes|outside/i);
+  });
+
+  it("rejects unrelated verifyCwd that cannot map under worksite (fail closed)", () => {
+    expect(() =>
+      containerBaselineVerifyCwd("/root/.sc/repo", "/tmp/unrelated"),
+    ).toThrow(/verifyCwd.*workingRepo|escapes|outside|unrelated/i);
+
+    expect(() =>
+      buildBaselineContainerFullTestArgv({
+        imageName: "ming-orchestrator-coder:latest",
+        workingRepo: "/root/.sc/repo",
+        familyBase: "family/1006",
+        verifyCwd: "/tmp/unrelated",
+      }),
+    ).toThrow(/verifyCwd|escapes|outside|unrelated/i);
+  });
+
+  it("runBaselineFullTestsInWorkerContainer fails closed on escaped verifyCwd (no docker -w outside)", async () => {
+    const calls: string[] = [];
+    const result = await runBaselineFullTestsInWorkerContainer(
+      {
+        imageName: "ming-orchestrator-coder:test",
+        workingRepo: "/root/.sc/repo",
+        familyBase: "family/1006",
+        verifyCwd: "/root/.sc/repo/../other",
+        provisionDeps: async () => {
+          calls.push("provision");
+        },
+      },
+      (file) => {
+        calls.push(file);
+        return "";
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failureClass).toBe("infra");
+    expect(result.output).toMatch(/verifyCwd|escapes|outside/i);
+    // Must not spawn docker with -w outside the bind mount.
+    expect(calls).not.toContain("docker");
   });
 });
 

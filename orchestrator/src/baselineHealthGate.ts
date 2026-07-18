@@ -25,6 +25,8 @@
  * `sc.run` lifecycle is not required for a pure full-suite probe — no LLM.
  */
 
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
 import { shWithClock } from "./externalCall.js";
 import { formatExecFailureOutput } from "./execFailureOutput.js";
 import { gitExitStatus, isFileNotFound } from "./fsErrors.js";
@@ -290,26 +292,30 @@ export const BASELINE_CONTAINER_WORKSITE = "/home/agent/baseline-worksite";
 /**
  * Map host verifyCwd under workingRepo → container path under
  * {@link BASELINE_CONTAINER_WORKSITE}.
+ *
+ * Normalizes both paths, then requires verifyCwd to stay inside workingRepo
+ * (no lexical `..` escape, no unrelated absolute path). Escape / unmappable
+ * paths throw — callers must fail closed rather than point docker `-w` outside
+ * the bind mount (PR #1017 verifyCwd containment).
  */
 export function containerBaselineVerifyCwd(
   workingRepo: string,
   verifyCwd: string,
 ): string {
-  const hostRoot = workingRepo.endsWith("/")
-    ? workingRepo.slice(0, -1)
-    : workingRepo;
-  if (verifyCwd === hostRoot || verifyCwd === workingRepo) {
-    return BASELINE_CONTAINER_WORKSITE;
+  const hostRoot = resolve(workingRepo);
+  const absVerify = resolve(verifyCwd);
+  const rel = relative(hostRoot, absVerify);
+  // Contained: "" (same path) or a relative segment that does not climb out.
+  // Reject ".." / "../…" and absolute rel (Windows cross-drive).
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(
+      `baseline health gate: verifyCwd escapes workingRepo ` +
+        `(verifyCwd=${verifyCwd}, workingRepo=${workingRepo})`,
+    );
   }
-  const prefix = hostRoot + "/";
-  if (verifyCwd.startsWith(prefix)) {
-    const rel = verifyCwd.slice(prefix.length);
-    return rel.length > 0
-      ? `${BASELINE_CONTAINER_WORKSITE}/${rel}`
-      : BASELINE_CONTAINER_WORKSITE;
-  }
-  // Fallback: treat verifyCwd as absolute-but-unrelated; still work under worksite.
-  return BASELINE_CONTAINER_WORKSITE;
+  return rel.length > 0
+    ? `${BASELINE_CONTAINER_WORKSITE}/${rel.split(sep).join("/")}`
+    : BASELINE_CONTAINER_WORKSITE;
 }
 
 /**
@@ -445,7 +451,19 @@ export async function runBaselineFullTestsInWorkerContainer(
     };
   }
 
-  const argv = buildBaselineContainerFullTestArgv(req);
+  let argv: string[];
+  try {
+    argv = buildBaselineContainerFullTestArgv(req);
+  } catch (err) {
+    // verifyCwd containment / argv build — fail closed as infra (no docker spawn).
+    const output = formatExecFailureOutput(err);
+    return {
+      ok: false,
+      exitCode: 1,
+      output: `baseline health gate: container argv rejected\n${output}`,
+      failureClass: "infra",
+    };
+  }
   const [file, ...args] = argv;
   if (file === undefined) {
     return {
