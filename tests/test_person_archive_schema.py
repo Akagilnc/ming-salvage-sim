@@ -16,9 +16,9 @@ def _column_info(db, table):
     return {row["name"]: dict(row) for row in db.conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def test_characters_table_has_person_archive_fields(game):
+def test_characters_table_has_person_archive_fields(read_game):
     """ADR 0009 stores machine-readable reason and travel state on characters."""
-    db, _, _ = game
+    db, _, _ = read_game
 
     cols = _columns(db, "characters")
 
@@ -31,9 +31,9 @@ def test_characters_table_has_person_archive_fields(game):
         assert info[name]["dflt_value"] == "''"
 
 
-def test_person_logs_table_records_person_archive_audit_chain(game):
+def test_person_logs_table_records_person_archive_audit_chain(read_game):
     """ADR 0009 persists person archive process history separately from final state."""
-    db, _, _ = game
+    db, _, _ = read_game
 
     cols = _columns(db, "person_logs")
 

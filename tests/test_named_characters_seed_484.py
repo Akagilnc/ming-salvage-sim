@@ -39,8 +39,8 @@ def test_r3_named_characters_load_legal_guilt_and_historical_offices():
     assert {"河道治理", "漕运工程"} <= set(li.personal_skills)
 
 
-def test_r4_hu_tingyan_loader_and_db_use_legal_office_type(game):
-    db, _state, _content = game
+def test_r4_hu_tingyan_loader_and_db_use_legal_office_type(read_game):
+    db, _state, _content = read_game
 
     row = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", ("胡廷宴",)
