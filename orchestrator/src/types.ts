@@ -580,14 +580,15 @@ export interface CoderAdvanceEvent {
 }
 
 /**
- * #926 / #1002 — judge `advanceCoder` target unusable: stay on the current repair seat.
- * Never a terminal — result returns to the judge desk on the normal continue path.
+ * #926 / #1002 — judge `advanceCoder` target unusable: stay on the current repair seat
+ * (coderFix / fixer). Never a terminal — result returns to the judge desk on the
+ * normal continue path.
  */
 export interface CoderAdvanceStayPutEvent {
   readonly event: "coder_advance_stay_put";
   /** Why the advance was refused (`unknown_target`, …). */
   readonly reason: string;
-  /** Current coder seat (unchanged). */
+  /** Current repair seat (coderFix / fixer; unchanged). */
   readonly fromModelId: string;
   /** Same as from — stay-put does not move. */
   readonly toModelId: string;

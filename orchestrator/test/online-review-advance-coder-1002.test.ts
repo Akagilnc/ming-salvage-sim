@@ -225,4 +225,47 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     expect(backend.fixerModels.length).toBeGreaterThanOrEqual(2);
     expect(backend.fixerModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
   });
+
+  it("re-enter online-review rebuilds sticky fixer from latest ledger coder_advance", async () => {
+    // Mirror single-slice sticky re-hold: process restart / re-entry must not
+    // drop an already-audited advance (in-memory modelRoute alone is not enough).
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+    const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
+    expect(defaultFixer).not.toBe("gpt-5.6-sol");
+
+    const backend = new OnlineReviewAdvanceBackend([
+      // No advanceCoder in this invocation — stickiness must come from ledger.
+      { converged: false },
+      { converged: true },
+    ]);
+    await backend.appendFamilyLedger({
+      status: "coder_advance",
+      event: "coder_advance",
+      reason: "coder_advance",
+      fromModelId: defaultFixer,
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "sol@med",
+      ts: "2026-07-18T00:00:00.000Z",
+    });
+    // stay_put after advance must not cancel re-hold (same as single-slice scan).
+    await backend.appendFamilyLedger({
+      status: "coder_advance_stay_put",
+      event: "coder_advance_stay_put",
+      reason: "unknown_target",
+      fromModelId: "gpt-5.6-sol",
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "not-a-real-coder",
+      ts: "2026-07-18T00:00:01.000Z",
+    });
+
+    const result = await runFamilyOnlineReviewLoop({
+      familyBackend: backend,
+      familyBase: "family/1002",
+      ship: OFFLINE_SHIP,
+    });
+
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(backend.fixerModels[0]).toBe("gpt-5.6-sol");
+    expect(backend.fixerModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
+  });
 });
