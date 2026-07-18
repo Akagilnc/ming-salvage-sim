@@ -241,10 +241,19 @@ def test_office_knowledge_domains_are_loaded_from_content(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
     monkeypatch.setitem(content.office_knowledge_domains, "礼部", ("military",))
+    seen_limits = []
+
+    def complete_small_army_report(*, limit):
+        seen_limits.append(limit)
+        return "\n".join(f"军籍第{i}营" for i in range(1, limit + 1))
+
+    monkeypatch.setattr(db, "army_report", complete_small_army_report)
 
     view = db.get_character_knowledge(state, minister.name)
 
     assert "military" in view["world"]
+    assert "军籍第30营" in view["world"]["military"]
+    assert seen_limits == [30]
     assert "personnel" not in view["world"]
 
 

@@ -252,11 +252,27 @@ def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transf
     assert order["excluded_targets"] == {
         "people": [excluded.name], "offices": ["户部"],
     }
-    restored = db.load_state()
-    db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
-    db.record_public_knowledge_event(
-        restored, "密查公开", "密查户部旧账已奉明发", source_id=f"secret_order:{order['id']}",
-    )
-    knowledge = db.get_character_knowledge(restored, excluded.name)
-    assert not any(item["source_id"] == f"secret_order:{order['id']}" for item in knowledge["events"])
-    assert not any(item["source_id"] == f"secret_order:{order['id']}" for item in knowledge["public_events"])
+    path = db.path
+    db.close()
+
+    from ming_sim.db import GameDB
+
+    fresh_db = GameDB(path, content)
+    try:
+        restored = fresh_db.load_state()
+        fresh_db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
+        fresh_db.record_public_knowledge_event(
+            restored, "密查公开", "密查户部旧账已奉明发",
+            source_id=f"secret_order:{order['id']}",
+        )
+        knowledge = fresh_db.get_character_knowledge(restored, excluded.name)
+        assert not any(
+            item["source_id"] == f"secret_order:{order['id']}"
+            for item in knowledge["events"]
+        )
+        assert not any(
+            item["source_id"] == f"secret_order:{order['id']}"
+            for item in knowledge["public_events"]
+        )
+    finally:
+        fresh_db.close()
