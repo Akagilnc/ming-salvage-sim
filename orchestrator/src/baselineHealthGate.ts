@@ -93,6 +93,25 @@ export const NOOP_BASELINE_FIX_ATTEMPT: BaselineFixAttempt = async () => ({
 });
 
 /**
+ * Shared docker/npm tooling heuristics for infra vs suite classification.
+ * Used by {@link classifyBaselineFailure} and {@link isInfraExecFailure} so
+ * ENOENT / daemon / missing-cli patterns live in one place (#1006 CR R4 S1).
+ */
+const INFRA_DOCKER_DAEMON_RE = /Cannot connect to the Docker daemon/i;
+const INFRA_DOCKER_MISSING_RE =
+  /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found|ENOENT.*\bdocker\b/i;
+const INFRA_NPM_MISSING_RE =
+  /spawn\s+npm\s+ENOENT|npm:\s*(?:command\s+)?not found|ENOENT.*\bnpm\b/i;
+
+function matchesInfraToolingOutput(output: string): boolean {
+  return (
+    INFRA_DOCKER_DAEMON_RE.test(output) ||
+    INFRA_DOCKER_MISSING_RE.test(output) ||
+    INFRA_NPM_MISSING_RE.test(output)
+  );
+}
+
+/**
  * Classify baseline red as infrastructure vs suite disease.
  * Explicit `failureClass` wins; otherwise heuristic on output (docker/npm spawn,
  * provision, daemon) so pure infra never steers operators at a pre-fix ticket.
@@ -108,11 +127,7 @@ export function classifyBaselineFailure(
     /baseline health gate:\s*(deps provision|worksite prepare|empty container argv)/i.test(
       o,
     ) ||
-    /Cannot connect to the Docker daemon/i.test(o) ||
-    /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found|ENOENT.*\bdocker\b/i.test(
-      o,
-    ) ||
-    /spawn\s+npm\s+ENOENT|npm:\s*(?:command\s+)?not found|ENOENT.*\bnpm\b/i.test(o) ||
+    matchesInfraToolingOutput(o) ||
     /deps provision|provision(?:ing)? failed|npm ci failed/i.test(o)
   ) {
     return "infra";
@@ -277,13 +292,6 @@ export function buildBaselineContainerFullTestArgv(
 }
 
 /**
- * Capture execFileSync-style failure detail: message + stdout + stderr.
- * Re-export of shared {@link formatExecFailureOutput} (single source with
- * family verify summarizeError).
- */
-export const formatBaselineExecFailureOutput = formatExecFailureOutput;
-
-/**
  * Heuristic failed-test path extraction from vitest / jest-ish output.
  * Best-effort only — the full output is always retained on the failure package.
  */
@@ -355,7 +363,7 @@ export async function runBaselineFullTestsInWorkerContainer(
   try {
     await ensureBaselineWorksiteReady(req, sh);
   } catch (err) {
-    const output = formatBaselineExecFailureOutput(err);
+    const output = formatExecFailureOutput(err);
     return {
       ok: false,
       exitCode: 1,
@@ -381,7 +389,7 @@ export async function runBaselineFullTestsInWorkerContainer(
     });
     return { ok: true };
   } catch (err) {
-    const output = formatBaselineExecFailureOutput(err);
+    const output = formatExecFailureOutput(err);
     const exitCode =
       err !== null &&
       typeof err === "object" &&
@@ -411,11 +419,7 @@ function isInfraExecFailure(err: unknown, output: string): boolean {
   ) {
     return true;
   }
-  return (
-    /Cannot connect to the Docker daemon/i.test(output) ||
-    /spawn\s+docker\s+ENOENT|docker:\s*(?:command\s+)?not found/i.test(output) ||
-    /spawn\s+npm\s+ENOENT|npm:\s*(?:command\s+)?not found/i.test(output)
-  );
+  return matchesInfraToolingOutput(output);
 }
 
 function defaultBaselineSh(
