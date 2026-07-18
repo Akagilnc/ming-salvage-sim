@@ -3,9 +3,10 @@
  * #1010 — local patch: Sandcastle cancellation must kill the in-flight exec
  * process tree (docker/podman/no-sandbox), not merely abandon the host Promise.
  *
- * Upstream @ai-hero/sandcastle@0.12.0 is current latest; no bump available.
- * Strategy: patch the installed dist so AbortSignal / idle-timeout abort the
- * shared exec seam. Idempotent — safe to re-run on every postinstall / import.
+ * Upstream pin: @ai-hero/sandcastle@0.12.0 (exact; package.json has no ^).
+ * No upstream bump available — strategy is a local dist patch so AbortSignal /
+ * idle-timeout abort the shared exec seam. Idempotent — safe on every
+ * postinstall / import-time ensure.
  *
  * Marker token: #1010-sandcastle-cancel
  *
@@ -14,6 +15,13 @@
  * - docker/podman: same host kill PLUS in-container pkill by SC_CANCEL_TOKEN
  *   (killing the host `docker exec` client alone leaves the remote shell alive
  *   in a reused container — the production bug #1010 names)
+ * - in-container pgrep loop MUST exclude $$ so the kill helper does not match
+ *   and signal itself (its own cmdline contains the SC_CANCEL_TOKEN needle)
+ *
+ * Needle-miss contract: every patch* helper throws Error when the expected
+ * upstream dist shape is absent (version drift / unexpected minify). Main
+ * exits 1 with `sandcastle-cancel-patch FAILED: …` — never silent no-op.
+ * ensureSandcastleCancelPatch propagates that as a thrown Error.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -127,7 +135,10 @@ function patchNoSandbox(source) {
           });`;
 
   if (!next.includes(spawnBlock)) {
-    throw new Error("apply-sandcastle-cancel-patch: no-sandbox spawn block not found");
+    throw new Error(
+      "apply-sandcastle-cancel-patch: no-sandbox spawn block not found " +
+        "(needle-miss — refuse silent no-op; pin/check @ai-hero/sandcastle@0.12.0)",
+    );
   }
 
   const replacement =
@@ -148,6 +159,31 @@ function patchNoSandbox(source) {
   return next.replace(spawnBlock, replacement);
 }
 
+/** True when the in-container kill loop already excludes self ($$). */
+function hasSelfExcludeKillLoop(source) {
+  // Patched dist stores the kill script as a double-quoted JS string, so the
+  // file bytes contain escaped quotes: [ \"$p\" = \"$$\" ].
+  return (
+    source.includes('[ \\"$p\\" = \\"$$\\" ]') ||
+    source.includes('[ "$p" = "$$" ]')
+  );
+}
+
+/**
+ * Upgrade a previously patched kill loop that lacked $$ self-exclusion.
+ * Returns null when the old loop shape is not present (caller does full patch).
+ */
+function upgradeKillLoopSelfExclude(source) {
+  if (hasSelfExcludeKillLoop(source)) return source;
+  // Prior #1010 shape: `); do pkill -` without skipping $$
+  const old =
+    '" 2>/dev/null); do pkill -"';
+  const upgraded =
+    '" 2>/dev/null); do [ \\"$p\\" = \\"$$\\" ] && continue; pkill -"';
+  if (!source.includes(old)) return null;
+  return source.split(old).join(upgraded);
+}
+
 /**
  * docker/podman: detached host client + in-container pkill by cancel token.
  * `runtime` is "docker" or "podman".
@@ -157,9 +193,21 @@ function patchContainerRuntime(source, runtime) {
   if (
     source.includes(MARKER_TOKEN) &&
     source.includes("SC_CANCEL_TOKEN") &&
-    source.includes("onAbortExtra")
+    source.includes("onAbortExtra") &&
+    hasSelfExcludeKillLoop(source)
   ) {
     return source;
+  }
+
+  // Already patched once but missing $$ exclude — migrate in place.
+  if (
+    source.includes("SC_CANCEL_TOKEN") &&
+    source.includes("__scCancelWireAbortKill") &&
+    source.includes("onAbortExtra") &&
+    !hasSelfExcludeKillLoop(source)
+  ) {
+    const upgraded = upgradeKillLoopSelfExclude(source);
+    if (upgraded !== null) return upgraded;
   }
 
   let next = ensureHelper(source);
@@ -208,11 +256,13 @@ function patchContainerRuntime(source, runtime) {
     "            const inContainerKill = () => {\n" +
     "              const killOnce = (sig) => {\n" +
     // Children first (sleep/agent CLI), then the token-tagged shell so EXIT
-    // traps can still run on TERM before any later KILL.
+    // traps can still run on TERM before any later KILL. Exclude $$ so the
+    // kill helper (whose cmdline embeds the SC_CANCEL_TOKEN needle) never
+    // signals itself mid-loop.
     "                const script =\n" +
     '                  "for p in $(pgrep -f SC_CANCEL_TOKEN=" +\n' +
     '                  cancelToken +\n' +
-    '                  " 2>/dev/null); do pkill -" +\n' +
+    '                  " 2>/dev/null); do [ \\"$p\\" = \\"$$\\" ] && continue; pkill -" +\n' +
     "                  sig +\n" +
     '                  " -P $p 2>/dev/null; kill -" +\n' +
     "                  sig +\n" +
@@ -233,7 +283,8 @@ function patchContainerRuntime(source, runtime) {
 
   if (!next.includes(fileExecHead)) {
     throw new Error(
-      `apply-sandcastle-cancel-patch: ${runtime} exec head not found in source`,
+      `apply-sandcastle-cancel-patch: ${runtime} exec head not found in source ` +
+        `(needle-miss — refuse silent no-op; pin/check @ai-hero/sandcastle@0.12.0)`,
     );
   }
   return next.replace(fileExecHead, fileExecReplacement);
