@@ -354,7 +354,8 @@ export function paginateReviewThreadNodes(
       "reviewThreads(first:$first,after:$after){",
       "pageInfo{endCursor hasNextPage}",
       `nodes{${nodesFields}}`,
-      "}}}}}",
+      // Close query / repository / pullRequest / reviewThreads (pageInfo + nodes already closed).
+      "}}}}",
     ].join("");
     const ghArgs = [
       "api",
