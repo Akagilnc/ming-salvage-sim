@@ -701,6 +701,18 @@ export function unansweredChildEscalations(
   return out.reverse();
 }
 
+function answerPayloadFromChildAnswer(
+  entry: FamilyLedgerEntry,
+): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    source: (entry.source ?? "human") as "human" | "resume_input",
+    ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
+  };
+}
+
 /**
  * The human answer that reopens a specific child's parked decision gate
  * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
@@ -723,13 +735,7 @@ export function childEscalationAnswer(
   for (let i = entries.length - 1; i > escalatedIdx; i--) {
     const entry = entries[i]!;
     if (isValidChildAnswer(entry, childIssue)) {
-      return {
-        event: "escalation_answered",
-        answer: entry.answer!,
-        source: (entry.source ?? "human") as "human" | "resume_input",
-        ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
-        ...(entry.note != null ? { note: entry.note } : {}),
-      };
+      return answerPayloadFromChildAnswer(entry);
     }
   }
   return undefined;
@@ -750,13 +756,7 @@ export function latestChildBoundAnswer(
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (!isValidChildAnswer(entry, childIssue)) continue;
-    return {
-      event: "escalation_answered",
-      answer: entry.answer!,
-      source: (entry.source ?? "human") as "human" | "resume_input",
-      ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
-      ...(entry.note != null ? { note: entry.note } : {}),
-    };
+    return answerPayloadFromChildAnswer(entry);
   }
   return undefined;
 }

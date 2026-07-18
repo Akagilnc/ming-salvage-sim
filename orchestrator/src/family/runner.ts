@@ -971,39 +971,35 @@ async function runChild(
       forStep !== undefined &&
       handoff === "parked" &&
       escKind === "decision";
-    if (canInjectInPlace) {
-      const parkedSessionId = [...resumeState!.ledger]
-        .reverse()
-        .find((entry) => entry.step === forStep)?.sessionId;
-      if (typeof parkedSessionId === "string" && parkedSessionId.length > 0) {
-        const answerEntry: PersistentLedgerEntry = {
-          step: forStep!,
-          sessionId: escalationAnswer.sessionId ?? parkedSessionId,
-          prompt_hash: "family-answer",
-          branchHEAD: resumeState!.worktree.branch,
-          ts: new Date().toISOString(),
-          event: "escalation_answered",
-          forStep: forStep!,
-          answer: escalationAnswer.answer,
-          source: "human",
-          ...(escalationAnswer.note !== undefined
-            ? { note: escalationAnswer.note }
-            : {}),
-        } as PersistentLedgerEntry;
-        await singleSliceBackend.writeLedger(answerEntry, resumeState!.stateDir);
-      } else {
-        // Parked decision but sessionId gone — #1019 fresh redispatch with answer.
-        familyEscalationAnswer = escalationAnswer;
-        await familyBackend.appendFamilyLedger({
-          childIssue: child.issue,
-          status: "worker_dispatched",
-          event: "worker_dispatched",
-          workerStep: "child_answer_fresh_redispatch",
-          reason: CHILD_ANSWER_FRESH_REDISPATCH,
-        });
-      }
+    const parkedSessionId =
+      canInjectInPlace
+        ? [...resumeState!.ledger]
+            .reverse()
+            .find((entry) => entry.step === forStep)?.sessionId
+        : undefined;
+    if (
+      canInjectInPlace &&
+      typeof parkedSessionId === "string" &&
+      parkedSessionId.length > 0
+    ) {
+      const answerEntry: PersistentLedgerEntry = {
+        step: forStep!,
+        sessionId: escalationAnswer.sessionId ?? parkedSessionId,
+        prompt_hash: "family-answer",
+        branchHEAD: resumeState!.worktree.branch,
+        ts: new Date().toISOString(),
+        event: "escalation_answered",
+        forStep: forStep!,
+        answer: escalationAnswer.answer,
+        source: "human",
+        ...(escalationAnswer.note !== undefined
+          ? { note: escalationAnswer.note }
+          : {}),
+      } as PersistentLedgerEntry;
+      await singleSliceBackend.writeLedger(answerEntry, resumeState!.stateDir);
     } else {
-      // Missing resume / failed terminal / non-park residue → #1019 fresh redispatch.
+      // Missing resume / failed terminal / park without sessionId → #1019
+      // fresh redispatch with answer cargo (not fail-closed).
       familyEscalationAnswer = escalationAnswer;
       await familyBackend.appendFamilyLedger({
         childIssue: child.issue,

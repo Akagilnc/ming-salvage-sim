@@ -1,18 +1,22 @@
 /**
  * #1019 — cross-launcher redispatch for dead-session park / failed children.
  *
- * Field bifurcation (#969 flight5 vs #985/#998):
- * - #998: family `child_decision_parked` + answer + child single-slice still
- *   reopenable → inject answer → planResume reopens → real worker (merged).
- * - #991/#992: human answer rows present but no family park rows (mixed-wave
- *   failure+park dropped durable parks) → no inject → single-slice S8 parked
- *   terminal-replayed in ~96ms with identical park text.
- * - #988: family park+answer but child ledger ends S8 failed → inject is ignored
- *   by planResume (failed never reopens) → terminal failed infra_failure replay.
+ * Field bifurcation (#969 flight5 2026-07-18 14:42Z vs #985/#998 success):
+ * - #998 (control): after answer, child was still open/unmerged with productive
+ *   single-slice residue → wave redispatched real S2 work → merged. Not a pure
+ *   terminal-replay path.
+ * - #991/#992: human `escalation_answered` rows existed but family ledger had
+ *   **no** `child_decision_parked` (mixed-wave A-class failure dropped durable
+ *   parks under old P1-a). Re-entry did not inject answers → single-slice S8
+ *   parked terminal-replayed in ~96ms with flight4 park text.
+ * - #988: family park+answer present, but child ledger ended S8 **failed**
+ *   (not parked). planResume treats failed as terminal → infra_failure replay;
+ *   answers after failed S8 never reopened work.
  *
  * AC:
  * 1. Answered park + dead/missing session → fresh re-dispatch with answer text
- *    (not fail-closed, not old terminal replay).
+ *    (not fail-closed, not old terminal replay). Live sessionId + dead container
+ *    still uses #256 resumeSession→fresh-run fallback after inject.
  * 2. Failed child → new launcher may redispatch (failure history kept).
  * 3. True infra_failure (worker cannot start) still fails loud.
  */
