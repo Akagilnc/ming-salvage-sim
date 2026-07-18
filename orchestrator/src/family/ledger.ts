@@ -31,6 +31,10 @@ import {
   type StopSummary,
 } from "../stopSummary.js";
 import {
+  emitShipProgress,
+  getProgressBroadcastConfig,
+} from "../progressBroadcast.js";
+import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
   type FamilyLedgerEntry,
@@ -751,6 +755,32 @@ export async function recordAdmissionSkipped(
   );
 }
 
+/**
+ * #1006 — durable audit when the admission baseline health gate fails closed
+ * (family-base full suite red before fan-out). Not an unblock fact.
+ */
+export async function recordBaselineHealthFailed(
+  backend: FamilyBackend,
+  record: {
+    readonly reason: string;
+    readonly message: string;
+    readonly familyHeadAfter?: string;
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "baseline_health_failed",
+      event: "baseline_health_failed",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
+    }) as FamilyLedgerEntry,
+  );
+}
+
 function isValidFamilyAnswer(entry: FamilyLedgerEntry): boolean {
   return (
     entry.status === "escalation_answered" &&
@@ -1094,6 +1124,14 @@ export async function recordShipped(
         }),
     }) as FamilyLedgerEntry,
   );
+  // #1007: first successful ship must echo progress (resume path also echoes;
+  // missing here left the only ship event on re-entry, not the open).
+  // Align epic with resume path when ambient progress config has it.
+  emitShipProgress({
+    epic: getProgressBroadcastConfig().epic,
+    pr,
+    familyHead: familyHeadAfter,
+  });
 }
 
 /**

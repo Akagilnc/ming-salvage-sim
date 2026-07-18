@@ -55,8 +55,10 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
+import "./sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import {
   extractLastTagBody,
 } from "./lastTaggedJson.js";
@@ -93,6 +95,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
+import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
@@ -2009,6 +2012,15 @@ export class RealBackend implements Backend {
     if (this.workingRepoReady) return;
     this.buildOrReuseClone();
     this.assertIndependentClone();
+    // #1014: exclude runner-owned iso sidecars so family final CMR dirty-pin
+    // (status --untracked-files=all) does not hard-stop on live .ledger-* /
+    // .sandcastle/ droppings. append* (throw-through) when a real .git is on
+    // disk (AC1: excludes must be present; failure leaves workingRepoReady=
+    // false). Unit fixtures that stub independence without a filesystem .git
+    // skip the write; production clones always have .git after buildOrReuseClone.
+    if (existsSync(join(this.workingRepo, ".git"))) {
+      appendIsoOperationalExcludes(this.workingRepo);
+    }
     this.workingRepoReady = true;
   }
 
@@ -2899,6 +2911,9 @@ export class RealBackend implements Backend {
     // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
+      // #1012: host file must exist as a regular file before docker bind-mount
+      // (missing path → docker creates a directory placeholder → host EISDIR).
+      ensureRegularFileForBindMount(options.fixFindingsLanding.path);
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
         sandboxPath: options.fixFindingsLanding.sandboxPath,

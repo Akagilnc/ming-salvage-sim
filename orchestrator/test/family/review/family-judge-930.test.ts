@@ -1028,4 +1028,70 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(coderModels.length).toBeGreaterThanOrEqual(2);
     expect(coderModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
   });
+
+  it("#1017 C2: CMR re-entry re-holds sticky coderFix from ledger (seat-scoped)", async () => {
+    // Process restart after a successful CMR coderFix advance must rebuild
+    // slots.coderFix from ledger — not rely on in-memory activeRoute alone.
+    // Online-review fixer advances on the same ledger must not win.
+    const defaultCoderFix = "gpt-5.6-terra";
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          // No advanceCoder in this invocation — stickiness is ledger-only.
+          return completedJudge(judgeContinue([FINDING]), "judge-rehold");
+        }
+        return completedJudge(judgeConverged(), "judge-rehold");
+      },
+    });
+    await backend.appendFamilyLedger({
+      status: "coder_advance",
+      event: "coder_advance",
+      reason: "coder_advance",
+      fromModelId: defaultCoderFix,
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "sol@med",
+      advanceSeat: "coderFix",
+      phase: "final",
+      cmrPass: "completeness",
+      ts: "2026-07-18T00:00:00.000Z",
+    });
+    // Later fixer-seat advance must not re-hold coderFix (R2 seat filter).
+    // Use a distinct roster slug so an unscoped scan would pick the wrong seat.
+    await backend.appendFamilyLedger({
+      status: "coder_advance",
+      event: "coder_advance",
+      reason: "coder_advance",
+      fromModelId: "gpt-5.4",
+      toModelId: "gpt-5.6-sol-high",
+      advanceCoder: "sol@high",
+      advanceSeat: "fixer",
+      ts: "2026-07-18T00:00:01.000Z",
+    });
+    // stay_put after advance must not cancel re-hold.
+    await backend.appendFamilyLedger({
+      status: "coder_advance_stay_put",
+      event: "coder_advance_stay_put",
+      reason: "unknown_target",
+      fromModelId: "gpt-5.6-sol",
+      toModelId: "gpt-5.6-sol",
+      advanceCoder: "not-a-real-coder",
+      advanceSeat: "coderFix",
+      ts: "2026-07-18T00:00:02.000Z",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    // Coder-fix is the load-bearing assertion; online-review may not fully
+    // converge under this fake backend with pre-seeded fixer-seat rows.
+    const coder = backend.dispatches.find((d) => d.kind === "coder");
+    expect(coder?.model).toBe("gpt-5.6-sol");
+    expect(coder?.model).not.toBe(defaultCoderFix);
+    expect(coder?.model).not.toBe("gpt-5.6-sol-high");
+    // CMR courts themselves must not have failed before ship/online-review.
+    expect(result.ran).toBe(true);
+    expect(result.failedStatus).not.toMatch(/cmr_|coder_fix|verify_/);
+  });
 });

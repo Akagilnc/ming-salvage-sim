@@ -4,6 +4,29 @@
 
 ## [未发布]
 
+## [0.35.0.0] — 2026-07-18
+
+### Added
+- **#1009 编排器维护战役 III（八票并发）**：双舰实战修正合波。
+- **#1002** 在线评审环 fixer 席接 `advanceCoder` 粘性通道（只改修理席）。
+- **#1005 / ADR 0141** 腿散文合法：删 content-shape 拒收；transport 在场即开庭。
+- **#1006** family fan-out 前 baseline 健康闸（容器 full；红不扇出 + 台账）。
+- **#1007** 主动进度播报：`progress.jsonl` + 票号 stage/判词/处置 + `npm run status` + fail-open notify。
+- **#1010** Sandcastle 取消缝：abort/idle 杀容器内 shell + 清临时文件（本地 pin 0.12.0 patch）。
+- **#1012** fix-findings 挂载前 ensure 正规文件；EISDIR 不机械六连。
+- **#1014** provision/ensure 写入 `.ledger-*/` 与 `.sandcastle/` 到 `.git/info/exclude`。
+- **#1016** botPolling GraphQL reviewThreads 查询收尾括号修正（4 外层）。
+- **ADR 0140 落地**：`npm run test:fast` vs full `npm test`；coder/fixer 自检走 fast。
+
+### Fixed
+- Baseline 红出口 dual-write progress terminal（#1007×#1006）。
+- 生产 dist 可加载 cancel patch（TS emit，非仅 src .mjs）。
+- GraphQL errors 仍 fail-closed（#1016 负向钉）。
+
+### Changed
+- vitest 机械 heavy 池（path + harness nature）；义务面对齐 souls / coder_fix / README。
+
+
 ## [0.34.0.0] — 2026-07-18
 
 ### Added
