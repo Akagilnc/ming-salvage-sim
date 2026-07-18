@@ -3439,7 +3439,9 @@ export function cmrOutcomeFromResult(result: {
 
 /**
  * #1005 / ADR 0141: when host-observed leg transports are present, they are
- * the authority for panel presence — rebuild successfulLegs transport-only.
+ * the authority for panel presence — rebuild successfulLegs transport-only
+ * and overlay any cargo list (including a stale []). Content shape is never
+ * a gate; monorepo does not park on empty successfulLegs cargo.
  * Escalate outcomes are fate-only and carry no leg cargo.
  */
 function overlaySuccessfulLegsFromTransports(
@@ -3844,8 +3846,9 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
     normalizedParsed.priorFindingDispositions,
   );
   // #1005 / ADR 0141: when cargo lands per-leg transports, host rebuilds
-  // successfulLegs transport-only (isLegalLegPaper). Content-shape-empty
-  // successfulLegs lists must not park a live panel.
+  // successfulLegs transport-only (isLegalLegPaper). Content shape is never
+  // a gate; transports overlay any cargo successfulLegs (including []).
+  // Monorepo is consumer+overlay only — it does not park on empty lists.
   const cargoTransports = softParseLegTransports(
     normalizedParsed.legTransports,
   );
