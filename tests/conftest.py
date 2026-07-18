@@ -1,6 +1,6 @@
-"""pytest 基建：临时库 + opening 盘面 fixture。
+"""pytest 基建：只读 opening 盘面 + 按用例隔离的临时库 fixture。
 
-每个用例拿一个全新临时 SQLite，GameDB 自动 seed 开局盘面（人物/军队/地区/局势），
+纯读用例可共享一次真实 seed 的只读盘面；写库用例仍各拿一个全新临时 SQLite，
 互不污染。content 绑定到 context 和 issues 两个模块（各有自己的 _ctx）。
 """
 
@@ -29,6 +29,31 @@ def content() -> GameContent:
     ctx_bind(c)
     issues_mod.bind_content(c)
     return c
+
+
+@pytest.fixture(scope="session")
+def read_game(content):
+    """返回共享的真实开局盘面，供不改变 DB/state/content 的纯读测试使用。
+
+    只 seed 一次，并用 SQLite ``query_only`` 把误写变成响亮失败。任何写库路径、
+    会改变 state/content 的路径，或需要验证事务/隔离的测试必须继续使用 ``game``。
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = None
+    try:
+        db = GameDB(path, content)
+        db.seed_static_data()
+        state = db.load_state()
+        issues_mod.sync_opening_legacies(db, state)
+        db.conn.execute("PRAGMA query_only = ON")
+        yield db, state, content
+    finally:
+        if db is not None:
+            db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 @pytest.fixture(autouse=True)
