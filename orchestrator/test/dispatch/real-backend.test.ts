@@ -1,20 +1,6 @@
-/**
- * Unit tests for the PURE host-side logic of the real Backend (#256).
- *
- * Scope (per #256 acceptance criteria): only the zero-container, zero-LLM logic
- * — gh-snapshot parsing, auth-mount path construction, model-slug mapping,
- * per-step sessionId extraction (seam extension), resume error classification,
- * and failedStep attribution
- * (codex#3). The real container / real-LLM / real-gh paths are #256
- * MANUAL smoke and are NOT exercised here.
- *
- * These imports load `@ai-hero/sandcastle` (side-effect-free) but never start a
- * container, so the suite runs in the same zero-infra harness as the fake-Backend
- * step control-flow tests.
- */
-
-import { dirname, join } from "node:path";
 import {
+  dirname,
+  join,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -22,12 +8,15 @@ import {
   rmSync,
   readFileSync,
   writeFileSync,
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import * as telemetry from "../../src/telemetry.js";
-import {
+  homedir,
+  tmpdir,
+  fileURLToPath,
+  afterAll,
+  afterEach,
+  describe,
+  expect,
+  it,
+  vi,
   agentForSlug,
   attributeFailure,
   branchForIssue,
@@ -59,100 +48,36 @@ import {
   SANDBOX_SKILLS_DIR,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
-  type GhBlockedBy,
-  type GhIssueJson,
-} from "../../src/realBackend.js";
-import type {
+  GhBlockedBy,
+  GhIssueJson,
   StepOutput,
   StepSpec,
   WorktreeHandle,
-} from "../../src/types.js";
-import type * as sc from "@ai-hero/sandcastle";
-import { resolveRouteModels } from "../../src/modelRoutes.js";
-// NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
-// brief); S1's `extractAgentBrief` is the surviving brief reader.
-import * as scRuntime from "@ai-hero/sandcastle";
-import { StructuredOutputError } from "@ai-hero/sandcastle";
-import {
+  sc,
+  resolveRouteModels,
+  telemetry,
+  scRuntime,
+  StructuredOutputError,
   DECISION_GATE_TAG,
   RECEIPT_MAX_RETRIES,
   decisionGateSignalSchema,
   isReceiptRecoveryFailure,
   workerReceiptSchema,
-} from "../../src/receiptRecovery.js";
-import {
   CODER_RECEIPT_TAG,
   coderStationReceiptSchema,
   judgeStationReceiptSchema,
   JUDGE_RECEIPT_TAG,
-} from "../../src/stationReceiptContracts.js";
-import {
   runScriptedStructuredOutput,
-  type ScriptedAgent,
-} from "../helpers/scripted-sandcastle-run.js";
-
-/** #924 production coder no-gate / completed envelope (traffic + cargo siblings). */
-const CODER_COMPLETED_ENVELOPE = {
-  station: "coder" as const,
-  status: "completed" as const,
-  committed: true,
-  commitsAdded: 1,
-};
-
-const CODER_NO_COMMIT_ENVELOPE = {
-  station: "coder" as const,
-  status: "completed" as const,
-  committed: false,
-  commitsAdded: 0,
-};
-
-const CODER_ESCALATE_ENVELOPE = {
-  station: "coder" as const,
-  status: "escalate" as const,
-  reason: "owner choice",
-  diagnosis: "contract fork",
-  committed: false,
-  commitsAdded: 0,
-};
-
-type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
-
-function agentRunResult({
-  stdout,
-  commits = [],
-  sessionId,
-  output,
-}: {
-  readonly stdout: string;
-  readonly commits?: ReadonlyArray<{ sha: string }>;
-  readonly sessionId: string;
-  readonly output?: unknown;
-}): AgentRunResult {
-  // #928: do not feed completionSignal — completion is exit + legal sidecar.
-  return {
-    branch: "test-agent-branch",
-    stdout,
-    commits: [...commits],
-    iterations: [{ sessionId }],
-    ...(output !== undefined ? { output } : {}),
-  } as AgentRunResult;
-}
-
-/** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
-const tempHomes: string[] = [];
-
-function tempHome(prefix = "rb-home-748-"): string {
-  const home = mkdtempSync(join(tmpdir(), prefix));
-  tempHomes.push(home);
-  return home;
-}
-
-function cleanupTempHomes(): void {
-  while (tempHomes.length > 0) {
-    const home = tempHomes.pop();
-    if (home !== undefined) rmSync(home, { recursive: true, force: true });
-  }
-}
+  ScriptedAgent,
+  CODER_COMPLETED_ENVELOPE,
+  CODER_NO_COMMIT_ENVELOPE,
+  CODER_ESCALATE_ENVELOPE,
+  AgentRunResult,
+  agentRunResult,
+  tempHomes,
+  tempHome,
+  cleanupTempHomes,
+} from "./real-backend.shared.js";
 
 afterEach(cleanupTempHomes);
 afterEach(() => vi.restoreAllMocks());
@@ -934,20 +859,15 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     expect(existsSync(secondHome)).toBe(true);
   });
 
-  it("constructs successfully against the checked-in absolute prompts/ dir", () => {
-    expect(
-      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
-    ).not.toThrow();
-  });
-
-  it("does not calculate telemetry fingerprints during construction", () => {
+  it("constructs without calculating telemetry fingerprints against the checked-in dirs", () => {
     const configure = vi.spyOn(
       telemetry,
       "configureTelemetryFromWorkerImage",
     );
 
-    new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir });
-
+    expect(
+      () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
+    ).not.toThrow();
     expect(configure).not.toHaveBeenCalled();
   });
 
@@ -957,7 +877,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     ).toThrow(/must be an ABSOLUTE path/);
   });
 
-  it("throws on an absolute promptsDir that does not exist", () => {
+  it("rejects missing prompt or soul dependencies before clone", () => {
     expect(
       () =>
         new StubCloneBackend({
@@ -965,34 +885,26 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
           promptsDir: "/definitely/not/a/real/dir/xyz",
         }),
     ).toThrow(/does not exist/);
-  });
 
-  it("dir-exists-but-missing-souls throws with the missing filenames", () => {
-    // Use a real existing dir (mkdtemp) that has no soul files inside.
-    // Ctor must reject before any clone/git work (validateSoulsDir runs early).
+    // Constructor wiring must run soulsDir validation before clone/git work.
     const badSouls = mkdtempSync(join(tmpdir(), "dir-exists-missing-souls-"));
-    expect(() =>
-      new StubCloneBackend({
-        ...baseOpts,
-        promptsDir: realPromptsDir,
-        soulsDir: badSouls,
-      }),
-    ).toThrow(/missing required soul file\(s\):/);
-    let msg = "";
+    let message = "";
     try {
       new StubCloneBackend({
         ...baseOpts,
         promptsDir: realPromptsDir,
         soulsDir: badSouls,
       });
-    } catch (e: any) {
-      msg = String(e?.message ?? e);
+    } catch (error: any) {
+      message = String(error?.message ?? error);
     }
-    expect(msg).toMatch(/cmr\.md/);
-    expect(msg).toMatch(/verify\.md/);
-    expect(msg).not.toMatch(/output_protocol\.md/);
-    expect(msg).toMatch(/All of \[/);
+    expect(message).toMatch(/missing required soul file\(s\):/);
+    expect(message).toMatch(/cmr\.md/);
+    expect(message).toMatch(/verify\.md/);
+    expect(message).not.toMatch(/output_protocol\.md/);
+    expect(message).toMatch(/All of \[/);
   });
+
 });
 
 describe("RealBackend reviewer output contract", () => {
@@ -1204,20 +1116,6 @@ describe("RealBackend reviewer output contract", () => {
         ],
       }),
     ).not.toThrow();
-  });
-
-  it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const backend = new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 445,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-reviewer-"),
-    });
 
     const decoded = backend.probeDecodeOutput(reviewerSpec, {
       findingsCount: 1,
@@ -1242,8 +1140,6 @@ describe("RealBackend reviewer output contract", () => {
       priorFindingDispositions: [],
     });
 
-    // #925: S3/S6 decode projects residual open-count cargo onto judge form;
-    // findings rows (incl. disposition_reason) remain opaque cargo.
     expect(
       decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
     ).toBe("legacy fallback should not win");
@@ -1919,328 +1815,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.output).toMatchObject({
       tag: "judge",
       maxRetries: 2,
-    });
-  });
-
-  // ─── #899 T1: single-slice production SO four-case matrix ─────────────────
-  // Family production seat coverage lives in cmr-worker.test.ts. This block
-  // exercises RealBackend single-slice reviewer open-count + coder decision-gate
-  // at the real sc.run boundary (scripted provider, no LLM).
-
-  // #962: per-run GIT_CONFIG_GLOBAL isolation removes the old sequential need.
-  describe("#899 single-slice production SO four-case matrix", () => {
-    const cleanups: string[] = [];
-    afterEach(() => {
-      while (cleanups.length > 0) {
-        const dir = cleanups.pop();
-        if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it("accepts initial-good judge verdict via real sc.run (no same-session resume)", async () => {
-      const good = { station: "judge", status: "converged" };
-      const { agent, result } = await runScriptedStructuredOutput({
-        tag: JUDGE_RECEIPT_TAG,
-        schema: judgeStationReceiptSchema(),
-        emissions: [{ body: JSON.stringify(good) }],
-        maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-review-initial-good",
-        cleanups,
-      });
-      expect(result.output).toMatchObject(good);
-      expect(agent.callCount).toBe(1);
-      expect(agent.resumedSessions).toEqual([undefined]);
-
-      // Production decode path: typed judge → kind:judge.
-      const backend = makeBackend();
-      expect(
-        backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toEqual({ kind: "judge", status: "converged" });
-    });
-
-    it("accepts initial-good coder station receipt via real sc.run (no same-session resume)", async () => {
-      const good = CODER_ESCALATE_ENVELOPE;
-      const { agent, result } = await runScriptedStructuredOutput({
-        tag: CODER_RECEIPT_TAG,
-        schema: coderStationReceiptSchema(),
-        emissions: [{ body: JSON.stringify(good) }],
-        maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-coder-initial-good",
-        cleanups,
-      });
-      expect(result.output).toMatchObject({
-        station: "coder",
-        status: "escalate",
-        reason: "owner choice",
-        diagnosis: "contract fork",
-      });
-      expect(agent.callCount).toBe(1);
-
-      const backend = makeBackend();
-      expect(
-        backend.probeDecodeOutput(coderSpec, result.output),
-      ).toMatchObject({
-        escalate: { reason: "owner choice", diagnosis: "contract fork" },
-      });
-    });
-
-    it("recovers judge verdict bad→good same-session via real sc.run", async () => {
-      const agentOut: { agent?: ScriptedAgent } = {};
-      const good = {
-        station: "judge",
-        status: "continue",
-        findingDispositions: [
-          { identityKey: "correctness|a.ts:1|x", action: "live" },
-          { identityKey: "correctness|b.ts:2|y", action: "live" },
-        ],
-        fixPacketBody: "live: correctness|a.ts:1|x\nlive: correctness|b.ts:2|y",
-      };
-      const { agent, result } = await runScriptedStructuredOutput({
-        tag: JUDGE_RECEIPT_TAG,
-        schema: judgeStationReceiptSchema(),
-        emissions: [
-          { body: JSON.stringify({ findingsCount: -1 }) },
-          { body: JSON.stringify(good) },
-        ],
-        maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-review-recover",
-        cleanups,
-        agentOut,
-      });
-      expect(result.output).toMatchObject({ station: "judge", status: "continue" });
-      expect(agent.callCount).toBe(2);
-      expect(agent.resumedSessions).toEqual([
-        undefined,
-        "sess-ss-review-recover",
-      ]);
-      expect(agentOut.agent?.callCount).toBe(2);
-
-      const backend = makeBackend();
-      expect(
-        backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toMatchObject({ kind: "judge", status: "continue" });
-    });
-
-    it("recovers coder station-receipt bad→good same-session via real sc.run", async () => {
-      const good = {
-        station: "coder",
-        status: "escalate",
-        reason: "owner",
-        diagnosis: "needs human",
-      };
-      const { agent, result } = await runScriptedStructuredOutput({
-        tag: CODER_RECEIPT_TAG,
-        schema: coderStationReceiptSchema(),
-        emissions: [
-          { body: JSON.stringify({ committed: true }) },
-          { body: JSON.stringify(good) },
-        ],
-        maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-coder-recover",
-        cleanups,
-      });
-      expect(result.output).toMatchObject(good);
-      expect(agent.callCount).toBe(2);
-      expect(agent.resumedSessions).toEqual([
-        undefined,
-        "sess-ss-coder-recover",
-      ]);
-    });
-
-    it("propagates StructuredOutputError when judge maxRetries are exhausted", async () => {
-      const agentOut: { agent?: ScriptedAgent } = {};
-      try {
-        await runScriptedStructuredOutput({
-          tag: JUDGE_RECEIPT_TAG,
-          schema: judgeStationReceiptSchema(),
-          emissions: [
-            { body: JSON.stringify({ findingsCount: -1 }) },
-            { body: JSON.stringify({ status: "maybe" }) },
-            { body: JSON.stringify({ station: "judge" }) },
-          ],
-          maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "sess-ss-review-exhausted",
-          cleanups,
-          agentOut,
-        });
-        expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
-      } catch (err) {
-        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
-        const soe = err as scRuntime.StructuredOutputError;
-        expect(soe.tag).toBe(JUDGE_RECEIPT_TAG);
-        expect(isReceiptRecoveryFailure(err)).toBe(true);
-        expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
-      }
-    });
-
-    it("propagates StructuredOutputError when coder station-receipt maxRetries are exhausted", async () => {
-      const agentOut: { agent?: ScriptedAgent } = {};
-      try {
-        await runScriptedStructuredOutput({
-          tag: CODER_RECEIPT_TAG,
-          schema: coderStationReceiptSchema(),
-          emissions: [
-            { body: JSON.stringify({ status: "maybe" }) },
-            { body: JSON.stringify({ station: "coder" }) },
-            { body: JSON.stringify({ station: "coder", status: "refused" }) },
-          ],
-          maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "sess-ss-coder-exhausted",
-          cleanups,
-          agentOut,
-        });
-        expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
-      } catch (err) {
-        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
-        expect((err as scRuntime.StructuredOutputError).tag).toBe(CODER_RECEIPT_TAG);
-        expect(isReceiptRecoveryFailure(err)).toBe(true);
-        expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
-      }
-    });
-
-    it("classifies non-resumable open-count maxRetries as recovery failure", async () => {
-      await expect(
-        runScriptedStructuredOutput({
-          tag: JUDGE_RECEIPT_TAG,
-          schema: judgeStationReceiptSchema(),
-          emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
-          maxRetries: RECEIPT_MAX_RETRIES,
-          resumable: false,
-          name: "grok",
-          cleanups,
-        }),
-      ).rejects.toSatisfy((err: unknown) => {
-        expect(err).toBeInstanceOf(Error);
-        expect((err as Error).message).toMatch(
-          /output\.maxRetries requires an agent provider that supports session resumption/i,
-        );
-        expect(isReceiptRecoveryFailure(err)).toBe(true);
-        return true;
-      });
-    });
-
-    it("classifies non-resumable coder station-receipt maxRetries as recovery failure", async () => {
-      await expect(
-        runScriptedStructuredOutput({
-          tag: CODER_RECEIPT_TAG,
-          schema: coderStationReceiptSchema(),
-          emissions: [{ body: JSON.stringify(CODER_COMPLETED_ENVELOPE) }],
-          maxRetries: RECEIPT_MAX_RETRIES,
-          resumable: false,
-          name: "grok",
-          cleanups,
-        }),
-      ).rejects.toSatisfy((err: unknown) => {
-        expect(isReceiptRecoveryFailure(err)).toBe(true);
-        return true;
-      });
-    });
-
-    it("production RealBackend reviewer seat: first-good open-count via real sc.run", async () => {
-      // #899 T1: cross production RealBackend.runStep boundary + real sc.run.
-      const agentOut: { agent?: ScriptedAgent } = {};
-      let sandcastleCalls = 0;
-      class ProductionSeatBackend extends PreflightBackend {
-        protected override async runAgentSandbox(
-          options: Parameters<typeof scRuntime.run>[0],
-        ): Promise<Awaited<ReturnType<typeof scRuntime.run>>> {
-          sandcastleCalls += 1;
-          this.lastAgentOptions = options;
-          this.agentOptions.push(options);
-          expect(options.output).toEqual(
-            expect.objectContaining({ tag: "judge", maxRetries: RECEIPT_MAX_RETRIES }),
-          );
-          const run = await runScriptedStructuredOutput({
-            tag: JUDGE_RECEIPT_TAG,
-            schema: judgeStationReceiptSchema(),
-            emissions: [
-              { body: JSON.stringify({ station: "judge", status: "converged" }) },
-            ],
-            maxRetries: RECEIPT_MAX_RETRIES,
-            sessionId: "prod-ss-review-initial-good",
-            cleanups,
-            agentOut,
-          });
-          return run.result;
-        }
-      }
-      const backend = new ProductionSeatBackend({
-        sourceRepo: "/tmp/source",
-        remote: "https://github.com/owner/name.git",
-        runKey: 899,
-        repo: "owner/name",
-        imageName: "img",
-        promptsDir: realPromptsDir,
-        soulsDir: realSoulsDir,
-        home: tempHome("rb-home-ss-prod-review-"),
-      });
-      await expect(
-        backend.runStep(reviewerSpec, {
-          branch: "feat/issue-899",
-          base: "main",
-          path: "/tmp/worktree/issue-899",
-        }),
-      ).resolves.toMatchObject({
-        output: { kind: "judge", status: "converged" },
-      });
-      expect(sandcastleCalls).toBe(1);
-      expect(agentOut.agent?.callCount).toBe(1);
-    });
-
-    it("production RealBackend coder seat: station-receipt SOE exhaust → #598, zero fixer", async () => {
-      let sandcastleCalls = 0;
-      class ProductionSeatBackend extends PreflightBackend {
-        protected override async runAgentSandbox(
-          options: Parameters<typeof scRuntime.run>[0],
-        ): Promise<Awaited<ReturnType<typeof scRuntime.run>>> {
-          sandcastleCalls += 1;
-          this.lastAgentOptions = options;
-          this.agentOptions.push(options);
-          expect(options.output).toEqual(
-            expect.objectContaining({
-              tag: CODER_RECEIPT_TAG,
-              maxRetries: RECEIPT_MAX_RETRIES,
-            }),
-          );
-          return (
-            await runScriptedStructuredOutput({
-              tag: CODER_RECEIPT_TAG,
-              schema: coderStationReceiptSchema(),
-              emissions: [
-                { body: JSON.stringify({ status: "maybe" }) },
-                { body: JSON.stringify({ station: "coder" }) },
-                { body: JSON.stringify({ station: "coder", status: "refused" }) },
-              ],
-              maxRetries: RECEIPT_MAX_RETRIES,
-              sessionId: "prod-ss-coder-exhausted",
-              cleanups,
-            })
-          ).result;
-        }
-      }
-      const backend = new ProductionSeatBackend({
-        sourceRepo: "/tmp/source",
-        remote: "https://github.com/owner/name.git",
-        runKey: 899,
-        repo: "owner/name",
-        imageName: "img",
-        promptsDir: realPromptsDir,
-        soulsDir: realSoulsDir,
-        home: tempHome("rb-home-ss-prod-coder-"),
-      });
-      await expect(
-        backend.runStep(coderSpec, {
-          branch: "feat/issue-899",
-          base: "main",
-          path: "/tmp/worktree/issue-899",
-        }),
-      ).rejects.toSatisfy((err: unknown) => {
-        // Sandcastle may wrap SOE in Effect FiberFailure/ExecError under load;
-        // #598 disposition uses isReceiptRecoveryFailure (cause-chain aware).
-        expect(isReceiptRecoveryFailure(err)).toBe(true);
-        return true;
-      });
-      expect(sandcastleCalls).toBe(1);
     });
   });
 

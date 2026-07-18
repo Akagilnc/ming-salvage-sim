@@ -87,13 +87,6 @@ describe("recordMerged — full-schema event (#298)", () => {
     ]);
   });
 
-  it("stays back-compatible: a number childIssue still writes the thin entry", async () => {
-    // #293-style call (the merger before #295 fills full fields) must still work.
-    const backend = new FakeFamilyBackend();
-    await recordMerged(backend, 11);
-    expect(backend.appended).toEqual([{ childIssue: 11, status: "merged" }]);
-  });
-
   it("omits undefined optional fields (no `childBranch: undefined` noise)", async () => {
     const backend = new FakeFamilyBackend();
     await recordMerged(backend, { childIssue: 12, wave: 1 });

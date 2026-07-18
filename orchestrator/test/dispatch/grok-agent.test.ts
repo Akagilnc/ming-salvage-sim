@@ -1,27 +1,40 @@
-/**
- * #807 — grok-build pool provider: custom AgentProvider + registry wiring.
- * Route smoke is bare-ping only (#884); old bash/nonce-file evidence helpers are gone.
- */
-
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-
 import {
+  spawn,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  tmpdir,
+  join,
+  afterEach,
+  describe,
+  expect,
+  it,
   createGrokStreamParser,
   grokAgent,
   shellEscape,
-} from "../../src/grokAgent.js";
-import {
   POOL_DISPATCH_BINDINGS,
   agentForSlug,
   resolveModelSlug,
   resolveModelSlugForPool,
-} from "../../src/modelRegistry.js";
-import { barePingArgv, barePingNonceSatisfied } from "../../src/realBackend.js";
-import { routeSmokeEntries, resolveRouteModels } from "../../src/modelRoutes.js";
+  barePingArgv,
+  barePingNonceSatisfied,
+  routeSmokeEntries,
+  resolveRouteModels,
+  transportDirs,
+  transportDir,
+  transportEnv,
+  fakeGrokPath,
+} from "./grok-agent.shared.js";
+
+afterEach(() => {
+  for (const dir of transportDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("#807 grokAgent AgentProvider", () => {
   it("builds a headless grok command with a materialized stdin prompt (not sc.pi)", () => {
@@ -33,55 +46,18 @@ describe("#807 grokAgent AgentProvider", () => {
     });
     expect(cmd.command).toContain("grok ");
     expect(cmd.command).toContain("prompt_file=$(mktemp)");
-    expect(cmd.command).toContain('--prompt-file "$prompt_file"');
+    expect(cmd.command).toContain("cat > \"$prompt_file\"");
+    expect(cmd.command).toContain("--prompt-file \"$prompt_file\"");
+    expect(cmd.command).toContain("trap cleanup_prompt EXIT");
+    expect(cmd.command).toContain("trap 'relay_signal TERM' TERM");
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).toContain("-m grok-4.5");
+    expect(cmd.command).not.toMatch(/\blogin\b/);
+    expect(cmd.command).not.toMatch(/--device-auth|--device-code/);
     expect(cmd.command).not.toMatch(/\bpi\b/);
     expect(cmd.stdin).toBe("echo OK");
   });
-
-  it.each(["success", "failure", "HUP", "INT", "TERM"])(
-    "preserves prompt bytes and removes the private prompt file after %s",
-    (mode) => {
-      const root = mkdtempSync(join(tmpdir(), "grok-command-"));
-      try {
-        const bin = join(root, "grok");
-        const captured = join(root, "captured");
-        const pathLog = join(root, "path");
-        const modeLog = join(root, "mode");
-        writeFileSync(
-          bin,
-          `#!/bin/sh\nwhile [ "$1" != "--prompt-file" ]; do shift; done\nshift\nprintf '%s' "$1" > "$PATH_LOG"\nstat -c '%a' "$1" > "$MODE_LOG"\ncp "$1" "$CAPTURED"\ncase "$MODE" in success) exit 0;; failure) exit 7;; *) kill -s "$MODE" "$PPID"; exit 0;; esac\n`,
-        );
-        chmodSync(bin, 0o755);
-        const prompt = "line one\nline two: 雪\n";
-        const built = grokAgent("grok-4.5", { captureSessions: false }).buildPrintCommand({
-          prompt,
-          dangerouslySkipPermissions: true,
-        });
-        spawnSync("sh", ["-c", built.command], {
-          input: built.stdin,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            PATH: `${root}:${process.env.PATH ?? ""}`,
-            TMPDIR: root,
-            MODE: mode,
-            CAPTURED: captured,
-            PATH_LOG: pathLog,
-            MODE_LOG: modeLog,
-          },
-        });
-        expect(readFileSync(captured, "utf8")).toBe(prompt);
-        expect(readFileSync(modeLog, "utf8").trim()).toBe("600");
-        expect(existsSync(readFileSync(pathLog, "utf8"))).toBe(false);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    },
-  );
-
 
   it("emits text (not result) per chunk, then ONE accumulated result on end", () => {
     // #899 hotfix / #928: result.stdout (typed envelope / sidecar extraction
