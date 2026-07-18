@@ -15,7 +15,7 @@ from functools import partial
 
 from driver import run_settle
 from ming_sim import issues
-from tests.section_rejection_helpers import rejection_rows
+from tests.section_rejection_helpers import game, rejection_rows
 
 
 _rejection_rows = partial(rejection_rows, columns="section, reason, category")

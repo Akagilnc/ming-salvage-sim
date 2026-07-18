@@ -9,6 +9,7 @@ db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 import pytest
 
 import ming_sim.issues as I
+from tests.section_rejection_helpers import game
 
 
 def _closes(result):
