@@ -4,6 +4,7 @@ from dataclasses import replace
 import inspect
 
 import ming_sim.mindreading as mindreading
+from ming_sim.context import character_context_with_db
 from ming_sim.mindreading import (
     build_mindreading_payload,
     build_scouting_precision_payload,
@@ -91,6 +92,16 @@ def test_mindreading_uses_three_truth_sources_without_naked_values(game):
     assert "seed_guilt" not in str(payload)
     assert str(target.identity) not in str(payload)
     assert str(target.loyalty) not in str(payload)
+
+    db.conn.execute("UPDATE characters SET identity='invalid' WHERE name=?", (target.name,))
+    db.conn.commit()
+    invalid_target = replace(target, identity="invalid")
+    context_text = character_context_with_db(invalid_target, db)
+    invalid_payload = build_mindreading_payload(
+        db, state, reader, invalid_target, minister_reply="臣愿担责。",
+    )
+    assert "党色较淡" in context_text
+    assert "党色较淡" in invalid_payload["truths"]["党账"]
 
 
 def test_same_reply_is_read_through_different_three_source_ledgers(game):
