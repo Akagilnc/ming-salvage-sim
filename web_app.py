@@ -99,6 +99,7 @@ UPLOAD_PORTRAIT_DIR = user_data_path("uploads", "portraits")
 CUSTOM_PORTRAIT_PREFIX = "custom:"
 ALLOWED_PORTRAIT_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_PORTRAIT_BYTES = 8 * 1024 * 1024  # 8MB 上限
+_MindreadingTailContext = tuple[Dict[str, object], object]
 
 # resolve/fail_condition 同时喂 extractor（需 input.factions/leverage 等技术 key）与展示给玩家。
 # 展示前把技术词替换成中文，原文不动（LLM 仍读原文判定）。按长键先替，避免子串误伤。
@@ -643,10 +644,6 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
         signature.bind(text)
         return prompt_builder(text)
     return prompt_builder(text, character, chat_turn_id=chat_turn_id)
-
-
-class _ChatPayload(dict):
-    """对外仍是普通 payload；锁外 tail 材料只存在对象属性，不进入协议键。"""
 
 
 class WebGame:
@@ -1513,7 +1510,7 @@ class WebGame:
         pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[_MindreadingTailContext]]:
         character = self.session._character(minister_name)
         mindreading_materials = None
         mindreading_error = ""
@@ -1538,7 +1535,7 @@ class WebGame:
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
-        payload = _ChatPayload({
+        payload = {
             "minister": minister_name,
             "answer": answer,
             "mindreading": None,
@@ -1557,22 +1554,22 @@ class WebGame:
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
-        })
-        payload.mindreading_materials = mindreading_materials
-        payload.mindreading_llm_config = getattr(self.session, "llm_config", None)
-        return payload
+        }
+        tail_context = (
+            (mindreading_materials, getattr(self.session, "llm_config", None))
+            if mindreading_materials is not None else None
+        )
+        return payload, tail_context
 
     @staticmethod
-    def _attach_mindreading_tail(payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _attach_mindreading_tail(
+        payload: Dict[str, Any],
+        tail_context: Optional[_MindreadingTailContext],
+    ) -> Dict[str, Any]:
         """锁外尾随生成；失败只写显式错误，不改变已经持久化的召对。"""
-        materials = getattr(payload, "mindreading_materials", None)
-        llm_config = getattr(payload, "mindreading_llm_config", None)
-        if hasattr(payload, "mindreading_materials"):
-            del payload.mindreading_materials
-        if hasattr(payload, "mindreading_llm_config"):
-            del payload.mindreading_llm_config
-        if materials is None:
+        if tail_context is None:
             return payload
+        materials, llm_config = tail_context
         try:
             mindreading = generate_mindreading_payload(materials, llm_config)
             truths = mindreading.get("truths") if isinstance(mindreading, dict) else None
@@ -1587,8 +1584,7 @@ class WebGame:
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         with self._runtime_write_gate():
-            payload = self._chat_with_write_gate_held(minister_name, message)
-        return self._attach_mindreading_tail(payload)
+            return self._chat_with_write_gate_held(minister_name, message)
 
     def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -1623,7 +1619,7 @@ class WebGame:
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
             # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
             # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-            payload = self._chat_payload(
+            payload, _tail_context = self._chat_payload(
                 minister_name, result.answer,
                 court_action=result.court_action, next_minister=result.next_minister,
                 proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -1654,7 +1650,7 @@ class WebGame:
         before_snapshot: Dict[str, Any],
         accepted_turn: int,
         emit_delta,
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Optional[_MindreadingTailContext]]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
         agent = self.session.registry.get(character)
@@ -1866,7 +1862,7 @@ class WebGame:
                 )
             answer = GameSession._ensure_confirmation_cue(answer)
         pending_action_failures = list(res.get("pending_action_failures") or [])
-        payload = self._chat_payload(
+        payload, tail_context = self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
             proposed_directive=proposed, appointed_minister=appointed,
             registered_minister=registered,
@@ -1878,7 +1874,7 @@ class WebGame:
             accepted_turn=accepted_turn,
         )
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        return payload
+        return payload, tail_context
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -1934,7 +1930,7 @@ class WebGame:
         def worker() -> None:
             nonlocal gate_released
             try:
-                payload = self._chat_stream_payload(
+                payload, tail_context = self._chat_stream_payload(
                     minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
             except Exception as error:  # noqa: BLE001
                 # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
@@ -1955,7 +1951,7 @@ class WebGame:
                 self._complete_pending_write()
             # Stage A 已把回复、chat_turn、history 与 rollback snapshot 全部落稳；
             # finally 先释放单写门并清 pending，Stage B 才消费纯材料。
-            payload = self._attach_mindreading_tail(payload)
+            payload = self._attach_mindreading_tail(payload, tail_context)
             ev_queue.put({"type": "done", "payload": payload})
 
         thread = threading.Thread(target=worker, daemon=True)
@@ -2984,8 +2980,7 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
 
     def _create_with_gate() -> Dict[str, Any]:
         with _serialized_web_write(game):
-            payload = game._chat_with_write_gate_held(minister_name, "\n".join(lines))
-        return WebGame._attach_mindreading_tail(payload)
+            return game._chat_with_write_gate_held(minister_name, "\n".join(lines))
 
     return await run_in_threadpool(_create_with_gate)
 
