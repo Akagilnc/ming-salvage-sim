@@ -115,6 +115,15 @@ cd image && ./build.sh                     # 2. rebake the worker image
 Souls are mounted live (not baked), prompts ship with the repo, dev skills are
 baked into the image at build time.
 
+**Target hygiene (2026-07-18):** the integrated CMR refuses a dirty target —
+the iso clone must be a clean committed snapshot (`git status --porcelain=v1
+--untracked-files=all` empty). Long campaigns accumulate untracked runtime
+droppings (`.sandcastle/` leg scratch, `*.draft.json` outcome envelopes, core
+dumps; 485 hit 9,889 paths). Clean by **moving** them to a quarantine dir
+outside the repo — never `rm` (uncommitted worker output is unrecoverable),
+and move the exact untracked paths, not top-level segments (a lone untracked
+file inside a tracked dir must not drag the whole tracked dir out).
+
 ### 3. Create the run directory and driver
 
 One dir per epic: `~/.sc-orchestrator/run-<EPIC>/`, holding a small driver
@@ -168,9 +177,12 @@ Before igniting, read the FINAL lineup (preset + your overrides) against the
 seating rules. These are enforced by maintaining the route table itself —
 deliberately NO validator machinery (owner ruling 2026-07-11):
 
-- **Judging seats are sol-only**: `verify` (sole judge identity; #923),
-  `cmrCompleteness`, `cmrCorrectness` sit gpt-5.6-sol. terra does not review.
-- **Coding seats stay terra**: `coder`, `coderFix`.
+- **Judging seats are sol** (`verify` + `cmrCompleteness` + `cmrCorrectness`
+  — collectively "the judge"; #923). terra does not review.
+- **Coding/fix seats follow the owner's current route order** (2026-07-18:
+  sol-low across coder/coderFix/fixer; judge-nameable bench sol@med/sol@high
+  via the roster — coderFix advance is live, the fixer-seat channel is
+  #1002).
 - If sol ever holds a fixing seat, the floor reviewer for its output is
   cross-family (opus).
 
@@ -184,11 +196,25 @@ cd ~/.sc-orchestrator/run-<EPIC>
 node driver-<EPIC>.mjs >> run.log 2>&1
 ```
 
+Current practice (2026-07): launchers live at
+`~/.sc-orchestrator/launch-<epic>.mjs` (sed-copy of `launch-485.mjs`; exactly
+three epic-specific fields: `epicIssue`, `familyBase`, `ledgerDir`), ignited
+with the route env pair — omitting either is a dead launch:
+
+```bash
+cd ~/.sc-orchestrator && PATH="$HOME/.sc-orchestrator/bin:$PATH" \
+  ORCHESTRATOR_ROUTE=<preset> \
+  ORCHESTRATOR_ROUTE_PRESETS_PATH=$HOME/.sc-orchestrator/route-presets.json \
+  node launch-<epic>.mjs > flight.log 2>&1
+```
+
 Rules of engagement:
 
-- **One family run per machine at a time.** Runs share the docker daemon,
-  host CLI auth, and model quota; do not ignite a second family while one is
-  active (`docker ps` + a fresh `run.log` mtime tell you).
+- **Concurrent family runs: two max (owner-approved 2026-07-18, first twin
+  flight 485+969).** Flights share the docker daemon, host CLI auth, and model
+  quota; expect CPU contention to inflate test wall-clocks and fire
+  load-sensitive flakes (#986-class e2e timeouts). Three+ concurrent launchers
+  is not advised.
 - **Resume must reuse the byte-identical ignition command** — same env
   overrides included — or the route lineup (and its smoke) changes mid-run.
 - Auth freshness probes (cheap, before igniting): codex —
@@ -214,6 +240,17 @@ for the reason.
 | `.../family-<EPIC>-ledger/worker-logs/S*.log` | live worker output (tail these) |
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
+
+**Truth sources per layer (2026-07-18 monitoring-misread lesson):** the family
+ledger above records FAMILY-station events only (merger / integrated CMR /
+verify / parks). Per-child single-slice truth lives in the iso clone:
+`<iso>/.sandcastle/worktrees/.ledger-<issue>/steps.jsonl` (authoritative step
+outcomes) plus `.ledger-<issue>/worker-logs/*.result.json` and `S*.log`.
+Launcher stage lines carry NO issue id — five children each dispatching S2
+print five identical `dispatch step=S2` lines (observability debt, #975).
+During a wave the family branch tip does NOT move: children merge serially
+only after the whole wave settles (`Promise.allSettled` barrier) — a static
+family tip is expected behavior, not a stall signal.
 
 **Worker silence (#937 / #934 ID-007):** a quiet half-hour with a running
 container can be normal work. Host-side silence reporting reuses existing
@@ -244,6 +281,14 @@ still use `--ephemeral` (shared `~/.codex` collision risk); container workers
 do not. When resume is unavailable, the canonical target preserves the
 scene/worktree and starts a new invocation/relay via existing fresh-session
 recovery (#936/#937/#942).
+
+The family's own FINAL-phase gates (integrated-CMR jury failures, dirty-target
+refusals) park as phase-level `escalated` rows with no `childIssue`; answer
+them with the same append-one-line shape minus `childIssue` (add
+`"source":"human"`). Infra misfires are legitimate adjudications — e.g. a
+review leg killed by an operator `docker stop` (grok exit 137) is answered
+"transient, retry as-is", ideally with a host bare-ping as evidence. The
+ledger is append-only: answer rows, never edits.
 
 ### 7. Resume semantics
 
@@ -277,6 +322,13 @@ Presets (factory content of `config/route-presets.json`):
 | `codex-tight` | sonnet | opus | sonnet | opus + agy (codex family excluded) |
 | `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
 | `claude-tight` | grok-4.5 | gpt-5.6-sol | gpt-5.6-sol-low | codex sol + grok-4.5 + agy (claude family excluded) |
+
+The operative table is whatever `ORCHESTRATOR_ROUTE_PRESETS_PATH` points at —
+in practice `~/.sc-orchestrator/route-presets.json`, which the owner edits
+directly (2026-07-18 `claude-cheap` there: coder/coderFix/fixer = sol-low,
+judge = sol-med, ship/merger/cleanup/landing = grok-4.5, cmrReview legs
+grok + agy(optional) + opus). The factory table above is only the in-repo
+default.
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
@@ -473,3 +525,7 @@ replacement Actions and Sandcastle controls land.
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
 | worker looks hung | host silence is observational only (#937) — no idle kill / PID-tree; capacity/quota walls still park or relay via durable ledger + ephemeral baton brief (no `.relay-focus.md`); completion is clean exit + legal sidecar (#928) | wait for process exit / typed outcome; on explicit 429/capacity use the existing park/relay owner; never invent hang-kill from log quiet |
+| `parked: no usable completeness review legs` / `cross-vendor jury floor not met` | container legs' prose / unanchored output rejected by LEG-level admissibility — extra-constitutional (ADR 0141), not a transient | don't blind-retry the same shape; land #1005, or hand-run the integrated CMR and answer the gate with its verdict |
+| `parked: completeness target is not a clean committed snapshot` | untracked runtime droppings in the iso clone | quarantine by `mv` (see Target hygiene), answer the gate, re-ignite |
+| startup smoke `CLI version changed from X to Y` on an optional leg | host↔container CLI version drift invalidating the recorded smoke | re-ignition refreshes the recorded version; an OPTIONAL leg blocking launch is #846-class degrade debt |
+| every slice in a wave red on the SAME test | inherited baseline defect fanned out N ways — each fixer repairs it independently, merger later reconciles N same-shape patches | pre-fix the family base first (#1006 gate); container-env-only reds exist (GitHub-CI-green ≠ container-green, e.g. `/dev/stdin` os error 6) |
