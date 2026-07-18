@@ -310,6 +310,9 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
         state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
     )
     marker = "TURN_REPORT_SECRET_MARKER_490"
+    # #883: this independently public source, not the aggregate itself,
+    # authorizes the visible public fragment.
+    db.record_public_knowledge_event(state, "朝廷常务", marker, source_id="test:490:public")
     db.save_turn_report(
         state, f"朝廷常务；{marker}", public_body=f"朝廷常务；{marker}",
     )
@@ -514,16 +517,20 @@ def test_secret_blacklist_survives_later_public_projection(game):
 def test_public_reports_accumulate_across_turns(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    # #883: aggregates never authorize knowledge; independently persisted
+    # public sources are the cross-turn knowledge rail.
+    db.record_public_knowledge_event(state, "清丈", "第一回合：清丈已明发。", source_id="test:turn-one")
     db.save_turn_report(state, "第一回合：清丈已明发。")
     later = db.load_state()
     later.turn += 2
+    db.record_public_knowledge_event(later, "军务", "第三回合：军务有变。", source_id="test:turn-three")
     db.save_turn_report(later, "第三回合：军务有变。")
 
     view = db.get_character_knowledge(later, minister.name)
 
     bodies = [item["body"] for item in view["public_events"]]
-    assert "第一回合：清丈已明发。" in bodies
-    assert "第三回合：军务有变。" in bodies
+    assert any("第一回合：清丈已明发。" in body for body in bodies)
+    assert any("第三回合：军务有变。" in body for body in bodies)
 
 
 def test_participation_record_adapter_covers_assignment_shape(game):

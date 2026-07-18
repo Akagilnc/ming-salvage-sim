@@ -252,6 +252,14 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
     ).fetchall()
     projected: list[Dict[str, object]] = []
     for row in rows:
+        source_id = str(row["source_id"] or "")
+        # Plain turn-report/chapter rows are rendered aggregate read models,
+        # not independently authorizable sources.  Their explicit ``:public``
+        # counterparts remain source-scoped and are projected below.
+        if ((source_id.startswith("turn_report:") and not source_id.endswith(":public"))
+                or (source_id.startswith("chapter:") and not source_id.startswith("chapter_source:"))
+                or re.fullmatch(r"settlement:narrative:\d+", source_id)):
+            continue
         try:
             roster = json.loads(row["participant_roster"] or "[]")
         except (TypeError, ValueError):
@@ -364,8 +372,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
 
         Reports and chapter memories are rendered aggregates.  When their turn
         has source-scoped knowledge rows, those rows are the only material used
-        for this character.  The aggregate is a compatibility fallback for old
-        saves that predate the source projection and have no rows at all.
+        for this character.  Without an independent source, it grants nothing.
         """
         # Only durable source rows are inputs here.  The synthetic
         # ``turn_report:*``/``chapter:*`` rows below are read-model outputs;
@@ -423,20 +430,16 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             )
         ]
 
-        # Once any source boundary exists, the aggregate is no longer an
-        # authorization boundary: chapter-memory/LLM rewriting can paraphrase
-        # a secret so that it is no longer an exact substring of the source.
-        # Project only independently persisted visible items.  The aggregate
-        # remains a compatibility fallback solely for old saves with no source
-        # rows at all; new settlement producers must persist public and
-        # restricted items through ``knowledge_items``.
+        # An aggregate has no independent source boundary.  It is never a
+        # knowledge grant: source rows are the sole public projection seam.
+        # #883 deliberately has no old-save compatibility fallback.
         if rows:
             return "\n".join(
                 _qualitative(row.get("body") or row.get("title") or "")
                 for row in visible
                 if row.get("body") or row.get("title")
             )
-        return _qualitative(fallback)
+        return ""
 
     # Keep the durable source rows, and add a character-specific projection of
     # each aggregate archive.  Source rows redact restricted fragments from

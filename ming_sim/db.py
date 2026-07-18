@@ -103,7 +103,7 @@ def _snapshot_secret_order_people(
 
 
 _SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|莫让|别让|不要让|不许|严禁)\s*"
+    r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|莫让|别让|不要让|不许|严禁)\s*"
     r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
 )
 _SECRET_OFFICE_TYPES = (
@@ -174,6 +174,12 @@ def _recover_secret_order_exclusions(
                 )
                 if kind == "office":
                     offices.append(canonical_target)
+                else:
+                    # The CLI adapter has no content registry, but must use
+                    # this same parser.  Preserve an unresolved explicit name
+                    # for issuance-time canonicalisation instead of dropping
+                    # it or maintaining a second CLI classifier.
+                    people.append(target)
     return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
 
 
@@ -755,9 +761,10 @@ class GameDB:
             FROM office_slots AS s
             LEFT JOIN characters AS c
               ON c.status = 'active'
-             AND (((',' || replace(replace(c.office, '，', ','), ' ', '') || ',')
-                   LIKE '%,' || s.office_title || ',%')
-                  OR (s.office_title = '两广总督' AND c.office = '总督两广'));
+             AND (
+                 replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
+                 OR (s.office_title = '两广总督' AND c.office = '总督两广')
+             );
 
             CREATE TABLE IF NOT EXISTS person_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10103,6 +10110,13 @@ class GameDB:
         ).fetchall()
         result = []
         for row in rows:
+            source_id = str(row["source_id"] or "")
+            if (not character_name and (
+                (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
+                or (source_id.startswith("chapter:") and not source_id.startswith("chapter_source:"))
+                or re.fullmatch(r"settlement:narrative:\d+", source_id)
+            )):
+                continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]), "period": int(row["period"]),
                     "kind": row["kind"], "title": row["title"], "body": row["body"], "source_id": row["source_id"]}
             if include_exclusions:
@@ -10481,27 +10495,21 @@ class GameDB:
         """Single projection seam for one held audience row (#976 DRY).
 
         Stamps knowledge with the message's original ``origin_turn`` (not the
-        release-time state.turn).  Returns knowledge_status: ``private``
-        (active secret assignee) or ``released`` (shared track).
+        release-time state.turn).  Only message provenance decides the rail:
+        a non-secret audience line is public even when its speaker separately
+        holds an active secret order.
         """
         source_id = f"chat_message:{int(message_id)}"
         minister = str(minister_name or "").strip()
         body = str(content or "")
         proj_turn = int(origin_turn if origin_turn is not None else state.turn)
         proj_state = state if proj_turn == int(state.turn) else replace(state, turn=proj_turn)
-        if self._is_active_secret_order_assignee(minister):
-            self.record_character_participation(
-                proj_state, [minister], "audience", "召对", body,
-                source_id=source_id, commit=False,
-            )
-            status = "private"
-        else:
-            self.record_participation_record(
-                proj_state,
-                {"participants": [minister], "title": "召对", "body": body},
-                kind="audience", source_id=source_id, commit=False,
-            )
-            status = "released"
+        self.record_participation_record(
+            proj_state,
+            {"participants": [minister], "title": "召对", "body": body},
+            kind="audience", source_id=source_id, commit=False,
+        )
+        status = "released"
         self.conn.execute(
             "UPDATE chat_messages SET knowledge_status=? WHERE id=?",
             (status, int(message_id)),
@@ -10606,16 +10614,6 @@ class GameDB:
             dict(item) for item in participant_roster
             if item.get("character_id") or item.get("name")
         ]
-        # #976: audience/chat for an active secret-order assignee never enters
-        # the shared ledger (structure).  Private participation events and
-        # secret_order_briefs cover 参与即知 / 接令面.  No content matching.
-        if self._is_audience_chat_shared_channel(kind_text, source_id):
-            roster_names = [
-                str(item.get("character_id") or item.get("name") or "").strip()
-                for item in roster
-            ]
-            if any(self._is_active_secret_order_assignee(n) for n in roster_names if n):
-                return
         if not source_id:
             source_id = f"{kind}:{state.turn}:{title}"
         self.conn.execute(

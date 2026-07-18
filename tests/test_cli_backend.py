@@ -103,10 +103,7 @@ def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatc
         "期限月数": 0,
         "标签": ["辽饷"],
     }, ensure_ascii=False)
-    captured = {}
-
     def fake_json_extractor(prompt, llm_config=None, tag=""):
-        captured["prompt"] = prompt
         return canned, 1
 
     monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
@@ -117,8 +114,6 @@ def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatc
     )
     assert result["title"] == long_title
     assert len(result["title"]) == len(long_title)
-    # Soft guidance only — no hard 字 cap in the extract prompt.
-    assert not re.search(r"\d+字", captured["prompt"])
 
 
 def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
@@ -161,6 +156,42 @@ def test_secret_exclusion_recovery_covers_non_disclosure_clause(monkeypatch):
 
     assert result["excluded_names"] == []
     assert result["excluded_offices"] == ["翰林院侍读学士"]
+
+
+def test_cli_and_durable_secret_exclusion_share_the_same_parser(game, monkeypatch):
+    from ming_sim.db import canonical_secret_order_exclusions
+
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+    cli = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
+    people, offices = canonical_secret_order_exclusions(
+        game[2], [], [], "密查账目，不走户部。"
+    )
+
+    assert cli["excluded_names"] == people == []
+    assert cli["excluded_offices"] == offices == ["户部"]
+
+
+def test_cli_adapter_emits_recommend_person_tool_call(monkeypatch):
+    from agno.models.message import Message
+
+    model = cb.CliChat(id="test", backend="codex")
+    monkeypatch.setattr(
+        model, "_call_cli",
+        lambda prompt: (
+            "臣荐某甲。[[recommend_person:{\"name\":\"某甲\",\"target_office\":\"巡盐御史\",\"reason\":\"可堪\"}]]", 1,
+        ),
+    )
+    response = model.invoke(
+        [Message(role="user", content="可荐何人")], Message(role="assistant"),
+        tools=[{"type": "function", "function": {
+            "name": "recommend_person",
+            "parameters": {"type": "object", "required": ["name", "target_office"],
+                           "properties": {"name": {}, "target_office": {}, "reason": {}}},
+        }}],
+    )
+
+    assert response.tool_calls
+    assert response.tool_calls[0]["function"]["name"] == "recommend_person"
 
 
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):

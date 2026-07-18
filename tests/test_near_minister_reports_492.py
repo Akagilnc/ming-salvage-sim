@@ -24,6 +24,18 @@ def test_frontier_vacancies_are_seeded_and_restore_from_characters(game):
     assert restored_row["holder_name"] == "胡廷宴"
 
 
+def test_vacancy_projection_recognises_acting_office_text(game):
+    db, _state, _content = game
+    for office in ("署理陕西巡抚", "陕西巡抚（署理）"):
+        db.conn.execute(
+            "UPDATE characters SET office=?, office_type='督抚', status='active' WHERE name='胡廷宴'",
+            (office,),
+        )
+        db.conn.commit()
+        row = next(row for row in db.list_office_vacancies() if row["office_title"] == "陕西巡抚")
+        assert row["holder_name"] == "胡廷宴"
+
+
 def test_equivalent_seeded_two_guangdong_governor_title_is_not_vacant(game):
     db, _state, _content = game
     vacancies = {row["office_title"]: row for row in db.list_office_vacancies()}

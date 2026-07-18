@@ -33,6 +33,10 @@ from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    ChatCompletionMessageFunctionToolCall,
+    Function as ToolFunction,
+)
 from openai.types.chat.chat_completion import Choice
 from pydantic import BaseModel
 
@@ -1840,26 +1844,16 @@ def _extract_secret_order(
         deadline = 0
     tags = obj.get("标签")
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
-    excluded_names, excluded_offices = _normalize_secret_exclusions(
-        obj.get("排除对象"), legacy=obj.get("排除名单"))
-    recovered_names = _secret_excluded_people_from_command(player_command)
-    # The prose fallback has no GameContent instance, so classify the stable
-    # institutional vocabulary here before it becomes an explicit person key.
-    # DB issuance then resolves the office target to its actual incumbents.
-    recovered_targets = [
-        (name, _canonical_secret_office_target(name)) for name in recovered_names
-    ]
-    recovered_named_offices = [office for _, office in recovered_targets if office]
-    recovered_names = [name for name, office in recovered_targets if not office]
-    if recovered_names:
-        excluded_names = list(dict.fromkeys([*excluded_names, *recovered_names]))
     from ming_sim.db import canonical_secret_order_exclusions
-    _ignored_people, recovered_offices = canonical_secret_order_exclusions(
-        None, [], [*_secret_excluded_offices_from_command(player_command), *recovered_named_offices],
+    raw_targets = obj.get("排除对象") if isinstance(obj.get("排除对象"), dict) else {}
+    raw_people = raw_targets.get("人物", raw_targets.get("people", obj.get("排除名单", [])))
+    raw_offices = raw_targets.get("机构", raw_targets.get("offices", []))
+    excluded_names, excluded_offices = canonical_secret_order_exclusions(
+        None,
+        raw_people if isinstance(raw_people, list) else [],
+        raw_offices if isinstance(raw_offices, list) else [],
         player_command,
     )
-    if recovered_offices:
-        excluded_offices = list(dict.fromkeys([*excluded_offices, *recovered_offices]))
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
@@ -1869,82 +1863,6 @@ def _extract_secret_order(
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices,
             "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
-
-
-def _normalize_secret_exclusions(value: object, *, legacy: object = None) -> Tuple[List[str], List[str]]:
-    """Normalize person and office secrecy targets; legacy names remain accepted."""
-    if not isinstance(value, dict):
-        names = legacy if isinstance(legacy, list) else []
-        return ([str(item).strip() for item in names if str(item).strip()], [])
-    people = value.get("人物", value.get("people", value.get("names", [])))
-    offices = value.get("机构", value.get("offices", value.get("office_types", [])))
-    return (
-        [str(item).strip() for item in people if str(item).strip()] if isinstance(people, list) else [],
-        [str(item).strip() for item in offices if str(item).strip()] if isinstance(offices, list) else [],
-    )
-
-
-def _secret_excluded_offices_from_command(text: str) -> List[str]:
-    """Recover explicit institutional secrecy clauses the extractor may omit."""
-    offices: List[str] = []
-    for match in re.finditer(
-        r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不可令|勿令|不得告知|不许|严禁)\s*"
-        r"([^，。；;、\s]{2,20}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))",
-        text or "",
-    ):
-        office = match.group(1).strip("：:，,。；;、")
-        if office and office not in offices:
-            offices.append(office)
-    return offices
-
-
-def _canonical_secret_office_target(value: str) -> str:
-    """Return the institutional lookup key for a secrecy target, if any.
-
-    The CLI fallback has no content registry to resolve a name or alias.  It
-    therefore recognises only stable institution vocabulary, normalising
-    collective wording (``户部诸官``) to the canonical office type while
-    preserving specific office titles for the DB's issuance-time lookup.
-    """
-    target = value.strip()
-    office_types = (
-        "吏部|户部|礼部|兵部|刑部|工部|都察院|大理寺|通政司|司礼监|内阁|"
-        "东厂|锦衣卫|翰林院|詹事府"
-    )
-    match = re.fullmatch(
-        rf"(?P<office>{office_types})(?P<collective>诸官|官员|诸司|诸人|上下|众人)?", target,
-    )
-    if match:
-        return match.group("office")
-    if re.fullmatch(
-        r"[\u4e00-\u9fff]{0,8}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
-        r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
-        r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)",
-        target,
-    ):
-        return target
-    return ""
-
-
-def _secret_excluded_people_from_command(command: str) -> List[str]:
-    """Recover explicit named secrecy targets when the extractor omits them."""
-    patterns = (
-        r"(?:瞒住|瞒着|不得让|勿使|不要让)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
-        r"(?:对|向)([^，。；\s]{2,20}?)(?=(?:保密|秘而不宣|不得透露))",
-        r"(?:莫让|莫使)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
-    )
-    names = []
-    for pattern in patterns:
-        for match in re.findall(pattern, str(command or "")):
-            names.extend(
-                item.strip("，。；、 ")
-                for item in re.split(r"[、，,和与及]", match)
-            )
-    # A later secrecy clause can say only "勿使他们知晓".  It reinforces the
-    # preceding named exclusion but must never manufacture a fake person key.
-    names = [name for name in names if name and name not in {"他们", "他", "她", "此人", "诸人"}]
-    return list(dict.fromkeys(name for name in names if name))
-
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
@@ -2017,9 +1935,45 @@ def _secret_prefix_needs_recent_context(secret_intent: str) -> bool:
     return bool(_SECRET_CONFIRM_ATOM_RE.match(compact))
 
 
-def _fake_completion(text: str, model_id: str) -> ChatCompletion:
+_CLI_RECOMMENDATION_CALL = re.compile(
+    r"\n?\[\[recommend_person:(\{.*?\})\]\]\s*$", re.DOTALL,
+)
+
+
+def _cli_recommendation_call(text: str, tools: object) -> tuple[str, list[ChatCompletionMessageFunctionToolCall]]:
+    """Adapt an explicit CLI recommendation envelope into the existing tool seam."""
+    offered = next(
+        (tool.get("function", tool) for tool in (tools or [])
+         if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
+        None,
+    )
+    match = _CLI_RECOMMENDATION_CALL.search(text) if offered else None
+    if not match:
+        return text, []
+    try:
+        payload = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return text, []
+    schema = offered.get("parameters") or {}
+    required = schema.get("required") or []
+    properties = schema.get("properties") or {}
+    if (not isinstance(payload, dict)
+            or any(not str(payload.get(key) or "").strip() for key in required)
+            or any(key not in properties for key in payload)):
+        return text, []
+    call = ChatCompletionMessageFunctionToolCall(
+        id="cli-recommendation",
+        type="function",
+        function=ToolFunction(name=offered["name"], arguments=json.dumps(payload, ensure_ascii=False)),
+    )
+    return text[:match.start()].rstrip(), [call]
+
+
+def _fake_completion(
+    text: str, model_id: str, tool_calls: list[ChatCompletionMessageFunctionToolCall] | None = None,
+) -> ChatCompletion:
     """把纯文本包成 OpenAI ChatCompletion 交给 agno 解析。"""
-    msg = ChatCompletionMessage(role="assistant", content=text)
+    msg = ChatCompletionMessage(role="assistant", content=text, tool_calls=tool_calls)
     choice = Choice(index=0, message=msg, finish_reason="stop")
     return ChatCompletion(
         id="cli-backend", choices=[choice], created=0,
@@ -2062,6 +2016,16 @@ class CliChat(OpenAIChat):
         # 玩家用拟旨/密令按钮（消息带前缀）时，handler 用 resolve_minister_actions
         # 把这句回话原文整段入档。invoke 只负责出文本。
         prompt = _messages_to_prompt(messages, response_format)
+        recommendation_schema = next(
+            (tool.get("function", tool) for tool in (tools or [])
+             if isinstance(tool, dict) and tool.get("function", tool).get("name") == "recommend_person"),
+            None,
+        )
+        if recommendation_schema:
+            prompt += (
+                "\n\n【荐人调用】只有确要调用此工具时，回答末尾追加"
+                f"[[recommend_person:<arguments JSON>]]；arguments 须严格符合以下已提供的工具 schema：{json.dumps(recommendation_schema.get('parameters') or {}, ensure_ascii=False)}"
+            )
         with _TRACE_LOCK:  # 原子自增，防并发丢增量/seq 重复（#83）
             _seq += 1
             seq = _seq
@@ -2089,7 +2053,11 @@ class CliChat(OpenAIChat):
                  + (f" ERROR={error}" if error else ""))
 
         text = _strip_agent_narration(text)
-        provider_response = _fake_completion(text, self.id)
+        text, tool_calls = _cli_recommendation_call(text, tools)
+        provider_response = (
+            _fake_completion(text, self.id, tool_calls)
+            if tool_calls else _fake_completion(text, self.id)
+        )
         return self._parse_provider_response(provider_response, response_format=response_format)
 
     async def ainvoke(  # type: ignore[override]

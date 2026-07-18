@@ -429,3 +429,15 @@ def test_chapter_counterpart_filters_settlement_narrative_derived_with_report(ga
     assert "正常月结正文" not in _public_chapter_counterpart(
         db.knowledge_items_for_turn(state.turn)
     )
+def test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge(game):
+    db, state, content = game
+    db.conn.execute(
+        "INSERT INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
+        (state.turn + 9, state.year, state.period, "旧档密令摘要不得公开"),
+    )
+    db.conn.commit()
+    reader = next(iter(content.characters))
+    rendered = "\n".join(
+        item.get("body", "") for item in db.get_character_knowledge(state, reader)["public_events"]
+    )
+    assert "旧档密令摘要不得公开" not in rendered

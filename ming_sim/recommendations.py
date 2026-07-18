@@ -6,12 +6,13 @@ import json
 from typing import Any, Dict, Iterable, List
 
 from .knowledge import knowledge_row_visible_to
+from .context import IDENTITY_BUCKET_CUTOFFS
 from .qualitative import qualitative_bucket
 
 
 def _identity_bucket(value: object) -> int:
     """Use the same low/middle/high identity cuts as minister context."""
-    return qualitative_bucket(value, (40, 80), default=50)
+    return qualitative_bucket(value, IDENTITY_BUCKET_CUTOFFS, default=50)
 
 def _source_visible_to(row: Any, recommender: str, *, target: Any = None, db: Any) -> bool:
     """Apply the #459 exclusion boundary before using a source's roster."""

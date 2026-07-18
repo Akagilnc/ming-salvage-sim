@@ -89,19 +89,14 @@ _DIG_7_REQUIRED_SEED_NAMES = {
 
 def test_required_dig_7_seed_roster_entries_are_persisted(game):
     db, state, content = game
-    roster = load_json_asset("characters.json")["characters"]
-    seeded = [raw for raw in roster if "identity" in raw]
-    seeded_by_name = {raw["name"]: raw for raw in seeded}
-    # dig-7's 74-person substrate remains mandatory; later approved roster
-    # additions may also carry identity rather than weakening that baseline.
-    assert _DIG_7_REQUIRED_SEED_NAMES <= seeded_by_name.keys()
-    for name in _DIG_7_REQUIRED_SEED_NAMES:
-        raw = seeded_by_name[name]
-        character = content.characters[raw["name"]]
+    expected = _DIG_7_REQUIRED_SEED_NAMES | {"郭允厚", "李之藻", "张缙彦", "李从心", "汤若望", "胡廷宴"}
+    assert expected <= set(content.characters)
+    for name in expected:
+        character = content.characters[name]
         row = db.conn.execute(
             "SELECT identity, seed_guilt FROM characters WHERE name=?", (character.name,)
         ).fetchone()
-        assert row["identity"] == raw["identity"] == character.identity
+        assert row["identity"] == character.identity
         if character.name in {"高起潜", "吴昌时"}:
             assert row["seed_guilt"] == ""
         else:
