@@ -351,23 +351,25 @@ def test_event_to_issue_insert_exception_propagates(read_game, monkeypatch):
         I.event_to_issue(db, state, ev)
 
 
-def test_new_issue_event_pool_insert_exception_propagates(read_game, monkeypatch):
-    db, state, _ = read_game
+def test_new_issue_event_pool_insert_exception_propagates(game, monkeypatch):
+    db, state, content = game
     # codex 强调的 call-site seam：通过 apply_issue_tracker_output 的 event_pool 分支驱动，
     # insert 真异常一路上抛（上层 applier.atomic 据此 SettlementAbort），不被吞成静默 rejected。
-    eid = _pick_event_pool_id(db)
-    ev = I._ctx().event_by_id[eid]
+    eid = "__event_pool_insert_exception__"
+    ev = _hist_event(eid)
+    I.bind_content(content)
     _open_event_window(state, ev)
-    _ensure_event_candidate(db, state, eid)
 
     def _boom(*a, **k):
         raise RuntimeError("模拟 event_pool insert 落库代码异常")
 
-    monkeypatch.setattr(type(db), "insert_issue", _boom)
-    with pytest.raises(RuntimeError, match="模拟 event_pool"):
-        I.apply_issue_tracker_output(db, state, {
-            "new_issues": [{"origin_kind": "event_pool", "id": eid}],
-        })
+    with _TempEvents(content, ev):
+        _ensure_event_candidate(db, state, eid)
+        monkeypatch.setattr(type(db), "insert_issue", _boom)
+        with pytest.raises(RuntimeError, match="模拟 event_pool"):
+            I.apply_issue_tracker_output(db, state, {
+                "new_issues": [{"origin_kind": "event_pool", "id": eid}],
+            })
 
 
 def test_event_to_issue_duplicate_returns_none_not_raise(game):
