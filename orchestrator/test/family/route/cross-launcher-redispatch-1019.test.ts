@@ -320,10 +320,12 @@ describe("#1019 AC1 — answered park + missing resume → fresh re-dispatch wit
     ).length;
     // Fresh re-dispatch must run coder again (not 0ms terminal replay / fail-closed).
     expect(s2After).toBeGreaterThan(s2Before);
-    expect(second.children.find((c) => c.issue === 1019)?.status).not.toBe("failed");
     expect(
-      second.children.find((c) => c.issue === 1019)?.failureCause,
-    ).not.toBe("child_answer_without_parked_state");
+      familyBackend.ledger.some(
+        (e) =>
+          e.childIssue === 1019 && e.reason === "child_answer_fresh_redispatch",
+      ),
+    ).toBe(true);
     // Answer text reaches the new worker context.
     expect(singleSliceBackend.coderAnswers.some((a) => a.includes("optional"))).toBe(
       true,
@@ -410,6 +412,8 @@ describe("#1019 AC3 — true infra failure still fails loud", () => {
     expect(s2AfterSecond).toBeGreaterThan(s2AfterFirst);
     expect(second.status).not.toBe("completed");
     expect(second.children.find((c) => c.issue === 1021)?.status).toBe("failed");
+    // Loud failure class (not already_done / silent handled).
+    expect(second.stopSummary?.reason).toMatch(/infra_failure|owning_issue_still_red/);
     expect(familyBackend.merges.some((m) => m.childIssue === 1021)).toBe(false);
   });
 });

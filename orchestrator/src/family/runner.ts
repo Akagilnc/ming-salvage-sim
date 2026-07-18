@@ -884,6 +884,10 @@ function readChildDecisionEscalation(
  * The escalated (last non-terminal) step in a child's parked single-slice ledger
  * (#604 slice 5) — the `forStep` a family-level answer must target so the child's
  * own `planResume` reopens THAT step in its recorded session.
+ *
+ * Shape-kin to single-slice `lastNonTerminalStep` in runner.ts (same reverse
+ * scan). Kept local: family uses `isStepId` + PersistentLedgerEntry; runner's
+ * helper is not exported and sits on a different module boundary.
  */
 function escalatedChildStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
