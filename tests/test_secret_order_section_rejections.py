@@ -105,21 +105,19 @@ def test_update_unknown_order_id_missing_ref(game):
     assert rows[0][2] == "missing_ref", rows
 
 
-def _active_order_id(db):
-    row = db.conn.execute(
-        "SELECT id FROM secret_orders WHERE status='active' ORDER BY id LIMIT 1").fetchone()
-    return row[0] if row else None
-
-
-def test_update_valid_active_order_applies_no_reject(read_game):
+def test_update_valid_active_order_applies_no_reject(game):
     """正向守门（cmr r2 claude）：合法 active 密令 update 不被新 get_secret_order gate 误拒，
     sim_note 真写入、零拒收行。"""
-    db, state, content = read_game
+    db, state, content = game
     turn = state.turn
-    oid = _active_order_id(db)
-    if oid is None:
-        import pytest
-        pytest.skip("基底无 active 密令")
+    oid = db.create_secret_order(
+        state,
+        "测试密令官",
+        "合法更新正向守门",
+        "先建 active 密令，再验证推演更新真实落库。",
+        [],
+        deadline_months=1,
+    )
 
     run_settle(db, state, content, {
         "secret_order_updates": [{"order_id": oid, "sim_note": "推演副作用XYZ"}],
