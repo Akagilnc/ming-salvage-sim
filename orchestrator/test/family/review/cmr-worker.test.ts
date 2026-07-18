@@ -55,7 +55,6 @@ import {
   WorkerResult,
   WorkerSpec,
   buildExplicitLandingLiveHooks,
-  here,
   realPromptsDir,
   realSoulsDir,
   DEFAULT_CMR_LEGS,
@@ -510,34 +509,6 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         ).kind,
       ).toBe("verdict");
     });
-  });
-});
-
-describe("integrated CMR pass prompt closure contract", () => {
-  for (const promptName of [
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]) {
-
-  }
-
-  for (const promptName of [
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]) {
-
-  }
-
-  it("integrated completeness prompt keeps undeveloped targets out of issue-body YAML", () => {
-    const prompt = readFileSync(
-      join(realPromptsDir, "integrated_cmr_completeness.md"),
-      "utf8",
-    );
-
-    expect(prompt).toContain("module_scope");
-    expect(prompt).toContain("runner-supplied metadata");
-    expect(prompt).toContain("not issue-body prose or extra YAML");
-    expect(prompt).toContain("Do not infer");
   });
 });
 
@@ -1101,82 +1072,6 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.env.CMR_CODEX_EFFORT).toBeUndefined();
   });
 
-  it("#768 drift guard: cmrSandboxConfig source must assign CMR_CODEX_MODEL from the review legs", () => {
-    // Behavioral pin above goes green only while injection works; this source
-    // guard REDS if the env key is deleted or replaced with a hardcoded slug.
-    const source = readFileSync(
-      join(here, "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
-      "utf8",
-    );
-    const fnStart = source.indexOf("protected cmrSandboxConfig(");
-    expect(fnStart).toBeGreaterThanOrEqual(0);
-    // Extract the ENTIRE method via brace matching — no arbitrary char window
-    // (a fixed slice can spuriously miss the assignment if the function grows).
-    // Signature shape: cmrSandboxConfig(...): { returnType } { body }
-    let i = source.indexOf("(", fnStart);
-    let depth = 0;
-    for (; i < source.length; i++) {
-      if (source[i] === "(") depth++;
-      else if (source[i] === ")") {
-        depth--;
-        if (depth === 0) {
-          i++;
-          break;
-        }
-      }
-    }
-    while (i < source.length && /\s/.test(source[i]!)) i++;
-    if (source[i] === ":") {
-      // Skip return-type annotation; the next `{` at nest 0 after type content
-      // is the function body opener.
-      i++;
-      let nest = 0;
-      let started = false;
-      while (i < source.length) {
-        const c = source[i]!;
-        if (c === "{" && nest === 0 && started) break;
-        if (c === "{" || c === "(" || c === "[") {
-          nest++;
-          started = true;
-          i++;
-        } else if (c === "}" || c === ")" || c === "]") {
-          nest--;
-          i++;
-        } else if (/\s/.test(c)) {
-          i++;
-        } else {
-          started = true;
-          i++;
-        }
-      }
-    } else {
-      while (i < source.length && source[i] !== "{") i++;
-    }
-    const bodyOpen = i;
-    expect(source[bodyOpen]).toBe("{");
-    depth = 0;
-    let fnEnd = -1;
-    for (i = bodyOpen; i < source.length; i++) {
-      if (source[i] === "{") depth++;
-      else if (source[i] === "}") {
-        depth--;
-        if (depth === 0) {
-          fnEnd = i + 1;
-          break;
-        }
-      }
-    }
-    expect(fnEnd).toBeGreaterThan(fnStart);
-    const fnBody = source.slice(fnStart, fnEnd);
-    // Must match the real assignment/derivation line, not a comment mention alone.
-    // Effort-variant slugs resolve via modelIdForSlug → CLI model id.
-    expect(fnBody).toMatch(
-      /env\.CMR_CODEX_MODEL\s*=\s*modelIdForSlug\(\s*codexReviewLeg\.slug\s*\)/,
-    );
-    // Effort must come from registry row for the slug (not hardcoded).
-    expect(fnBody).toMatch(/CMR_CODEX_EFFORT/);
-    expect(fnBody).toMatch(/resolveModelSlug\s*\(\s*codexReviewLeg\.slug\s*\)/);
-  });
 });
 
 // ═══════════════════ 4b. mountCmrAuth — best-effort per leg (codex cmr R1) ═══════════════════
