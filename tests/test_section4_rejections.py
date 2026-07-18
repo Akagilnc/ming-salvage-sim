@@ -15,16 +15,7 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
-
-
-def _rejection_rows(db, turn, section=None):
-    rows = db.conn.execute(
-        "SELECT section, reason, category, source FROM rejection_reports"
-        " WHERE turn=? ORDER BY id", (turn,)
-    ).fetchall()
-    if section is not None:
-        rows = [r for r in rows if r[0] == section]
-    return rows
+from tests.section_rejection_helpers import rejection_rows as _rejection_rows
 
 
 def _a_region(db):

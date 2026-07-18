@@ -11,15 +11,14 @@ active id 静默报成功（cmr r1 codex 抓出，#14 silent-success）。本组
 
 from __future__ import annotations
 
+from functools import partial
+
 from driver import run_settle
 from ming_sim import issues
+from tests.section_rejection_helpers import rejection_rows
 
 
-def _rejection_rows(db, turn, section):
-    return db.conn.execute(
-        "SELECT section, reason, category FROM rejection_reports"
-        " WHERE turn=? AND section=? ORDER BY id", (turn, section)
-    ).fetchall()
+_rejection_rows = partial(rejection_rows, columns="section, reason, category")
 
 
 def test_close_unknown_order_id_missing_ref(game):
