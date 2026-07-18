@@ -667,6 +667,55 @@ export function emitTerminalProgress(input: {
   });
 }
 
+/**
+ * #1007 — park/terminal dual-write for any public exit.
+ *
+ * Parked → park + terminal (park carries notify); completed/failed → terminal.
+ * Fail-open; call from shared exit helpers so call sites cannot forget.
+ */
+export function emitExitProgress(input: {
+  readonly ledgerDir?: string;
+  readonly epic?: number | null;
+  readonly issue?: number | null;
+  readonly step?: string | null;
+  readonly status: "completed" | "parked" | "failed";
+  readonly stopReason?: string | null;
+  readonly gateSummary?: string | null;
+  readonly log?: (line: string) => void;
+  readonly notifySpawn?: NotifySpawn;
+  readonly now?: () => string;
+}): void {
+  if (input.status === "parked") {
+    const gate =
+      typeof input.gateSummary === "string" && input.gateSummary.trim().length > 0
+        ? input.gateSummary.trim()
+        : typeof input.stopReason === "string" && input.stopReason.trim().length > 0
+          ? input.stopReason.trim()
+          : "parked";
+    emitParkProgress({
+      ledgerDir: input.ledgerDir,
+      epic: input.epic,
+      issue: input.issue ?? null,
+      step: input.step ?? null,
+      gateSummary: gate,
+      reason: input.stopReason ?? null,
+      log: input.log,
+      notifySpawn: input.notifySpawn,
+      now: input.now,
+    });
+  }
+  emitTerminalProgress({
+    ledgerDir: input.ledgerDir,
+    epic: input.epic,
+    issue: input.issue ?? null,
+    status: input.status,
+    stopReason: input.stopReason ?? null,
+    log: input.log,
+    notifySpawn: input.notifySpawn,
+    now: input.now,
+  });
+}
+
 // ─── status renderer ─────────────────────────────────────────────────────────
 
 export interface IssueProgressSnapshot {
@@ -903,6 +952,10 @@ export function renderFamilyStatusFromDir(ledgerDir: string): string {
       `rounds=${issue.judgeRounds}`,
       `verdict=${issue.latestVerdict ?? "—"}`,
     ];
+    // AC 站位: surface latest stage token when the feed has one.
+    if (issue.latestStage !== null && issue.latestStage.length > 0) {
+      parts.push(`stage=${issue.latestStage}`);
+    }
     if (issue.dispositions !== null) {
       const d = issue.dispositions;
       parts.push(

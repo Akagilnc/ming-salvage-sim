@@ -59,11 +59,10 @@ import { MAX_RELAY_HANDOFFS } from "../relayDispatch.js";
 import { logDriverStage } from "../stageLog.js";
 import {
   configureProgressBroadcast,
+  emitExitProgress,
   emitLandingProgress,
   emitMergeProgress,
-  emitParkProgress,
   emitShipProgress,
-  emitTerminalProgress,
   emitWaveCloseProgress,
 } from "../progressBroadcast.js";
 import { isAnyStepId, isStepId } from "../types.js";
@@ -296,7 +295,7 @@ async function decideFamilyQuotaWall(opts: {
   ): Promise<FamilyQuotaWallDecision> => {
     const children = await familyChildrenSnapshot(opts);
     // #1007: quota / relay-admission park (all barrier.kind==="park" early returns).
-    emitFamilyExitProgress({
+    emitExitProgress({
       epic: opts.epicIssue,
       status: "parked",
       stopReason: stopSummary.reason,
@@ -695,41 +694,6 @@ function familyHeadMetadata(input: {
       sources,
     },
   };
-}
-
-/**
- * #1007: park/terminal progress for family exits that bypass finalize() /
- * finalizeDecisionPark() (early re-entry parks, landing/merger/online-review
- * parks, quota wall parks). Parked → park + terminal; failed/completed → terminal.
- * Fail-open (emit helpers never throw into the main flow).
- */
-function emitFamilyExitProgress(input: {
-  readonly epic: number;
-  readonly issue?: number | null;
-  readonly status: "completed" | "parked" | "failed";
-  readonly stopReason?: string | null;
-  readonly gateSummary?: string | null;
-}): void {
-  if (input.status === "parked") {
-    const gate =
-      typeof input.gateSummary === "string" && input.gateSummary.trim().length > 0
-        ? input.gateSummary.trim()
-        : typeof input.stopReason === "string" && input.stopReason.trim().length > 0
-          ? input.stopReason.trim()
-          : "parked";
-    emitParkProgress({
-      epic: input.epic,
-      issue: input.issue ?? null,
-      gateSummary: gate,
-      reason: input.stopReason ?? null,
-    });
-  }
-  emitTerminalProgress({
-    epic: input.epic,
-    issue: input.issue ?? null,
-    status: input.status,
-    stopReason: input.stopReason ?? null,
-  });
 }
 
 function familyStopSummary(input: {
@@ -1254,7 +1218,7 @@ async function ensureLandingForResume(input: {
   );
   if (recorded.kind === "park") {
     // #1007: landing park early-return (bypasses finalize).
-    emitFamilyExitProgress({
+    emitExitProgress({
       epic: input.familyIssue,
       status: "parked",
       stopReason: recorded.stopSummary.reason,
@@ -1272,7 +1236,7 @@ async function ensureLandingForResume(input: {
     };
   }
   // #1007: landing hard-fail early-return.
-  emitFamilyExitProgress({
+  emitExitProgress({
     epic: input.familyIssue,
     status: "failed",
     stopReason: recorded.stopSummary.reason,
@@ -1615,6 +1579,18 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
+    const stopSummary = infraFailureStopSummary({
+      summary: `${admitted.escalation.reason}: ${diagnosis}`,
+      repairHint:
+        "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
+    });
+    // #1007: family startup route fail — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_config_invalid",
       familyBase: input.familyBase,
@@ -1622,11 +1598,7 @@ export async function runFamily(
         reason: admitted.escalation.reason,
         diagnosis,
       },
-      stopSummary: infraFailureStopSummary({
-        summary: `${admitted.escalation.reason}: ${diagnosis}`,
-        repairHint:
-          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
-      }),
+      stopSummary,
       children,
       ...(input.epic.admissionSkipped !== undefined &&
       input.epic.admissionSkipped.length > 0
@@ -1642,14 +1614,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
+    });
+    // #1007: family smoke missing executor — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: reason },
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1675,14 +1655,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: `route smoke failed: ${reason}`,
+      repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
+    });
+    // #1007: family smoke throw — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
-      stopSummary: infraFailureStopSummary({
-        summary: `route smoke failed: ${reason}`,
-        repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1694,14 +1682,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: smokeFailure,
+      repairHint: "rerun the route smoke or repair the selected model×pipe",
+    });
+    // #1007: family smoke failure — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
-      stopSummary: infraFailureStopSummary({
-        summary: smokeFailure,
-        repairHint: "rerun the route smoke or repair the selected model×pipe",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1801,7 +1797,7 @@ export async function runFamily(
       });
       if (publicStatus === "failed") {
         // #1007: prior escalation re-entry terminal (bypasses finalize).
-        emitFamilyExitProgress({
+        emitExitProgress({
           epic: input.epic.issue,
           status: "failed",
           stopReason: stopSummary.reason,
@@ -1817,7 +1813,7 @@ export async function runFamily(
         });
       }
       // #1007: prior decision escalation re-entry park (bypasses finalize).
-      emitFamilyExitProgress({
+      emitExitProgress({
         epic: input.epic.issue,
         status: "parked",
         stopReason: stopSummary.reason,
@@ -1944,7 +1940,7 @@ export async function runFamily(
         decisionGatePark: true,
       });
       // #1007: unanswered child decision park re-entry (bypasses finalizeDecisionPark).
-      emitFamilyExitProgress({
+      emitExitProgress({
         epic: epic.issue,
         issue: first.childIssue,
         status: "parked",
@@ -2147,9 +2143,8 @@ export async function runFamily(
         : {}),
     };
     // #1007: family exit progress. Parked finalize must emit park+terminal
-    // (same contract as emitFamilyExitProgress early-return parks); completed/
-    // failed emit terminal only.
-    emitFamilyExitProgress({
+    // (same contract as early-return parks); completed/failed emit terminal only.
+    emitExitProgress({
       epic: epic.issue,
       status,
       stopReason: stopSummary.reason,
@@ -2200,18 +2195,13 @@ export async function runFamily(
       return { issue: c.issue, status: "skipped" as const };
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
-    // #1007: park + terminal (typed gate summary; no worker prose parse).
-    emitParkProgress({
-      issue: parked.issue,
-      epic: epic.issue,
-      gateSummary: parked.escalation.diagnosis || parked.escalation.reason,
-      reason: "decision_gate_park",
-    });
-    emitTerminalProgress({
+    // #1007: shared dual-write helper (DELETE local park+terminal dup).
+    emitExitProgress({
       issue: parked.issue,
       epic: epic.issue,
       status: "parked",
       stopReason: "decision_gate_park",
+      gateSummary: parked.escalation.diagnosis || parked.escalation.reason,
     });
     return {
       status: "parked",
@@ -2276,18 +2266,26 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
+      const reconcileStop = familyStopSummary({
+        status: "failed",
+        familyBase,
+        familyHead,
+        children,
+        escalationReason:
+          "family reconcile found the live family-base HEAD inconsistent with the ledger",
+      });
+      // #1007: reconcile fail-closed bypasses finalize — dual-write terminal.
+      emitExitProgress({
+        epic: epic.issue,
+        status: "failed",
+        stopReason: reconcileStop.reason,
+        gateSummary: reconcileStop.summary,
+      });
       return failedFamilyResult({
         cause: "runner_internal_error",
         familyBase,
         familyHead,
-        stopSummary: familyStopSummary({
-          status: "failed",
-          familyBase,
-          familyHead,
-          children,
-          escalationReason:
-            "family reconcile found the live family-base HEAD inconsistent with the ledger",
-        }),
+        stopSummary: reconcileStop,
         children,
       });
     }
@@ -2483,6 +2481,13 @@ export async function runFamily(
             stopSummary,
             escalationKind: "failure",
             phase: "wave",
+          });
+          // #1007: dependency-cycle fail bypasses finalize — dual-write terminal.
+          emitExitProgress({
+            epic: epic.issue,
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
           });
           return attachDiagnostics(
             failedFamilyResult({
@@ -2686,7 +2691,7 @@ export async function runFamily(
             phase: "wave",
           });
           // #1007: merger decision park early-return (bypasses finalizeDecisionPark).
-          emitFamilyExitProgress({
+          emitExitProgress({
             epic: epic.issue,
             issue: r.issue,
             status: "parked",
@@ -3089,7 +3094,7 @@ export async function runFamily(
       }
       if (terminal.status === "parked") {
         // #1007: online-review parked on shipped-resume (bypasses finalize).
-        emitFamilyExitProgress({
+        emitExitProgress({
           epic: epic.issue,
           status: "parked",
           stopReason: terminal.stopSummary.reason,
@@ -3104,7 +3109,7 @@ export async function runFamily(
         };
       }
       // #1007: online-review hard-fail on shipped-resume.
-      emitFamilyExitProgress({
+      emitExitProgress({
         epic: epic.issue,
         status: "failed",
         stopReason: terminal.stopSummary.reason,
@@ -3164,6 +3169,14 @@ export async function runFamily(
     if (landingWall.relayBilling !== undefined) {
       runRelayBilling = landingWall.relayBilling;
     }
+    // #1007: shipped-resume completed early return bypasses finalize.
+    emitExitProgress({
+      epic: epic.issue,
+      status: "completed",
+      stopReason: "already_done",
+      gateSummary:
+        "family review loop resumed from the shipped checkpoint and converged",
+    });
     return {
       status: "completed",
       familyBase,
@@ -3287,7 +3300,7 @@ export async function runFamily(
           }
           // #1007: online-review park/fail on open-shipped re-entry (returned later
           // without finalize — emit here at construction).
-          emitFamilyExitProgress({
+          emitExitProgress({
             epic: epic.issue,
             status: terminal.status === "parked" ? "parked" : "failed",
             stopReason: terminal.stopSummary.reason,
@@ -3357,6 +3370,14 @@ export async function runFamily(
           openShippedTerminal = landingBlocked;
           return { ok: false, ran: true };
         }
+        // #1007: open-shipped completed early return bypasses finalize.
+        emitExitProgress({
+          epic: epic.issue,
+          status: "completed",
+          stopReason: "already_done",
+          gateSummary:
+            "family review loop resumed from the open-shipped checkpoint and converged",
+        });
         openShippedTerminal = {
           status: "completed",
           familyBase,
