@@ -167,13 +167,21 @@ export async function executeAdvanceCoderSuggestion(input: {
 }
 
 /**
+ * Repair seat a family-ledger `coder_advance*` row applied to.
+ * Online-review sticky re-hold and CMR coderFix must not cross-bleed (#1017 R2).
+ */
+export type AdvanceRepairSeat = "coderFix" | "fixer";
+
+/**
  * Dual status/event audit fields for family ledger advance rows.
  * Shared by online-review fixer + family CMR coderFix courts (#919 / #1002).
  * Callers spread court-only extras (phase / cmrPass) on top — no framework.
+ * `advanceSeat` is required so sticky rebuild can scope by court.
  */
 export function familyAdvanceCoderAuditFields(
   effect: Extract<AdvanceCoderEffectResult, { kind: "stay_put" | "advanced" }>,
   suggestion: string,
+  advanceSeat: AdvanceRepairSeat,
 ): {
   readonly status: "coder_advance" | "coder_advance_stay_put";
   readonly event: "coder_advance" | "coder_advance_stay_put";
@@ -182,6 +190,7 @@ export function familyAdvanceCoderAuditFields(
   readonly fromModelId: string;
   readonly toModelId: string;
   readonly advanceCoder: string;
+  readonly advanceSeat: AdvanceRepairSeat;
   readonly ts: string;
 } {
   return {
@@ -192,27 +201,36 @@ export function familyAdvanceCoderAuditFields(
     fromModelId: effect.audit.fromModelId,
     toModelId: effect.audit.toModelId,
     advanceCoder: suggestion.trim(),
+    advanceSeat,
     ts: effect.audit.ts,
   };
 }
 
 /**
  * Latest successful `coder_advance` target slug from a ledger scan
- * (newest-first). Ignores `coder_advance_stay_put`. Shared re-hold shape for
- * single-slice / online-review sticky rebuild (#926 / #1002).
+ * (newest-first), scoped to one repair seat. Ignores stay_put and rows for
+ * other seats (or legacy unscoped rows — fail closed on re-hold).
+ * Online-review sticky fixer rebuild (#1002 / #1017 R2).
  */
 export function latestCoderAdvanceToSlug(
   ledger: ReadonlyArray<{
     readonly event?: string;
     readonly status?: string;
     readonly toModelId?: string;
+    readonly advanceSeat?: string;
   }>,
+  seat: AdvanceRepairSeat,
 ): string | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const row = ledger[i]!;
     const isAdvance =
       row.event === "coder_advance" || row.status === "coder_advance";
-    if (isAdvance && typeof row.toModelId === "string" && row.toModelId.length > 0) {
+    if (
+      isAdvance &&
+      row.advanceSeat === seat &&
+      typeof row.toModelId === "string" &&
+      row.toModelId.length > 0
+    ) {
       return row.toModelId;
     }
   }

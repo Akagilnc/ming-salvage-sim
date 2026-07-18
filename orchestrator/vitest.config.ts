@@ -48,6 +48,8 @@ function heavyByHarnessNature(root = "test"): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
+      // Cheap guard: never descend into dependency / vcs trees under test/.
+      if (name === "node_modules" || name === ".git") continue;
       const p = join(dir, name);
       if (statSync(p).isDirectory()) {
         walk(p);

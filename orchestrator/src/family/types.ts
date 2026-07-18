@@ -414,6 +414,12 @@ export interface FamilyLedgerEntry {
    * (coder_advance* audit rows). Not an unblock field.
    */
   readonly toModelId?: string;
+  /**
+   * #1002 / #1017 — which repair seat this coder_advance* row applied to
+   * (`coderFix` family CMR vs `fixer` online-review). Sticky rebuild must
+   * scope by this field so courts do not cross-bleed on the shared family ledger.
+   */
+  readonly advanceSeat?: "coderFix" | "fixer";
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */
