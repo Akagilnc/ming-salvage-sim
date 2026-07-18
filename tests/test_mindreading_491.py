@@ -108,8 +108,14 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
     assert set(material) == {"当轮回话", "党账", "君臣账", "底案", "近臣自身见闻"}
     assert material["当轮回话"] == reply
     assert any(item["title"] == "旧闻" for item in material["近臣自身见闻"])
-    assert payload["truths"]["潜台词"] == model.text
-    assert payload["reply_text"] == material["当轮回话"]
+    assert payload == {
+        "reader": reader.name,
+        "target": target.name,
+        "source": "见闻",
+        "precision": "清晰",
+        "narration": model.text,
+    }
+    assert "忠诚=98" not in json.dumps(payload, ensure_ascii=False)
     assert "工心计" in material["底案"]
     assert "案情分量：无" in material["底案"]
     rendered = json.dumps(material, ensure_ascii=False)
@@ -140,7 +146,7 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     assert "合谋" in material["底案"]
     assert "92" not in json.dumps(material, ensure_ascii=False)
     assert "15" not in json.dumps(material, ensure_ascii=False)
-    assert payload["truths"]["底案"] == material["底案"]
+    assert payload["narration"] == model.text
 
 
 def test_runtime_uses_existing_model_config_factory(game, monkeypatch):

@@ -196,12 +196,5 @@ def generate_mindreading_payload(
         "target": materials.get("target"),
         "source": materials.get("source"),
         "precision": materials.get("precision"),
-        "reader_context": dict(reader_context),
-        "truths": {
-            "党账": truths.get("党账"),
-            "君臣账": truths.get("君臣账"),
-            "底案": truths.get("底案"),
-            "潜台词": subtext,
-        },
-        "reply_text": materials.get("reply_text"),
+        "narration": subtext,
     }
