@@ -6,9 +6,9 @@ from __future__ import annotations
 import json
 
 
-def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(game):
+def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
     """流寇头目与股分层：李自成、张献忠应绑定各自独立 power,不共享全局 bandits。"""
-    db, _state, _content = game
+    db, _state, _content = read_game
 
     rows = {
         row["name"]: dict(row)
