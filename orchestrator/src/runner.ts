@@ -55,6 +55,7 @@ import {
 import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
+  clearProgressBroadcastConfig,
   configureProgressBroadcast,
   emitExitProgress,
   emitJudgeProgress,
@@ -1447,6 +1448,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
     input.now !== undefined ? input.now() : new Date();
+
+  // #1007 / #1017: process progress feed is one-invocation-owned.
+  // Standalone clears any prior same-process family binding so this run rebinds
+  // to its own stateDir. Family children (input.family set) inherit the family
+  // ledger already configured by runFamily / familyDriver — never overwrite.
+  if (input.family === undefined) {
+    clearProgressBroadcastConfig();
+  }
 
   // #936 / #934 ID-005: Scene Recovery first — resident discovery before
   // admission network work when a durable scene may already exist.
