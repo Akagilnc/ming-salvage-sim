@@ -1508,15 +1508,24 @@ class WebGame:
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         mindreading_payload = None
+        mindreading_error = ""
         reader_name = current_inner_court_attendant_name(self.db)
         reader = self.content.characters.get(reader_name) if reader_name else None
         if reader is not None and reader_name != minister_name:
-            mindreading_payload = build_mindreading_payload(
-                self.db, self.state, reader, character, answer,
-            )
-            truths = mindreading_payload.get("truths") if isinstance(mindreading_payload, dict) else None
-            if not isinstance(truths, dict) or not truths:
-                raise RuntimeError("读心 payload 为空或缺少真相投影")
+            try:
+                mindreading_payload = build_mindreading_payload(
+                    self.db, self.state, reader, character, answer,
+                )
+                truths = (
+                    mindreading_payload.get("truths")
+                    if isinstance(mindreading_payload, dict) else None
+                )
+                if not isinstance(truths, dict) or not truths:
+                    raise RuntimeError("读心 payload 为空或缺少真相投影")
+            except Exception as error:  # noqa: BLE001 — reading cannot roll back a completed reply
+                mindreading_payload = None
+                detail = error.message if hasattr(error, "message") else str(error)
+                mindreading_error = f"读心生成失败：{detail or type(error).__name__}"
         # Durable chat_turn message ids first, then memory history.  Publishing
         # history before append/update opens a race: observers see the minister
         # reply while can_undo_last_chat_turn is still false (#976 hold path
@@ -1532,6 +1541,7 @@ class WebGame:
             "minister": minister_name,
             "answer": answer,
             "mindreading": mindreading_payload,
+            "mindreading_error": mindreading_error,
             "history": self.chat_history[minister_name],
             "court_action": court_action,
             "next_minister": next_minister,
