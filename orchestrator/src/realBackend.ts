@@ -94,6 +94,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
+import { ensureIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
@@ -2010,6 +2011,10 @@ export class RealBackend implements Backend {
     if (this.workingRepoReady) return;
     this.buildOrReuseClone();
     this.assertIndependentClone();
+    // #1014: exclude runner-owned iso sidecars so family final CMR dirty-pin
+    // (status --untracked-files=all) does not hard-stop on live .ledger-* /
+    // .sandcastle/ droppings. Re-run on resume is idempotent.
+    ensureIsoOperationalExcludes(this.workingRepo);
     this.workingRepoReady = true;
   }
 
