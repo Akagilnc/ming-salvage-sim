@@ -34,9 +34,9 @@ def test_cli_settle_rejects_non_dict_envelope_delta(game, tmp_path):
 
 
 @pytest.mark.parametrize("bad", [[], "", 0, "foo", 5])
-def test_run_settle_rejects_non_dict_raw_delta(game, bad):
+def test_run_settle_rejects_non_dict_raw_delta(read_game, bad):
     """run_settle 边界:非 dict(falsy 的 []/""/0 + 非 falsy 的 str/int)一律响亮报错、不推进(codex-P1a + Sourcery)。"""
-    db, state, content = game
+    db, state, content = read_game
     before = state.turn
     with pytest.raises(ValueError):
         run_settle(db, state, content, bad)
@@ -86,9 +86,9 @@ def test_run_settle_records_non_dict_nested_value(game):
     assert '"entity_id": "shanxi"' in row["item_json"]
 
 
-def test_run_settle_rejects_unknown_toplevel_key(game):
+def test_run_settle_rejects_unknown_toplevel_key(read_game):
     """未知顶层 key(拼写错,如 地区变更↔地区变化)响亮报错,不静默无效推进(codex-P1b)。"""
-    db, state, content = game
+    db, state, content = read_game
     before = state.turn
     with pytest.raises(ValueError):
         run_settle(db, state, content, {"地区变更": {"shanxi": {"动乱": 5}}})
@@ -317,10 +317,10 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
         ch.office = old_office
 
 
-def test_cli_state_prints_board(game, capsys):
+def test_cli_state_prints_board(read_game, capsys):
     """`state` 子命令打印当前盘面（含纪年），返回码 0。"""
-    db, state, content = game
-    rc = driver.main(["state"], game=game)
+    db, state, content = read_game
+    rc = driver.main(["state"], game=read_game)
     out = capsys.readouterr().out
     assert rc == 0
     assert str(state.year) in out
@@ -372,10 +372,10 @@ def test_cli_settle_envelope_persists_narrative(game, tmp_path):
     assert cannon == 3
 
 
-def test_cli_dump_prints_regions(game, capsys):
+def test_cli_dump_prints_regions(read_game, capsys):
     """`dump` 打印盘面快照，含地区行（地区 id 出现在输出里），返回码 0。"""
-    db, state, content = game
-    rc = driver.main(["dump"], game=game)
+    db, state, content = read_game
+    rc = driver.main(["dump"], game=read_game)
     out = capsys.readouterr().out
     assert rc == 0
     assert "shanxi" in out

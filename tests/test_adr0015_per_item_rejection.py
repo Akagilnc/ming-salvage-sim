@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+from tests.section_rejection_helpers import game
+
 
 def _reports(db):
     return [dict(r) for r in db.conn.execute("SELECT turn, section, item_json, reason, category, source, attempt FROM rejection_reports ORDER BY id")]
