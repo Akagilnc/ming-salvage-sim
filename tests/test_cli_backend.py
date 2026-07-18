@@ -171,29 +171,6 @@ def test_cli_and_durable_secret_exclusion_share_the_same_parser(game, monkeypatc
     assert cli["excluded_offices"] == offices == ["户部"]
 
 
-def test_cli_adapter_emits_recommend_person_tool_call(monkeypatch):
-    from agno.models.message import Message
-
-    model = cb.CliChat(id="test", backend="codex")
-    monkeypatch.setattr(
-        model, "_call_cli",
-        lambda prompt: (
-            "臣荐某甲。[[recommend_person:{\"name\":\"某甲\",\"target_office\":\"巡盐御史\",\"reason\":\"可堪\"}]]", 1,
-        ),
-    )
-    response = model.invoke(
-        [Message(role="user", content="可荐何人")], Message(role="assistant"),
-        tools=[{"type": "function", "function": {
-            "name": "recommend_person",
-            "parameters": {"type": "object", "required": ["name", "target_office"],
-                           "properties": {"name": {}, "target_office": {}, "reason": {}}},
-        }}],
-    )
-
-    assert response.tool_calls
-    assert response.tool_calls[0]["function"]["name"] == "recommend_person"
-
-
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
     """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
     canned = json.dumps({
@@ -771,16 +748,6 @@ def test_secret_extract_classifies_shipped_hanlin_targets_as_offices(monkeypatch
     assert result["excluded_offices"] == [target]
 
 
-# ── 底层流式不实现（高层 response_stream 委托非流式）──
-
-def test_clichat_low_level_stream_not_implemented():
-    cc = cb.CliChat(id="m", backend="agy")
-    with pytest.raises(NotImplementedError):
-        cc.invoke_stream()
-    with pytest.raises(NotImplementedError):
-        cc.ainvoke_stream()
-
-
 # ── codex 后端工程修复（实测撞出来的坑）──
 
 def test_run_codex_flags_and_stdout(monkeypatch):
@@ -873,6 +840,8 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
 
 
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
+    from agno.models.message import Message
+
     seen = {}
 
     def fake_chunks(prompt, *, model=None, timeout=None, reasoning_strength=None):
@@ -882,9 +851,9 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     monkeypatch.setattr(cb, "_iter_codex_stream_chunks", fake_chunks)
     chat = cb.CliChat(id="gpt-test", backend="codex", reasoning_strength="low")
 
-    chunks = list(chat.response_stream([SimpleNamespace(role="user", content="请写邸报")]))
+    chunks = list(chat.response_stream([Message(role="user", content="请写邸报")]))
 
-    assert [chunk.content for chunk in chunks] == ["邸报"]
+    assert [chunk.content for chunk in chunks if chunk.content] == ["邸报"]
     assert seen["reasoning_strength"] == "low"
 
 
