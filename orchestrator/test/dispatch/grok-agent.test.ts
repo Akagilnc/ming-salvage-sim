@@ -60,6 +60,7 @@ function transportEnv(
     GROK_CHILD_PID_OUT: childPidOut,
     // Harness-only: default off so a polluted parent env cannot hang normal-exit cases.
     GROK_HOLD_OPEN: "0",
+    GROK_EXIT_CODE: "0",
     ...extra,
   };
 }
@@ -68,7 +69,7 @@ function fakeGrokPath(binDir: string): string {
   const path = join(binDir, "grok");
   writeFileSync(
     path,
-    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nprintf '%s' \"$$\" > \"$GROK_CHILD_PID_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then exec sleep 30; fi\nexit 0\n",
+    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nprintf '%s' \"$$\" > \"$GROK_CHILD_PID_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then exec sleep 30; fi\nexit \"${GROK_EXIT_CODE:-0}\"\n",
     "utf8",
   );
   chmodSync(path, 0o755);
@@ -126,6 +127,63 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(result.stdout).toBe(prompt);
     expect(readFileSync(pathOut, "utf8")).toMatch(/^.+$/);
     expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it("returns a Grok failure code after reaping the child and removing the staged prompt", async () => {
+    const root = transportDir("grok-transport-failure-");
+    const bin = join(root, "bin");
+    const staging = join(root, "staging");
+    const pathOut = join(root, "prompt-path");
+    const childPidOut = join(root, "child-pid");
+    mkdirSync(bin);
+    mkdirSync(staging);
+    fakeGrokPath(bin);
+    const built = grokAgent("grok-4.5").buildPrintCommand({
+      prompt: "failing worker context",
+      dangerouslySkipPermissions: true,
+    });
+    const child = spawn("sh", ["-c", built.command], {
+      env: transportEnv(bin, staging, pathOut, childPidOut, {
+        GROK_EXIT_CODE: "23",
+      }),
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const pid = child.pid!;
+    let grokPid: number | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const closed = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      });
+      child.stdin.end(built.stdin);
+      const result = await Promise.race([
+        closed,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(new Error("nonzero Grok worker did not exit within 5s")),
+            5_000,
+          );
+        }),
+      ]);
+      grokPid = Number(readFileSync(childPidOut, "utf8"));
+      expect(result).toEqual({ code: 23, signal: null });
+      expect(readdirSync(staging)).toEqual([]);
+      expect(() => process.kill(grokPid!, 0)).toThrow();
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      for (const cleanupPid of [pid, grokPid]) {
+        if (cleanupPid === undefined) continue;
+        try {
+          process.kill(cleanupPid, "SIGKILL");
+        } catch {
+          // Expected after the wrapper has reaped the failed Grok child.
+        }
+      }
+    }
   });
 
   it.each(["SIGHUP", "SIGINT", "SIGTERM"] as const)(
