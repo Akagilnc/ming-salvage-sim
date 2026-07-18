@@ -207,6 +207,7 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
     [
       "run",
       "--rm",
+      "-i",
       "--entrypoint",
       "/bin/sh",
       "-e",

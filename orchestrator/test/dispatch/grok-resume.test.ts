@@ -56,7 +56,7 @@ function localHandleWithStdin(worktreePath: string): BindMountSandboxHandle {
     ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
       new Promise((resolve) => {
         const child = execFile(
-          "bash",
+          "sh",
           ["-c", command],
           { cwd: options?.cwd ?? worktreePath, maxBuffer: 64 * 1024 * 1024 },
           (err, stdout, stderr) => {
@@ -528,7 +528,7 @@ describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
               resumeSession,
             });
             const child = execFile(
-              "bash",
+              "sh",
               ["-c", built.command],
               { cwd: work, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
               (err, stdout, stderr) => {
