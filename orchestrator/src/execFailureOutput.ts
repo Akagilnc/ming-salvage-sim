@@ -16,8 +16,7 @@ export function decodeChildOutput(v: unknown): string {
 
 /**
  * Capture exec failure detail: message + labeled stdout + stderr.
- * Single source for baseline {@link formatBaselineExecFailureOutput} and
- * family verify summarizeError.
+ * Single source for baseline health gate and family verify summarizeError.
  */
 export function formatExecFailureOutput(err: unknown): string {
   const parts: string[] = [];
