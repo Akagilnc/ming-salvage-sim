@@ -12,27 +12,34 @@ SOURCE_FILES = (
 )
 
 
-# The old-label tripwire guards live surfaces (prompts/engine/frontend) only.
-# docs/ and archive/ may legitimately quote the retired label verbatim
-# (e.g. archived playtest transcripts predate the rename) — see #531.
-EXCLUDED_PREFIXES = ("docs/", "archive/")
-
-
 def test_scout_report_label_replaces_old_bulletin_section_name():
     old_label = "陛下" + "未知者"
     new_label = "探子回报"
 
     contents = {path: path.read_text(encoding="utf-8") for path in SOURCE_FILES}
-    tracked_files = [
-        path.decode("utf-8")
-        for path in subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).split(b"\0")
-        if path
-    ]
+    scan = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-F",
+            "-l",
+            "-z",
+            "-e",
+            old_label,
+            "--",
+            ".",
+            ":(exclude)docs/**",
+            ":(exclude)archive/**",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert scan.returncode in (0, 1), scan.stderr.decode("utf-8", errors="replace")
     old_label_files = [
-        path
-        for path in tracked_files
-        if not path.startswith(EXCLUDED_PREFIXES)
-        and old_label in (ROOT / path).read_text(encoding="utf-8", errors="ignore")
+        path.decode("utf-8")
+        for path in scan.stdout.split(b"\0")
+        if path
     ]
 
     assert old_label_files == []
