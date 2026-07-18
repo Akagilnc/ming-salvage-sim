@@ -1501,63 +1501,79 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // finished completed/failed/parked terminal (zero meta/smoke).
   // Skip early short-circuit when a repairIntent is present — that path must
   // still durable-write the intent (and surface write failures) before planResume.
+  // #1019: inside a family run, prior S8(failed) is NOT terminal-replayed —
+  // unmerged children may redispatch (failure history stays on the ledger).
+  // familyEscalationAnswer also skips early parked/failed replay so a dead
+  // session can fresh-redispatch with the answer. resume_state_invalid still
+  // fails closed (corrupt residue).
   if (scene.kind === "resident" && input.repairIntent === undefined) {
     const earlyPlan = planResume(scene.state.ledger);
     if (earlyPlan.terminalStatus !== undefined) {
-      const worktree = scene.state.worktree;
-      const ledger = earlyPlan.priorLedger;
-      if (earlyPlan.terminalStatus === "failed") {
-        const reason =
-          earlyPlan.terminalCause === "resume_state_invalid"
-            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
-            : "prior run terminated with a failed handoff (re-fed after completion)";
-        const errorPackage: ErrorPackage = {
-          failedStep: lastAgentStep(ledger) ?? "S8",
-          reason,
-          branchHead: worktree.branch,
-        };
-        const stopSummary =
-          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        // #1007: durable terminal replay must self-describe this invocation's feed.
+      const familyRedispatchFailed =
+        earlyPlan.terminalStatus === "failed" &&
+        input.family !== undefined &&
+        earlyPlan.terminalCause !== "resume_state_invalid";
+      const familyAnswerRedispatch =
+        input.family !== undefined &&
+        input.familyEscalationAnswer !== undefined &&
+        earlyPlan.terminalStatus !== "completed" &&
+        earlyPlan.terminalCause !== "resume_state_invalid";
+      if (!familyRedispatchFailed && !familyAnswerRedispatch) {
+        const worktree = scene.state.worktree;
+        const ledger = earlyPlan.priorLedger;
+        if (earlyPlan.terminalStatus === "failed") {
+          const reason =
+            earlyPlan.terminalCause === "resume_state_invalid"
+              ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+              : "prior run terminated with a failed handoff (re-fed after completion)";
+          const errorPackage: ErrorPackage = {
+            failedStep: lastAgentStep(ledger) ?? "S8",
+            reason,
+            branchHead: worktree.branch,
+          };
+          const stopSummary =
+            latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+          // #1007: durable terminal replay must self-describe this invocation's feed.
+          emitExitProgress({
+            issue: issueNumber,
+            step: "S8",
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
+          });
+          return failedRunResult({
+            cause: earlyPlan.terminalCause ?? "runner_internal_error",
+            errorPackage,
+            stepLedger: ledger,
+            stopSummary,
+          });
+        }
+        const stopSummary: StopSummary =
+          earlyPlan.terminalStatus === "completed"
+            ? {
+                reason: "already_done",
+                summary: "prior run already reached a completed handoff",
+              }
+            : latestLedgerStopSummary(ledger) ?? {
+                reason: "spec_conflict",
+                summary: "prior run is paused at an unanswered escalation",
+                repairHint: "answer the escalation and rerun",
+              };
+        // #1007: durable completed/parked replay — emit terminal (fail-open).
         emitExitProgress({
           issue: issueNumber,
           step: "S8",
-          status: "failed",
+          status: earlyPlan.terminalStatus,
           stopReason: stopSummary.reason,
           gateSummary: stopSummary.summary,
         });
-        return failedRunResult({
-          cause: earlyPlan.terminalCause ?? "runner_internal_error",
-          errorPackage,
+        return {
+          status: earlyPlan.terminalStatus,
+          branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
           stepLedger: ledger,
           stopSummary,
-        });
+        };
       }
-      const stopSummary: StopSummary =
-        earlyPlan.terminalStatus === "completed"
-          ? {
-              reason: "already_done",
-              summary: "prior run already reached a completed handoff",
-            }
-          : latestLedgerStopSummary(ledger) ?? {
-              reason: "spec_conflict",
-              summary: "prior run is paused at an unanswered escalation",
-              repairHint: "answer the escalation and rerun",
-            };
-      // #1007: durable completed/parked replay — emit terminal (fail-open).
-      emitExitProgress({
-        issue: issueNumber,
-        step: "S8",
-        status: earlyPlan.terminalStatus,
-        stopReason: stopSummary.reason,
-        gateSummary: stopSummary.summary,
-      });
-      return {
-        status: earlyPlan.terminalStatus,
-        branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
-        stepLedger: ledger,
-        stopSummary,
-      };
     }
   }
 
@@ -2656,7 +2672,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumeFor:
     | { step: SliceStepId; sessionId: string; sessionModel?: string }
     | undefined;
-  let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
+  // #1019: family fresh redispatch may carry the human answer before any
+  // planResume inject; plan.escalationAnswer overwrites this when present.
+  let resumedEscalationAnswer: EscalationAnswerEvent | undefined =
+    input.familyEscalationAnswer !== undefined
+      ? {
+          event: "escalation_answered",
+          answer: input.familyEscalationAnswer.answer,
+          source: input.familyEscalationAnswer.source ?? "human",
+          forStep: (input.familyEscalationAnswer.forStep ?? "S2") as SliceStepId,
+          ...(input.familyEscalationAnswer.note !== undefined
+            ? { note: input.familyEscalationAnswer.note }
+            : {}),
+          ...(input.familyEscalationAnswer.sessionId !== undefined
+            ? { sessionId: input.familyEscalationAnswer.sessionId }
+            : {}),
+        }
+      : undefined;
   // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
   let resumeMonitorHandle:
     | import("./types.js").WorkerMonitorHandle
@@ -2859,40 +2891,57 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #955 r7: only real agent dispatch rows — bookkeeping/audit events
     // (session_continuity_lost, worker_monitor_spawned, …) also carry step +
     // sessionId but must not resurrect a dropped id after r5 identity loss.
-    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-      const entry = plan.priorLedger[i]!;
-      if (isBookkeepingEntry(entry)) continue;
-      if (
-        (entry.step === "S2" || entry.step === "S5") &&
-        typeof entry.sessionId === "string"
-      ) {
-        coderSessionId = entry.sessionId;
-        coderSessionModel =
-          typeof entry.modelSlug === "string"
-            ? entry.modelSlug
-            : entry.step === "S5"
-              ? stepSpecs.S5.model
-              : stepSpecs.S2.model;
-        break;
+    // #1019: family failed / answer redispatch must NOT revive a dead session
+    // lineage from a prior terminal — force a fresh worker session (history stays).
+    const familyFailedRedispatch =
+      plan.terminalStatus === "failed" &&
+      input.family !== undefined &&
+      plan.terminalCause !== "resume_state_invalid";
+    const familyAnswerRedispatch =
+      input.family !== undefined &&
+      input.familyEscalationAnswer !== undefined &&
+      plan.terminalStatus !== undefined &&
+      plan.terminalStatus !== "completed" &&
+      plan.terminalCause !== "resume_state_invalid";
+    if (!familyFailedRedispatch && !familyAnswerRedispatch) {
+      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+        const entry = plan.priorLedger[i]!;
+        if (isBookkeepingEntry(entry)) continue;
+        if (
+          (entry.step === "S2" || entry.step === "S5") &&
+          typeof entry.sessionId === "string"
+        ) {
+          coderSessionId = entry.sessionId;
+          coderSessionModel =
+            typeof entry.modelSlug === "string"
+              ? entry.modelSlug
+              : entry.step === "S5"
+                ? stepSpecs.S5.model
+                : stepSpecs.S2.model;
+          break;
+        }
       }
     }
     // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
     // #955 r7: same bookkeeping exclusion as coder rebuild above.
-    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-      const entry = plan.priorLedger[i]!;
-      if (isBookkeepingEntry(entry)) continue;
-      if (
-        isJudgeSeat({ step: entry.step }) &&
-        typeof entry.sessionId === "string"
-      ) {
-        judgeSessionId = entry.sessionId;
-        judgeSessionModel =
-          typeof entry.modelSlug === "string"
-            ? entry.modelSlug
-            : entry.step === "S6"
-              ? stepSpecs.S6.model
-              : stepSpecs.S3.model;
-        break;
+    // #1019: same fresh-session rule as coder on family failed/answer redispatch.
+    if (!familyFailedRedispatch && !familyAnswerRedispatch) {
+      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+        const entry = plan.priorLedger[i]!;
+        if (isBookkeepingEntry(entry)) continue;
+        if (
+          isJudgeSeat({ step: entry.step }) &&
+          typeof entry.sessionId === "string"
+        ) {
+          judgeSessionId = entry.sessionId;
+          judgeSessionModel =
+            typeof entry.modelSlug === "string"
+              ? entry.modelSlug
+              : entry.step === "S6"
+                ? stepSpecs.S6.model
+                : stepSpecs.S3.model;
+          break;
+        }
       }
     }
 
@@ -2903,60 +2952,96 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // an already-finished run's reported status). Report the
       // TRUE public terminal status (completed | parked | failed), never a
       // hardcoded completed (#255/#942: a prior failed/parked must not masquerade).
-      if (plan.terminalStatus === "failed") {
-        const reason =
-          plan.terminalCause === "resume_state_invalid"
-            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
-            : "prior run terminated with a failed handoff (re-fed after completion)";
-        const errorPackage: ErrorPackage = {
-          failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
-          reason,
-          branchHead: worktree.branch,
-        };
-        const stopSummary =
-          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        // #1007: late durable terminal replay (e.g. repairIntent path) still emits.
+      //
+      // #1019: family children redispatch prior S8(failed) productively (keep
+      // failure history). resume_state_invalid still fails closed.
+      const familyRedispatchFailed =
+        plan.terminalStatus === "failed" &&
+        input.family !== undefined &&
+        plan.terminalCause !== "resume_state_invalid";
+      const familyAnswerRedispatch =
+        input.family !== undefined &&
+        input.familyEscalationAnswer !== undefined &&
+        plan.terminalStatus !== "completed" &&
+        plan.terminalCause !== "resume_state_invalid";
+      if (!familyRedispatchFailed && !familyAnswerRedispatch) {
+        if (plan.terminalStatus === "failed") {
+          const reason =
+            plan.terminalCause === "resume_state_invalid"
+              ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+              : "prior run terminated with a failed handoff (re-fed after completion)";
+          const errorPackage: ErrorPackage = {
+            failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
+            reason,
+            branchHead: worktree.branch,
+          };
+          const stopSummary =
+            latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+          // #1007: late durable terminal replay (e.g. repairIntent path) still emits.
+          emitExitProgress({
+            issue: issueNumber,
+            step: "S8",
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
+          });
+          return failedRunResult({
+            cause: plan.terminalCause ?? "runner_internal_error",
+            errorPackage,
+            stepLedger: ledger,
+            stopSummary,
+          });
+        }
+        const stopSummary: StopSummary =
+          plan.terminalStatus === "completed"
+            ? {
+                reason: "already_done",
+                summary: "prior run already reached a completed handoff",
+              }
+            : latestLedgerStopSummary(ledger) ?? {
+                reason: "spec_conflict",
+                summary: "prior run is paused at an unanswered escalation",
+                repairHint: "answer the escalation and rerun",
+              };
+        // #1007: late durable completed/parked replay — emit terminal (fail-open).
         emitExitProgress({
           issue: issueNumber,
           step: "S8",
-          status: "failed",
+          status: plan.terminalStatus,
           stopReason: stopSummary.reason,
           gateSummary: stopSummary.summary,
         });
-        return failedRunResult({
-          cause: plan.terminalCause ?? "runner_internal_error",
-          errorPackage,
+        return {
+          status: plan.terminalStatus,
+          branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
           stepLedger: ledger,
           stopSummary,
-        });
+        };
       }
-      const stopSummary: StopSummary =
-        plan.terminalStatus === "completed"
-          ? {
-              reason: "already_done",
-              summary: "prior run already reached a completed handoff",
-            }
-          : latestLedgerStopSummary(ledger) ?? {
-              reason: "spec_conflict",
-              summary: "prior run is paused at an unanswered escalation",
-              repairHint: "answer the escalation and rerun",
-            };
-      // #1007: late durable completed/parked replay — emit terminal (fail-open).
-      emitExitProgress({
-        issue: issueNumber,
-        step: "S8",
-        status: plan.terminalStatus,
-        stopReason: stopSummary.reason,
-        gateSummary: stopSummary.summary,
-      });
-      return {
-        status: plan.terminalStatus,
-        branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
-        stepLedger: ledger,
-        stopSummary,
-      };
-    }
-
+      // Family failed / answer redispatch: re-enter last non-terminal step with a
+      // FRESH session (keep committed worktree + full ledger history). Dead prior
+      // sessions are not resumed; answer cargo rides familyEscalationAnswer.
+      step =
+        lastNonTerminalStep(
+          plan.priorLedger as ReadonlyArray<PersistentLedgerEntry>,
+        ) ?? "S0";
+      resumeFor = undefined;
+      if (input.familyEscalationAnswer !== undefined) {
+        resumedEscalationAnswer = {
+          event: "escalation_answered",
+          answer: input.familyEscalationAnswer.answer,
+          source: input.familyEscalationAnswer.source ?? "human",
+          forStep: (input.familyEscalationAnswer.forStep ??
+            (isValidStepId(step) ? step : "S2")) as SliceStepId,
+          ...(input.familyEscalationAnswer.note !== undefined
+            ? { note: input.familyEscalationAnswer.note }
+            : {}),
+          ...(input.familyEscalationAnswer.sessionId !== undefined
+            ? { sessionId: input.familyEscalationAnswer.sessionId }
+            : {}),
+        };
+      }
+    } else {
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
     // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
     // commits + baton state are the payload. Relay state is read from the
@@ -2976,7 +3061,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           : {}),
       };
     }
-    resumedEscalationAnswer = plan.escalationAnswer;
+    resumedEscalationAnswer =
+      plan.escalationAnswer ?? resumedEscalationAnswer;
+    }
     // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
     // into S5 landing only. Runner still does not filter blockingFindings.
     const repairScope = plan.continueFixingRepair?.event.findingScope;

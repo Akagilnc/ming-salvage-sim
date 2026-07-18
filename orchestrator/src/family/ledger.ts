@@ -735,6 +735,32 @@ export function childEscalationAnswer(
   return undefined;
 }
 
+/**
+ * #1019 — latest child-bound answer regardless of a preceding family park row.
+ *
+ * Mixed-wave failure+park historically dropped durable `child_decision_parked`
+ * rows (#604 P1-a), so humans still answered from progress text but
+ * {@link childEscalationAnswer} could not see the bind. Cross-launcher re-entry
+ * must still feed that answer into fresh redispatch.
+ */
+export function latestChildBoundAnswer(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  childIssue: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidChildAnswer(entry, childIssue)) continue;
+    return {
+      event: "escalation_answered",
+      answer: entry.answer!,
+      source: (entry.source ?? "human") as "human" | "resume_input",
+      ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
+      ...(entry.note != null ? { note: entry.note } : {}),
+    };
+  }
+  return undefined;
+}
+
 /** Append one production-admission skip audit row. */
 export async function recordAdmissionSkipped(
   backend: FamilyBackend,

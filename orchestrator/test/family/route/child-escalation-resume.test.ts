@@ -620,30 +620,28 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
   });
 });
 
-// ─── test 7 (P1-b): a family answer with MISSING resume state fails closed ───────
+// ─── test 7 (P1-b → #1019): missing resume degrades to fresh redispatch ────────
 //
-// #604 correctness r1 (P1-b): when a human answered a parked child's decision gate
-// but its single-slice resume state is MISSING (findResumeState returns undefined),
-// runChild must NOT fall through to a fresh `runOrchestrator` (from-scratch re-run,
-// violating 原地-resume). It must fail closed (`"failed"`) so a human repairs the
-// state and reruns — never silently start over.
+// #604 P1-b originally fail-closed when resume state was missing. #1019 owner AC
+// overturns that: answered park + dead/missing session → fresh re-dispatch with
+// answer text (keep committed worktree progress when present; never silent
+// terminal replay / fail-closed).
 
-describe("#604 r1 (P1-b) — a family answer with missing resume state fails closed", () => {
-  it("answer present + findResumeState undefined → child failed, NO fresh runOrchestrator", async () => {
-    // A backend whose findResumeState ALWAYS returns undefined (the parked state
-    // was lost / not persisted), so the resume-injection branch cannot fire.
+describe("#604 r1 (P1-b) / #1019 — missing resume → fresh redispatch with answer", () => {
+  it("answer present + findResumeState undefined → fresh S2 redispatch, can complete", async () => {
+    // Hide resume residue after the first park so inject cannot fire.
     class NoResumeStateBackend extends EscalatingChildBackend {
       constructor() {
-        super(11);
+        // escalate only first run so redispatch can complete after the answer.
+        super(11, true);
       }
       override async findResumeState(): Promise<ResumeState | undefined> {
-        return undefined; // no resume residue for any child
+        return undefined;
       }
     }
     const singleSliceBackend = new NoResumeStateBackend();
     const familyBackend = new FakeFamilyBackend();
 
-    // ── invocation 1: parks on #11's decision escalation ──
     const first = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
@@ -653,19 +651,16 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
     });
     expect(first.status).toBe("parked");
 
-    // ── human answers #11 ──
     await recordFamilyEscalationAnswered(familyBackend, {
       childIssue: 11,
       answer: "field X is optional; proceed",
       source: "human",
     });
 
-    // Witness the S2 dispatch count BEFORE the resume attempt.
     const s2Before = singleSliceBackend.runStepCalls.filter(
       (c) => c.issue === 11 && c.step === "S2",
     ).length;
 
-    // ── invocation 2 (re-entry): resume state missing → must FAIL CLOSED ──
     const second = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(11),
@@ -674,15 +669,17 @@ describe("#604 r1 (P1-b) — a family answer with missing resume state fails clo
       familyBase: "family/604-base",
     });
 
-    // Fail-closed: NOT a fabricated success, NOT merged.
-    expect(second.status).not.toBe("completed");
-    expect(second.children.find((c) => c.issue === 11)?.status).toBe("failed");
-    expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
-    // And it did NOT re-run the child from scratch (no new S2 dispatch on resume).
     const s2After = singleSliceBackend.runStepCalls.filter(
       (c) => c.issue === 11 && c.step === "S2",
     ).length;
-    expect(s2After).toBe(s2Before);
+    expect(s2After).toBeGreaterThan(s2Before);
+    expect(
+      familyBackend.ledger.some(
+        (e) => e.reason === "child_answer_fresh_redispatch",
+      ),
+    ).toBe(true);
+    expect(second.status).toBe("completed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
   });
 });
 
@@ -733,22 +730,15 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
   });
 });
 
-// ─── test 6 (P1-a ②): a REAL failure in the same wave must NOT be masked by a
-// decision park ────────────────────────────────────────────────────────────────
+// ─── test 6 (P1-a ② / #1019): A-class failure still wins family status; parks
+// for decision siblings are still durable-written so answers can re-open later.
 //
-// #604 correctness r1 (P1-a ②): a single wave can carry BOTH a real `failed`
-// child (infra/protocol failure — A-class incomplete/failure) AND a
-// decision-escalated child (B-class answerable park). The old runner parked the
-// whole family (B-class `decision_gate_park`) as soon as ANY decision-escalated
-// child existed, silently MASKING the real failure behind an answerable park. The
-// A-class failure must take precedence: the family finalizes as `incomplete`
-// (never `escalated`/`decision_gate_park`), and no `child_decision_parked` row is
-// recorded, so the real failure is not hidden.
+// #604 P1-a: mixed wave must NOT finalize as family decision_gate_park (that
+// masks the real failure). #1019: still record `child_decision_parked` for the
+// escalated sibling (flight5 #991/#992 had answers but no park rows).
 
-describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a decision park", () => {
-  it("mixed wave (1 decision-escalated + 1 failed) → incomplete, NOT a decision_gate_park", async () => {
-    // #11 decision-escalates (coder S2 carries STUCK); #12 FAILS (committed:false
-    // → S8 error). Both blockedBy:[] so they run in the SAME wave.
+describe("#604 r1 (P1-a ②) / #1019 — mixed wave records parks but family stays failed", () => {
+  it("mixed wave (1 decision-escalated + 1 failed) → failed family, durable park for escalated child", async () => {
     class MixedWaveBackend extends EscalatingChildBackend {
       constructor(private readonly failIssue: number) {
         super(11); // #11 decision-escalates on its S2
@@ -784,15 +774,16 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
       familyBase: "family/604-base",
     });
 
-    // A-class precedence: the run is NOT a B-class decision park.
+    // A-class precedence: the family is NOT a B-class decision park.
     expect(result.status).not.toBe("escalated");
     expect(result.status).toBe("failed");
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
-    // No decision-park row was recorded — the real failure is not hidden behind one.
+    // #1019: escalated sibling still gets a durable park row for later answer.
     expect(
-      familyBackend.ledger.some((e) => e.event === "child_decision_parked"),
-    ).toBe(false);
-    // The failing child is honestly failed and never merged.
+      familyBackend.ledger.some(
+        (e) => e.event === "child_decision_parked" && e.childIssue === 11,
+      ),
+    ).toBe(true);
     expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
     expect(familyBackend.merges.some((m) => m.childIssue === 12)).toBe(false);
   });
