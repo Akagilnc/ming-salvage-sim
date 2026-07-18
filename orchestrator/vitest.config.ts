@@ -30,7 +30,10 @@ const heavyPathPatterns: string[] = [
   "test/**/*e2e*.test.ts",
   "test/**/sandcastle-*.test.ts",
   "test/**/real-backend.test.ts",
-  "test/**/live-*.test.ts",
+  // Do not use bare live-*: domain names like live-officer-effort are pure
+  // registry units. Real live/e2e tax is covered by nature scan + *e2e* /
+  // sandcastle / real-backend / *-worker. Prefer *live-e2e* if a path signal
+  // is ever needed for a true live-e2e suite.
   // Worker integration suites (cmr-worker, ship-worker, …) — real SO four-case homes.
   // Pure unit files use other stems (worker-dispatch, worker-reporting, …).
   "test/**/*-worker.test.ts",
