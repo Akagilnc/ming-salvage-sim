@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 
@@ -16,10 +17,29 @@ def test_scout_report_label_replaces_old_bulletin_section_name():
     new_label = "探子回报"
 
     contents = {path: path.read_text(encoding="utf-8") for path in SOURCE_FILES}
+    scan = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-F",
+            "-l",
+            "-z",
+            "-e",
+            old_label,
+            "--",
+            ".",
+            ":(exclude)docs/**",
+            ":(exclude)archive/**",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    assert scan.returncode in (0, 1), scan.stderr.decode("utf-8", errors="replace")
     old_label_files = [
-        path.relative_to(ROOT).as_posix()
-        for path, content in contents.items()
-        if old_label in content
+        path.decode("utf-8")
+        for path in scan.stdout.split(b"\0")
+        if path
     ]
 
     assert old_label_files == []
