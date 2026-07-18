@@ -43,14 +43,21 @@ export interface ProgressBroadcastConfig {
 
 let progressConfig: ProgressBroadcastConfig = {};
 
-/** Install / merge process-level progress feed config. */
+/**
+ * Install / merge process-level progress feed config.
+ *
+ * Lifecycle: process-global for one orchestration entry (family driver or
+ * single-slice runner binds `ledgerDir` as soon as it is known). Tests must
+ * call {@link clearProgressBroadcastConfig} between cases — production does
+ * not clear on family exit (next entry re-binds / merges).
+ */
 export function configureProgressBroadcast(
   cfg: ProgressBroadcastConfig,
 ): void {
   progressConfig = { ...progressConfig, ...cfg };
 }
 
-/** Clear process-level config (tests). */
+/** Clear process-level config (tests / isolation). */
 export function clearProgressBroadcastConfig(): void {
   progressConfig = {};
 }
@@ -455,6 +462,8 @@ export function emitProgressEvent(input: {
   readonly ledgerDir?: string;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
+  /** When false, skip ORCHESTRATOR_NOTIFY_CMD (park dual-write already notified). */
+  readonly notify?: boolean;
 }): void {
   try {
     const line = formatProgressLogLine(input.event);
@@ -463,6 +472,7 @@ export function emitProgressEvent(input: {
     // log failure must not block
   }
   tryAppendProgressEvent(resolveLedgerDir(input.ledgerDir), input.event);
+  if (input.notify === false) return;
   try {
     maybeNotify(input.event, input.notifySpawn);
   } catch {
@@ -648,6 +658,8 @@ export function emitTerminalProgress(input: {
   readonly stopReason?: string | null;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
+  /** When false, write feed/log only (park dual-write already notified). Default true. */
+  readonly notify?: boolean;
   readonly now?: () => string;
 }): void {
   const event: ProgressTerminalEvent = {
@@ -664,14 +676,16 @@ export function emitTerminalProgress(input: {
     ledgerDir: input.ledgerDir,
     log: input.log,
     notifySpawn: input.notifySpawn,
+    notify: input.notify,
   });
 }
 
 /**
  * #1007 — park/terminal dual-write for any public exit.
  *
- * Parked → park + terminal (park carries notify); completed/failed → terminal.
- * Fail-open; call from shared exit helpers so call sites cannot forget.
+ * Parked → park + terminal (park carries notify; terminal half skips notify);
+ * completed/failed → terminal (notify). Fail-open; call from shared exit helpers
+ * so call sites cannot forget.
  */
 export function emitExitProgress(input: {
   readonly ledgerDir?: string;
@@ -703,6 +717,18 @@ export function emitExitProgress(input: {
       notifySpawn: input.notifySpawn,
       now: input.now,
     });
+    // Terminal feed row only — park already carried the single notify spawn.
+    emitTerminalProgress({
+      ledgerDir: input.ledgerDir,
+      epic: input.epic,
+      issue: input.issue ?? null,
+      status: "parked",
+      stopReason: input.stopReason ?? null,
+      log: input.log,
+      notify: false,
+      now: input.now,
+    });
+    return;
   }
   emitTerminalProgress({
     ledgerDir: input.ledgerDir,

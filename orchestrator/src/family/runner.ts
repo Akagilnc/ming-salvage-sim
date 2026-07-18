@@ -2976,6 +2976,13 @@ export async function runFamily(
         },
       },
     };
+    // #1007: already-converged completed early return bypasses finalize — emit.
+    emitExitProgress({
+      epic: epic.issue,
+      status: "completed",
+      stopReason: alreadyDoneSummary.reason,
+      gateSummary: alreadyDoneSummary.summary,
+    });
     return {
       status: "completed",
       familyBase,
