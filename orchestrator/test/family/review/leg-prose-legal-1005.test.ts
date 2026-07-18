@@ -12,16 +12,31 @@
  *      transport-only panel presence (exit 0 + non-empty raw stdout).
  *   2. {@link cmrOutcomeFromResult} overlay — host path that builds
  *      successfulLegs from leg transports for family cmr cargo.
- *   3. {@link runVerifyCmr} — court opens on typed judge verdict whose
- *      successfulLegs were production-derived from prose transports
- *      (no pre-minted successfulLegs already-pass).
+ *   3. {@link RealFamilyBackend.runCmrWorker} — production consumer
+ *      extracts legTransports from sandbox-shaped results (top-level or
+ *      typed-output soft cargo) and rebuilds presence without pre-mint.
+ *   4. {@link runVerifyCmr} — court opens on production-derived cargo
+ *      (no pre-minted successfulLegs stuffed into liveCmrJudge fixtures).
  *
  * Zero schema change on the judge↔runner envelope (ADR 0131).
  */
 
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { cmrOutcomeFromResult } from "../../../src/family/realFamilyBackend.js";
+import type { RunResult } from "@ai-hero/sandcastle";
+
+import {
+  cmrOutcomeFromResult,
+  RealFamilyBackend,
+  type CmrAuth,
+  type CmrWorkerOutcome,
+} from "../../../src/family/realFamilyBackend.js";
+import { cmrWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import {
   isLegalLegPaper,
@@ -36,16 +51,45 @@ import type {
 } from "../../../src/family/types.js";
 import type {
   DispatchContext,
-  JudgeResult,
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
-import {
-  liveCmrJudgeContinue,
-  liveCmrJudgeGreen,
-} from "../../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const realPromptsDir = join(here, "..", "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "..", "image", "souls");
+
+const cleanups: string[] = [];
+afterEach(() => {
+  while (cleanups.length > 0) {
+    const p = cleanups.pop();
+    if (p !== undefined) rmSync(p, { recursive: true, force: true });
+  }
+});
+
+function mkDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(d);
+  return d;
+}
+
+function realRepo1005(): { readonly repo: string; readonly head: string } {
+  const repo = mkDir("1005-cmr-repo-");
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
+    cwd: repo,
+  });
+  execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+  const head = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: repo,
+    encoding: "utf8",
+  }).trim();
+  return { repo, head };
+}
 
 /** 485 autopsy shape: pure-prose / no-anchor legs that must still count present. */
 const PURE_PROSE_STDOUT = [
@@ -75,75 +119,64 @@ const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
 
-class ScriptedProseLegCourtBackend implements FamilyBackend {
-  resolveLandingLiveHooks(input: {
-    prUrl: string;
-    convergedHeadOid: string;
-    familyBase: string;
-  }) {
-    return buildExplicitLandingLiveHooks({
-      prUrl: input.prUrl,
-      headOid: input.convergedHeadOid,
-      remoteBranchName: input.familyBase,
-    });
+/**
+ * Sandbox-shaped sc.run result: typed judge receipt WITHOUT successfulLegs
+ * already-pass, plus host-observed legTransports (production consumer input).
+ */
+function sandboxResultWithProseLegTransports(input: {
+  readonly place: "top-level" | "output-soft-cargo";
+  readonly status?: "converged" | "continue";
+  readonly successfulLegsCargo?: ReadonlyArray<string>;
+  readonly fixPacketBody?: string;
+}): RunResult & { readonly output: Record<string, unknown> } {
+  const status = input.status ?? "converged";
+  const baseOutput: Record<string, unknown> =
+    status === "converged"
+      ? {
+          station: "judge",
+          status: "converged",
+          ...CMR_EVIDENCE,
+          // Stale content-shape-empty list: host transport authority must win.
+          successfulLegs: input.successfulLegsCargo ?? [],
+        }
+      : {
+          station: "judge",
+          status: "continue",
+          findingDispositions: [
+            { identityKey: "prose-leg:gap", action: "live" },
+          ],
+          fixPacketBody:
+            input.fixPacketBody ??
+            "judge distilled live finding from prose leg evidence",
+          skippedLegs: [
+            { slug: "agy", reason: "provider unavailable (transport dead)" },
+          ],
+          ...CMR_EVIDENCE,
+          successfulLegs: input.successfulLegsCargo ?? [],
+        };
+
+  if (input.place === "output-soft-cargo") {
+    return {
+      branch: "fb",
+      stdout: "",
+      commits: [],
+      iterations: [],
+      output: {
+        ...baseOutput,
+        legTransports: [...PROSE_LEG_TRANSPORTS_485],
+      },
+    };
   }
 
-  readonly ledger: FamilyLedgerEntry[] = [];
-  currentFamilyHead = "head-485-prose";
-  private cmrIndex = 0;
-
-  constructor(
-    private readonly cmrOutputs: ReadonlyArray<JudgeResult> | JudgeResult,
-  ) {}
-
-  async mergeChildIntoFamilyBase(
-    _child: MergeRequest,
-  ): Promise<{ familyHead: string }> {
-    return { familyHead: "unused" };
-  }
-  async resolveMergeConflict(_req?: unknown): Promise<{ familyHead: string }> {
-    throw new Error("resolveMergeConflict not used in this test");
-  }
-  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
-    this.ledger.push(entry);
-  }
-  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
-    return this.ledger;
-  }
-  async readFamilyHead(): Promise<string> {
-    return this.currentFamilyHead;
-  }
-  async runFamilyVerify(_req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
-    return { ok: true };
-  }
-  async dispatchWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<WorkerResult> {
-    if (spec.kind === "cmr") {
-      const outputs = Array.isArray(this.cmrOutputs)
-        ? this.cmrOutputs
-        : [this.cmrOutputs];
-      const output = outputs[Math.min(this.cmrIndex, outputs.length - 1)]!;
-      this.cmrIndex += 1;
-      return { kind: "completed", output };
-    }
-    if (spec.kind === "ship") {
-      return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: ctx.familyBase ?? "family/1005",
-          status: "pr_opened",
-          pr: `pr://${ctx.familyBase ?? "family/1005"}`,
-          prHead: this.currentFamilyHead,
-        },
-      };
-    }
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) return skeleton;
-    return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
-  }
+  return {
+    branch: "fb",
+    stdout: "",
+    commits: [],
+    iterations: [],
+    // Top-level host field (sandbox/result shape when producer lands transports).
+    legTransports: [...PROSE_LEG_TRANSPORTS_485],
+    output: baseOutput,
+  } as RunResult & { readonly output: Record<string, unknown> };
 }
 
 /**
@@ -202,6 +235,149 @@ function productionOutcomeFromProseTransports(input: {
     throw new Error("expected kind:judge from production overlay");
   }
   return outcome;
+}
+
+/**
+ * FamilyBackend whose cmr dispatch goes through production runCmrWorker with
+ * a sandbox-shaped result that carries legTransports — never pre-mints
+ * successfulLegs into a liveCmrJudge fixture.
+ */
+class ProductionSandboxProseLegBackend extends RealFamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  currentFamilyHead: string;
+  private readonly sandboxPlace: "top-level" | "output-soft-cargo";
+  private readonly continueBody?: string;
+
+  constructor(opts: {
+    readonly workingRepo: string;
+    readonly ledgerDir: string;
+    readonly familyHead: string;
+    readonly sandboxPlace: "top-level" | "output-soft-cargo";
+    readonly continueBody?: string;
+  }) {
+    // familyBase must exist as a git branch: runCmrWorker checks it out.
+    // realRepo1005 creates branch "fb".
+    super({
+      workingRepo: opts.workingRepo,
+      familyBase: "fb",
+      ledgerDir: opts.ledgerDir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    this.currentFamilyHead = opts.familyHead;
+    this.sandboxPlace = opts.sandboxPlace;
+    this.continueBody = opts.continueBody;
+  }
+
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
+    });
+  }
+
+  protected override mountCmrAuth(): CmrAuth {
+    return { claudeToken: "tok" };
+  }
+
+  /**
+   * Force the non-CLI path: runVerifyCmr → dispatchWorker → runCmrWorker.
+   * RealFamilyBackend otherwise prefers monitored host CLI for productive seats.
+   */
+  override resolveCliMonitorDispatch(): undefined {
+    return undefined;
+  }
+
+  protected override async runAgentSandbox(
+    _options: Parameters<RealFamilyBackend["runAgentSandbox"]>[0],
+  ): Promise<Awaited<ReturnType<RealFamilyBackend["runAgentSandbox"]>>> {
+    // Converged green for happy court; continue when a fix packet is requested.
+    if (this.continueBody !== undefined) {
+      return sandboxResultWithProseLegTransports({
+        place: this.sandboxPlace,
+        status: "continue",
+        fixPacketBody: this.continueBody,
+        successfulLegsCargo: [],
+      }) as Awaited<ReturnType<RealFamilyBackend["runAgentSandbox"]>>;
+    }
+    return sandboxResultWithProseLegTransports({
+      place: this.sandboxPlace,
+      status: "converged",
+      successfulLegsCargo: [],
+    }) as Awaited<ReturnType<RealFamilyBackend["runAgentSandbox"]>>;
+  }
+
+  override async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+
+  override async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+
+  override async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+
+  override async runFamilyVerify(
+    _req: FamilyVerifyRequest,
+  ): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+
+  override async mergeChildIntoFamilyBase(
+    _child: MergeRequest,
+  ): Promise<{ familyHead: string }> {
+    return { familyHead: "unused" };
+  }
+
+  override async resolveMergeConflict(
+    _req?: unknown,
+  ): Promise<{ familyHead: string }> {
+    throw new Error("resolveMergeConflict not used in this test");
+  }
+
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      // Production consumer: runCmrWorker extracts transports + overlays.
+      return super.dispatchWorker(spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase ?? "fb",
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase ?? "fb"}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
+    return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
+  }
+
+  /** Expose production runCmrWorker for direct consumer assertions. */
+  public invokeRunCmrWorker(
+    spec: ReturnType<typeof cmrWorkerSpec>,
+    ctx: DispatchContext,
+  ): Promise<CmrWorkerOutcome> {
+    return this.runCmrWorker(spec, ctx);
+  }
 }
 
 describe("#1005 ADR 0141 isLegalLegPaper — transport-only presence", () => {
@@ -315,32 +491,152 @@ describe("#1005 ADR 0141 cmrOutcomeFromResult — host overlay builds successful
       successfulLegs: ["grok", "opus"],
     });
   });
+
+  it("empty-after-filter legTransports falls back to cargo successfulLegs", () => {
+    // Chatty garbage / empty array must not force successfulLegs=[] when the
+    // intent of soft-parse absence is fall-back (same as transport-absent).
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        successfulLegs: ["grok", "opus"],
+        // Empty array and all-invalid rows both filter to no legal rows.
+        legTransports: [
+          { notALeg: true },
+          "chatty",
+          { slug: "", exitCode: 0, stdout: "x" },
+        ],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+
+    const emptyArr = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        successfulLegs: ["opus"],
+        legTransports: [],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+    });
+    expect(emptyArr).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["opus"],
+    });
+  });
+
+  it("well-formed dead-only transports still rebuild successfulLegs to []", () => {
+    // Fall-back is only for no well-formed rows — dead but well-formed
+    // transports are real authority (all absent).
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        successfulLegs: ["should-not-survive"],
+        legTransports: [
+          { slug: "agy", exitCode: 1, stdout: "" },
+          { slug: "grok", exitCode: 0, stdout: "   " },
+        ],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: [],
+    });
+  });
+});
+
+describe("#1005 ADR 0141 runCmrWorker — production consumer extracts sandbox legTransports", () => {
+  it("rebuilds successfulLegs from top-level sandbox legTransports (no pre-mint cargo)", async () => {
+    const { repo, head } = realRepo1005();
+    const be = new ProductionSandboxProseLegBackend({
+      workingRepo: repo,
+      ledgerDir: mkDir("1005-ledger-"),
+      familyHead: head,
+      sandboxPlace: "top-level",
+    });
+
+    const outcome = await be.invokeRunCmrWorker(
+      cmrWorkerSpec("fresh", "completeness"),
+      {
+        familyBase: "fb",
+        cmrPass: "completeness",
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+  });
+
+  it("rebuilds successfulLegs from typed-output soft cargo legTransports", async () => {
+    // Production SO is passthrough for soft siblings — legTransports may land
+    // on result.output (same object requireTypedTrafficSignal returns).
+    const { repo, head } = realRepo1005();
+    const be = new ProductionSandboxProseLegBackend({
+      workingRepo: repo,
+      ledgerDir: mkDir("1005-ledger-"),
+      familyHead: head,
+      sandboxPlace: "output-soft-cargo",
+    });
+
+    const outcome = await be.invokeRunCmrWorker(
+      cmrWorkerSpec("fresh", "completeness"),
+      {
+        familyBase: "fb",
+        cmrPass: "completeness",
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
+  });
 });
 
 describe("#1005 ADR 0141 family court — prose transports open the court", () => {
-  it("live judge converged with production-derived prose successfulLegs ships", async () => {
-    // Production panel path: transports → cmrOutcomeFromResult → successfulLegs.
-    // Court must open without a pre-minted successfulLegs already-pass fixture.
-    const production = productionOutcomeFromProseTransports({
-      status: "converged",
-      transports: [...PROSE_LEG_TRANSPORTS_485],
+  it("live judge converged via production runCmrWorker sandbox path ships (no liveCmrJudge pre-mint)", async () => {
+    // Court proof uses production consumer only: sandbox result carries
+    // legTransports + empty successfulLegs cargo; runCmrWorker overlays presence.
+    // No liveCmrJudgeGreen({ successfulLegs: [...] }) already-pass fixture.
+    const { repo, head } = realRepo1005();
+    const backend = new ProductionSandboxProseLegBackend({
+      workingRepo: repo,
+      ledgerDir: mkDir("1005-court-ledger-"),
+      familyHead: head,
+      sandboxPlace: "output-soft-cargo",
     });
-    expect(production.successfulLegs).toEqual(["grok", "opus"]);
 
-    const backend = new ScriptedProseLegCourtBackend(
-      liveCmrJudgeGreen({
-        // Cargo comes only from production overlay — not hand-minted slugs.
-        successfulLegs: production.successfulLegs,
-        skippedLegs: production.skippedLegs,
-        ...CMR_EVIDENCE,
-      }),
+    // Direct consumer nail: production-derived legs before court.
+    const production = await backend.invokeRunCmrWorker(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
     );
+    expect(production).toMatchObject({
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["grok", "opus"],
+    });
 
     const result = await runVerifyCmr({
       phase: "final",
-      familyBase: "family/1005-prose-legs",
-      familyBackend: backend,
-      familyHeadAfter: "head-485-prose",
+      familyBase: "fb",
+      familyBackend: backend as unknown as FamilyBackend,
+      familyHeadAfter: head,
     });
 
     expect(result).toEqual({ ok: true, ran: true });
@@ -365,37 +661,31 @@ describe("#1005 ADR 0141 family court — prose transports open the court", () =
     ).toBe(true);
   });
 
-  it("live judge continue with production-derived prose-leg cargo still opens court", async () => {
-    const liveFinding = {
-      severity: "high" as const,
-      category: "correctness",
-      claim_quote: "prose-leg distilled a real gap the judge keeps live",
-      location: "orchestrator/src/family/verifyCmr.ts:prose-leg",
-      suggested_fix: "close the gap",
-      action: "fix_now" as const,
-    };
-
-    const production = productionOutcomeFromProseTransports({
-      status: "continue",
-      transports: [...PROSE_LEG_TRANSPORTS_485],
-      fixPacketBody: "judge distilled live finding from prose leg evidence",
+  it("live judge continue via production sandbox legTransports still opens court", async () => {
+    const { repo, head } = realRepo1005();
+    const backend = new ProductionSandboxProseLegBackend({
+      workingRepo: repo,
+      ledgerDir: mkDir("1005-continue-ledger-"),
+      familyHead: head,
+      sandboxPlace: "top-level",
+      continueBody: "judge distilled live finding from prose leg evidence",
     });
-    expect(production.successfulLegs).toEqual(["grok", "opus"]);
 
-    const backend = new ScriptedProseLegCourtBackend(
-      liveCmrJudgeContinue([liveFinding], {
-        successfulLegs: production.successfulLegs,
-        skippedLegs: production.skippedLegs,
-        reason: "judge distilled live finding from prose leg evidence",
-        ...CMR_EVIDENCE,
-      }),
+    const production = await backend.invokeRunCmrWorker(
+      cmrWorkerSpec("fresh", "completeness"),
+      { familyBase: "fb", cmrPass: "completeness" },
     );
+    expect(production).toMatchObject({
+      kind: "judge",
+      status: "continue",
+      successfulLegs: ["grok", "opus"],
+    });
 
     const result = await runVerifyCmr({
       phase: "final",
-      familyBase: "family/1005-prose-continue",
-      familyBackend: backend,
-      familyHeadAfter: "head-485-prose",
+      familyBase: "fb",
+      familyBackend: backend as unknown as FamilyBackend,
+      familyHeadAfter: head,
     });
 
     expect(result.ran).toBe(true);
@@ -411,5 +701,16 @@ describe("#1005 ADR 0141 family court — prose transports open the court", () =
           ),
       ),
     ).toBe(false);
+  });
+});
+
+// Keep a thin direct-overlay regression without court fixtures (no liveCmrJudge).
+describe("#1005 ADR 0141 productionOutcome helper — transports only", () => {
+  it("derives successfulLegs from prose transports without pre-mint cargo", () => {
+    const production = productionOutcomeFromProseTransports({
+      status: "converged",
+      transports: [...PROSE_LEG_TRANSPORTS_485],
+    });
+    expect(production.successfulLegs).toEqual(["grok", "opus"]);
   });
 });
