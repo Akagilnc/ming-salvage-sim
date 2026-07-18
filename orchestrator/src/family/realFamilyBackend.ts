@@ -101,6 +101,7 @@ import {
   type LegTransport,
 } from "../legPaper.js";
 
+import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 

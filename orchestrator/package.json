@@ -5,6 +5,7 @@
   "description": "Ming LLM Epic Orchestrator — runner for AFK TDD dev loop (#244)",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/apply-sandcastle-cancel-patch.mjs",
     "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
