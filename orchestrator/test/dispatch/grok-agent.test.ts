@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -32,13 +33,33 @@ import { routeSmokeEntries, resolveRouteModels } from "../../src/modelRoutes.js"
 
 const transportDirs: string[] = [];
 afterEach(() => {
-  for (const dir of transportDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of transportDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 function transportDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   transportDirs.push(dir);
   return dir;
+}
+
+/** Isolated env for transport shells — never inherit test-harness hold/path vars. */
+function transportEnv(
+  binDir: string,
+  staging: string,
+  pathOut: string,
+  extra: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    TMPDIR: staging,
+    GROK_PROMPT_PATH_OUT: pathOut,
+    // Harness-only: default off so a polluted parent env cannot hang normal-exit cases.
+    GROK_HOLD_OPEN: "0",
+    ...extra,
+  };
 }
 
 function fakeGrokPath(binDir: string): string {
@@ -77,11 +98,10 @@ describe("#807 grokAgent AgentProvider", () => {
     const bin = join(root, "bin");
     const staging = join(root, "staging");
     const pathOut = join(root, "prompt-path");
-    await import("node:fs/promises").then(({ mkdir }) => Promise.all([
-      mkdir(bin),
-      mkdir(staging),
-    ]));
+    mkdirSync(bin);
+    mkdirSync(staging);
     fakeGrokPath(bin);
+    // >128KB payload — the reason worker transport stages to a file, not argv.
     const prompt = `start-${"明".repeat(70_000)}-end`;
     const built = grokAgent("grok-4.5").buildPrintCommand({
       prompt,
@@ -89,16 +109,13 @@ describe("#807 grokAgent AgentProvider", () => {
     });
     const result = await new Promise<{ stdout: string; code: number | null }>((resolve) => {
       const child = spawn("bash", ["-c", built.command], {
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH ?? ""}`,
-          TMPDIR: staging,
-          GROK_PROMPT_PATH_OUT: pathOut,
-        },
+        env: transportEnv(bin, staging, pathOut),
         stdio: ["pipe", "pipe", "pipe"],
       });
       let stdout = "";
-      child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+      child.stdout.setEncoding("utf8").on("data", (chunk) => {
+        stdout += chunk;
+      });
       child.on("close", (code) => resolve({ stdout, code }));
       child.stdin.end(built.stdin);
     });
@@ -113,10 +130,8 @@ describe("#807 grokAgent AgentProvider", () => {
     const bin = join(root, "bin");
     const staging = join(root, "staging");
     const pathOut = join(root, "prompt-path");
-    await import("node:fs/promises").then(({ mkdir }) => Promise.all([
-      mkdir(bin),
-      mkdir(staging),
-    ]));
+    mkdirSync(bin);
+    mkdirSync(staging);
     fakeGrokPath(bin);
     const built = grokAgent("grok-4.5").buildPrintCommand({
       prompt: "sensitive worker context",
@@ -124,17 +139,13 @@ describe("#807 grokAgent AgentProvider", () => {
     });
     const child = spawn("bash", ["-c", built.command], {
       detached: true,
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH ?? ""}`,
-        TMPDIR: staging,
-        GROK_PROMPT_PATH_OUT: pathOut,
-        GROK_HOLD_OPEN: "1",
-      },
+      env: transportEnv(bin, staging, pathOut, { GROK_HOLD_OPEN: "1" }),
       stdio: ["pipe", "ignore", "ignore"],
     });
     child.stdin.end(built.stdin);
-    await expect.poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 }).toMatch(/^.+$/);
+    await expect
+      .poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 })
+      .toMatch(/^.+$/);
     process.kill(-child.pid!, "SIGTERM");
     await new Promise<void>((resolve) => child.on("close", () => resolve()));
     expect(readdirSync(staging)).toEqual([]);
