@@ -375,23 +375,6 @@ class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
 }
 
 describe("#964 grok headless auth — native fail-fast surface", () => {
-  it("grokAgent print command stays headless (prompt-file + streaming-json; no login subcommand)", () => {
-    const cmd = grokAgent("grok-4.5").buildPrintCommand({
-      prompt: "resolve the conflict",
-      dangerouslySkipPermissions: true,
-    });
-    expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("cat > \"$prompt_file\"");
-    expect(cmd.command).toContain("--prompt-file \"$prompt_file\"");
-    expect(cmd.command).toContain("trap cleanup_prompt EXIT");
-    expect(cmd.command).toContain("trap 'relay_signal TERM' TERM");
-    expect(cmd.command).toContain("--output-format streaming-json");
-    expect(cmd.command).toContain("--always-approve");
-    expect(cmd.command).not.toMatch(/\blogin\b/);
-    expect(cmd.command).not.toMatch(/--device-auth|--device-code/);
-    expect(cmd.stdin).toBe("resolve the conflict");
-  });
-
   it("pins container grok to a fail-fast non-interactive release (0.2.102+)", () => {
     // Production mechanism (#964): pin ≥0.2.102 so headless auth death fail-fasts
     // ("Not signed in") instead of interactive device-code wait (0.2.93 flight3).

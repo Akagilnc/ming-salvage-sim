@@ -66,7 +66,7 @@ function fakeGrokPath(binDir: string): string {
   const path = join(binDir, "grok");
   writeFileSync(
     path,
-    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then while :; do sleep 1; done; fi\nexit 0\n",
+    "#!/bin/sh\ncat \"$2\"\nprintf '%s' \"$2\" > \"$GROK_PROMPT_PATH_OUT\"\nif [ \"${GROK_HOLD_OPEN:-0}\" = 1 ]; then while :; do :; done; fi\nexit 0\n",
     "utf8",
   );
   chmodSync(path, 0o755);
@@ -125,32 +125,73 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(readdirSync(staging)).toEqual([]);
   });
 
-  it("removes the staged prompt and exits when the worker process group is terminated", async () => {
-    const root = transportDir("grok-transport-term-");
-    const bin = join(root, "bin");
-    const staging = join(root, "staging");
-    const pathOut = join(root, "prompt-path");
-    mkdirSync(bin);
-    mkdirSync(staging);
-    fakeGrokPath(bin);
-    const built = grokAgent("grok-4.5").buildPrintCommand({
-      prompt: "sensitive worker context",
-      dangerouslySkipPermissions: true,
-    });
-    const child = spawn("bash", ["-c", built.command], {
-      detached: true,
-      env: transportEnv(bin, staging, pathOut, { GROK_HOLD_OPEN: "1" }),
-      stdio: ["pipe", "ignore", "ignore"],
-    });
-    child.stdin.end(built.stdin);
-    await expect
-      .poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 })
-      .toMatch(/^.+$/);
-    process.kill(-child.pid!, "SIGTERM");
-    await new Promise<void>((resolve) => child.on("close", () => resolve()));
-    expect(readdirSync(staging)).toEqual([]);
-  });
-
+  it.each(["SIGHUP", "SIGINT", "SIGTERM"] as const)(
+    "removes the staged prompt and preserves %s worker interruption semantics",
+    async (signal) => {
+      const root = transportDir("grok-transport-term-");
+      const bin = join(root, "bin");
+      const staging = join(root, "staging");
+      const pathOut = join(root, "prompt-path");
+      mkdirSync(bin);
+      mkdirSync(staging);
+      fakeGrokPath(bin);
+      const built = grokAgent("grok-4.5").buildPrintCommand({
+        prompt: "sensitive worker context",
+        dangerouslySkipPermissions: true,
+      });
+      const child = spawn("bash", ["-c", built.command], {
+        detached: true,
+        env: transportEnv(bin, staging, pathOut, { GROK_HOLD_OPEN: "1" }),
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      child.stdin.end(built.stdin);
+      const pid = child.pid!;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await expect
+          .poll(() => readFileSync(pathOut, "utf8"), { timeout: 5_000 })
+          .toMatch(/^.+$/);
+        const closed = new Promise<{
+          code: number | null;
+          signal: NodeJS.Signals | null;
+        }>((resolve) => {
+          child.once("close", (code, closeSignal) => {
+            resolve({ code, signal: closeSignal });
+          });
+        });
+        process.kill(-pid, signal);
+        const result = await Promise.race([
+          closed,
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error(`${signal} worker group did not exit within 5s`)),
+              5_000,
+            );
+          }),
+        ]);
+        expect(result).toEqual({ code: null, signal });
+        expect(readdirSync(staging)).toEqual([]);
+        await expect
+          .poll(() => {
+            try {
+              process.kill(-pid, 0);
+              return true;
+            } catch {
+              return false;
+            }
+          }, { timeout: 2_000 })
+          .toBe(false);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // Expected once the process group has exited; failure cleanup only.
+        }
+      }
+    },
+    10_000,
+  );
 
   it("emits text (not result) per chunk, then ONE accumulated result on end", () => {
     // #899 hotfix / #928: result.stdout (typed envelope / sidecar extraction
