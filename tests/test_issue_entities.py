@@ -238,8 +238,8 @@ def test_issue_unified_person_change_shadows_legacy_person_effects(game):
         content.characters[name].office_type = old_office_type
 
 
-def test_resolve_rejects_bad_unified_person_change_effect(game):
-    db, state, content = game
+def test_resolve_rejects_bad_unified_person_change_effect(read_game):
+    db, state, content = read_game
 
     with pytest.raises(ValueError, match="人物变更 非法"):
         I._apply_issue_entities(
@@ -252,24 +252,24 @@ def test_resolve_rejects_bad_unified_person_change_effect(game):
 
 
 @pytest.mark.parametrize("bad_effect", [{"人物变更": "bad"}, {"人物变更": ["bad"]}])
-def test_issue_person_change_effect_rejects_malformed_shape(game, bad_effect):
-    db, state, content = game
+def test_issue_person_change_effect_rejects_malformed_shape(read_game, bad_effect):
+    db, state, content = read_game
 
     with pytest.raises(ValueError, match="人物变更"):
         I._apply_issue_entities(db, state, bad_effect, "局势#测试结案", content=content)
 
 
-def test_malformed_army_raises_not_silent(game):
+def test_malformed_army_raises_not_silent(read_game):
     """缺 manpower 的建军必须抛错，不许静默跳过（全局严格）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "new_armies": [{"id": "broken", "name": "残军", "owner_power": "ming"}],
         }, "局势#测试")
 
 
-def test_army_bad_owner_power_raises(game):
-    db, state, _ = game
+def test_army_bad_owner_power_raises(read_game):
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "new_armies": [{"id": "x", "name": "野军", "owner_power": "不存在的势力",
@@ -277,16 +277,16 @@ def test_army_bad_owner_power_raises(game):
         }, "局势#测试")
 
 
-def test_unknown_character_raises(game):
-    db, state, _ = game
+def test_unknown_character_raises(read_game):
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "character_status_changes": [{"name": "查无此人张三", "status": "dead"}],
         }, "局势#测试")
 
 
-def test_bad_status_raises(game):
-    db, state, content = game
+def test_bad_status_raises(read_game):
+    db, state, content = read_game
     name = active_ming_character(db, content)
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
@@ -294,9 +294,9 @@ def test_bad_status_raises(game):
         }, "局势#测试")
 
 
-def test_empty_effect_noop(game):
+def test_empty_effect_noop(read_game):
     """无实体段的 effect 不应报错、不改军队数。"""
-    db, state, _ = game
+    db, state, _ = read_game
     before = _army_count(db)
     I._apply_issue_entities(db, state, {"metrics": {"民心": 5}}, "局势#测试")
     assert _army_count(db) == before
@@ -331,25 +331,25 @@ def test_apply_score_extraction_rejects_nondict_power_second_level_per_entity(ga
     assert applied["validate_shape_rejections"][0]["item"] == {"entity_id": "mongol", "raw_value": "bad"}
 
 
-def test_apply_score_extraction_rejects_nondict_list_item_per_item(game):
+def test_apply_score_extraction_rejects_nondict_list_item_per_item(read_game):
     """ADR0015：list 字段含非 dict 项 → 逐项拒收。"""
-    db, state, _ = game
+    db, state, _ = read_game
     applied = I.apply_score_extraction(db, state, {"fiscal_creates": [{"key": "x"}, "bad-scalar"]})
     assert applied["validate_shape_rejections"][0]["item"] == {"raw_value": "bad-scalar"}
 
 
-def test_apply_score_extraction_tolerates_null_field(game):
+def test_apply_score_extraction_tolerates_null_field(read_game):
     """Gemini R1:LLM 输出某字段为 null 时,validate 不得比 apply 更严——None 当缺省 no-op,
     不抛 ValueError(apply 本就 `.get(key) or {}` 容忍)。"""
-    db, state, _ = game
+    db, state, _ = read_game
     # region_delta=None(null)+ army_delta=None,均应被当空 no-op 放行,不抛。
     I.apply_score_extraction(db, state, {"region_delta": None, "army_delta": None})
 
 
-def test_apply_score_extraction_rejects_unknown_top_level_key(game):
+def test_apply_score_extraction_rejects_unknown_top_level_key(read_game):
     """#57:落库核拒未知顶层 key(拼写错=静默无效落库)。用 canonicalize 之后仍不在 schema 的
     真·未知 key(非中文别名——别名会被 _canonicalize_extraction 映射成合法 key,Red Team RT-C)。"""
-    db, state, _ = game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I.apply_score_extraction(db, state, {"region_delta_typo": {"shanxi": {"unrest": 5}}})
 
@@ -367,18 +367,18 @@ def test_resolve_army_delta_reinforces_existing(game):
     assert _army_count(db) == before          # 扩编不新建军队
 
 
-def test_army_delta_unknown_army_raises(game):
+def test_army_delta_unknown_army_raises(read_game):
     """army_delta 引用未入库军队 → 抛错中断（全局严格，绝不静默）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "army_delta": {"查无此军": {"manpower": 100}},
         }, "局势#测试")
 
 
-def test_non_dict_character_status_item_raises(game):
+def test_non_dict_character_status_item_raises(read_game):
     """character_status_changes 含非 dict 项 → 抛错，不静默丢（docstring 称全局严格，CMR F7）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "character_status_changes": ["这不是dict"],

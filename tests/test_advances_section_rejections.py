@@ -28,8 +28,8 @@ def _make_active_issue(db, state):
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_advance_non_dict_item_rejected_not_crash(game, bad_item):
-    db, state, _ = game
+def test_advance_non_dict_item_rejected_not_crash(read_game, bad_item):
+    db, state, _ = read_game
     # 非 dict adv 项（advances:[null]/标量）：adv.get 会抛 AttributeError 崩整月——逐项拒收守门。
     out = I.apply_issue_tracker_output(db, state, {"advances": [bad_item]})
     rej = _rejected(out)
@@ -39,8 +39,8 @@ def test_advance_non_dict_item_rejected_not_crash(game, bad_item):
 
 
 @pytest.mark.parametrize("bad_id", ["abc", None, True, 1.5, -10 ** 100])
-def test_advance_bad_issue_id_rejected(game, bad_id):
-    db, state, _ = game
+def test_advance_bad_issue_id_rejected(read_game, bad_id):
+    db, state, _ = read_game
     # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 逐项拒收留痕，不裸 continue 静默丢、不逃逸。
     out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": bad_id, "delta_bar": 5}]})
     rej = _rejected(out)
@@ -68,8 +68,8 @@ def test_advance_dirty_int_field_rejected(game, field, bad):
     assert rej[0]["category"] == "invalid_enum"
 
 
-def test_advance_missing_issue_rejected(game):
-    db, state, _ = game
+def test_advance_missing_issue_rejected(read_game):
+    db, state, _ = read_game
     # advance_issue 回 None（issue 不存在）→ missing_ref 逐项拒收留痕，不裸 continue 静默丢。
     out = I.apply_issue_tracker_output(db, state, {"advances": [{"issue_id": 999999, "delta_bar": 5}]})
     rej = _rejected(out)
@@ -116,8 +116,8 @@ def test_advance_code_exception_propagates(game, monkeypatch):
 # ——矛盾且结算 commit 无 rollback。fix：pre-check active，确认后才应用 metric。
 
 
-def test_advance_missing_issue_no_metric_leak(game):
-    db, state, _ = game
+def test_advance_missing_issue_no_metric_leak(read_game):
+    db, state, _ = read_game
     before = dict(state.metrics)
     out = I.apply_issue_tracker_output(db, state, {
         "advances": [{"issue_id": 999999, "delta_bar": 5, "metric_delta": {"民心": -10}}],

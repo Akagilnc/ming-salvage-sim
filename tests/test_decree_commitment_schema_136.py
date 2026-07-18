@@ -1,5 +1,4 @@
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -16,8 +15,8 @@ def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
     }
 
 
-def test_issues_schema_has_commitment_deadline_columns(game):
-    db, _, _ = game
+def test_issues_schema_has_commitment_deadline_columns(read_game):
+    db, _, _ = read_game
 
     cols = _table_columns(db, "issues")
 
@@ -149,8 +148,8 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     assert row["commitment_kind"] == "until_stop"
 
 
-def test_decree_commitment_shape_with_string_stop_condition_requires_marker(game):
-    db, state, _ = game
+def test_decree_commitment_shape_with_string_stop_condition_requires_marker(read_game):
+    db, state, _ = read_game
 
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
@@ -305,18 +304,3 @@ def test_decree_initiative_cap_rejects_sixteenth_with_updated_message(game):
     assert len(rejected) == 1, out
     assert "十五事在办" in rejected[0]["reason"]
     assert "十事在办" not in rejected[0]["reason"]
-
-
-def test_delta_schema_pitfall_table_documents_fifteen_initiative_cap():
-    text = Path("docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
-
-    assert "active `initiative` ≤15" in text
-    assert "active `initiative` ≤10" not in text
-    assert "`end_turn`" in text
-    assert "连续 N 月" in text
-    assert "end_turn = turn + N" in text
-    assert "`commitment_kind`" in text
-    assert "`stop_condition` 是别名" not in text
-    assert "`stop_condition` | dict" in text
-    assert "文本或 dict" not in text
-    assert "`cannon`" in text

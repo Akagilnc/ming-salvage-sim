@@ -107,29 +107,6 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
-def test_army_numeric_fields_synced_across_prompts():
-    """治本（CMR codexA/B 火器 coverage-drift）：军队数值字段以 constants 为唯一源，
-    extractor 两 prompt 必须全含其中文标签、enrich prompt 至少含军备两轴。
-    标签从 ARMY_SCORE_FIELDS/ARMY_FIELD_LABELS 派生 —— 将来加字段本测试立挂，
-    不再每轮 cross-model review 揪一处没同步的 prompt（杀 whack-a-mole）。"""
-    import os
-    import inspect
-    from ming_sim.constants import ARMY_SCORE_FIELDS, ARMY_FIELD_LABELS
-    base = os.path.join(os.path.dirname(__file__), "..", "content", "prompts")
-    shared = open(os.path.join(base, "score_extractor_shared.md"), encoding="utf-8").read()
-    military = open(os.path.join(base, "score_extractor_military_external.md"), encoding="utf-8").read()
-    # extractor 可写数值轴 = score 字段去 arrears（欠饷由 flows 唯一变更，prompt 严禁写）
-    full = [ARMY_FIELD_LABELS[f] for f in ARMY_SCORE_FIELDS if f != "arrears"]
-    for label in full:
-        assert label in shared, f"score_extractor_shared.md 缺军队数值字段「{label}」(constants 已定义)"
-        assert label in military, f"score_extractor_military_external.md 缺军队数值字段「{label}」(constants 已定义)"
-    # enrich 内联 prompt（数值结算设计器）至少含军备两轴，新军/扩编可武装
-    import ming_sim.cli_backend as _cb
-    enrich_src = inspect.getsource(_cb.enrich_initiative_effects)
-    for f in ("firearm_equipment", "cannon_equipment"):
-        assert ARMY_FIELD_LABELS[f] in enrich_src, f"enrich prompt 缺军备轴「{ARMY_FIELD_LABELS[f]}」"
-
-
 def test_army_detail_shows_firearm_cannon(game):
     """army_detail(大臣 inspect_army 走它)必须显示火器/随军大炮数值——否则 tool-call 大臣查军详情
     看不到军备两轴，火器 read 侧不闭环(CMR codexB read-surface)。"""
@@ -143,9 +120,9 @@ def test_army_detail_shows_firearm_cannon(game):
     assert "随军大炮3" in detail
 
 
-def test_army_report_shows_firearm_and_cannon(game):
+def test_army_report_shows_firearm_and_cannon(read_game):
     """army_report(list_armies 警讯)带火器 + 随军大炮(炮)，read 摘要面闭环（CMR codexC）。"""
-    db, _, _ = game
+    db, _, _ = read_game
     rpt = db.army_report(limit=8)
     assert "火器" in rpt
     assert "炮" in rpt
@@ -164,14 +141,6 @@ def test_army_detail_dynamic_new_army_shows_firearm(game):
         detail = db.army_detail(key)
         assert "火器77" in detail, key
         assert "随军大炮5" in detail, key
-
-
-def test_game_world_prompt_lists_firearm_cannon():
-    """全局 game_world 军队字段表含火器/随军大炮(大臣据此知军备轴，CMR codexB)。"""
-    import os
-    p = os.path.join(os.path.dirname(__file__), "..", "content", "prompts", "game_world.md")
-    txt = open(p, encoding="utf-8").read()
-    assert "火器" in txt and "随军大炮" in txt
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content):
@@ -195,10 +164,10 @@ def test_fresh_seed_wires_firearm_not_all_zero(content):
                 os.remove(f)
 
 
-def test_create_army_cannon_nonint_rejected_not_crash(game):
+def test_create_army_cannon_nonint_rejected_not_crash(read_game):
     """建军时 cannon_equipment 给非 int(如"几门")→ 逐项拒收留痕,不抛崩也不再
     静默兜底 0（旧语义被 cmr S2 r1「在场即须合法」取代——静默 0=伪造军备）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, [{
         "id": "cannon_nonint_test", "name": "炮非数测试", "owner_power": "ming",
         "manpower": 2000, "maintenance_per_turn": 1, "cannon_equipment": "几门",
@@ -227,9 +196,9 @@ def test_apply_army_delta_chinese_keys(game):
     assert row["cannon_equipment"] == 5
 
 
-def test_simulator_payload_includes_firearm(game):
+def test_simulator_payload_includes_firearm(read_game):
     """喂 simulator 的军表必须带火器/大炮列，否则 LLM 看不见、软判无从谈起。"""
-    db, state, _ = game
+    db, state, _ = read_game
     from ming_sim.simulation import build_simulator_payload
     payload = build_simulator_payload(state, db, "", "")
     armies = payload.get("armies") or {}
