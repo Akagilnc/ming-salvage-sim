@@ -28,30 +28,23 @@ def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge
     assert hidden.name not in names
 
 
-def test_same_faction_network_respects_recommender_identity_band(game):
+def test_low_identity_recommender_can_see_high_identity_same_faction_candidate(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
-    candidates = [c for c in content.characters.values()
-                  if c.name != recommender.name
-                  and c.faction == recommender.faction
-                  and c.office_type not in ("后宫", "宗藩")]
-    assert candidates
-    visible, hidden = candidates[:2]
-    db.conn.execute("UPDATE characters SET identity=50 WHERE name=?", (recommender.name,))
-    db.conn.execute(
-        "UPDATE characters SET identity=40, status='offstage', office='' WHERE name=?",
-        (visible.name,),
-    )
+    candidate = next(c for c in content.characters.values()
+                     if c.name != recommender.name
+                     and c.faction == recommender.faction
+                     and c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute("UPDATE characters SET identity=5 WHERE name=?", (recommender.name,))
     db.conn.execute(
         "UPDATE characters SET identity=95, status='offstage', office='' WHERE name=?",
-        (hidden.name,),
+        (candidate.name,),
     )
     db.conn.commit()
 
     names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
 
-    assert visible.name in names
-    assert hidden.name not in names
+    assert candidate.name in names
 
 
 def test_private_and_public_structured_hearing_exposes_cross_faction_candidate(game):

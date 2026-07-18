@@ -6,7 +6,6 @@ from typing import Any, Dict, Iterable, List
 
 from .knowledge import knowledge_row_visible_to
 from .participant_roster import participant_roster_names
-from .qualitative import identity_bucket
 
 
 def _known_names(db: Any, recommender: str) -> set[str]:
@@ -83,15 +82,14 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     if conn is None:
         return []
     source = conn.execute(
-        "SELECT faction, identity, name, office, office_type FROM characters WHERE name=?", (recommender,)
+        "SELECT faction FROM characters WHERE name=?", (recommender,)
     ).fetchone()
     if source is None:
         return []
     faction = str(source["faction"] or "")
-    recommender_identity_bucket = identity_bucket(source["identity"])
     known = _known_names(db, recommender)
     rows = conn.execute(
-        "SELECT name, office, office_type, faction, identity, status, reason_code, status_reason "
+        "SELECT name, office, office_type, faction, status, reason_code, status_reason "
         "FROM characters WHERE name != ? AND power_id='ming' "
         "AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') "
         "AND status IN ('active','offstage','retired','dismissed') "
@@ -103,12 +101,6 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     result: List[Dict[str, object]] = []
     for row in rows:
         same_faction = str(row["faction"] or "") == faction
-        if (
-            same_faction
-            and str(row["name"]) not in known
-            and identity_bucket(row["identity"]) > recommender_identity_bucket
-        ):
-            continue
         if not same_faction and str(row["name"]) not in known:
             continue
         status = str(row["status"] or "")
