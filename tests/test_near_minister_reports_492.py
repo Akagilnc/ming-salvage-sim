@@ -36,11 +36,14 @@ def test_vacancy_projection_recognises_acting_office_text(game):
         assert row["holder_name"] == "胡廷宴"
 
 
-def test_equivalent_seeded_two_guangdong_governor_title_is_not_vacant(game):
+def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(game):
     db, _state, _content = game
-    vacancies = {row["office_title"]: row for row in db.list_office_vacancies()}
-    assert vacancies["两广总督"]["holder_name"] == "王尊德"
-    assert "现由王尊德任事" in build_return_report(db, "两广总督可有？")["statement"]
+
+    for title in ("陕西巡抚", "三边总督"):
+        assert title in build_return_report(db, f"{title}可有？")["statement"]
+    assert build_return_report(db, "两广总督可有？")["statement"] == (
+        "近臣暂未查到与所问相符的督抚官缺。"
+    )
 
 
 def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatch):

@@ -15,17 +15,6 @@ from ming_sim.qualitative import qualitative_audience_text
 OFFICE_SLOTS = (
     ("陕西巡抚", "督抚", "shaanxi", "陕西"),
     ("三边总督", "督抚", "shaanxi", "陕西、甘肃、宁夏"),
-    ("蓟辽总督", "督抚", "liaodong", "蓟州、辽东"),
-    ("宣大总督", "督抚", "shanxi", "宣府、大同"),
-    ("山西巡抚", "督抚", "shanxi", "山西"),
-    ("河南巡抚", "督抚", "henan", "河南"),
-    ("山东巡抚", "督抚", "shandong", "山东"),
-    ("登莱巡抚", "督抚", "deng_lai", "登莱"),
-    ("湖广巡抚", "督抚", "huguang", "湖广"),
-    ("四川巡抚", "督抚", "sichuan", "四川"),
-    ("福建巡抚", "督抚", "fujian", "福建"),
-    ("广东巡抚", "督抚", "guangdong", "广东"),
-    ("两广总督", "督抚", "guangdong", "两广"),
 )
 
 

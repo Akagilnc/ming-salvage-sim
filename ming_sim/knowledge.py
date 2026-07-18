@@ -12,6 +12,7 @@ import json
 import re
 from typing import Any, Dict
 
+from ming_sim.participant_roster import participant_roster_names
 from ming_sim.qualitative import qualitative_audience_text
 
 
@@ -104,14 +105,7 @@ def knowledge_row_visible_to(
     except (KeyError, IndexError, TypeError):
         event_is_public = False
     if not event_is_public and source is not None and str(source["kind"] or "") != "public":
-        try:
-            roster = json.loads(source["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        participants = {
-            str(item.get("character_id") or item.get("name"))
-            for item in roster if isinstance(item, dict)
-        }
+        participants = participant_roster_names(source["participant_roster"])
         if participants and character_name not in participants:
             return False
     return True
@@ -231,15 +225,7 @@ def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[D
                 or (source_id.startswith("chapter:") and not source_id.startswith("chapter_source:"))
                 or re.fullmatch(r"settlement:narrative:\d+", source_id)):
             continue
-        try:
-            roster = json.loads(row["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        participants = {
-            str(item.get("character_id") or item.get("name"))
-            for item in roster
-            if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-        }
+        participants = participant_roster_names(row["participant_roster"])
         try:
             excluded = json.loads(row["excluded_names"] or "[]")
         except (TypeError, ValueError):
@@ -575,17 +561,12 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
         source_id = f"issue:{issue['id']}"
         try:
-            roster = json.loads(issue["participant_roster"] or "[]")
-        except (TypeError, ValueError, KeyError):
-            roster = []
+            participants = participant_roster_names(issue["participant_roster"])
+        except (KeyError, IndexError, TypeError):
+            participants = set()
         # Unassigned issues are public; assigned issues are visible only when
         # this character entered the durable source projection.
-        if roster:
-            participants = {
-                str(item.get("character_id") or item.get("name"))
-                for item in roster
-                if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-            }
+        if participants:
             if character_name not in participants or source_id not in known_source_ids:
                 continue
         if not knowledge_row_visible_to(

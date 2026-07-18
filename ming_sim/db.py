@@ -32,6 +32,7 @@ from ming_sim.models import (
     loads_effect_dict, monthly_amount, period_label,
 )
 from ming_sim.intelligence import OFFICE_SLOTS
+from ming_sim.participant_roster import participant_roster_names
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -763,7 +764,6 @@ class GameDB:
               ON c.status = 'active'
              AND (
                  replace(replace(c.office, '（署理）', ''), '署理', '') = s.office_title
-                 OR (s.office_title = '两广总督' AND c.office = '总督两广')
              );
 
             CREATE TABLE IF NOT EXISTS person_logs (
@@ -7973,15 +7973,7 @@ class GameDB:
         ).fetchall()
         character_names = {str(row["name"]) for row in characters}
         for row in source_rows:
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            participants = {
-                str(item.get("character_id") or item.get("name"))
-                for item in roster
-                if isinstance(item, Mapping) and (item.get("character_id") or item.get("name"))
-            }
+            participants = participant_roster_names(row["participant_roster"])
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
             except (TypeError, ValueError):
@@ -10146,14 +10138,7 @@ class GameDB:
             "SELECT turn, year, period, kind, title, body, source_id, participant_roster, excluded_names "
             "FROM character_knowledge_sources ORDER BY turn, id"
         ).fetchall():
-            try:
-                roster = json.loads(row["participant_roster"] or "[]")
-            except (TypeError, ValueError):
-                roster = []
-            names = {
-                str(item.get("character_id") or item.get("name"))
-                for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-            }
+            names = participant_roster_names(row["participant_roster"])
             if str(row["source_id"]) in known_sources or str(character_name) not in names:
                 continue
             item = {"turn": int(row["turn"]), "year": int(row["year"]),
@@ -10192,14 +10177,7 @@ class GameDB:
                 source_id = str(row["source_id"])
                 if source_id in known_sources:
                     continue
-                try:
-                    roster = json.loads(row["participant_roster"] or "[]")
-                except (TypeError, ValueError):
-                    roster = []
-                names = {
-                    str(item.get("character_id") or item.get("name"))
-                    for item in roster if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
-                }
+                names = participant_roster_names(row["participant_roster"])
                 if str(character_name) not in names:
                     continue
                 result.append({
