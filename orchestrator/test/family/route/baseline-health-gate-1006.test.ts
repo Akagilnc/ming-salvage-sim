@@ -432,6 +432,12 @@ describe("#1006 worker-container full-test argv (env parity)", () => {
     expect(argv[wIdx + 1]).toBe(
       "/home/agent/baseline-worksite/orchestrator",
     );
+    const imageIdx = argv.indexOf("ming-orchestrator-coder:latest");
+    const entrypointIdx = argv.indexOf("--entrypoint");
+    expect(entrypointIdx).toBeGreaterThan(-1);
+    expect(argv[entrypointIdx + 1]).toBe("bash");
+    expect(entrypointIdx).toBeLessThan(imageIdx);
+    expect(argv.slice(imageIdx + 1)).toEqual(["-lc", "npm test"]);
     // Command runs inside the container image — never host `npm test` alone.
     // familyBase checkout is host-side only (ensureBaselineWorksiteReady); no
     // second container-side git checkout on the bind mount (#1006 CR N1).
