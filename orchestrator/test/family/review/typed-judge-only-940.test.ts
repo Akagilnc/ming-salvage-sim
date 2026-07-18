@@ -1,3 +1,4 @@
+// @vitest-pool heavy
 /**
  * #940 — CMR / online review / 线上复验 only consume typed judge.
  *
@@ -421,4 +422,3 @@ describe("#940 unified worker dispatch — ID-004 / ID-006 still hold", () => {
     ).toBe(true);
   });
 });
-

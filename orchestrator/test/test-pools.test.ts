@@ -14,14 +14,22 @@ describe("canonical test pool classification (#990)", () => {
   it("rejects process, Sandcastle, and real-git taxes from the fast pool", () => {
     const keyword = ["im", "port"].join("");
     const taxedSources = [
+      "// @vitest-pool heavy\n",
       `${keyword} { execFileSync } from "node:child_process";\nexecFileSync("node", ["worker.js"]);`,
       `${keyword} { Sandcastle } from "@ai-hero/sandcastle";\nawait Sandcastle.create();`,
       `${keyword} { runScriptedStructuredOutput } from "./helpers/scripted-sandcastle-run.js";\nawait runScriptedStructuredOutput({});`,
       `${keyword} { execFileSync } from "node:child_process";\nexecFileSync("git", ["init"]);`,
     ];
 
-    expect(taxedSources.map(classifyTestSource)).toEqual(["heavy", "heavy", "heavy", "heavy"]);
+    expect(taxedSources.map(classifyTestSource)).toEqual(["heavy", "heavy", "heavy", "heavy", "heavy"]);
     expect(classifyTestFile(resolve("test/family/route/e2e-driver.test.ts"))).toBe("heavy");
+    expect(
+      classifyTestSource(`${keyword}("node:child_process").then(({ spawnSync }) => spawnSync("node", ["-v"]));`),
+    ).toBe("heavy");
+  });
+
+  it("keeps fake-backend scheduler behavior in fast despite production imports", () => {
+    expect(classifyTestFile(resolve("test/route/pure-scheduler.test.ts"))).toBe("fast");
   });
 
   it("fails if any mechanically heavy test is discovered in the fast pool", () => {
