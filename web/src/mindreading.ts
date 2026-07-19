@@ -74,10 +74,37 @@ export const chatReducer = (state: ChatMessage[], action: ChatAction): ChatMessa
     case "reset":
       return state.length ? [] : state;
     case "history":
-      return projectServerHistory(action.history);
+      return reconcileHistory(state, projectServerHistory(action.history));
     case "mindreading":
       return insertMindreadingByTurn(state, action.chatTurnId, action.records);
     default:
       return state;
   }
+};
+
+/**
+ * 新历史投影替换整串时，保住「已浮现但新投影尚未含」的读心递话（#499）——
+ * done1→mind1→陈旧 done2 的 done2 投影可能早于 mind1 落库、缺 a1；若整串替换会抹掉
+ * a1。凡其归属轮仍在新投影中的已浮现递话，按归属轮重新定位补回；归属轮已消失
+ * （撤回/切人）的则随之丢弃。定位/去重复用 insertMindreadingByTurn，不另建缓存。
+ */
+const reconcileHistory = (prev: ChatMessage[], projected: ChatMessage[]): ChatMessage[] => {
+  const turnsInView = new Set(
+    projected
+      .map((m) => m.chatTurnId)
+      .filter((t): t is number => typeof t === "number" && t > 0),
+  );
+  let result = projected;
+  for (const m of prev) {
+    if (
+      m.role !== "attendant" ||
+      typeof m.chatTurnId !== "number" ||
+      typeof m.recordId !== "number" ||
+      !turnsInView.has(m.chatTurnId)
+    ) {
+      continue;
+    }
+    result = insertMindreadingByTurn(result, m.chatTurnId, [{ id: m.recordId, narration: m.content }]);
+  }
+  return result;
 };

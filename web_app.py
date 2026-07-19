@@ -1879,7 +1879,6 @@ class WebGame:
                 pipe = AudienceTurnPipeline(write_gate=self._runtime_write_gate())
             if not pipe.reply_persisted:
                 pipe.accept_persisted_reply(str(minister_reply))
-            pipe.mark_reply_visible()
 
             def _job(reply: str):
                 return run_mindreading_for_turn(
@@ -1891,7 +1890,6 @@ class WebGame:
                     llm_config=getattr(self.session, "llm_config", None),
                     chat_turn_id=chat_turn_id,
                     write_gate=self._runtime_write_gate(),
-                    timeline=pipe.timeline,
                 )
 
             fut = pipe.issue_mindreading(_job, minister_reply=str(minister_reply))
@@ -1971,28 +1969,20 @@ class WebGame:
                     # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
                     character = self.session._character(minister_name)
                     action_intent_future = self.session._start_cli_action_intent(character, text)
-                    if action_intent_future is not None:
-                        pipe.note_parallel_issued("action_intent")
 
                     def produce(on_delta: Any) -> str:
                         nonlocal payload
-                        # 用 pipeline 的 on_delta 记首 token；生产流仍走既有 payload 装配
-                        def _emit(delta: str) -> None:
-                            on_delta(delta)
-
                         payload = self._chat_stream_payload(
                             minister_name, text, chat_turn_id, before_snapshot,
-                            accepted_turn, _emit,
+                            accepted_turn, on_delta,
                             action_intent_future=action_intent_future,
                         )
                         return str((payload or {}).get("answer") or "")
 
                     reply = pipe.stream_reply(produce, on_delta=emit_delta)
-                    # _chat_stream_payload 已落库回话；公开 API 接管状态机
+                    # _chat_stream_payload 已落库回话；公开 API 接管状态机（读心闸门据此打开）
                     if reply:
                         pipe.accept_persisted_reply(reply)
-                    if pipe.reply_persisted:
-                        pipe.mark_reply_visible()
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
                     # 否则 error 事件不会被投进 queue、消费者永久挂死。
