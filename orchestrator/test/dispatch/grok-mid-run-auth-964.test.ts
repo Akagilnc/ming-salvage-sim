@@ -68,6 +68,10 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import {
+  dockerAvailable,
+  dockerUnavailableReason,
+} from "./docker.shared.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const orchestratorRoot = join(here, "..", "..");
@@ -121,23 +125,9 @@ type GrokProbeTarget =
   | { kind: "docker"; image: string; version: string };
 
 /**
- * Live docker daemon reachable (not merely `docker` on PATH).
- * Same gate as #1010 cancel tests — missing sock / stopped daemon must skip
- * live probes, never fail red with "failed to connect to the docker API".
- */
-function dockerDaemonAvailable(): boolean {
-  if (!whichBinary("docker")) return false;
-  const info = spawnSync("docker", ["info"], {
-    encoding: "utf8",
-    timeout: 15_000,
-  });
-  return info.status === 0;
-}
-
-/**
  * Resolve a real grok that matches the production fail-fast pin.
  * Prefer host (GROK_BIN / PATH); fall back to docker image with baked pin.
- * Skip when neither yields a pin-matching binary, or docker daemon is down.
+ * The live test gates host Docker once before calling this resolver.
  */
 function resolveGrokProbeTarget(): GrokProbeTarget | null {
   const fromEnv = process.env.GROK_BIN?.trim();
@@ -153,8 +143,6 @@ function resolveGrokProbeTarget(): GrokProbeTarget | null {
     }
   }
 
-  // CLI-on-PATH is not enough: no sock / stopped daemon → skip (not red).
-  if (!dockerDaemonAvailable()) return null;
   const image =
     process.env.GROK_PROBE_IMAGE?.trim() || DEFAULT_GROK_PROBE_IMAGE;
   // Cheap presence check — missing image → no docker target.
@@ -408,20 +396,30 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     expect(containerfile).not.toMatch(/@xai-official\/grok@0\.2\.93/);
   });
 
-  it(
-    "live headless empty-auth fails fast before timeout (no device-auth hang)",
+  const liveDockerAvailable = dockerAvailable();
+  const liveDockerSkipReason = dockerUnavailableReason();
+  if (!liveDockerAvailable) {
+    console.warn(
+      `[#964] skipping container-backed live probes: ${liveDockerSkipReason}`,
+    );
+  }
+
+  it.skipIf(!liveDockerAvailable)(
+    liveDockerAvailable
+      ? "live headless empty-auth fails fast before timeout (no device-auth hang)"
+      : `live headless empty-auth fails fast before timeout [skipped: ${liveDockerSkipReason}]`,
     () => {
       // #964 AC: real worker print shape + empty credentials must not enter
       // interactive device-code wait. Pin 0.2.102 is the production hang fix;
       // this probe exercises a real binary (host pin or baked image pin).
-      // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
+      // Docker is live here; soft-skip only when neither target has the pin.
       const target = resolveGrokProbeTarget();
       if (!target) {
         // Loud skip reason — CI with rebaked image / host pin / live docker should not hit this.
         console.warn(
           `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN, ` +
-            `or docker daemon unavailable / no image with that pin ` +
-            `(set GROK_BIN, start docker, or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
+          `or no docker image with that pin ` +
+            `(set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
             `override image via GROK_PROBE_IMAGE). Pin ${GROK_FAIL_FAST_PIN} remains the production mechanism.`,
         );
         return;
