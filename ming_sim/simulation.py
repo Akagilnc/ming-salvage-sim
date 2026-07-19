@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import copy
 import sqlite3
+from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional
 
 from agno.agent import Agent
@@ -378,15 +379,22 @@ def build_simulator_payload(
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
     # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
-    court_roster = _auto_table([
-        dict(r) for r in db.conn.execute(
-            # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
-            # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
-            "SELECT name,office,office_type,faction,status,power_id,"
-            "location,transit_to FROM characters WHERE status='active' "
-            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
-        ).fetchall()
-    ])
+    from ming_sim.qualitative import qualitative_character_axes
+
+    court_rows = []
+    for row in db.conn.execute(
+        # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
+        # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
+        "SELECT name,office,office_type,faction,status,power_id,location,transit_to,"
+        "loyalty,ability,integrity,courage,identity FROM characters WHERE status='active' "
+        "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
+    ).fetchall():
+        raw = dict(row)
+        raw.update(qualitative_character_axes(SimpleNamespace(**raw)))
+        for field in ("loyalty", "ability", "integrity", "courage", "identity"):
+            raw.pop(field)
+        court_rows.append(raw)
+    court_roster = _auto_table(court_rows)
     return {
         "year": state.year,
         "period": state.period,
