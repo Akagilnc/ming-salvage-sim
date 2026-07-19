@@ -251,7 +251,6 @@ export type GameState = {
   turn: { year: number; period: number; turn: number; phase?: string };
   metrics: Metrics;
   previous_summary: string;
-  previous_account_summary?: string;
   treasury: string;
   issues: Issue[];
   legacies: Legacy[];
@@ -296,7 +295,7 @@ export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
 
-export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "extraction" | "history" | "menu" | "secret_orders" | "ending" | "long_goals";
+export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "menu" | "secret_orders" | "ending" | "long_goals";
 
 export type SaveEntry = { name: string; size: number; mtime: number };
 
@@ -466,20 +465,11 @@ export type MenuStatus = {
   };
 };
 
-export type ExtractionData = {
-  turn: number;
-  year: number;
-  period: number;
-  exists: boolean;
-  extractor_output?: any;
-};
-
 export type HistoryTurnItem = {
   turn: number;
   year: number;
   period: number;
   has_report: boolean;
-  has_extraction: boolean;
   has_directive: boolean;
 };
 
@@ -508,7 +498,6 @@ export type HistoryDetail = {
   report: string;
   decree_text: string;
   directives: HistoryDirective[];
-  extraction: ExtractionData | null;
 };
 
 export type TerrainTransform = { x: number; y: number; width: number; height: number };

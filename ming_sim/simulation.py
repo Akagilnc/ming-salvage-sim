@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import copy
+import re
 import sqlite3
+from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional
 
 from agno.agent import Agent
 
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
+from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
 from ming_sim.issues import (
@@ -245,6 +248,110 @@ def _auto_table(rows: List[Dict[str, object]]) -> Dict[str, object]:
     return _table(rows, cols)
 
 
+_CHARACTER_AXIS_GATE_PATTERN = (
+    r"character\.[^.]+\.(?:loyalty|ability|integrity|courage|identity|intrigue)"
+    r"(?:\.(?:avg|min|max|sum))?"
+)
+_CHARACTER_AXIS_GATE_KEY = re.compile(rf"^{_CHARACTER_AXIS_GATE_PATTERN}$")
+_CHARACTER_AXIS_LEGACY_GATE = re.compile(
+    rf"^{_CHARACTER_AXIS_GATE_PATTERN}\s*(?:>=|<=|>|<|==|=)\s*-?\d+(?:\.\d+)?$"
+)
+_QUALITATIVE_CHARACTER_GATE = "人物属性条件由引擎按定性档位复核"
+_CHARACTER_EFFECT_KEYS = ("人物变更", "person_changes", "character")
+_CHARACTER_AXIS_MUTATION_FIELDS = frozenset({
+    "loyalty", "ability", "integrity", "courage", "identity", "intrigue",
+    "忠诚", "能力", "清廉", "胆略", "党派认同", "阴谋",
+})
+
+
+def _condition_has_character_axis(value: object) -> bool:
+    parsed = value
+    if isinstance(value, str):
+        text = str(value or "").strip()
+        if _CHARACTER_AXIS_LEGACY_GATE.fullmatch(text):
+            return True
+        if not text.startswith("{"):
+            return False
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return False
+    return isinstance(parsed, dict) and any(
+        _CHARACTER_AXIS_GATE_KEY.fullmatch(str(key)) for key in parsed
+    )
+
+
+def _project_simulator_condition(value: object) -> object:
+    """Hide exact character thresholds at the mixed simulator boundary."""
+    parsed = value
+    encoded = isinstance(value, str)
+    if encoded:
+        text = str(value or "").strip()
+        if _CHARACTER_AXIS_LEGACY_GATE.fullmatch(text):
+            return _QUALITATIVE_CHARACTER_GATE
+        if not text.startswith("{"):
+            return value
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return value
+    if not isinstance(parsed, dict):
+        return value
+    projected = {
+        str(key): condition
+        for key, condition in parsed.items()
+        if not _CHARACTER_AXIS_GATE_KEY.fullmatch(str(key))
+    }
+    if len(projected) == len(parsed):
+        return value
+    projected["人物属性条件"] = "由引擎按定性档位复核"
+    return json.dumps(projected, ensure_ascii=False) if encoded else projected
+
+
+def _project_simulator_issue_conditions(issue: Dict[str, object]) -> Dict[str, object]:
+    """Apply the simulator-only character gate projection to one issue."""
+    projected = dict(issue)
+    has_character_gate = any(
+        _condition_has_character_axis(projected.get(key))
+        for key in ("结案条件", "失败条件", "resolve_condition", "fail_condition", "stop_condition")
+    )
+    for key in ("结案条件", "失败条件", "resolve_condition", "fail_condition", "stop_condition"):
+        if key in projected:
+            projected[key] = _project_simulator_condition(projected[key])
+    progress = projected.get("commitment_progress")
+    if has_character_gate and isinstance(progress, dict):
+        qualitative_progress = dict(progress)
+        if "remaining_to_goal" in qualitative_progress:
+            qualitative_progress["remaining_to_goal"] = "距达标仍有差距"
+        projected["commitment_progress"] = qualitative_progress
+    for key in (f"当前每{TURN_UNIT}效果", "成功效果", "失败效果"):
+        effect = projected.get(key)
+        if isinstance(effect, dict):
+            projected[key] = _project_simulator_character_effect(effect)
+    return projected
+
+
+def _project_simulator_character_effect(effect: Dict[str, object]) -> Dict[str, object]:
+    """Remove exact character-axis deltas while preserving the effect structure."""
+    projected = dict(effect)
+    for section in _CHARACTER_EFFECT_KEYS:
+        items = projected.get(section)
+        if not isinstance(items, list):
+            continue
+        projected[section] = [
+            {
+                key: value
+                for key, value in item.items()
+                if key not in _CHARACTER_AXIS_MUTATION_FIELDS
+                or not isinstance(value, (int, float))
+                or isinstance(value, bool)
+            }
+            if isinstance(item, dict) else item
+            for item in items
+        ]
+    return projected
+
+
 def _talent_pool_rows(db: "GameDB", state: GameState) -> List[Dict[str, object]]:
     """ADR 0009 人才池视图（读取端闭环）：居家/致仕/削籍在世者皆可起复，带
     status + reason_code（机读）+ status_reason（可读），裁判与玩家才看得见
@@ -341,7 +448,14 @@ def build_simulator_payload(
     ]
     active = db.list_active_issues()
     issues_payload = [
-        issue_to_payload(row, db.list_recent_issue_advances(int(row["id"]), 1), db=db, state=state)
+        _project_simulator_issue_conditions(
+            issue_to_payload(
+                row,
+                db.list_recent_issue_advances(int(row["id"]), 1),
+                db=db,
+                state=state,
+            )
+        )
         for row in active
     ]
     # 帝国修正不进 simulator payload：它是纯机械的百分比修正符，由落账层自动放大/缩小增量，不进叙事。
@@ -353,9 +467,9 @@ def build_simulator_payload(
             "summary": ev.summary,
             "interests": ev.interests,
             "is_historical": ev.trigger_year > 0,
-            "resolve_condition": ev.resolve_condition,
-            "fail_condition": ev.fail_condition,
-            "precondition": ev.precondition,
+            "resolve_condition": _project_simulator_condition(ev.resolve_condition),
+            "fail_condition": _project_simulator_condition(ev.fail_condition),
+            "precondition": _project_simulator_condition(ev.precondition),
         }
         for ev in gather_candidate_events(state, db)
     ]
@@ -378,15 +492,22 @@ def build_simulator_payload(
     # 削籍）走 offstage_ministers 人才池，在押/流放者两份都不在（玩家下旨决定去留）。旧 status!=
     # 'offstage' 会把削籍/致仕/在押者也混进在朝名单、与人才池双重曝光自相矛盾。注：大臣 system 的
     # 现状参照名册（registry.build_court_roster）另有用途、故意含非 active 带状态标签，不在此口径。
-    court_roster = _auto_table([
-        dict(r) for r in db.conn.execute(
-            # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
-            # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
-            "SELECT name,office,office_type,faction,status,power_id,"
-            "location,transit_to FROM characters WHERE status='active' "
-            "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
-        ).fetchall()
-    ])
+    from ming_sim.qualitative import qualitative_character_axes
+
+    court_rows = []
+    for row in db.conn.execute(
+        # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
+        # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
+        "SELECT name,office,office_type,faction,status,power_id,location,transit_to,"
+        "loyalty,ability,integrity,courage,identity FROM characters WHERE status='active' "
+        "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
+    ).fetchall():
+        raw = dict(row)
+        raw.update(qualitative_character_axes(SimpleNamespace(**raw)))
+        for field in ("loyalty", "ability", "integrity", "courage", "identity"):
+            raw.pop(field)
+        court_rows.append(raw)
+    court_roster = _auto_table(court_rows)
     return {
         "year": state.year,
         "period": state.period,

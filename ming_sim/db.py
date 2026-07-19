@@ -33,6 +33,7 @@ from ming_sim.models import (
 )
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.participant_roster import participant_roster_names
+from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -681,6 +682,9 @@ class GameDB:
         from ming_sim.applier import _SuspendableConnection
         self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
         # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
         # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
         self._legacy_mod_cache: Optional[Dict[str, object]] = None
@@ -978,8 +982,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(building_id) REFERENCES buildings(id)
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS economy_accounts (
@@ -1496,6 +1499,9 @@ class GameDB:
             ON relation_edge_events(source, target, event_kind, id);
             """
         )
+        self._migrate_building_logs_to_durable_audit()
+        self._ensure_office_type_parents()
+        self._ensure_event_parents()
         for column, definition in {
             "military_strength": "INTEGER NOT NULL DEFAULT 50",
             "cohesion": "INTEGER NOT NULL DEFAULT 50",
@@ -2337,25 +2343,166 @@ class GameDB:
         row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
         return row is not None
 
-    def seed_static_data(self) -> None:
-        if not self.table_has_rows("offices"):
-            for office_type, definition in self.content.office_definitions.items():
-                self.conn.execute(
-                    """
-                    INSERT INTO offices
-                    (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        office_type,
-                        json.dumps(definition["skills"], ensure_ascii=False),
-                        json.dumps(definition["tools"], ensure_ascii=False),
-                        str(definition["authority_scope"]),
-                        int(definition["power"]),
-                        int(definition["responsibility"]),
-                        int(definition["corruption_risk"]),
-                    ),
+    def _ensure_office_type_parents(self) -> None:
+        """Materialize every declared/referenced office type before FK-checked writes."""
+        title_kinds = tuple(PERSON_TITLE_KINDS)
+        placeholders = ",".join("?" for _ in title_kinds)
+        if self._table_exists("character_offices"):
+            self.conn.execute(
+                f"DELETE FROM character_offices WHERE office_type IN ({placeholders})",
+                title_kinds,
+            )
+        self.conn.execute(
+            f"DELETE FROM offices WHERE office_type IN ({placeholders})",
+            title_kinds,
+        )
+        for office_type in sorted(self._canonical_office_types()):
+            self._ensure_office_type_parent(office_type)
+        if self._table_exists("character_offices"):
+            self.conn.execute(
+                """
+                UPDATE character_offices
+                SET office_type = (
+                    SELECT characters.office_type FROM characters
+                    WHERE characters.name = character_offices.character_name
                 )
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM offices
+                    WHERE offices.office_type = character_offices.office_type
+                )
+                  AND EXISTS (
+                    SELECT 1 FROM characters
+                    JOIN offices ON offices.office_type = characters.office_type
+                    WHERE characters.name = character_offices.character_name
+                )
+                """
+            )
+
+    def _canonical_office_types(self) -> set[str]:
+        return (
+            set(self.content.office_definitions)
+            | {
+                str(character.office_type).strip()
+                for character in self.content.characters.values()
+                if str(character.office_type).strip()
+            }
+            | {
+                str(office_type).strip()
+                for office_type in (_offices_table().get("allowed_types") or [])
+                if str(office_type).strip()
+            }
+        )
+
+    def _migrate_building_logs_to_durable_audit(self) -> None:
+        """Keep building history after its live building has been removed."""
+        if not self.conn.execute("PRAGMA foreign_key_list(building_logs)").fetchall():
+            return
+        self.conn.executescript(
+            """
+            CREATE TABLE building_logs_without_live_fk (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                building_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                old_value TEXT NOT NULL,
+                new_value TEXT NOT NULL,
+                delta INTEGER,
+                reason TEXT NOT NULL,
+                event_id TEXT,
+                edict_id INTEGER,
+                actor TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO building_logs_without_live_fk
+                (id,turn,year,period,building_id,field,old_value,new_value,delta,
+                 reason,event_id,edict_id,actor,created_at)
+            SELECT id,turn,year,period,building_id,field,old_value,new_value,delta,
+                   reason,event_id,edict_id,actor,created_at
+            FROM building_logs;
+            DROP TABLE building_logs;
+            ALTER TABLE building_logs_without_live_fk RENAME TO building_logs;
+            CREATE INDEX idx_building_logs_turn ON building_logs(turn, building_id);
+            """
+        )
+
+    def _ensure_office_type_parent(self, office_type: str) -> None:
+        office_type = str(office_type or "").strip()
+        if not office_type:
+            return
+        if self.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type=?", (office_type,)
+        ).fetchone() is not None:
+            return
+        if office_type not in self._canonical_office_types():
+            raise ValueError(f"未定义官类 '{office_type}'")
+        definition = self.content.office_definitions.get(office_type, {})
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO offices
+            (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                office_type,
+                json.dumps(definition.get("skills", []), ensure_ascii=False),
+                json.dumps(definition.get("tools", []), ensure_ascii=False),
+                str(definition.get("authority_scope", office_type)),
+                int(definition.get("power", 0)),
+                int(definition.get("responsibility", 0)),
+                int(definition.get("corruption_risk", 0)),
+            ),
+        )
+
+    def _ensure_event_parents(self) -> None:
+        event_ids = {
+            str(event.id).strip()
+            for event in (*self.content.events, *self.content.seed_events)
+            if str(event.id).strip()
+        }
+        for event_id in sorted(event_ids):
+            self._ensure_event_parent(event_id)
+
+    def _ensure_event_parent(self, event_id: str) -> None:
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return
+        if self.conn.execute(
+            "SELECT 1 FROM events WHERE id=?", (event_id,)
+        ).fetchone() is not None:
+            return
+        event = next(
+            (
+                candidate
+                for candidate in (*self.content.events, *self.content.seed_events)
+                if str(candidate.id) == event_id
+            ),
+            None,
+        )
+        if event is None:
+            raise ValueError(f"未定义事件 '{event_id}'")
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO events
+            (id, title, kind, summary, urgency, severity, credibility, interests, audiences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                str(event.title),
+                str(event.kind),
+                str(event.summary),
+                int(event.urgency),
+                int(event.severity),
+                int(event.credibility),
+                json.dumps(event.interests, ensure_ascii=False),
+                json.dumps(event.audiences, ensure_ascii=False),
+            ),
+        )
+
+    def seed_static_data(self) -> None:
+        self._ensure_office_type_parents()
 
         if not self.table_has_rows("office_slots"):
             self.conn.executemany(
@@ -2562,26 +2709,6 @@ class GameDB:
                         building.output_metric,
                         building.output_amount,
                         building.status,
-                    ),
-                )
-        if not self.table_has_rows("events"):
-            for event in (*self.content.events, *self.content.seed_events):
-                self.conn.execute(
-                    """
-                    INSERT INTO events
-                    (id, title, kind, summary, urgency, severity, credibility, interests, audiences)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event.id,
-                        event.title,
-                        event.kind,
-                        event.summary,
-                        event.urgency,
-                        event.severity,
-                        event.credibility,
-                        json.dumps(event.interests, ensure_ascii=False),
-                        json.dumps(event.audiences, ensure_ascii=False),
                     ),
                 )
         self._migrate_arrears_unit_to_silver(is_fresh_armies_seed)
@@ -4373,6 +4500,9 @@ class GameDB:
         if not current_type:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
         eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
+        is_person_title = eff_type in PERSON_TITLE_KINDS
+        if not is_person_title:
+            self._ensure_office_type_parent(eff_type)
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -4383,18 +4513,21 @@ class GameDB:
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        self.conn.execute(
-            """
-            INSERT INTO character_offices (character_name, office_title, office_type, source)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(character_name) DO UPDATE SET
-                office_title = excluded.office_title,
-                office_type = excluded.office_type,
-                source = excluded.source,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (name, office, eff_type, source),
-        )
+        if is_person_title:
+            self.conn.execute("DELETE FROM character_offices WHERE character_name=?", (name,))
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO character_offices (character_name, office_title, office_type, source)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(character_name) DO UPDATE SET
+                    office_title = excluded.office_title,
+                    office_type = excluded.office_type,
+                    source = excluded.source,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (name, office, eff_type, source),
+            )
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (name,)
@@ -4614,6 +4747,7 @@ class GameDB:
             character.office_type,
             llm_config or self.llm_config,
         )
+        self._ensure_office_type_parent(character.office_type)
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
@@ -6940,9 +7074,6 @@ class GameDB:
     _ROLLBACK_TABLE_PK = {
         "turn_directives": "id",
         "secret_orders": "id",
-        # #976: briefs are not covered by FK CASCADE (PRAGMA foreign_keys=0);
-        # include in chat-turn rollback so undo cannot orphan secret_order_briefs.
-        "secret_order_briefs": "order_id",
         "characters": "name",
         "character_offices": "character_name",
         "consort_traits": "name",
@@ -6951,7 +7082,7 @@ class GameDB:
         "pending_actions": "id",
         # #9 R1 finding#4：leverage hook（set_character_status/set_character_office）会改 factions
         # .leverage(+offset)。chat office/dismiss 动作撤回须连 factions 一并还原，否则 characters
-        # 被还原而 factions leverage 留脏。快照 SELECT * 含 leverage+offset，restore INSERT OR REPLACE
+        # 被还原而 factions leverage 留脏。快照 SELECT * 含 leverage+offset，原位 UPDATE
         # 全列覆盖、二者同还原。
         "factions": "name",
     }
@@ -6983,7 +7114,17 @@ class GameDB:
 
     def _snapshot_table(self, table: str, pk: str) -> Dict[str, Dict[str, Any]]:
         rows = self.conn.execute(f"SELECT * FROM {table}").fetchall()
-        return {str(row[pk]): self._row_dict(row) for row in rows}
+        snapshot = {str(row[pk]): self._row_dict(row) for row in rows}
+        if table == "secret_orders":
+            brief_pins = {
+                str(row["order_id"]): str(row["origin_chat_message_ids"] or "[]")
+                for row in self.conn.execute(
+                    "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs"
+                ).fetchall()
+            }
+            for order_id, row in snapshot.items():
+                row["_rollback_brief_origin_chat_message_ids"] = brief_pins.get(order_id, "[]")
+        return snapshot
 
     def capture_chat_rollback_snapshot(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """截取召对前后的可回滚业务表状态，用于撤回时做差异还原。"""
@@ -7078,17 +7219,7 @@ class GameDB:
         ]
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
-            for item in items:
-                table = str(item["target_table"])
-                strategy = str(item["rollback_strategy"])
-                target_id = str(item["target_id"])
-                if strategy == "delete_inserted_row":
-                    self._delete_row_in_tx(table, target_id)
-                elif strategy in {"restore_row", "restore_deleted_row"}:
-                    before_row = self._json_load_row(item["before_json"])
-                    self._restore_row_in_tx(table, before_row)
-                else:
-                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
@@ -7276,13 +7407,25 @@ class GameDB:
     def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
         if not row:
             return
-        if table not in self._ROLLBACK_TABLE_PK:
+        row = {key: value for key, value in row.items() if not key.startswith("_rollback_")}
+        pk = self._ROLLBACK_TABLE_PK.get(table)
+        if not pk:
             raise ValueError(f"不支持回滚表：{table}")
+        if self.conn.execute(
+            f"SELECT 1 FROM {table} WHERE {pk} = ?", (row[pk],)
+        ).fetchone() is not None:
+            columns = [column for column in row if column != pk]
+            assignments = ",".join(f"{column}=?" for column in columns)
+            self.conn.execute(
+                f"UPDATE {table} SET {assignments} WHERE {pk}=?",
+                [row[column] for column in columns] + [row[pk]],
+            )
+            return
         columns = list(row.keys())
         placeholders = ",".join("?" for _ in columns)
         column_sql = ",".join(columns)
         self.conn.execute(
-            f"INSERT OR REPLACE INTO {table} ({column_sql}) VALUES ({placeholders})",
+            f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",
             [row[column] for column in columns],
         )
 
@@ -7291,6 +7434,63 @@ class GameDB:
         if not pk:
             raise ValueError(f"不支持回滚表：{table}")
         self.conn.execute(f"DELETE FROM {table} WHERE {pk} = ?", (target_id,))
+
+    def _restore_secret_order_brief_projection_in_tx(
+        self, order_id: int, origin_chat_message_ids: Iterable[int],
+    ) -> None:
+        order = self.conn.execute(
+            "SELECT turn_issued,year_issued,period_issued,minister_name,title,content "
+            "FROM secret_orders WHERE id=?", (int(order_id),),
+        ).fetchone()
+        if order is None:
+            return
+        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
+        self.conn.execute(
+            """
+            INSERT INTO secret_order_briefs
+                (order_id,turn,year,period,minister_name,title,body,origin_chat_message_ids)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(order_id) DO UPDATE SET
+                turn=excluded.turn, year=excluded.year, period=excluded.period,
+                minister_name=excluded.minister_name, title=excluded.title, body=excluded.body,
+                origin_chat_message_ids=excluded.origin_chat_message_ids,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                int(order_id), int(order["turn_issued"]), int(order["year_issued"]),
+                int(order["period_issued"]), str(order["minister_name"]),
+                str(order["title"]), str(order["content"]),
+                safe_json_dumps(pins, ensure_ascii=False),
+            ),
+        )
+
+    def _restore_chat_rollback_items_in_tx(
+        self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
+    ) -> None:
+        undone = {int(message_id) for message_id in undone_message_ids}
+        for item in items:
+            table = str(item["target_table"])
+            strategy = str(item["rollback_strategy"])
+            target_id = str(item["target_id"])
+            if strategy == "delete_inserted_row":
+                self._delete_row_in_tx(table, target_id)
+            elif strategy in {"restore_row", "restore_deleted_row"}:
+                before_row = self._json_load_row(item["before_json"])
+                self._restore_row_in_tx(table, before_row)
+                if table == "secret_orders":
+                    raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
+                    if raw_pins is None:
+                        brief = self.conn.execute(
+                            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+                            (int(target_id),),
+                        ).fetchone()
+                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        pins = [pin for pin in current if int(pin) not in undone]
+                    else:
+                        pins = json.loads(str(raw_pins) or "[]")
+                    self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
+            else:
+                raise ValueError(f"不支持的回滚策略：{strategy}")
 
     def undo_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
         row = self.conn.execute(
@@ -7360,17 +7560,7 @@ class GameDB:
                 "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
             )
-            for item in items:
-                table = str(item["target_table"])
-                strategy = str(item["rollback_strategy"])
-                target_id = str(item["target_id"])
-                if strategy == "delete_inserted_row":
-                    self._delete_row_in_tx(table, target_id)
-                elif strategy in {"restore_row", "restore_deleted_row"}:
-                    before_row = self._json_load_row(item["before_json"])
-                    self._restore_row_in_tx(table, before_row)
-                else:
-                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            self._restore_chat_rollback_items_in_tx(items, message_ids)
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
             for draft_id in draft_ids_to_delete:
                 self.conn.execute(
@@ -8973,7 +9163,7 @@ class GameDB:
                 """
                 INSERT INTO turn_directives
                 (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-                VALUES (?, ?, ?, '', ?, '', ?, '大臣拟旨', ?, ?)
+                VALUES (?, ?, ?, NULL, ?, '', ?, '大臣拟旨', ?, ?)
                 """,
                 (state.turn, state.year, state.period, actor, text, status, f"由{actor}拟旨入档"),
             )
@@ -9345,8 +9535,8 @@ class GameDB:
             (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, event.id if event else "",
-             actor, skill_id, text, source, status, notes),
+            (state.turn, state.year, state.period, event.id if event else None,
+             actor or None, skill_id, text, source, status, notes),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -9578,6 +9768,7 @@ class GameDB:
         terminal_reason: str = "",
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9600,6 +9791,7 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9622,6 +9814,7 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9636,6 +9829,7 @@ class GameDB:
             self.conn.commit()
 
     def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9662,6 +9856,7 @@ class GameDB:
         eid = str(event_id or "").strip()
         if not eid:
             return
+        self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
         label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
         self.conn.execute(
@@ -11413,7 +11608,7 @@ class GameDB:
         return {c["name"] for c in self.admin_columns(table)}
 
     def admin_upsert(self, table: str, values: Dict[str, object]) -> Dict[str, object]:
-        """按主键 INSERT OR REPLACE，返回落库后的行。只接受表内有的列。"""
+        """按主键原位 upsert，返回落库后的行。只接受表内有的列。"""
         pk = self.admin_check_table(table)
         valid = self._admin_valid_cols(table)
         data = {k: v for k, v in values.items() if k in valid}
@@ -11422,8 +11617,15 @@ class GameDB:
         cols = list(data.keys())
         placeholders = ",".join("?" for _ in cols)
         collist = ",".join(cols)
+        update_cols = [column for column in cols if column != pk]
+        conflict_action = (
+            "DO UPDATE SET "
+            + ",".join(f"{column}=excluded.{column}" for column in update_cols)
+            if update_cols else "DO NOTHING"
+        )
         self.conn.execute(
-            f"INSERT OR REPLACE INTO {table} ({collist}) VALUES ({placeholders})",
+            f"INSERT INTO {table} ({collist}) VALUES ({placeholders}) "
+            f"ON CONFLICT({pk}) {conflict_action}",
             [data[c] for c in cols],
         )
         # 国库/内库同时落在 economy_accounts.balance，load_state 会用后者盖回 metrics。

@@ -25,7 +25,6 @@ from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
     power_band,
-    safe_historical_text,
 )
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
@@ -196,7 +195,7 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     report = context.db.get_turn_report(prev_turn)
     if not report or not report.strip():
         return ""
-    safe_report = safe_historical_text(report, "上回合邸报")
+    safe_report = str(report or "")
     return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
 
 
@@ -209,20 +208,9 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
                 and int(c.get("turn") or 0) != prev_turn]
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
     for c in chapters:
-        body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
+        body = str(c.get("body") or c.get("title") or "")
         if body:
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
-    if len(lines) == 1:
-        # A rejected historical aggregate must be explicit rather than silently
-        # disappearing: the minister sees neither its unsafe raw axes nor an
-        # invented substitute.  This also keeps the P4 boundary observable at
-        # the chapter-memory seam.
-        raw_chapters = context.db.list_chapter_memories(upto_turn=context.state.turn)
-        for chapter in raw_chapters:
-            safe = safe_historical_text(chapter.get("body") or chapter.get("title"), "起居注章节")
-            if "已略去" in safe:
-                lines.append(f"- {chapter['year']}年{chapter['period']}月：{safe}")
-                break
     if len(lines) == 1:
         return ""
     brief = "\n".join(lines)
