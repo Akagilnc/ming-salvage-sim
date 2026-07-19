@@ -15,7 +15,7 @@ from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
-from ming_sim.models import LLMConfig
+from ming_sim.models import Character, LLMConfig
 from ming_sim.session import GameSession
 from driver import run_settle, open_game
 
@@ -102,6 +102,57 @@ def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
     assert sess.db.conn.execute(
         "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
     ).fetchone() is None
+
+
+def test_runtime_person_title_does_not_materialize_office_record(fresh_game_dir):
+    sess, _dbp, _content = fresh_game_dir
+    person = Character(
+        name="测试降臣",
+        office="降臣",
+        office_type="身名分",
+        faction="中立",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50,
+        ability=50,
+        integrity=50,
+        courage=50,
+        style="测试人物",
+        power_id="ming",
+    )
+
+    sess.db.add_character(sess.state, person)
+
+    assert sess.db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (person.name,)
+    ).fetchone()["office_type"] == "身名分"
+    assert sess.db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert sess.db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (person.name,)
+    ).fetchone() is None
+
+
+def test_person_title_is_skipped_when_office_archive_is_rebuilt(fresh_game_dir):
+    sess, dbp, content = fresh_game_dir
+    minister = sess.db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    sess.db.set_character_office(minister, "降臣", "身名分")
+    sess.db.conn.execute("DELETE FROM character_offices")
+    sess.db.conn.commit()
+    sess.close()
+
+    reopened = GameDB(dbp, content=content)
+    try:
+        reopened.seed_static_data()
+        assert reopened.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
+        ).fetchone() is None
+        assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()
 
 
 def test_existing_office_fk_violation_is_normalized_on_reopen(fresh_game_dir):
