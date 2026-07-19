@@ -508,6 +508,49 @@ const judgeVerdictSchema = z.discriminatedUnion("status", [
   judgeEscalateSchema,
 ]);
 
+/** Traffic keys for T2 judge envelopes — cargo siblings stay off strict decode. */
+const JUDGE_BASE_TRAFFIC_KEYS = [
+  "station",
+  "status",
+  "cargoPointer",
+] as const;
+const JUDGE_CONTINUE_TRAFFIC_KEYS = [
+  "findingDispositions",
+  "fixPacketBody",
+  "advanceCoder",
+] as const;
+const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
+
+/** Pick only judge traffic while preserving conflicting traffic for strict rejection. */
+export function pickJudgeTraffic(raw: unknown): unknown {
+  const parsed = asRecord(raw);
+  if (!parsed.ok) return raw;
+  const record = parsed.value;
+  const traffic: Record<string, unknown> = {};
+  const statusKeys =
+    record.status === "continue"
+      ? JUDGE_CONTINUE_TRAFFIC_KEYS
+      : record.status === "escalate"
+        ? JUDGE_ESCALATE_TRAFFIC_KEYS
+        : [];
+  const conflictingKeys =
+    record.status === "converged"
+      ? [...JUDGE_CONTINUE_TRAFFIC_KEYS, ...JUDGE_ESCALATE_TRAFFIC_KEYS]
+      : record.status === "escalate"
+        ? JUDGE_CONTINUE_TRAFFIC_KEYS
+        : [];
+  for (const key of [
+    ...JUDGE_BASE_TRAFFIC_KEYS,
+    ...statusKeys,
+    ...conflictingKeys,
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      traffic[key] = record[key];
+    }
+  }
+  return traffic;
+}
+
 /** Encode a validated judge verdict into its canonical JSON shape. */
 export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
   // Already typed; return a plain JSON-safe clone of the canonical shape.
@@ -1122,7 +1165,9 @@ export function decodeStationEnvelope(
   if (!banned.ok) return banned;
 
   const station = record.value.station;
-  if (station === "judge") return decodeJudgeVerdict(record.value);
+  if (station === "judge") {
+    return decodeJudgeVerdict(pickJudgeTraffic(record.value));
+  }
   if (
     station === "coder" ||
     station === "coderFix" ||

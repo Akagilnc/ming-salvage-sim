@@ -88,6 +88,7 @@ import {
   judgeStationReceiptSchema,
   mergerStationReceiptSchema,
   onlineReviewStationReceiptSchema,
+  pickJudgeTraffic,
   shipStationReceiptSchema,
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
@@ -3784,47 +3785,6 @@ function classifyCmrOutcomePayload(
   // {@link unusableResidualOpenCountPaper} (kind:"reviewer"+findingsCount:0) —
   // never mint continue from findingsCount; never dual kind:"cmr" unusable.
   return residualCmrVerdictCargo(normalizedParsed);
-}
-
-/** Traffic keys for T2 judge envelopes — cargo siblings stay off the strict decode. */
-const JUDGE_BASE_TRAFFIC_KEYS = [
-  "station",
-  "status",
-  "cargoPointer",
-] as const;
-const JUDGE_CONTINUE_TRAFFIC_KEYS = [
-  "findingDispositions",
-  "fixPacketBody",
-  "advanceCoder",
-] as const;
-const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
-
-function pickJudgeTraffic(
-  record: Record<string, unknown>,
-): Record<string, unknown> {
-  const traffic: Record<string, unknown> = {};
-  const statusKeys =
-    record.status === "continue"
-      ? JUDGE_CONTINUE_TRAFFIC_KEYS
-      : record.status === "escalate"
-        ? JUDGE_ESCALATE_TRAFFIC_KEYS
-        : [];
-  const conflictingKeys =
-    record.status === "converged"
-      ? [...JUDGE_CONTINUE_TRAFFIC_KEYS, ...JUDGE_ESCALATE_TRAFFIC_KEYS]
-      : record.status === "escalate"
-        ? JUDGE_CONTINUE_TRAFFIC_KEYS
-        : [];
-  for (const key of [
-    ...JUDGE_BASE_TRAFFIC_KEYS,
-    ...statusKeys,
-    ...conflictingKeys,
-  ]) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
-      traffic[key] = record[key];
-    }
-  }
-  return traffic;
 }
 
 function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
