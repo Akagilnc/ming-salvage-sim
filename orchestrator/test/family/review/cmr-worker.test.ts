@@ -726,6 +726,23 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     });
   });
 
+  it("rejects converged judge traffic carrying continue-only repair instructions", () => {
+    const o = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        findingDispositions: [{ identityKey: "still-live", action: "live" }],
+        fixPacketBody: "repair the still-live finding",
+      },
+    });
+
+    expect(o).toEqual({
+      kind: "verdict",
+      successfulLegs: [],
+      evidencePaths: [],
+    });
+  });
+
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const result = {
