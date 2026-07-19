@@ -4246,7 +4246,7 @@ def _strategic_event_result_preflight_error(
                             target_office,
                             str(item.get("office_type") or item.get("new_office_type") or ""),
                             current_type,
-                            llm_config,
+                            llm_config or db.llm_config,
                         )
                         if target_office == current_office and target_type == current_type:
                             return _noop_error(
@@ -5662,7 +5662,10 @@ def apply_office_appointment(
             # 显式 new_office_type 名分，但内存 Character 若在此被 infer 反推成官职
             # （office='诸生'→'生员'），DB 与内存分岔、registry.refresh 按错角色建当回合上下文。
             ch.office_type = resolve_office_type_preserving_title(
-                ch.office, new_office_type, ch.office_type, llm_config
+                ch.office,
+                new_office_type,
+                ch.office_type,
+                llm_config or db.llm_config,
             )
             if registry is not None:
                 registry.refresh(name)

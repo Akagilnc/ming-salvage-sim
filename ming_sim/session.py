@@ -300,7 +300,10 @@ def apply_appointment(
     office_type = (
         "后宫" if is_consort
         else resolve_office_type_preserving_title(
-            office, str(data.get("office_type") or "").strip(), "待铨", llm_config
+            office,
+            str(data.get("office_type") or "").strip(),
+            "待铨",
+            llm_config or db.llm_config,
         )
     )
 
