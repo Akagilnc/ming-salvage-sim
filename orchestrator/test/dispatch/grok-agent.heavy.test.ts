@@ -148,25 +148,53 @@ describe("#807 grokAgent AgentProvider", () => {
       prompt: "must not reach Grok",
       dangerouslySkipPermissions: true,
     });
-    const result = await new Promise<{
-      code: number | null;
-      stderr: string;
-    }>((resolve) => {
-      const child = spawn("sh", ["-c", built.command], {
-        env: transportEnv(bin, staging, pathOut, childPidOut),
-        stdio: ["pipe", "ignore", "pipe"],
-      });
+    const child = spawn("sh", ["-c", built.command], {
+      env: transportEnv(bin, staging, pathOut, childPidOut),
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    const pid = child.pid!;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
       let stderr = "";
       child.stderr.setEncoding("utf8").on("data", (chunk) => {
         stderr += chunk;
       });
-      child.on("close", (code) => resolve({ code, stderr }));
+      const closed = new Promise<{ code: number | null; stderr: string }>(
+        (resolve) => {
+          child.once("close", (code) => {
+            if (timeout !== undefined) clearTimeout(timeout);
+            resolve({ code, stderr });
+          });
+        },
+      );
       child.stdin.end(built.stdin);
-    });
-    expect(result.code).toBe(42);
-    expect(result.stderr).toContain("simulated prompt staging write failure");
-    expect(() => readFileSync(pathOut, "utf8")).toThrow();
-    expect(readdirSync(staging)).toEqual([]);
+      const result = await Promise.race([
+        closed,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // Expected if the staging-failure child already exited.
+            }
+            reject(
+              new Error("staging-failure worker did not exit within 5s"),
+            );
+          }, 5_000);
+        }),
+      ]);
+      expect(result.code).toBe(42);
+      expect(result.stderr).toContain("simulated prompt staging write failure");
+      expect(() => readFileSync(pathOut, "utf8")).toThrow();
+      expect(readdirSync(staging)).toEqual([]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Expected once the staging-failure child has exited.
+      }
+    }
   });
 
   it.each(["SIGHUP", "SIGINT", "SIGTERM"] as const)(
