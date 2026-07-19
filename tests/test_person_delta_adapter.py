@@ -1829,6 +1829,55 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
         content.characters[name].office_type = old_office_type
 
 
+def _new_ming_character(name: str, office: str, office_type: str) -> Character:
+    return Character(
+        name=name,
+        office=office,
+        office_type=office_type,
+        faction="",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50,
+        ability=50,
+        integrity=50,
+        courage=50,
+        style="",
+        power_id="ming",
+    )
+
+
+def test_add_character_person_title_skips_office_type_scaffold(game):
+    """#1057: 运行时新建带名分（person-title）人物撞 #1056 严格官类校验。add_character 须镜像
+    set_character_office 守卫——person-title 不建 offices 父行、不写 character_offices 脏行，
+    否则 _ensure_office_type_parent 直接 ValueError 中止结算。"""
+    db, state, _content = game
+    name = "阵前新附甲"
+
+    db.add_character(state, _new_ming_character(name, "降臣", "身名分"), source="阵前倒戈")
+
+    row = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row is not None
+    assert row["office_type"] == "身名分"
+    assert db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone() is None
+
+
+def test_add_character_non_canonical_office_type_still_raises(game):
+    """守卫只放行 person-title 名分：真正未定义的官类仍必须响亮 ValueError（闸不被放宽吞掉）。"""
+    db, state, _content = game
+
+    with pytest.raises(ValueError, match="未定义官类"):
+        db.add_character(
+            state, _new_ming_character("杜撰甲", "绝无此名的杜撰怪衔", "杜撰官类")
+        )
+
+
 @pytest.mark.parametrize(
     ("item", "expected"),
     [
