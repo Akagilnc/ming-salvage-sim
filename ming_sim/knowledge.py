@@ -110,11 +110,6 @@ def knowledge_row_visible_to(
     return True
 
 
-def _prose(text: object) -> str:
-    """Carry durable report prose without mechanically interpreting it."""
-    return str(text or "")
-
-
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
     """Render one character's projected knowledge for an audience prompt.
 
@@ -275,7 +270,7 @@ def _world(
         )),
     }
     facts = {
-        domain: _prose(report_builders[domain]())
+        domain: str(report_builders[domain]() or "")
         for domain in visible_domains
         if domain in report_builders
     }
@@ -320,7 +315,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "turn": int(directive["turn"]), "year": int(directive["year"]),
             "period": int(directive["period"]), "kind": "public",
             "title": directive.get("event_title") or "明发旨意",
-            "body": _prose(directive.get("text") or ""),
+            "body": str(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
     def source_projection(turn: int, fallback: object, *, public_counterpart: str = "") -> str:
@@ -391,7 +386,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # #883 deliberately has no old-save compatibility fallback.
         if rows:
             return "\n".join(
-                _prose(row.get("body") or row.get("title") or "")
+                str(row.get("body") or row.get("title") or "")
                 for row in visible
                 if row.get("body") or row.get("title")
             )
@@ -439,7 +434,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
 
     visible_events = [
         {
-            key: (_prose(value) if key == "body" else value)
+            key: (str(value or "") if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
         for row in events
@@ -466,7 +461,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             projected_turns.add(int(turn))
     visible_public = [
         {
-            key: (_prose(value) if key == "body" else value)
+            key: (str(value or "") if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
         for row in public_events
@@ -545,7 +540,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         deduped_public.append(row)
     visible_public = deduped_public
     public_bodies = [
-        _prose(item.get("body") or item.get("title") or "")
+        str(item.get("body") or item.get("title") or "")
         for item in visible_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
@@ -632,5 +627,5 @@ def build_character_treasury_ledger(
             f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
             f"余额{row['balance_after']}）"
         )
-        lines.append(_prose(line))
+        lines.append(line)
     return "\n".join(lines)

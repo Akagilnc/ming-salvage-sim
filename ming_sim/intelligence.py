@@ -54,11 +54,6 @@ def source_kind_for_query(query: str) -> str:
     return "inquiry" if any(word in text for word in ("查访", "密查", "查问", "访查")) else "firsthand"
 
 
-def _report_text(text: object) -> str:
-    """Carry report prose; structured readers own qualitative projection."""
-    return str(text or "")
-
-
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
     """Read the existing domain presentation seams, keeping values out of payload."""
     domain = _query_domain(query)
@@ -67,17 +62,17 @@ def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
     if domain == "office":
         return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
     if domain == "arrears":
-        return _report_text(db.army_report(limit=10)), "armies"
+        return str(db.army_report(limit=10) or ""), "armies"
     if domain == "bandits":
         # power_report is the existing qualitative military-intelligence seam;
         # use its domain filter so a bandit question cannot receive every
         # foreign power's report.
-        return _report_text(db.power_report(
+        return str(db.power_report(
             # Content identifies the three rebel powers by id while their
             # display kind is \"内乱\".  power_report accepts either form.
             exclude_self=True, kinds={"bandit", "bandits", "内乱"}, audience=True,
-        )), "powers"
-    return _report_text(db.power_report(exclude_self=True, audience=True)), "powers"
+        ) or ""), "powers"
+    return str(db.power_report(exclude_self=True, audience=True) or ""), "powers"
 
 
 def _character_domain_statement(db: Any, state: Any, character_name: str, query: str) -> tuple[str, str]:
@@ -94,7 +89,7 @@ def _character_domain_statement(db: Any, state: Any, character_name: str, query:
     # The durable source id remains in the knowledge ledger.  The audience
     # payload gets only a qualitative label, so its provenance can be
     # explained without exposing an internal key (which may contain digits).
-    return _report_text(record.get("body")), "持久见闻"
+    return str(record.get("body") or ""), "持久见闻"
 
 
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
