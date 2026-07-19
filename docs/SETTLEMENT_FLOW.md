@@ -70,15 +70,17 @@
      （driver 路无 ready=0 占位，pre_settle 后直接存 ready=1，见 8.5）
 
   4. chapter_memories = db.list_chapter_memories(upto_turn=state.turn, recent=6)
-     secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48 防 enum 泄漏邸报）
+     secret_orders = group_secret_orders_for_sim(active + pending_review 行)  # 分中文键两组{在办,待核议}、剥英文 status（#48）
      secret_orders = augment_secret_orders_with_due_commitments(secret_orders, db, state)
-       ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时复用「待核议」通道顶给 simulator；
-         不另起 due_commitments 结构，不在 active_issues 背景里等 LLM 自己想起。
+       ↳ form③ 承诺（有 end_turn、无 ongoing_effects）到期时写入「待核议」分组（entry_kind=due_commitment）
+       ↳ #883 分流：分组只喂 personnel_secret extractor 独立 rail；
+         simulator 公共轨只派生扁平 due_commitments（永不预读密令正文）
      previous_summary = db.previous_turn_summary(state.turn)
 
   5. [我产邸报 narrative]  ← 季末讲官身份，照 season_simulator.md 的章法
      - 拆 decree_text 成独立旨意逐条推演
      - 钱粮三要素「源→目标，金额」
+     - 公共轨可见 due_commitments（到期待裁承诺），不预读 secret_orders
      - 末尾可追 <<DECISION>>...<<END>> HITL 决策块（≤5 个）
 
   6. narrative, decisions = parse_decision_blocks(narrative)

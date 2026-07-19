@@ -53,6 +53,7 @@ import {
   opts,
   FakeSeamsBackend,
 } from "./real-backend.shared.js";
+import { ensureGitInfoExclude } from "../../../src/gitInfoExclude.js";
 
 afterEach(() => {
   for (const r of tempState.repos) rmSync(r, { recursive: true, force: true });
@@ -1472,29 +1473,11 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
 
 describe("RealFamilyBackend runtime file git excludes", () => {
   it("treats CRLF exclude entries as existing lines instead of appending duplicates", () => {
-    class Probe extends RealFamilyBackend {
-  resolveLandingLiveHooks(input: {
-    prUrl: string;
-    convergedHeadOid: string;
-    familyBase: string;
-  }) {
-    return buildExplicitLandingLiveHooks({
-      prUrl: input.prUrl,
-      headOid: input.convergedHeadOid,
-      remoteBranchName: input.familyBase,
-    });
-  }
-
-      public exclude(filename: string): void {
-        this.excludeOptionalRuntimeFileFromGit(filename);
-      }
-    }
     const repo = trackRepo();
     const excludePath = join(repo, ".git", "info", "exclude");
     writeFileSync(excludePath, ".orchestrator-outcome.json\r\n", "utf8");
-    const b = new Probe(opts(repo));
 
-    b.exclude(".orchestrator-outcome.json");
+    ensureGitInfoExclude(repo, ".orchestrator-outcome.json");
 
     expect(readFileSync(excludePath, "utf8")).toBe(".orchestrator-outcome.json\r\n");
   });

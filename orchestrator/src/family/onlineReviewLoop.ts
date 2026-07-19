@@ -11,8 +11,18 @@
  */
 
 import {
+  BOT_OVERDUE_POLL_COUNT,
+  BOT_POLL_INTERVAL_MS,
+  BOT_RETRIGGER_COMMENT,
+  checkRunsConverged,
+  classifyCheckRuns,
   droppedBotIds,
+  findAdmissibleRetriggerComment,
   ONLINE_REVIEW_BOT_IDS,
+  parsePrRef,
+  pollPrReviewState,
+  postBotRetriggerComment,
+  type OnlineReviewBotId,
   type PrReviewSnapshot,
 } from "../botPolling.js";
 import {
@@ -22,17 +32,6 @@ import {
   type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import type { Sh } from "../familyDriver.js";
-import {
-  BOT_OVERDUE_POLL_COUNT,
-  BOT_POLL_INTERVAL_MS,
-  BOT_RETRIGGER_COMMENT,
-  checkRunsConverged,
-  classifyCheckRuns,
-  findAdmissibleRetriggerComment,
-  parsePrRef,
-  pollPrReviewState,
-  postBotRetriggerComment,
-} from "../botPolling.js";
 import type {
   FixerResult,
   OnlineReviewLandingSnapshot,
@@ -677,7 +676,9 @@ export async function waitForBotQuiescence(
     readonly prUrl: string;
     readonly roundTrigger: RoundTrigger;
     readonly maxPolls?: number;
-    readonly botPendingPolls?: Readonly<Partial<Record<string, number>>>;
+    readonly botPendingPolls?: Readonly<
+      Partial<Record<OnlineReviewBotId, number>>
+    >;
     readonly clock?: BotPollClock;
   },
 ): Promise<PrReviewSnapshot> {
@@ -697,7 +698,7 @@ export async function waitForBotQuiescence(
       prUrl: input.prUrl,
       pollCount: poll,
       roundTrigger,
-      botPendingPolls: input.botPendingPolls as never,
+      botPendingPolls: input.botPendingPolls,
     });
     roundTrigger = last.roundTriggerUsed;
     if (last.quiescent) return last;

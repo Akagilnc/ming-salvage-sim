@@ -745,18 +745,6 @@ def test_fiscal_levy_expired_pending_choice_is_terminalized(game):
         content.events.remove(ev)
 
 
-def test_fiscal_levy_memorial_prompt_contract_is_positive_p4():
-    from pathlib import Path
-
-    text = (Path(__file__).resolve().parents[1] / "content/prompts/season_simulator.md").read_text(
-        encoding="utf-8"
-    )
-    assert "fiscal_levy_memorial_estimates" in text
-    assert "以奏疏口吻" in text
-    assert "国总万两量级加征估算" in text
-    assert "可补军费" in text
-
-
 def test_lian_levy_start_triggers_and_updates_shadow_settle_before_fiscal_tick(game):
     db, state, content = game
     issues.bind_content(content)

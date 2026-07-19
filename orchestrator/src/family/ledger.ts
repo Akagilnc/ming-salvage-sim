@@ -31,6 +31,10 @@ import {
   type StopSummary,
 } from "../stopSummary.js";
 import {
+  emitShipProgress,
+  getProgressBroadcastConfig,
+} from "../progressBroadcast.js";
+import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
   type FamilyLedgerEntry,
@@ -697,6 +701,18 @@ export function unansweredChildEscalations(
   return out.reverse();
 }
 
+function answerPayloadFromChildAnswer(
+  entry: FamilyLedgerEntry,
+): EscalationAnswerPayload {
+  return {
+    event: "escalation_answered",
+    answer: entry.answer!,
+    source: (entry.source ?? "human") as "human" | "resume_input",
+    ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
+    ...(entry.note != null ? { note: entry.note } : {}),
+  };
+}
+
 /**
  * The human answer that reopens a specific child's parked decision gate
  * (#604 slice 5), or `undefined` when the child is not parked / not yet answered.
@@ -719,14 +735,28 @@ export function childEscalationAnswer(
   for (let i = entries.length - 1; i > escalatedIdx; i--) {
     const entry = entries[i]!;
     if (isValidChildAnswer(entry, childIssue)) {
-      return {
-        event: "escalation_answered",
-        answer: entry.answer!,
-        source: (entry.source ?? "human") as "human" | "resume_input",
-        ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
-        ...(entry.note != null ? { note: entry.note } : {}),
-      };
+      return answerPayloadFromChildAnswer(entry);
     }
+  }
+  return undefined;
+}
+
+/**
+ * #1019 — latest child-bound answer regardless of a preceding family park row.
+ *
+ * Mixed-wave failure+park historically dropped durable `child_decision_parked`
+ * rows (#604 P1-a), so humans still answered from progress text but
+ * {@link childEscalationAnswer} could not see the bind. Cross-launcher re-entry
+ * must still feed that answer into fresh redispatch.
+ */
+export function latestChildBoundAnswer(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  childIssue: number,
+): EscalationAnswerPayload | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidChildAnswer(entry, childIssue)) continue;
+    return answerPayloadFromChildAnswer(entry);
   }
   return undefined;
 }
@@ -747,6 +777,32 @@ export async function recordAdmissionSkipped(
       stopSummary: successStopSummary({
         admissionSkipped: [record],
       }),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * #1006 — durable audit when the admission baseline health gate fails closed
+ * (family-base full suite red before fan-out). Not an unblock fact.
+ */
+export async function recordBaselineHealthFailed(
+  backend: FamilyBackend,
+  record: {
+    readonly reason: string;
+    readonly message: string;
+    readonly familyHeadAfter?: string;
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger(
+    compact({
+      status: "baseline_health_failed",
+      event: "baseline_health_failed",
+      phase: "wave",
+      reason: record.reason,
+      message: record.message,
+      ...(record.familyHeadAfter !== undefined
+        ? { familyHeadAfter: record.familyHeadAfter }
+        : {}),
     }) as FamilyLedgerEntry,
   );
 }
@@ -1094,6 +1150,14 @@ export async function recordShipped(
         }),
     }) as FamilyLedgerEntry,
   );
+  // #1007: first successful ship must echo progress (resume path also echoes;
+  // missing here left the only ship event on re-entry, not the open).
+  // Align epic with resume path when ambient progress config has it.
+  emitShipProgress({
+    epic: getProgressBroadcastConfig().epic,
+    pr,
+    familyHead: familyHeadAfter,
+  });
 }
 
 /**

@@ -12,12 +12,16 @@
  * returned so the caller's existing durable-abort path handles it (no new
  * supervisor, no new stop-reason field).
  *
- * This layer reads ONLY the outcome discriminant (`result.kind`) — never the
- * worker's self-reported content.
+ * This layer classifies process-level outcomes for mechanical retry:
+ * primarily the outcome discriminant (`result.kind`), plus durable host-FS
+ * (EISDIR-class) classification on throw / failed `reason` (#1012) so the same
+ * host path is not re-dispatched. It never reads worker self-reported content
+ * for judgment — that belongs to the next fresh reviewer pass.
  */
 
 import type { ChildProcess } from "node:child_process";
 
+import { isEisdirClassHostFsError } from "./fsErrors.js";
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import { capacityRelayErrorFrom } from "./relayDispatch.js";
 import {
@@ -108,8 +112,16 @@ function isNonRetryableDispatchThrow(err: unknown): boolean {
     isQuotaWaitForResetError(err) ||
     capacityRelayErrorFrom(err) !== undefined ||
     isWorkerTerminationFailedError(err) ||
-    isAdoptionPersistFailedError(err)
+    isAdoptionPersistFailedError(err) ||
+    // #1012: host FS EISDIR (docker dir-placeholder / open on directory) is
+    // durable infra — re-dispatch cannot heal the same host path.
+    isEisdirClassHostFsError(err)
   );
+}
+
+/** #1012: failed WorkerResult whose reason is EISDIR-class — same durable class. */
+function isEisdirClassFailedResult(result: WorkerResult): boolean {
+  return result.kind === "failed" && isEisdirClassHostFsError(result.reason);
 }
 
 /**
@@ -292,6 +304,9 @@ export async function withMechanicalRetry(
       result.kind === "failed" ? capacityRelayErrorFrom(new Error(result.reason)) : undefined;
     if (capacityError !== undefined) throw capacityError;
     if (!isProcessFailure(result)) return result;
+    // #1012: hostCliWorkerRunner converts EISDIR throws into failed results;
+    // do not empty-spin the process-root budget on the same host-FS error.
+    if (isEisdirClassFailedResult(result)) return result;
     // A process-level failure the caller's semantic layer owns is returned as-is so
     // the caller's own bounded loop retries it with its own counter (#598 sequential
     // composition — the generic layer fires only for failures nobody else owns).

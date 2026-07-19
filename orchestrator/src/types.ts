@@ -566,7 +566,8 @@ export interface RouteDegradedEvent {
 }
 
 /**
- * #926 — judge `advanceCoder` executed: coder slot switched; prior session retired.
+ * #926 / #1002 — judge `advanceCoder` executed: repair seat switched (coderFix /
+ * fixer); prior repair session retired when the model changed.
  * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
  */
 export interface CoderAdvanceEvent {
@@ -579,14 +580,15 @@ export interface CoderAdvanceEvent {
 }
 
 /**
- * #926 — judge `advanceCoder` target unusable: stay on the current coder.
- * Never a terminal — result returns to the judge desk on the normal continue path.
+ * #926 / #1002 — judge `advanceCoder` target unusable: stay on the current repair seat
+ * (coderFix / fixer). Never a terminal — result returns to the judge desk on the
+ * normal continue path.
  */
 export interface CoderAdvanceStayPutEvent {
   readonly event: "coder_advance_stay_put";
   /** Why the advance was refused (`unknown_target`, …). */
   readonly reason: string;
-  /** Current coder seat (unchanged). */
+  /** Current repair seat (coderFix / fixer; unchanged). */
   readonly fromModelId: string;
   /** Same as from — stay-put does not move. */
   readonly toModelId: string;
@@ -1152,7 +1154,10 @@ export interface CmrResult {
   readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
-  /** CMR leg slugs that actually produced a usable review this pass. */
+  /**
+   * CMR leg slugs present this pass (ADR 0141: transport success = exit 0 +
+   * non-empty raw stdout). Soft cargo only — content shape is never a gate.
+   */
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly CmrSkippedLeg[];
@@ -1260,6 +1265,13 @@ export interface VerifyResult {
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
+  /**
+   * #1002 — optional roster suggestion on continue: runner rewrites the online
+   * review **fixer** repair seat via executeAdvanceCoderSuggestion (same
+   * advanced/stay_put/noop topology as single-slice/family coderFix). Never a
+   * terminal fate signal.
+   */
+  readonly advanceCoder?: string;
 }
 
 /**
@@ -1897,6 +1909,12 @@ export interface RunInput {
    * performs a local handoff and never ships.
    */
   readonly family?: FamilyContext;
+  /**
+   * #1019 — family-level child decision answer when in-place resume residue is
+   * dead/missing. Carried into the first coder dispatch (fix-findings landing)
+   * on fresh redispatch; does not invent single-slice resume truth.
+   */
+  readonly familyEscalationAnswer?: EscalationAnswerPayload;
   /**
    * #686 / #909 — optional route pool table override for park-vs-relay at the
    * #683 disposition point. When present, the table is authoritative. When

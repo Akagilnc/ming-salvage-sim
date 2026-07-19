@@ -59,14 +59,9 @@ def _make_character(is_consort: bool = False) -> MagicMock:
 
 
 _REGISTRY_PATCHES = [
-    ("ming_sim.registry.build_court_brief", ""),
-    ("ming_sim.registry.build_court_roster", ""),
-    ("ming_sim.registry.build_court_roster_index", ""),
-    ("ming_sim.registry.build_last_gazette_brief", ""),
-    ("ming_sim.registry.build_memory_brief", ""),
+    ("ming_sim.registry.build_character_knowledge_brief", ""),
+    ("ming_sim.registry.build_recommendation_brief", ""),
     ("ming_sim.registry.build_secret_order_brief", ""),
-    ("ming_sim.registry.build_region_brief", ""),
-    ("ming_sim.registry.build_building_brief", ""),
     ("ming_sim.registry.build_minister_tools", []),
     ("ming_sim.registry._skills_for", MagicMock()),
     ("ming_sim.registry.character_context_with_db", "角色描述"),

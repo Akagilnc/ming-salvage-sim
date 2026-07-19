@@ -1,4 +1,6 @@
 import { beforeEach, vi } from "vitest";
+// #1010: patch Sandcastle cancel seam before any test imports sc.run / docker.
+import "../src/sandcastleCancelSeam.js";
 import { resetRoutePresetsCacheForTests } from "../src/modelRoutes.js";
 
 // The orchestrator runner may execute `npm test` under a non-default

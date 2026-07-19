@@ -1,11 +1,12 @@
 /**
- * #919 / #926 / #930 — one advanceCoder execution path for both courts.
+ * #919 / #926 / #930 / #1002 — one advanceCoder execution path for all courts.
  *
  * Topology law lives here once:
  *   resolveAdvanceCoderSuggestion → applySlug → optional probe → advanced | stay_put | noop
  *
  * Callers own only: audit persistence + sticky seat state. Never terminal on
- * bad advance (slice S3/S6 and family CMR continue share this contract).
+ * bad advance. Courts differ only in which repair seat `applySlug` rewrites
+ * (single-slice coderFix / family coderFix / online-review fixer — #1002).
  */
 
 import {
@@ -59,9 +60,10 @@ export type AdvanceCoderProbe = (
 /**
  * Execute a judge `advanceCoder` suggestion against one seat's current slug.
  *
- * `applySlug` is the only court difference:
- *   - single-slice S3/S6 → rewrite coder + coderFix
- *   - family CMR continue → rewrite coderFix only
+ * `applySlug` is the only court difference (repair seats only — #1002 07-18):
+ *   - single-slice S3/S6 → rewrite coderFix
+ *   - family CMR continue → rewrite coderFix
+ *   - online-review continue → rewrite fixer
  */
 export async function executeAdvanceCoderSuggestion(input: {
   readonly suggestion: string;
@@ -162,4 +164,75 @@ export async function executeAdvanceCoderSuggestion(input: {
       ts,
     },
   };
+}
+
+/**
+ * Repair seat a family-ledger `coder_advance*` row applied to.
+ * Online-review sticky re-hold and CMR coderFix must not cross-bleed (#1017 R2).
+ */
+export type AdvanceRepairSeat = "coderFix" | "fixer";
+
+/**
+ * Dual status/event audit fields for family ledger advance rows.
+ * Shared by online-review fixer + family CMR coderFix courts (#919 / #1002).
+ * Callers spread court-only extras (phase / cmrPass) on top — no framework.
+ * `advanceSeat` is required so sticky rebuild can scope by court.
+ */
+export function familyAdvanceCoderAuditFields(
+  effect: Extract<AdvanceCoderEffectResult, { kind: "stay_put" | "advanced" }>,
+  suggestion: string,
+  advanceSeat: AdvanceRepairSeat,
+): {
+  readonly status: "coder_advance" | "coder_advance_stay_put";
+  readonly event: "coder_advance" | "coder_advance_stay_put";
+  readonly reason: string;
+  readonly message: string | undefined;
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  readonly advanceCoder: string;
+  readonly advanceSeat: AdvanceRepairSeat;
+  readonly ts: string;
+} {
+  return {
+    status: effect.audit.event,
+    event: effect.audit.event,
+    reason: effect.kind === "stay_put" ? effect.reason : "coder_advance",
+    message: effect.audit.state_summary,
+    fromModelId: effect.audit.fromModelId,
+    toModelId: effect.audit.toModelId,
+    advanceCoder: suggestion.trim(),
+    advanceSeat,
+    ts: effect.audit.ts,
+  };
+}
+
+/**
+ * Latest successful `coder_advance` target slug from a ledger scan
+ * (newest-first), scoped to one repair seat. Ignores stay_put and rows for
+ * other seats (or legacy unscoped rows — fail closed on re-hold).
+ * Online-review sticky fixer rebuild (#1002 / #1017 R2).
+ */
+export function latestCoderAdvanceToSlug(
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly status?: string;
+    readonly toModelId?: string;
+    readonly advanceSeat?: string;
+  }>,
+  seat: AdvanceRepairSeat,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const row = ledger[i]!;
+    const isAdvance =
+      row.event === "coder_advance" || row.status === "coder_advance";
+    if (
+      isAdvance &&
+      row.advanceSeat === seat &&
+      typeof row.toModelId === "string" &&
+      row.toModelId.length > 0
+    ) {
+      return row.toModelId;
+    }
+  }
+  return undefined;
 }

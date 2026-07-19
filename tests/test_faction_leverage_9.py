@@ -183,21 +183,16 @@ def test_promotion_via_set_character_office_raises_leverage(game):
     """#9 finding(双hook)：active 成员从低权官调到高权官(set_character_office) → faction leverage 上升。
     增量版只挂 set_character_status、漏了升迁联动；全重算双 hook 修此。"""
     db, state, content = game
-    # 取一个阉党在朝低权官（地方/外臣），升迁到内阁，验 leverage 涨。
+    # 取一个阉党在朝低权官，升迁到一个未被占用的内阁首辅衔，验 leverage 涨。
+    # 不用通名「内阁大学士」：已有同名槽时真实路径会先 displacement，测到的是换人而非升迁。
     row = db.conn.execute(
         "SELECT name, office_type FROM characters WHERE faction='阉党' AND status='active' "
-        "AND office_type IN ('地方','外臣','翰林院','内臣') LIMIT 1"
+        "AND office_type IN ('礼部','刑部','工部','内臣','翰林院','地方','外臣') LIMIT 1"
     ).fetchone()
-    if row is None:
-        # 退而求其次：任取一个握官成员升到内阁尚书堂官，验非降（多数情况会涨）。
-        row = db.conn.execute(
-            "SELECT name, office_type FROM characters WHERE faction='阉党' AND status='active' "
-            "AND office_type NOT IN ('后宫','宗藩','未仕','','内阁','司礼监') LIMIT 1"
-        ).fetchone()
     if row is None:
         pytest.skip("阉党无可升迁的在朝低权官（数据依赖）")
     before = db.faction_leverage("阉党")
-    db.set_character_office(row["name"], "内阁大学士", "内阁")
+    db.set_character_office(row["name"], "中极殿首辅", "内阁")
     after = db.faction_leverage("阉党")
     assert after > before, f"升迁到内阁后 leverage 应上升(before={before} after={after})"
 

@@ -16,9 +16,17 @@ from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db
+from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
+from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
+from ming_sim.knowledge import project_court_roster_rows, render_character_knowledge
+from ming_sim.qualitative import (
+    building_output_effect,
+    building_qualitative_fields,
+    power_band,
+    safe_historical_text,
+)
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -61,7 +69,7 @@ def _ctx() -> GameContent:
     return _content
 
 
-def build_court_brief(context: CourtContext) -> str:
+def build_court_brief(context: CourtContext, character: Optional[Character] = None) -> str:
     """每回合精简上下文：仅含回合 + 核心数值 + 在办事项 + 钱粮一句话。
     地区/军队/派系/事项详情靠大臣按需调 tool 查（list_regions, inspect_memorial 等）。
     """
@@ -69,30 +77,58 @@ def build_court_brief(context: CourtContext) -> str:
     money_line = (
         f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
     )
-    score_line = "；".join(
-        f"{k}{metrics[k]}"
-        for k in ("民心", "皇威")
-        if k in metrics
-    )
-    issues = context.db.list_active_issues()
+    score_line = "民情与君威见于各地奏报和行事反应。"
+    if character:
+        # Characterized callers must use the same perspectival issue rail as
+        # the agent prompt; the uncharacterized board brief remains an engine
+        # overview for non-minister callers.
+        issues = context.db.get_character_knowledge(context.state, character.name).get("issues", [])
+    else:
+        issues = context.db.list_active_issues()
     issue_lines: List[str] = []
     for row in issues[:10]:
         kind_tag = "系统" if row["kind"] == "situation" else "玩家"
-        bar = int(row["bar_value"])
-        # 注意：bar_good_meaning/bar_bad_meaning 是进度条「两端」的含义，
-        # 不是当前状态。当前 bar 值才是进度，满 100 才算到 good 端。
         issue_lines.append(
             f"#{row['id']}[{kind_tag}]{row['title']}"
-            f"（进度{bar}/100；满100={row['bar_good_meaning']}，跌0={row['bar_bad_meaning']}）"
+            f"（局势未决；向好端：{row['bar_good_meaning']}；向坏端：{row['bar_bad_meaning']}）"
         )
     issues_brief = "；".join(issue_lines) if issue_lines else "无"
+    identity_brief = faction_context_with_db(character, context.db) if character else ""
     return (
         f"本{TURN_UNIT}：{context.state.year}年{context.state.period}月（第{context.state.turn}回合）。"
         f"钱粮：{money_line}国势：{score_line}。"
         f"在办事项：{issues_brief}。"
-        f"势力：{context.db.power_report(exclude_self=True)}。"
-        f"朝堂派系（满意度/影响力均为当前实值，据此判断各派当前强弱，不要凭印象推断）：{context.db.faction_report()}。"
+        f"{identity_brief}"
+        f"势力档料：{_power_brief(context)}。"
         f"地区/奏报/钱粮详情按需调工具查（list_regions/inspect_region/inspect_memorial/check_treasury 等）；人事与军队详情见下方固定名册。"
+    )
+
+
+def _minister_game_world_prompt(prompt: str) -> str:
+    """给大臣的世界观说明只保留呈现口径，不把引擎量表喂给角色。"""
+    lines = []
+    for line in prompt.splitlines():
+        if "国势核心数值四个：" in line:
+            line = "- 国势以奏报呈现：国库、内库保留钱粮口径；民心、皇威只作定性描述。"
+        elif "地区盘面使用两京十三省的核心字段：" in line:
+            line = "- 地区盘面中人口、粮食、田亩、隐田、每回合税收等可数物照实呈报；民心、动乱、士绅阻力、军事压力以定性描述呈报。"
+        elif "军队盘面使用主要军队核心字段：" in line:
+            line = "- 军队盘面中驻地、统帅、兵种、人数、月饷与欠饷等可数物照实呈报；补给、士气、训练、装备、火器、机动、忠诚以定性描述呈报；随军大炮照门数呈报。"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _power_brief(context: CourtContext) -> str:
+    """势力的抽象轴也只以定性档料进入扮演 prompt。"""
+    rows = context.db.power_rows(exclude_self=True)
+    if not rows:
+        return "势力未建档。"
+
+    return "；".join(
+        f"{row['name']}（{row['leader']}）：{row['stance']}，朝势{power_band(row['leverage'])}、"
+        f"军力{power_band(row['military_strength'])}、财力{power_band(row['supply'])}，"
+        f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
+        for row in rows
     )
 
 
@@ -160,24 +196,33 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     report = context.db.get_turn_report(prev_turn)
     if not report or not report.strip():
         return ""
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + report.strip()
+    safe_report = safe_historical_text(report, "上回合邸报")
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
-    """更早朝局的章节记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
-    此处跳过 turn-1，只留 turn-2 及更早数月的章节，避免与邸报重叠。"""
+    """从人物见闻投影渲染更早朝局；章节表不是人物读取端。"""
     prev_turn = int(context.state.turn) - 1
-    chapters = [
-        c for c in context.db.list_chapter_memories(upto_turn=context.state.turn, recent=4)
-        if int(c["turn"]) != prev_turn  # 上月已由邸报全文覆盖
-    ]
-    if not chapters:
-        return ""
+    knowledge = context.db.get_character_knowledge(context.state, character.name)
+    chapters = [c for c in knowledge.get("public_events", [])
+                if (c.get("kind") == "chapter_summary" or str(c.get("source_id") or "").startswith("chapter_source:"))
+                and int(c.get("turn") or 0) != prev_turn]
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
     for c in chapters:
-        body = (c.get("body") or c.get("title") or "").strip()
+        body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
         if body:
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
+    if len(lines) == 1:
+        # A rejected historical aggregate must be explicit rather than silently
+        # disappearing: the minister sees neither its unsafe raw axes nor an
+        # invented substitute.  This also keeps the P4 boundary observable at
+        # the chapter-memory seam.
+        raw_chapters = context.db.list_chapter_memories(upto_turn=context.state.turn)
+        for chapter in raw_chapters:
+            safe = safe_historical_text(chapter.get("body") or chapter.get("title"), "起居注章节")
+            if "已略去" in safe:
+                lines.append(f"- {chapter['year']}年{chapter['period']}月：{safe}")
+                break
     if len(lines) == 1:
         return ""
     brief = "\n".join(lines)
@@ -188,6 +233,18 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
         f"让他作答能记得这几月发生过什么。本次装 {len(chapters)} 章：{chap_list}，共 {len(brief)} 字"
     )
     return brief
+
+
+def build_character_knowledge_brief(character: Character, context: CourtContext) -> str:
+    """Render the minister's perspectival world slice for the audience prompt.
+
+    ``get_character_knowledge`` is the sole read boundary here: unlike the
+    legacy registry builders it applies office scoping and source exclusions
+    before anything reaches the model.  Keep this as one block so a future
+    prompt assembly change cannot accidentally reintroduce a global rail.
+    """
+    knowledge = context.db.get_character_knowledge(context.state, character.name)
+    return render_character_knowledge(knowledge, character.name)
 
 
 def build_secret_order_brief(character: Character, context: CourtContext) -> str:
@@ -201,9 +258,9 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
         return ""
     lines = [
         "【你身上还在办的密令】",
-        "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展100字内)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
+        "★ 皇帝问进度时调 `report_secret_order_progress(order_id, progress=本月新一步进展)`：有 progress 时先暂存待确认，确认后落档；若只想查看历史则留空 progress；同月补充会修正本月行。",
         "★ 皇帝催办/加急时调 `rush_secret_order(order_id, deadline_months=1/3/0, reason=催办缘由)`：1=下月核议，3=三月内核议，0=本月即核。",
-        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词200字内)`：转入待核议状态，等推演月末判 done/failed。",
+        "★ 自认任务办到位时调 `submit_secret_order_for_review(order_id, claim=自述办结陈词)`：转入待核议状态，等推演月末判 done/failed。",
         "★ progress / claim 写具体事实：派谁去、查到什么、摸到哪一层、下一步指向谁。空话「待实据到手」不算。",
         "★ 大臣无权直接判 done/failed——结案权全归推演。提交后该月不再可推进。",
         "在册密令：",
@@ -236,7 +293,7 @@ def build_region_brief(context: CourtContext) -> str:
 
 
 def build_building_brief(context: CourtContext) -> str:
-    """现有建筑紧凑表（名·类·省 等级/完好/产出）——省去叙述控 token。
+    """现有建筑紧凑表（名·类·省 规模/完好/产出）——省去叙述控 token。
     CLI 后端无 list_buildings 工具，靠此让大臣知国家有哪些厂局仓坞。"""
     try:
         # 用中文地区名（LEFT JOIN regions），不漏拼音 region_id（beizhili 等英文进 system
@@ -245,6 +302,7 @@ def build_building_brief(context: CourtContext) -> str:
             "SELECT b.name AS name, b.category AS category, "
             "COALESCE(r.name, b.region_id) AS region_name, "
             "b.level AS level, b.condition AS condition, "
+            "b.risk AS risk, "
             "b.output_metric AS output_metric, b.output_amount AS output_amount "
             "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id "
             "ORDER BY b.region_id, b.category"
@@ -253,13 +311,17 @@ def build_building_brief(context: CourtContext) -> str:
         return ""
     if not rows:
         return ""
+
     lines = []
     for r in rows:
-        out = f"·产{r['output_metric']}{int(r['output_amount'] or 0)}" if r["output_metric"] else ""
+        metric = str(r["output_metric"] or "")
+        out = building_output_effect(metric, r["output_amount"], prefix="·")
+        level, condition, _risk = building_qualitative_fields(r)
         lines.append(
-            f"{r['name']}（{r['category']}·{r['region_name']}）Lv{r['level']}完好{r['condition']}{out}"
+            f"{r['name']}（{r['category']}·{r['region_name']}）"
+            f"Lv档{level}，完好{condition}{out}"
         )
-    return "【现有建筑（名·类别·地区 等级/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
+    return "【现有建筑（名·类别·地区 规模/完好/产出；问营建/厂局/仓坞据此）】\n" + "；".join(lines)
 
 
 def _make_cultivate_tool(character: Character, context: CourtContext):
@@ -434,7 +496,10 @@ def create_minister_agent(
     # game_world / minister_agent prompt、character 档案 跨月完全相同 → DeepSeek 前缀缓存命中。
     # 每月动态上下文（钱粮、奏报、地区、军队、派系）由 MinisterRegistry 在 agent 创建后通过首轮
     # user message 喂入，不污染 system prompt。
-    c = _ctx()
+    # The caller owns the live content/state pair.  Requiring the module-level
+    # registry binding here makes this public construction seam fail in fresh
+    # sessions (and lets a stale binding win over a restored context).
+    c = context.db.content or _ctx()
     is_consort = character.office_type == "后宫"
     if is_consort:
         # 从 DB 取调教记录
@@ -447,7 +512,7 @@ def create_minister_agent(
         if extra_traits_str:
             cultivate_desc += f"性情逐渐变化：{extra_traits_str}。"
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.consort_agent_prompt,
             f"你当前扮演：{character.name}，{character.office}，性格{character.style}，"
             f"人物特质：{'、'.join(character.personal_skills)}。个人简介：{character.summary}"
@@ -457,57 +522,45 @@ def create_minister_agent(
         ]
         tools = [_make_cultivate_tool(character, context)]
     else:
-        # 月度动态上下文全挂 system 末尾——每月变一次破尾段缓存，但前面 game_world /
-        # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
-        # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
-        court_brief = build_court_brief(context)
-        # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
-        active_char_count = sum(
-            1 for ch in _ctx().characters.values()
-            # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
-            # （都跳宗藩），否则宗藩多时虚高、误切索引路丢全名册上下文（CodeRabbit PR#130 R2 Minor）。
-            if ch.office_type not in ("后宫", "宗藩")
-            # status 先于 resolve_power_id：多数人物 offstage，先短路省一次 DB 查询（gemini PR#130 R1）
-            and context.db.get_character_status(ch.name)[0] != "offstage"
-            and context.db.resolve_power_id(ch) == "ming"  # DB 权威，同 court_roster
-        )
+        # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
+        # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
+        # 保留给其他调用方，但不能从此处绕过角色见闻边界。
+        complete_roster = context.db.current_court_roster_rows(context.state)
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-        use_roster_tool = active_char_count > 100
-        use_army_tool = army_count > 30
-        if use_roster_tool:
-            court_roster = build_court_roster_index(context)
-        else:
-            court_roster = build_court_roster(context)
-        if use_army_tool:
-            army_roster = context.db.army_roster(index_only=True)
-        else:
-            army_roster = context.db.army_roster()
-        last_gazette = build_last_gazette_brief(context)
-        memory_brief = build_memory_brief(character, context)
+        projected_world = context.db.get_character_knowledge(
+            context.state, character.name,
+        )
+        projected_roster = project_court_roster_rows(
+            complete_roster, projected_world, character.office_type,
+        )
+        # Scale thresholds operate on the authorized slice, never on the global
+        # backing set: a large court cannot manufacture a personnel capability.
+        use_roster_tool = len(projected_roster) > 100
+        projected_world = projected_world.get("world") or {}
+        # The threshold may alter delivery, never authorization: a role without
+        # the military domain must not receive either the roster tool or skill.
+        use_army_tool = army_count > 30 and "military" in projected_world
+        knowledge_brief = build_character_knowledge_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
-        region_brief = build_region_brief(context)
-        building_brief = build_building_brief(context)
+        recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
         monthly_block_parts = [
             f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
             "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
-            f"本{TURN_UNIT}朝会盘面：{court_brief}",
         ]
-        if court_roster:
-            monthly_block_parts.append(court_roster)
-        if army_roster:
-            monthly_block_parts.append(army_roster)
-        if region_brief:
-            monthly_block_parts.append(region_brief)
-        if building_brief:
-            monthly_block_parts.append(building_brief)
-        if last_gazette:
-            monthly_block_parts.append(last_gazette)
-        if memory_brief:
-            monthly_block_parts.append(memory_brief)
+        if knowledge_brief:
+            monthly_block_parts.append(knowledge_brief)
         if secret_brief:
             monthly_block_parts.append(secret_brief)
+        monthly_block_parts.append(recommendation_brief)
+        if projected_roster and not use_roster_tool:
+            monthly_block_parts.append(
+                "【已授权在朝名册】\n" + "\n".join(
+                    f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
+                    for row in projected_roster
+                )
+            )
         instructions = [
-            c.game_world_prompt,
+            _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
             f"你当前扮演：{character_context_with_db(character, context.db)}，"
             f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
@@ -553,7 +606,11 @@ class MinisterRegistry:
         self.agno_db = agno_db
         self.context = context
         self.agents: Dict[str, Agent] = {}
-        characters = _ctx().characters
+        # The CourtContext owns the live content/state pair.  Do not depend on
+        # a module-global binding here: fresh sessions and registry refreshes
+        # must build from the same restored content that supplied the context.
+        self.content = context.db.content or _ctx()
+        characters = self.content.characters
         self.session_ids: Dict[str, str] = {
             name: f"minister-{name}-turn-{context.state.turn}"
             for name in characters
@@ -571,7 +628,7 @@ class MinisterRegistry:
         )
 
     def build_draft_line(self) -> str:
-        """实时查本回合已核定草案。供 GameSession.chat 每轮前置进 user message。"""
+        """实时查本回合已核定草案，供需要展示草案列表的调用方使用。"""
         draft_rows = self.context.db.list_directives(self.context.state, statuses=("draft",))
         if not draft_rows:
             return "无"
@@ -589,7 +646,7 @@ class MinisterRegistry:
         return agent
 
     def refresh(self, character_name: str) -> None:
-        character = _ctx().characters.get(character_name)
+        character = self.content.characters.get(character_name)
         if character is None:
             return
         self.agents[character.name] = self._create(character)

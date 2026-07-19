@@ -31,7 +31,7 @@ def office_skills(office_type: str) -> List[str]:
 
 
 def available_skill_ids(character: Character, db: Optional[GameDB] = None) -> List[str]:
-    c = _ctx()
+    c = getattr(db, "content", None) or _ctx()
     skill_ids = list(c.common_skills)
     skill_ids.extend(c.office_default_skills.get(character.office_type, []))
     skill_ids.extend(c.personal_skill_ids.get(character.name, []))
@@ -48,9 +48,10 @@ def available_skill_ids(character: Character, db: Optional[GameDB] = None) -> Li
 
 
 def available_skill_names(character: Character, db: Optional[GameDB] = None) -> str:
+    c = getattr(db, "content", None) or _ctx()
     names = []
     for skill_id in available_skill_ids(character, db):
-        definition = _ctx().skill_catalog.get(skill_id, {"name": skill_id, "kind": "未知"})
+        definition = c.skill_catalog.get(skill_id, {"name": skill_id, "kind": "未知"})
         names.append(f"{definition['name']}[{definition['kind']}]")
     return "，".join(names)
 

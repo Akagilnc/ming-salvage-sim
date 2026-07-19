@@ -65,7 +65,6 @@ system             -- 规则层直接写入
 ### `chat_messages`
 
 每轮召对逐条落库（`append_chat_message`），不丢进程重启。
-按`(minister_name, turn)`分组，供月末 chat_memory_extractor 使用。
 
 ### `secret_orders`
 
@@ -99,14 +98,6 @@ system             -- 规则层直接写入
   │       payload：turn + directives + decree_text + narrative + applied + extractor_output(applied view)
   │       输出：memories[] JSON → _write_llm_memories() → upsert_event_memory()
   │
-  └─ 3. extract_all_chat_memories()                [memories.py]
-          遍历当月所有召对大臣（db.get_chat_messages_for_turn）
-          每个大臣独立调用 extract_chat_memories_for_minister()
-            └─ agent：chat_memory_extractor（prompts/chat_memory_extractor.md）
-               payload：turn + minister_name + chat_history
-               输出：memories[] → source_kind强制=chat_message, source_id=大臣名:turn
-               限制：每大臣每回合 ≤ 3 条，importance≤2自动设expires_turn=turn+6
-
   以上完成后：prune_event_memories_for_turn(per_subject=3)
     -- 同主体同回合超过3条时按importance降序删低价值的
 ```
@@ -115,8 +106,6 @@ system             -- 规则层直接写入
 
 ```
 step 4  record_event_memories_from_resolution   （规则层）
-step 5  extract_all_chat_memories               （chat_memory agent）
-        ← 紧随落库之后，当月chat_messages已全量入库
 ```
 
 ---
@@ -151,15 +140,15 @@ build_memory_brief(character, context)
 
 ### 3c. 月末推演注入（simulator / extractor）
 
-`decree.py → resolve_directives` step 1.8：
+`decree.py → resolve_directives` step 1.8（#883 隔离架构）：
 
 ```
-1. create_memory_retrieval_agent 从诏书提取关键词（人名/地区/军队/势力/操作词）
-2. db.get_memories_by_keywords(keywords, turn, limit=10)      -- 普通，带expiry过滤
-3. 若LLM输出含year/period：get_memories_by_keywords(..., ignore_expiry=True)  -- 时间查
-4. 合并去重，时间查优先，截取[:12]
-5. 独立拉active secret_orders[:20]
-6. 两者分别作为 relevant_memories / secret_orders 字段注入 simulator / extractor payload
+1. 近几回合章节记忆 → relevant_memories（公共轨：simulator + 各 extractor 可见）
+2. 独立拉 active + pending_review 密令 → group_secret_orders_for_sim 分「在办/待核议」两组、剥英文 status（#48）
+3. augment_secret_orders_with_due_commitments 把到期待裁承诺并入「待核议」分组
+4. 注入分流（#883）：
+   - simulator payload：只派生扁平 due_commitments（entry_kind=due_commitment 的公开承诺），永不预读密令正文
+   - secret_orders 分组：只进 personnel_secret extractor 独立 rail；公共 extractor / 公共月报裁判不预读
 ```
 
 **`get_memories_by_keywords` 评分公式：**
@@ -231,7 +220,7 @@ session.py._apply_close_secret_order 截获 → db.close_secret_order(order_id, 
   → UPDATE status=done/failed, turn_closed=当前回合
 ```
 
-### 密令注入推演
+### 密令注入推演（#883 隔离）
 
 月末 `resolve_directives` step 1.8：
 
@@ -239,22 +228,19 @@ session.py._apply_close_secret_order 截获 → db.close_secret_order(order_id, 
 active_orders = (db.list_secret_orders(status="active")
                  + db.list_secret_orders(status="pending_review"))[:20]
 # group_secret_orders_for_sim 按状态分进中文键两组、剥英文 status
-# （#48：status=active/pending_review 只用来分组，绝不当字段进 LLM 输入，
-#   否则 simulator 把 active 照抄进「密旨动向」邸报段——「孙承宗密旨（active）」）
+# （#48：status=active/pending_review 只用来分组，绝不当字段进 LLM 输入——
+#   若把英文 enum 当字段注入，下游叙事/UI 会冒出「孙承宗密旨（active）」）
 secret_orders_for_sim = {
     "在办":   [...],   # active：承办中
-    "待核议": [...],   # pending_review：本回合待裁决
+    "待核议": [...],   # pending_review：本回合待裁决（可含 entry_kind=due_commitment 的公开承诺）
 }
-# 每条 {id, minister_name, title, content[:120], turn_issued, due_turn, progress, sim_note}（无 status）
-# 注入 simulator / extractor payload 的独立字段 secret_orders
+# 每条密令 {id, minister_name, title, content[:120], turn_issued, due_turn, progress, sim_note}（无 status）
+
+# #883 数据流分流：
+# - secret_orders 分组 → 只喂 personnel_secret extractor 独立 rail（核议主体）
+# - simulator 公共轨 → 只见派生扁平 due_commitments，永不预读密令正文
+# - 披露事件（source_id 前缀 secret_order_disclosure:）是简报升公开知识的唯一通道
 ```
-
-完结/失败密令**不**在此出现；它们通过 `chat_message` 来源的 `event_memory` 进入 `relevant_memories`。
-
-### 密令不重复进记忆
-
-`chat_memory_extractor.md` 提示词明确：
-> 密令（已由 `issue_secret_order` tool 独立落库）不重复写入记忆，除非对话中有额外承诺或情报值得记录。
 
 ---
 
@@ -263,11 +249,8 @@ secret_orders_for_sim = {
 | 关注点 | 状态 | 位置 |
 |--------|------|------|
 | chat_messages 逐条持久化 | ✅ | `db.append_chat_message` |
-| 月末chat提取不漏大臣 | ✅ | `get_chat_messages_for_turn` 按minister分组 |
-| chat提取单大臣失败不阻断 | ✅ | `extract_all_chat_memories` try/except |
 | 规则层 + LLM层不重复source | ✅ | UNIQUE(subject_type,subject_id,event_type,source_kind,source_id) upsert |
-| 密令不进event_memory（active阶段） | ✅ | 独立字段注入，提示词禁止重复 |
-| 密令结案后可通过chat记忆追溯 | ✅ | chat_message来源的event_memory中有结果叙述 |
+| 密令及其派生不进共享 memory | ✅ | #883：专用密令简报结构隔离；披露事件是唯一公开化通道 |
 | 注入不破前缀缓存 | ✅ | 全部走user message，不进system prompt |
 | 时间查绕过衰减 | ✅ | `ignore_expiry=True` 路径 |
 | 每月per_subject剪枝防膨胀 | ✅ | `prune_event_memories_for_turn(per_subject=3)` |
@@ -283,8 +266,5 @@ secret_orders_for_sim = {
 2. **密令active上限20条**：超限直接报错，不降级。
    若玩家密令积压多，大臣会看到报错提示，需先结案旧令。
 
-3. **chat提取时机**：月末颁诏后才提取chat记忆，当月召对内容当月无法被推演引用。
-   召对记忆下月才进入relevant_memories，有1回合滞后。
-
-4. **prune per_subject=3**：同主体同回合只保3条，可能剪掉次要但有效的事件记忆。
+3. **prune per_subject=3**：同主体同回合只保3条，可能剪掉次要但有效的事件记忆。
    importance评分对此有保护（高importance优先保留）。

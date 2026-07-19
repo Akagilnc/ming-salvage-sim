@@ -15,16 +15,7 @@ from __future__ import annotations
 import pytest
 
 from driver import run_settle
-
-
-def _rejection_rows(db, turn, section=None):
-    rows = db.conn.execute(
-        "SELECT section, reason, category, source FROM rejection_reports"
-        " WHERE turn=? ORDER BY id", (turn,)
-    ).fetchall()
-    if section is not None:
-        rows = [r for r in rows if r[0] == section]
-    return rows
+from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
 
 
 def _a_region(db):
@@ -608,21 +599,21 @@ def test_issue_path_tolerates_previously_skipped_cases(game):
     assert after == min(100, before + 2)  # 好字段照落
 
 
-def test_issue_path_still_strict_for_historically_fatal(game):
+def test_issue_path_still_strict_for_historically_fatal(read_game):
     """历史上就 raise 的类别(查无此军)在国策结案路保持严格(pin)。"""
     import ming_sim.issues as I
 
-    db, state, content = game
+    db, state, _ = read_game
     with pytest.raises(ValueError):
         I._apply_issue_entities(db, state, {
             "army_delta": {"查无此军xyz": {"morale": 2}},
         }, "局势#测试结案")
 
 
-def test_nondict_new_army_item_recorded_not_silent(game):
+def test_nondict_new_army_item_recorded_not_silent(read_game):
     """new_armies 非 dict 项不再静默 continue——留拒收记录(issue 路容忍不升级,
     历史即静默;season 路本就被 validate_delta_shape 挡在 S6)(cmr S2 r1 P3)。"""
-    db, state, content = game
+    db, state, _ = read_game
     created = db.create_armies_from_extraction(state, ["不是dict的项"], actor="测试")
     rej = [c for c in created if c.get("rejected")]
     assert len(rej) == 1
@@ -704,13 +695,13 @@ def test_inertia_natural_resolution_tolerated_rejection_no_crash(game):
     assert after == min(100, before + 1)  # 好字段照落
 
 
-def test_float_bool_army_delta_tolerated_on_issue_path(game):
+def test_float_bool_army_delta_tolerated_on_issue_path(read_game):
     """army_delta 的 float/bool 叶在改前是静默套用(int(3.7)=3 照落)=历史可活
     ——issue 路不得升级为崩月;None/字符串历史就 raise,保持严格
     (cmr S2 r3,2/2:「仅限历史上本就 raise 的类别」当真)。"""
     import ming_sim.issues as I
 
-    db, state, content = game
+    db, state, _ = read_game
     aid = db.conn.execute("SELECT id FROM armies LIMIT 1").fetchone()[0]
 
     # float/bool:容忍(不抛,拒收留痕,不套用)

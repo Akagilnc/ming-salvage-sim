@@ -9,6 +9,7 @@ db.close_issue 的代码/DB 异常上抛（ADR 0005 fail-loud）。
 import pytest
 
 import ming_sim.issues as I
+from tests.section_rejection_helpers import game
 
 
 def _closes(result):
@@ -26,8 +27,8 @@ def _rejected(result):
     1.5,        # float
     -10 ** 100,  # 超 SQLite 64-bit 下界
 ])
-def test_close_bad_issue_id_rejected(game, bad_issue_id):
-    db, state, _ = game
+def test_close_bad_issue_id_rejected(read_game, bad_issue_id):
+    db, state, _ = read_game
     # _parse_sqlite_id 拒非整数/bool/float/超 64-bit → 全数逐项拒收 invalid_enum，不泄漏/不崩。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": bad_issue_id, "reason": "resolved"}]}
@@ -39,8 +40,8 @@ def test_close_bad_issue_id_rejected(game, bad_issue_id):
 
 
 @pytest.mark.parametrize("bad_item", [None, 42, "字符串", ["列表"]])
-def test_close_non_dict_item_rejected_not_crash(game, bad_item):
-    db, state, _ = game
+def test_close_non_dict_item_rejected_not_crash(read_game, bad_item):
+    db, state, _ = read_game
     # 非 dict close 项（close_issues:[null]/标量，_sanitize 不清列表项可达）：必须逐项拒收，
     # 不能 cl.get 抛 AttributeError 崩整月（codex r4）。
     out = I.apply_issue_tracker_output(db, state, {"close_issues": [bad_item]})
@@ -50,8 +51,8 @@ def test_close_non_dict_item_rejected_not_crash(game, bad_item):
     assert "非对象" in rej[0]["reason"]
 
 
-def test_close_bad_reason_rejected(game):
-    db, state, _ = game
+def test_close_bad_reason_rejected(read_game):
+    db, state, _ = read_game
     # reason 在调用 close_issue 前先验，故任意 id 都会先因坏 reason 被拒。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 123, "reason": "bogus"}]}
@@ -62,8 +63,8 @@ def test_close_bad_reason_rejected(game):
     assert "reason" in rej[0]["reason"]
 
 
-def test_close_unknown_issue_rejected_missing_ref(game):
-    db, state, _ = game
+def test_close_unknown_issue_rejected_missing_ref(read_game):
+    db, state, _ = read_game
     # 合法 reason + 不存在的 issue_id → close_issue 回 None → missing_ref 拒收（不再静默 continue）。
     out = I.apply_issue_tracker_output(
         db, state, {"close_issues": [{"issue_id": 999999, "reason": "resolved"}]}
@@ -73,8 +74,8 @@ def test_close_unknown_issue_rejected_missing_ref(game):
     assert rej[0]["category"] == "missing_ref"
 
 
-def test_close_overflow_issue_id_rejected(game):
-    db, state, _ = game
+def test_close_overflow_issue_id_rejected(read_game):
+    db, state, _ = read_game
     # 10**100：int() 过得了但绑定 SQLite 会抛 OverflowError——必须在解析期拒收（invalid_enum），
     # 不能让 OverflowError 上抛崩整月（codex r1，复用 _parse_sqlite_id 64-bit 守门）。
     out = I.apply_issue_tracker_output(
@@ -175,8 +176,8 @@ def test_scalar_item_rejection_preserves_original_in_reports(game):
     assert 42 in items and None in items, items  # 原始标量原件保真，非嵌套 wrapper
 
 
-def test_close_issue_code_exception_propagates(game, monkeypatch):
-    db, state, _ = game
+def test_close_issue_code_exception_propagates(read_game, monkeypatch):
+    db, state, _ = read_game
     def _boom(*a, **k):
         raise RuntimeError("模拟 close_issue 落库代码异常")
     monkeypatch.setattr(type(db), "close_issue", _boom)
