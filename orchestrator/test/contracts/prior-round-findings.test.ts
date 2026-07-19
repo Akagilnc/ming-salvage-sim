@@ -61,7 +61,14 @@ function isHistoricalReleaseNote(path: string): boolean {
 
 function walkFiles(root: string, acc: string[] = []): string[] {
   for (const name of readdirSync(root)) {
-    if (name === "node_modules" || name === "dist" || name === ".git") continue;
+    if (
+      name === "node_modules" ||
+      name === "dist" ||
+      name === ".git" ||
+      name === ".sandcastle"
+    ) {
+      continue;
+    }
     const full = join(root, name);
     if (isHistoricalAdr(full) || isHistoricalReleaseNote(full)) continue;
     const st = statSync(full);

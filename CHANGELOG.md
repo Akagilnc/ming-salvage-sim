@@ -4,6 +4,23 @@
 
 ## [未发布]
 
+## [0.37.0.0] - 2026-07-19
+
+### Added
+- **#969 编排器测试分层**：新增带类型检查的 `test:fast` 自检入口；纯逻辑测试可在快速池运行，真实进程、沙箱与 Git 仓测试仍由 full 闸完整覆盖。
+- 新增机械税守卫，新测试若在 fast 池启动真实进程会直接失败，避免快速线随维护静默变慢。
+
+### Changed
+- 将编排器的进程、沙箱、真实后端、worker 与端到端测试迁入结构化 heavy 池，并抽取共享夹具，保留 full 契约覆盖的同时减少 coder/fixer 重复等待。
+- coder 与 fixer 的交卷自检统一使用 fast；wave verify、final verify、CI 与 ship 继续使用 full。
+
+### Fixed
+- 修复 Grok 大提示通过管道重开 `/dev/stdin` 时失败的问题：提示改为权限受限的临时文件，并在正常退出、鉴权失败及 HUP/INT/TERM 中清理且保留原信号语义。
+- 修复 Grok route-smoke 的 stdin 形状、探针环境与进程回收假红，并放宽真实 Git 端到端测试的合理超时预算。
+
+### Removed
+- 删除 dispatch、structured-output、ledger、scaffold smoke、real-backend 与废弃 focus 机制的重复测试钉；幸存测试继续覆盖同一外部契约。
+
 ## [0.36.0.0] - 2026-07-19
 
 ### Added
