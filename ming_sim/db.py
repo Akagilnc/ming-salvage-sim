@@ -2345,22 +2345,53 @@ class GameDB:
 
     def _ensure_office_type_parents(self) -> None:
         """Materialize every declared/referenced office type before FK-checked writes."""
-        definitions = dict(self.content.office_definitions)
-        referenced = {
-            str(character.office_type).strip()
-            for character in self.content.characters.values()
-            if str(character.office_type).strip()
-        }
-        if self._table_exists("characters"):
-            referenced.update(
-                str(row["office_type"]).strip()
-                for row in self.conn.execute(
-                    "SELECT DISTINCT office_type FROM characters"
-                ).fetchall()
-                if str(row["office_type"]).strip()
+        title_kinds = tuple(PERSON_TITLE_KINDS)
+        placeholders = ",".join("?" for _ in title_kinds)
+        if self._table_exists("character_offices"):
+            self.conn.execute(
+                f"DELETE FROM character_offices WHERE office_type IN ({placeholders})",
+                title_kinds,
             )
-        for office_type in sorted(set(definitions) | referenced):
+        self.conn.execute(
+            f"DELETE FROM offices WHERE office_type IN ({placeholders})",
+            title_kinds,
+        )
+        for office_type in sorted(self._canonical_office_types()):
             self._ensure_office_type_parent(office_type)
+        if self._table_exists("character_offices"):
+            self.conn.execute(
+                """
+                UPDATE character_offices
+                SET office_type = (
+                    SELECT characters.office_type FROM characters
+                    WHERE characters.name = character_offices.character_name
+                )
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM offices
+                    WHERE offices.office_type = character_offices.office_type
+                )
+                  AND EXISTS (
+                    SELECT 1 FROM characters
+                    JOIN offices ON offices.office_type = characters.office_type
+                    WHERE characters.name = character_offices.character_name
+                )
+                """
+            )
+
+    def _canonical_office_types(self) -> set[str]:
+        return (
+            set(self.content.office_definitions)
+            | {
+                str(character.office_type).strip()
+                for character in self.content.characters.values()
+                if str(character.office_type).strip()
+            }
+            | {
+                str(office_type).strip()
+                for office_type in (_offices_table().get("allowed_types") or [])
+                if str(office_type).strip()
+            }
+        )
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -2404,17 +2435,7 @@ class GameDB:
             "SELECT 1 FROM offices WHERE office_type=?", (office_type,)
         ).fetchone() is not None:
             return
-        canonical_types = set(self.content.office_definitions) | set(PERSON_TITLE_KINDS) | {
-            str(character.office_type).strip()
-            for character in self.content.characters.values()
-            if str(character.office_type).strip()
-        }
-        canonical_types.update(
-            str(row["office_type"]).strip()
-            for row in self.conn.execute("SELECT DISTINCT office_type FROM characters").fetchall()
-            if str(row["office_type"]).strip()
-        )
-        if office_type not in canonical_types:
+        if office_type not in self._canonical_office_types():
             raise ValueError(f"未定义官类 '{office_type}'")
         definition = self.content.office_definitions.get(office_type, {})
         self.conn.execute(
@@ -4479,7 +4500,9 @@ class GameDB:
         if not current_type:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
         eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
-        self._ensure_office_type_parent(eff_type)
+        is_person_title = eff_type in PERSON_TITLE_KINDS
+        if not is_person_title:
+            self._ensure_office_type_parent(eff_type)
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -4490,18 +4513,21 @@ class GameDB:
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        self.conn.execute(
-            """
-            INSERT INTO character_offices (character_name, office_title, office_type, source)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(character_name) DO UPDATE SET
-                office_title = excluded.office_title,
-                office_type = excluded.office_type,
-                source = excluded.source,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (name, office, eff_type, source),
-        )
+        if is_person_title:
+            self.conn.execute("DELETE FROM character_offices WHERE character_name=?", (name,))
+        else:
+            self.conn.execute(
+                """
+                INSERT INTO character_offices (character_name, office_title, office_type, source)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(character_name) DO UPDATE SET
+                    office_title = excluded.office_title,
+                    office_type = excluded.office_type,
+                    source = excluded.source,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (name, office, eff_type, source),
+            )
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (name,)
@@ -7088,7 +7114,17 @@ class GameDB:
 
     def _snapshot_table(self, table: str, pk: str) -> Dict[str, Dict[str, Any]]:
         rows = self.conn.execute(f"SELECT * FROM {table}").fetchall()
-        return {str(row[pk]): self._row_dict(row) for row in rows}
+        snapshot = {str(row[pk]): self._row_dict(row) for row in rows}
+        if table == "secret_orders":
+            brief_pins = {
+                str(row["order_id"]): str(row["origin_chat_message_ids"] or "[]")
+                for row in self.conn.execute(
+                    "SELECT order_id, origin_chat_message_ids FROM secret_order_briefs"
+                ).fetchall()
+            }
+            for order_id, row in snapshot.items():
+                row["_rollback_brief_origin_chat_message_ids"] = brief_pins.get(order_id, "[]")
+        return snapshot
 
     def capture_chat_rollback_snapshot(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """截取召对前后的可回滚业务表状态，用于撤回时做差异还原。"""
@@ -7183,17 +7219,7 @@ class GameDB:
         ]
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
-            for item in items:
-                table = str(item["target_table"])
-                strategy = str(item["rollback_strategy"])
-                target_id = str(item["target_id"])
-                if strategy == "delete_inserted_row":
-                    self._delete_row_in_tx(table, target_id)
-                elif strategy in {"restore_row", "restore_deleted_row"}:
-                    before_row = self._json_load_row(item["before_json"])
-                    self._restore_row_in_tx(table, before_row)
-                else:
-                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
@@ -7381,6 +7407,7 @@ class GameDB:
     def _restore_row_in_tx(self, table: str, row: Dict[str, Any]) -> None:
         if not row:
             return
+        row = {key: value for key, value in row.items() if not key.startswith("_rollback_")}
         pk = self._ROLLBACK_TABLE_PK.get(table)
         if not pk:
             raise ValueError(f"不支持回滚表：{table}")
@@ -7409,7 +7436,7 @@ class GameDB:
         self.conn.execute(f"DELETE FROM {table} WHERE {pk} = ?", (target_id,))
 
     def _restore_secret_order_brief_projection_in_tx(
-        self, order_id: int, undone_message_ids: Iterable[int],
+        self, order_id: int, origin_chat_message_ids: Iterable[int],
     ) -> None:
         order = self.conn.execute(
             "SELECT turn_issued,year_issued,period_issued,minister_name,title,content "
@@ -7417,14 +7444,7 @@ class GameDB:
         ).fetchone()
         if order is None:
             return
-        brief = self.conn.execute(
-            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
-            (int(order_id),),
-        ).fetchone()
-        pins = self._coerce_positive_message_ids(
-            json.loads(brief["origin_chat_message_ids"] or "[]") if brief is not None else []
-        )
-        undone = {int(message_id) for message_id in undone_message_ids}
+        pins = self._coerce_positive_message_ids(origin_chat_message_ids)
         self.conn.execute(
             """
             INSERT INTO secret_order_briefs
@@ -7440,9 +7460,37 @@ class GameDB:
                 int(order_id), int(order["turn_issued"]), int(order["year_issued"]),
                 int(order["period_issued"]), str(order["minister_name"]),
                 str(order["title"]), str(order["content"]),
-                safe_json_dumps([pin for pin in pins if pin not in undone], ensure_ascii=False),
+                safe_json_dumps(pins, ensure_ascii=False),
             ),
         )
+
+    def _restore_chat_rollback_items_in_tx(
+        self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
+    ) -> None:
+        undone = {int(message_id) for message_id in undone_message_ids}
+        for item in items:
+            table = str(item["target_table"])
+            strategy = str(item["rollback_strategy"])
+            target_id = str(item["target_id"])
+            if strategy == "delete_inserted_row":
+                self._delete_row_in_tx(table, target_id)
+            elif strategy in {"restore_row", "restore_deleted_row"}:
+                before_row = self._json_load_row(item["before_json"])
+                self._restore_row_in_tx(table, before_row)
+                if table == "secret_orders":
+                    raw_pins = before_row.get("_rollback_brief_origin_chat_message_ids")
+                    if raw_pins is None:
+                        brief = self.conn.execute(
+                            "SELECT origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+                            (int(target_id),),
+                        ).fetchone()
+                        current = json.loads(brief[0] or "[]") if brief is not None else []
+                        pins = [pin for pin in current if int(pin) not in undone]
+                    else:
+                        pins = json.loads(str(raw_pins) or "[]")
+                    self._restore_secret_order_brief_projection_in_tx(int(target_id), pins)
+            else:
+                raise ValueError(f"不支持的回滚策略：{strategy}")
 
     def undo_chat_turn(self, chat_turn_id: int) -> Dict[str, Any]:
         row = self.conn.execute(
@@ -7480,7 +7528,6 @@ class GameDB:
         # 补充→颁诏→撤回流程会漏掉 committed_directive_id，残留 orphan draft 污染颁诏。
         # 所以不依赖 strategy，只要该行 kind=='directive' 就回收。
         draft_ids_to_delete: List[int] = []
-        restored_secret_order_ids: List[int] = []
         seen_draft_ids: set[int] = set()
         for item in items:
             if str(item["target_table"]) != "pending_actions":
@@ -7513,27 +7560,13 @@ class GameDB:
                 "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
             )
-            for item in items:
-                table = str(item["target_table"])
-                strategy = str(item["rollback_strategy"])
-                target_id = str(item["target_id"])
-                if strategy == "delete_inserted_row":
-                    self._delete_row_in_tx(table, target_id)
-                elif strategy in {"restore_row", "restore_deleted_row"}:
-                    before_row = self._json_load_row(item["before_json"])
-                    self._restore_row_in_tx(table, before_row)
-                    if table == "secret_orders":
-                        restored_secret_order_ids.append(int(target_id))
-                else:
-                    raise ValueError(f"不支持的回滚策略：{strategy}")
+            self._restore_chat_rollback_items_in_tx(items, message_ids)
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
             for draft_id in draft_ids_to_delete:
                 self.conn.execute(
                     "DELETE FROM turn_directives WHERE id=? AND status='draft'",
                     (int(draft_id),),
                 )
-            for order_id in restored_secret_order_ids:
-                self._restore_secret_order_brief_projection_in_tx(order_id, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)
                 self.conn.execute(
