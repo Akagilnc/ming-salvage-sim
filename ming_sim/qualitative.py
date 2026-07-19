@@ -4,6 +4,46 @@ from __future__ import annotations
 
 import re
 
+from typing import Mapping
+
+
+# ADR 0122: the one vocabulary for character axes crossing a player-facing
+# LLM boundary.  Consumers may choose their output shape, but never redefine
+# the score bands.
+CHARACTER_QUALITATIVE_BANDS = {
+    "loyalty": ("离心已显", "心志浮动", "大体守中", "颇知向背", "可托腹心"),
+    "ability": ("才具浅薄", "才具有限", "堪当常务", "才具出众", "足任大事"),
+    "integrity": ("操守多亏", "操守未稳", "操守平常", "操守清正", "清介可称"),
+    "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
+}
+
+CHARACTER_AXIS_LABELS = {
+    "loyalty": "忠诚",
+    "ability": "能力",
+    "integrity": "清廉",
+    "courage": "胆略",
+}
+
+INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
+
+
+def qualitative_character_axes(character: object) -> Mapping[str, str]:
+    """Project all available character axes for player-facing LLM inputs."""
+    projected = {
+        CHARACTER_AXIS_LABELS[field]: qualitative_character_axis(
+            field, getattr(character, field)
+        )
+        for field in CHARACTER_QUALITATIVE_BANDS
+    }
+    projected["党派认同"] = identity_band(getattr(character, "identity"))
+    projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
+    return projected
+
+
+def qualitative_character_axis(field: str, value: object) -> str:
+    """Project one character score through the canonical ADR 0122 bands."""
+    return qualitative_band(value, CHARACTER_QUALITATIVE_BANDS[field])
+
 
 # 历史邸报/章节正文是 LLM 产物，不能假定它已经遵守 P4。只拦截
 # ``字段 + 直接数值`` 这种明确的裸抽象轴写法；钱粮、兵额、欠饷月数等
