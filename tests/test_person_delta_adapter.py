@@ -2817,9 +2817,11 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
     content.characters[name].reason_code = "获罪削籍"
 
     # 在 read-back（ch.status_reason 已刷成起复缘由）之后触发失败，逼 except 回滚。
+    # transfer 分支的内存 office_type 现经 resolve_office_type_preserving_title 求值（名分守卫
+    # 收敛点，#1059），失败注入点随之——set_character_office 的 DB 写与 read-back 已在其前跑完。
     def boom(*_a, **_k):
         raise RuntimeError("post-readback failure")
-    monkeypatch.setattr(issues, "infer_office_type_from_office", boom)
+    monkeypatch.setattr(issues, "resolve_office_type_preserving_title", boom)
 
     issues.apply_score_extraction(
         db, state,
@@ -4048,3 +4050,59 @@ def test_fresh_static_seed_person_title_character_no_offices_parent(content):
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
+
+
+def test_apply_office_appointment_person_title_survives_stem_collision(game):
+    """#1059 codex l6h/l6k：apply_office_appointment 两分支的显式名分透传，office 文本用「诸生」
+    （同为 offices.json 生员词干）——DB 写侧守卫早已保住名分，但建 Character（新建档路，经
+    apply_appointment）与内存 re-infer（transfer 分支）两个接缝仍会被 infer 反推成「生员」，
+    令名分守卫失效、内存与 DB 分岔。此钉贯穿【唯一落地核】真实入口，锁「显式名分在每个 seam
+    都不被 office 文本反推覆盖」的不变式，DB 与内存双侧断言。"""
+    db, state, content = game
+
+    # ── 新建档分支（l6h）：不在册的降将授名分，office='诸生' 撞生员词干 ──
+    newcomer = "测试名分新降将_1059"
+    assert newcomer not in content.characters
+    try:
+        result = issues.apply_office_appointment(
+            db, state, content, None,
+            newcomer, "诸生",
+            reason="降金后授名分",
+            new_office_type="身名分",
+        )
+        assert not result.get("rejected"), result
+        row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (newcomer,)
+        ).fetchone()
+        assert row is not None and row["office_type"] == "身名分"
+        assert content.characters[newcomer].office_type == "身名分"
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (newcomer,)
+        ).fetchone() is None
+    finally:
+        content.characters.pop(newcomer, None)
+
+    # ── transfer 分支（l6k）：在册 active 大臣改授名分，内存须与 DB 同保名分 ──
+    incumbent = "测试在册转名分_1059"
+    try:
+        db.add_character(state, _new_ming_character(incumbent, "监察御史", "都察院"))
+        content.characters[incumbent] = _new_ming_character(incumbent, "监察御史", "都察院")
+        result = issues.apply_office_appointment(
+            db, state, content, None,
+            incumbent, "诸生",
+            reason="夺情不允，降为诸生",
+            new_office_type="身名分",
+        )
+        assert not result.get("rejected"), result
+        assert result.get("kind") == "transfer", result
+        row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (incumbent,)
+        ).fetchone()
+        assert row is not None and row["office_type"] == "身名分"
+        # l6k 病灶：DB 保名分而内存被 re-infer 成「生员」——两侧必须一致
+        assert content.characters[incumbent].office_type == "身名分"
+    finally:
+        content.characters.pop(incumbent, None)

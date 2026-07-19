@@ -668,6 +668,29 @@ def infer_office_type_from_office(
     return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
 
 
+def resolve_office_type_preserving_title(
+    office: str,
+    declared: str,
+    fallback: str = "",
+    llm_config: Any = None,
+    use_llm: bool = True,
+) -> str:
+    """名分守卫的单一入口：显式声明的名分（declared ∈ PERSON_TITLE_KINDS）是权威身份，
+    office 文本反推不得覆盖它——例 office='诸生'（同为 offices.json 生员词干）会被
+    infer_office_type_from_office 改写成 '生员'，令下游名分守卫失效、误建 offices 父行、
+    写 character_offices 脏行（#1059 codex）。仅当**无显式名分声明**时才回落 declared or
+    fallback 走 infer（授实职即脱名分——既有名分仅作 fallback、不短路，照常重推）。
+
+    过去这条守卫散在 set_character_office / add_character / apply_appointment /
+    apply_office_appointment / 事件闸预览 / preflight noop 六处各写各的，名分透传只覆到
+    DB 写侧、漏在建 Character 与内存 re-infer 的接缝（#1059 codex l6h/l6k）。收敛到此一点，
+    任何 seam 只要「有显式声明 + 可能 infer」就调它，名分透传不再逐 seam 漏。"""
+    declared = (declared or "").strip()
+    if declared in PERSON_TITLE_KINDS:
+        return declared
+    return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -4528,10 +4551,9 @@ class GameDB:
         # 显式声明的名分（office_type ∈ PERSON_TITLE_KINDS）是权威身份，office 文本反推不得
         # 覆盖它（例 office='诸生'→infer 改写成 '生员'，令名分守卫失效，#1059 codex 同源）；
         # office_type 留空回落 current_type 时仍照常重推（授实职即脱名分，不短路）。
-        if office_type in PERSON_TITLE_KINDS:
-            eff_type = office_type
-        else:
-            eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
+        eff_type = resolve_office_type_preserving_title(
+            office, office_type, current_type, llm_config or self.llm_config
+        )
         is_person_title = eff_type in PERSON_TITLE_KINDS
         if not is_person_title:
             self._ensure_office_type_parent(eff_type)
@@ -4763,12 +4785,12 @@ class GameDB:
         # 显式声明的名分（PERSON_TITLE_KINDS）是权威身份，office 文本反推不得覆盖它：
         # 例 office='诸生'（亦为 offices.json 生员词干）会被 infer 改写成 '生员'，令下方
         # 名分守卫失效、误建 offices 父行并写 character_offices 脏行（#1059 codex）。
-        if character.office_type not in PERSON_TITLE_KINDS:
-            character.office_type = infer_office_type_from_office(
-                character.office,
-                character.office_type,
-                llm_config or self.llm_config,
-            )
+        character.office_type = resolve_office_type_preserving_title(
+            character.office,
+            character.office_type,
+            character.office_type,
+            llm_config or self.llm_config,
+        )
         # person-title 名分不入官职体系（镜像 set_character_office 守卫）：仅非名分才
         # 建 offices 父行——否则 #1056 严格官类校验对名分直接 ValueError 中止结算。
         if character.office_type not in PERSON_TITLE_KINDS:
