@@ -1,46 +1,21 @@
 import React from "react";
 import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw, ScrollText, Send, Star, Trash2, X } from "lucide-react";
 import { api } from "../api";
-import { ExtractionView } from "./extraction";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect, stripOrganicMarkdown } from "../format";
 import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
   report,
-  accountReport = "",
   onClose,
 }: {
   report: string;
-  accountReport?: string;
   onClose: () => void;
 }) {
-  const [page, setPage] = React.useState<"narrative" | "account">("narrative");
-  const accountText = accountReport.trim() || "本月暂无实账明细。";
-  const activeText = stripOrganicMarkdown(page === "narrative" ? report : accountText);
+  const activeText = stripOrganicMarkdown(report);
   return (
-    <FullscreenModal title="月末邸报" subtitle={page === "narrative" ? "第一页：本月故事" : "第二页：DB 实账"} bgClass="modal-bg-state" onClose={onClose}>
+    <FullscreenModal title="月末邸报" subtitle="本月故事" bgClass="modal-bg-state" onClose={onClose}>
       <article className="state-document modal-scroll">
-        <div className="report-page-tabs" role="tablist" aria-label="邸报分页">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={page === "narrative"}
-            className={`report-page-tab${page === "narrative" ? " active" : ""}`}
-            onClick={() => setPage("narrative")}
-          >
-            叙事
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={page === "account"}
-            className={`report-page-tab${page === "account" ? " active" : ""}`}
-            onClick={() => setPage("account")}
-          >
-            实账
-          </button>
-        </div>
         <div className="document-section">
           <pre className="memorial-text">{activeText}</pre>
         </div>
@@ -383,7 +358,6 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
               const tags: string[] = [];
               if (t.has_report) tags.push("奏报");
               if (t.has_directive) tags.push("诏");
-              if (t.has_extraction) tags.push("册");
               return (
                 <li key={t.turn}>
                   <button
@@ -464,12 +438,6 @@ export function HistoryDetailView({
         </section>
       ) : null}
 
-      {detail.extraction && detail.extraction.exists ? (
-        <section className="document-section">
-          <h3 className="extraction-section-title">邸报详明（extractor 解析）</h3>
-          <ExtractionView data={detail.extraction} loading={false} error="" />
-        </section>
-      ) : null}
     </>
   );
 }
