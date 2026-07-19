@@ -47,15 +47,20 @@ def run_mindreading_for_turn(
     minister_reply: str,
     llm_config: Any,
     chat_turn_id: int,
+    write_gate: threading.Lock,
     mindreading_agent: Any = None,
-    write_gate: Optional[threading.Lock] = None,
 ) -> Optional[Dict[str, Any]]:
-    """完整读心尾随：组材料 → 调模型 → 写库。失败上抛，不回滚回话。"""
+    """完整读心尾随：资格判定 → 组材料 → 调模型 → 写库。失败上抛，不回滚回话。
+
+    `write_gate` 必传：写库须走真实 runtime 写锁（与月末并发 extractor / 其它端点写同一把）。
+    不设「临时新锁」回退——新锁与谁都不互斥，串行不了任何并发写。
+    """
     from ming_sim.mindreading import (
         build_mindreading_materials,
         generate_mindreading_payload,
     )
 
+    # 唯一资格判定入口（外层不再重复查询）
     reader_name = mindreading_eligible(db, content_characters, minister_name)
     if reader_name is None:
         return None
@@ -68,8 +73,7 @@ def run_mindreading_for_turn(
         materials, llm_config, mindreading_agent=mindreading_agent,
     )
     if chat_turn_id:
-        gate = write_gate if write_gate is not None else threading.Lock()
-        with gate:
+        with write_gate:
             # 撤回安全（ADR 0038）：写前校验目标轮仍存活；failed/undone 不写孤儿，
             # 也不向玩家投递未落库的孤儿读心（无稳定记录身份 → 返 None）。
             if hasattr(db, "conn"):

@@ -7397,6 +7397,26 @@ class GameDB:
         ).fetchone()
         return self._row_dict(row) if row is not None else None
 
+    def list_pending_mindreading_turns(self, minister_name: str, turn: int) -> List[int]:
+        """本大臣本回合已完成回话（有大臣消息）但读心尚未落库的活跃轮 id（#499）。
+
+        供取消/早重开的前端对**所有**待读心轮各自轮询——不只最新轮，故新一轮发出也不丢
+        旧轮读心；已落库的轮不返回（NOT EXISTS mindreading_records）。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT ct.id FROM chat_turns ct
+            WHERE ct.minister_name = ? AND ct.turn = ? AND ct.status = 'active'
+              AND ct.minister_message_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = ct.id
+              )
+            ORDER BY ct.id
+            """,
+            (minister_name, int(turn)),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(
             "SELECT id FROM chat_turns WHERE status = 'active' ORDER BY id DESC LIMIT 1"
