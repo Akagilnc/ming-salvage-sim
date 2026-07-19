@@ -12,8 +12,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
-import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -64,18 +62,6 @@ def _real_session(tmp_path, content, name="s"):
     return GameSession(
         db_path=str(tmp_path / f"{name}.db"), llm_config=cfg,
         content=content, verify_llm=False,
-    )
-
-
-def _advance_endpoint_game(db, state, content):
-    """驱动真实 web 退朝端点（api_advance_without_edict）的最小 game 桩：真实 db/state。"""
-    from types import SimpleNamespace
-    return SimpleNamespace(
-        db=db, state=state, content=content,
-        session=SimpleNamespace(registry=None),
-        refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": int(state.turn)}},
-        directive_rows=lambda: [],
     )
 
 
@@ -443,93 +429,9 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
                 os.remove(p)
 
 
-# ── AC10 在飞：完成可收 / 超时 fail-closed ───────────────────────────
-
-
-def test_close_inflight_timeout_then_retry_after_land(game):
-    db, state, content = game
-    minister = _active_minister(db, content)
-    night_id, chat_id = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="fly", agno_runs_before=0,
-    )
-    with pytest.raises(AudienceNightError) as ei:
-        an.close_night(db, state, night_id=night_id, wait_timeout_s=0.0)
-    assert ei.value.code == "in_flight_chat"
-    assert ei.value.error_pack_path
-    assert an.get_night(db, night_id)["status"] == "open"
-
-    _land_reply(db, state, minister, chat_id)
-    result = an.close_night(db, state, night_id=night_id, wait_timeout_s=0.0)
-    assert result["closed"] is True
-    assert an.get_night(db, night_id)["status"] == "closed"
-
-
-def test_decree_endpoints_are_sync_offloaded():
-    """finding2：颁诏/退朝端点是同步 def → FastAPI 用 threadpool 跑，其中至多 30s 的同步
-    在飞等待不冻结 async event loop（若退回 async def + 同步 sleep 即回归，此断言红）。"""
-    import asyncio
-    import web_app
-    assert not asyncio.iscoroutinefunction(web_app.api_issue_decree)
-    assert not asyncio.iscoroutinefunction(web_app.api_advance_without_edict)
-
-
-def test_advance_endpoint_gate_free_wait_lets_inflight_reply_land(game, monkeypatch):
-    """AC10 真实 web 退朝端点：在抢 write_gate 前先 gate-free 等在飞回话落档；持 gate 的
-    回话 epilogue 能在等待期入档，端点随后收夜+过回合——不自锁。"""
-    import web_app
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    night_id, chat_id = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="fly", agno_runs_before=0,
-    )
-    game_stub = _advance_endpoint_game(db, state, content)
-    monkeypatch.setattr(web_app, "web_game", game_stub)
-    gate = web_app._game_write_gate(game_stub)
-
-    result: dict = {}
-    def run_endpoint():
-        try:
-            result["out"] = web_app.api_advance_without_edict()
-        except BaseException as exc:  # noqa: BLE001
-            result["exc"] = exc
-
-    gate.acquire()  # 测试扮演回话 epilogue：持 gate
-    worker = threading.Thread(target=run_endpoint)
-    worker.start()
-    time.sleep(0.2)  # 端点进入 gate-free 在飞等待（reply 尚未落档 → 夜仍开）
-    _land_reply(db, state, minister, chat_id)  # epilogue 持 gate 落档
-    gate.release()
-    worker.join(5.0)
-
-    assert not worker.is_alive(), "端点未在 gate 外等待，疑似持 gate 自锁"
-    assert "exc" not in result, f"端点异常：{result.get('exc')!r}"
-    assert db.conn.execute(
-        "SELECT status FROM chat_turns WHERE id=?", (chat_id,)).fetchone()["status"] == "active"
-    assert an.get_night(db, night_id)["status"] == "closed"
-    assert result["out"]["state"]["turn"]["turn"] == int(state.turn)
-
-
-def test_advance_endpoint_inflight_timeout_fails_closed(game, monkeypatch):
-    """AC10 fail-closed：在飞回话超时未落档 → 退朝端点 409（夜保持开、turn 不进、可重试）。"""
-    import web_app
-    from fastapi import HTTPException
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    before = int(state.turn)
-    night_id, _chat_id = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="fly2", agno_runs_before=0,
-    )
-    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 0.0)
-    game_stub = _advance_endpoint_game(db, state, content)
-    monkeypatch.setattr(web_app, "web_game", game_stub)
-
-    with pytest.raises(HTTPException) as ei:
-        web_app.api_advance_without_edict()
-    assert ei.value.status_code == 409
-    assert an.get_night(db, night_id)["status"] == "open"
-    assert int(state.turn) == before
+# ── AC10 在飞回话 × 真实 web 入口 → tests/test_web_audience_night_498.py ──
+# 完成回话入档→收夜、挂起 fail-closed 409/夜保持开、同步端点 offload 不冻结 loop、
+# 拟诏 preview 不收夜，均走真实 WebGame.chat_stream + 真实 ASGI 路由验证（只 fake LLM）。
 
 
 # ── 开夜原子 + 旧档迁移 ──────────────────────────────────────────────
@@ -621,34 +523,8 @@ def test_old_save_migration_night_id_index_order(content):
                 os.remove(p)
 
 
-# ── 结算相位不得召对（夜不跨月）─────────────────────────────────────
-
-
-def test_settlement_phase_chat_refused_creates_no_night(game):
-    """finding4：结算/亲裁相位调真实 WebGame.chat / chat_stream 被响亮拒绝，
-    且不建 chat turn / 不开夜（否则夜随 submit_decisions 跨月而不收）。"""
-    import web_app
-    from types import SimpleNamespace
-    from fastapi import HTTPException
-
-    db, state, content = game
-    minister = _active_minister(db, content)
-    state.turn_phase = TurnPhase.SETTLING.value
-    runtime = object.__new__(web_app.WebGame)
-    # WebGame.db/state/content 都是读 self.session 的属性
-    runtime.session = SimpleNamespace(
-        db=db, state=state, content=content, temporary_characters=set())
-
-    with pytest.raises(HTTPException) as ei:
-        runtime.chat(minister, "边事如何？")
-    assert ei.value.status_code == 409
-
-    events = list(runtime.chat_stream(minister, "边事如何？"))
-    assert events and events[0]["type"] == "error"
-
-    assert an.get_open_night(db) is None
-    assert db.conn.execute("SELECT COUNT(*) AS c FROM audience_nights").fetchone()["c"] == 0
-    assert db.conn.execute("SELECT COUNT(*) AS c FROM chat_turns").fetchone()["c"] == 0
+# 结算相位不得召对 + 等 gate 期间相位翻转（TOCTOU）被拒 → 真实 WebGame.chat_stream 验证，
+# 见 tests/test_web_audience_night_498.py::test_phase_flip_while_waiting_gate_is_rejected。
 
 
 # ── 负向 ─────────────────────────────────────────────────────────────
