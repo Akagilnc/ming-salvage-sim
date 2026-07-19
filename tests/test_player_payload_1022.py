@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from types import SimpleNamespace
+
+import pytest
 
 import web_app
 from ming_sim import skills
+from ming_sim.cli import terminal
 
 
 class _HistoryDB:
@@ -45,26 +50,85 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
     }
 
 
-def test_settlement_sse_payload_preserves_narrative_without_state_or_raw_scores():
-    payload = web_app._settlement_player_payload(
-        decree="诏曰：赈济辽东。",
-        report="邸报：国丈家赀约数十万两。",
-        decisions=[{"title": "辽饷", "context": "是否发帑"}],
-        pending_action_failures=[{"message": "承办未果"}],
-        steam_events=[{"name": "turns_played"}],
+class _SettlementSession:
+    last_decree = "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
+
+    def resolve_turn(self, **_kwargs):
+        return SimpleNamespace(
+            awaiting=True,
+            decisions=[{"title": "辽饷", "context": "家赀约十万两，是否发帑"}],
+        )
+
+    def submit_decisions(self, *_args, **_kwargs):
+        return "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+
+
+class _SettlementGame:
+    def __init__(self):
+        self.state = SimpleNamespace(turn=9, ended=False)
+        self.session = _SettlementSession()
+        self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
+        self._write_gate = threading.Lock()
+
+    def refresh_turn(self):
+        return None
+
+    def state_payload(self):
+        return {
+            "extraction": {"economy_moves": [{"account": "国库", "delta": -20}]},
+            "character": {"loyalty": 88, "ability": 77, "integrity": 66, "courage": 55},
+        }
+
+
+async def _serialized_terminal_event(route_name: str) -> tuple[str, dict]:
+    if route_name == "issue":
+        response = await web_app.api_issue_decree_stream(web_app.IssueDecreeRequest())
+    else:
+        response = await web_app.api_resolve_decisions_stream(
+            web_app.ResolveDecisionsRequest(choices=[{"label": "发帑"}])
+        )
+    chunks = [
+        chunk.decode() if isinstance(chunk, bytes) else chunk
+        async for chunk in response.body_iterator
+    ]
+    serialized = "".join(chunks)
+    event_line, data_line = serialized.strip().splitlines()
+    return event_line.removeprefix("event: "), json.loads(data_line.removeprefix("data: "))
+
+
+@pytest.mark.parametrize(
+    ("route_name", "expected_event"),
+    [("issue", "decisions"), ("resolve", "done")],
+)
+def test_settlement_sse_routes_serialize_only_player_narrative(
+    monkeypatch, route_name, expected_event,
+):
+    monkeypatch.setattr(web_app, "get_game", lambda: _SettlementGame())
+
+    event, payload = asyncio.run(_serialized_terminal_event(route_name))
+
+    assert event == expected_event
+    assert payload["decree"] == "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
+    if expected_event == "decisions":
+        assert payload["decisions"] == [{"title": "辽饷", "context": "家赀约十万两，是否发帑"}]
+    else:
+        assert payload["report"] == "邸报：国丈家赀约数十万两，三十万两帑银与五千援军已抵辽东。"
+    structured_keys: set[str] = set()
+    pending = [payload]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            structured_keys.update(value)
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    assert not (
+        {"state", "extraction", "extractor_output", "character", "loyalty", "ability", "integrity", "courage"}
+        & structured_keys
     )
 
-    assert payload == {
-        "decree": "诏曰：赈济辽东。",
-        "report": "邸报：国丈家赀约数十万两。",
-        "decisions": [{"title": "辽饷", "context": "是否发帑"}],
-        "pending_action_failures": [{"message": "承办未果"}],
-        "steam_events": [{"name": "turns_played"}],
-    }
-    assert not ({"state", "extraction", "extractor_output", "loyalty", "ability", "integrity", "courage"} & payload.keys())
 
-
-def test_cli_skill_card_uses_qualitative_character_bands(capsys, monkeypatch):
+def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeypatch):
     character = SimpleNamespace(
         name="袁崇焕",
         office="蓟辽督师",
@@ -78,9 +142,12 @@ def test_cli_skill_card_uses_qualitative_character_bands(capsys, monkeypatch):
     )
     monkeypatch.setattr(skills, "available_skill_ids", lambda character, db=None: [])
 
-    skills.print_skill_card(character)
+    handled = terminal._handle_court_command(
+        SimpleNamespace(db=None), "技能卡", character,
+    )
 
     rendered = capsys.readouterr().out
+    assert handled == "handled"
     assert "忠诚深厚" in rendered
     assert "能力干练" in rendered
     assert "清廉端谨" in rendered
