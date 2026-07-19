@@ -18,12 +18,16 @@ export function useDurableProjection(
   /**
    * 推进代次 → 取 state（可选并取密令列表）→ 仅当仍是最新代次才落 UI。
    * - 陈旧代次（更新的刷新已发生）：**返回 null**——消费者据此拒收陈旧 cargo，绝不用陈旧 state。
-   * - `onSecretOrders`：密令列表就绪且仍是最新代次时回调（供换回合自动弹窗等，同代次门控）。
+   * - `onSecretOrders`：密令就绪且仍最新时回调（如换回合标记已呈现，同代次门控）。
+   * - `autoOpen`：**延迟呈现由本协调器归属**：密令就绪且 when(orders) 为真则起 afterMs 定时器，
+   *   fire 时仍是最新代次才 open()——更新的撤回/刷新推进代次后陈旧定时器 no-op（不弹已作废窗）。
+   *   计时器交本协调器持有，避免 App 端裸 setTimeout 无归属。
    */
   const refresh = React.useCallback(
     async (opts?: {
       secretOrders?: boolean;
-      onSecretOrders?: (orders: SecretOrder[], isLatest: () => boolean) => void;
+      onSecretOrders?: (orders: SecretOrder[]) => void;
+      autoOpen?: { afterMs: number; when: (orders: SecretOrder[]) => boolean; open: () => void };
     }): Promise<GameState | null> => {
       const gen = ++genRef.current;
       const isLatest = () => genRef.current === gen;
@@ -32,9 +36,11 @@ export function useDurableProjection(
           .then(({ orders }) => {
             if (!isLatest()) return;
             applySecretOrders(orders);
-            // 把同代次归属检查交回调：延迟呈现（400ms 弹窗）在触发时据此判是否仍最新，
-            // 更新的撤回/刷新推进代次后陈旧定时器 no-op（延迟呈现纳入可取消的代次归属）。
-            opts.onSecretOrders?.(orders, isLatest);
+            opts.onSecretOrders?.(orders);
+            const auto = opts.autoOpen;
+            if (auto && auto.when(orders)) {
+              setTimeout(() => { if (isLatest()) auto.open(); }, auto.afterMs);
+            }
           })
           .catch(() => {});
       }

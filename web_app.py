@@ -1478,10 +1478,10 @@ class WebGame:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
-                # #499 回话提交即**显式接受**读心任务（''→'running'）：原子归属，不靠 schema 默认空
-                # 推断 accepted；worker 崩溃遗留的 running 由启动对账终态化，不永挂 pending。
-                self.db.mark_mindreading_running(chat_turn_id)
+                # #499 原子：链接大臣回话 + 接受读心任务（''→'running'）同一事务提交——
+                # 杜绝「已链接却空状态」孤儿（否则启动对账漏掉、恢复永不投递）。worker 崩溃
+                # 遗留的 running 由启动对账终态化，不永挂 pending。
+                self.db.commit_minister_reply(chat_turn_id, message_id)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         return {
             "minister": minister_name,
