@@ -1,5 +1,7 @@
+import json
 from pathlib import Path
 
+from ming_sim.agents import build_simulator_context
 from ming_sim.simulation import build_simulator_payload, _extractor_context_payload
 
 
@@ -80,6 +82,50 @@ def test_simulator_projects_structured_character_stop_condition_but_keeps_machin
     assert simulator_issue["commitment_progress"]["remaining_to_goal"] == "距达标仍有差距"
     assert "65" in extractor_issue["stop_condition"]
     assert "remaining_to_goal" in extractor_issue["commitment_progress"]
+
+
+def test_simulator_projects_issue_character_deltas_but_extractor_keeps_exact_effects(game):
+    db, state, _ = game
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="安抚毛文龙·人物效果",
+        origin_kind="decree",
+        bar_value=20,
+        stage_text="遣臣持诏赴皮岛",
+        ongoing_effects={
+            "人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 13, "reason": "每月安抚"}],
+            "metrics": {"皇威": 2468},
+        },
+        effect_on_resolve={
+            "人物变更": [{"name": "毛文龙", "动作": "评定", "ability": 14, "reason": "办成"}],
+        },
+        effect_on_fail={
+            "人物变更": [{"name": "毛文龙", "动作": "评定", "integrity": -15, "reason": "办砸"}],
+        },
+    )
+
+    simulator = build_simulator_payload(state, db, "", "")
+    simulator_issue = next(
+        item for item in simulator["active_issues"] if item["title"] == "安抚毛文龙·人物效果"
+    )
+    rendered = build_simulator_context(simulator)
+    extractor = _extractor_context_payload(db, state, "", "")
+    extractor_issue = next(
+        item for item in extractor["active_issues"] if item["title"] == "安抚毛文龙·人物效果"
+    )
+
+    assert '"loyalty": 13' not in rendered
+    assert '"ability": 14' not in rendered
+    assert '"integrity": -15' not in rendered
+    assert "2468" in rendered
+    assert simulator_issue["当前每月效果"]["人物变更"][0] == {
+        "name": "毛文龙", "动作": "评定", "reason": "每月安抚",
+    }
+    assert simulator_issue["当前每月效果"]["metrics"]["皇威"] == 2468
+    assert extractor_issue["ongoing_effects"]["人物变更"][0]["loyalty"] == 13
+    assert extractor_issue["effect_on_resolve"]["人物变更"][0]["ability"] == 14
+    assert extractor_issue["effect_on_fail"]["人物变更"][0]["integrity"] == -15
 
 
 def test_appease_mao_commitment_bar_100_stays_active_until_explicit_close(game):

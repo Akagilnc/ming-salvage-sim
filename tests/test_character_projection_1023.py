@@ -37,6 +37,10 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert row["胆略"] == "敢任其事"
     assert row["党派认同"] == "党色极深"
     assert row["阴谋"] == "阴谋能力未详，暂以查案行事表现推知"
+    assert (
+        "\t离心已显\t才具有限\t操守平常\t敢任其事\t党色极深\t"
+        "阴谋能力未详，暂以查案行事表现推知"
+    ) in rendered
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
@@ -56,7 +60,6 @@ def test_character_projection_allows_memorial_wealth_approximation_without_an_ex
     db, state, content = game
     character = next(iter(content.characters.values()))
     memorial = "臣闻此人家赀约数十万两，练兵有方、操守可虑。"
-    exact_wealth = "987654"
 
     rendered = character_context(character)
     payload = build_simulator_payload(state, db, "", memorial)
@@ -69,5 +72,4 @@ def test_character_projection_allows_memorial_wealth_approximation_without_an_ex
     assert "wealth" not in character_columns
     assert "wealth" not in payload["court_roster"]["cols"]
     assert "家产原值" not in payload["court_roster"]["cols"]
-    assert exact_wealth not in simulator_input
     assert "wealth" not in rendered

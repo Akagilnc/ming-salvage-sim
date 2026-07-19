@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional
 from agno.agent import Agent
 
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
+from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
 from ming_sim.issues import (
@@ -256,6 +257,11 @@ _CHARACTER_AXIS_LEGACY_GATE = re.compile(
     rf"^{_CHARACTER_AXIS_GATE_PATTERN}\s*(?:>=|<=|>|<|==|=)\s*-?\d+(?:\.\d+)?$"
 )
 _QUALITATIVE_CHARACTER_GATE = "人物属性条件由引擎按定性档位复核"
+_CHARACTER_EFFECT_KEYS = ("人物变更", "person_changes", "character")
+_CHARACTER_AXIS_MUTATION_FIELDS = frozenset({
+    "loyalty", "ability", "integrity", "courage", "identity", "intrigue",
+    "忠诚", "能力", "清廉", "胆略", "党派认同", "阴谋",
+})
 
 
 def _condition_has_character_axis(value: object) -> bool:
@@ -318,6 +324,31 @@ def _project_simulator_issue_conditions(issue: Dict[str, object]) -> Dict[str, o
         if "remaining_to_goal" in qualitative_progress:
             qualitative_progress["remaining_to_goal"] = "距达标仍有差距"
         projected["commitment_progress"] = qualitative_progress
+    for key in (f"当前每{TURN_UNIT}效果", "成功效果", "失败效果"):
+        effect = projected.get(key)
+        if isinstance(effect, dict):
+            projected[key] = _project_simulator_character_effect(effect)
+    return projected
+
+
+def _project_simulator_character_effect(effect: Dict[str, object]) -> Dict[str, object]:
+    """Remove exact character-axis deltas while preserving the effect structure."""
+    projected = dict(effect)
+    for section in _CHARACTER_EFFECT_KEYS:
+        items = projected.get(section)
+        if not isinstance(items, list):
+            continue
+        projected[section] = [
+            {
+                key: value
+                for key, value in item.items()
+                if key not in _CHARACTER_AXIS_MUTATION_FIELDS
+                or not isinstance(value, (int, float))
+                or isinstance(value, bool)
+            }
+            if isinstance(item, dict) else item
+            for item in items
+        ]
     return projected
 
 
@@ -672,6 +703,9 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": resolve_cond or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in keys else "") or "(未填)",
+            "ongoing_effects": loads_effect_dict(r["ongoing_effects"]),
+            "effect_on_resolve": loads_effect_dict(r["effect_on_resolve"]),
+            "effect_on_fail": loads_effect_dict(r["effect_on_fail"]),
             **commitment_condition_role(resolve_cond, commitment_kind),
         }
         if commitment_kind:
