@@ -138,7 +138,8 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     assert mind_event["payload"]["narration"] == "近臣低声：此言另有盘算。"
     assert seen_replies == ["臣先陈军务，不敢删节。"]
     assert "军务如何？" not in seen_replies[0]
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    # 公共信号（非私有计数）：读心任务达终态（记录已落）——worker DB 工作已收尾。
+    assert _wait_for(lambda: db.list_mindreading_records(int(mind_event["chat_turn_id"])))
 
 
 def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
@@ -208,7 +209,8 @@ def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
         # 恰消费一次（无第二次发起），且分类器只喂到皇帝消息、不含回话正文
         assert intent_consumed == [{"kind": "none"}]
         assert seen_intent_messages == ["军务如何？"]
-        assert _wait_for(lambda: web_game._pending_writes_count == 0)
+        # 公共信号：读心任务达终态（记录或 failed/skip）——worker 已收尾。
+        assert _wait_for(lambda: not web_game.mindreading_for_minister(minister_name)["mindreading_pending"])
     finally:
         intent_exec.shutdown(wait=True)
 
@@ -238,7 +240,8 @@ def test_mindreading_poll_path_after_stream(game, monkeypatch):
 
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy)
     list(web_game.chat_stream(minister_name, "如何？"))
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    # 公共信号：读心记录已落（API 输出可读）——worker 已收尾。
+    assert _wait_for(lambda: web_game.mindreading_for_minister(minister_name)["mindreading"])
     out = web_game.mindreading_for_minister(minister_name)
     assert out["chat_turn_id"] > 0
     assert out["mindreading"]
@@ -292,10 +295,10 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
 
     monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", boom)
     list(web_game.chat_stream(minister, "问。"))
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
     cid = int(db.get_last_active_chat_turn(minister, state.turn)["id"])
-    assert db.get_mindreading_status(cid) == "failed"  # 终态落库
+    # 公共信号：终态 failed 落库（任务态可读）——worker 已收尾。
+    assert _wait_for(lambda: db.get_mindreading_status(cid) == "failed")
     out = web_game.mindreading_for_minister(minister, cid)
     assert out["mindreading"] == []
     assert out["mindreading_pending"] is False  # 终态 → 单轮 pending 停
@@ -329,9 +332,9 @@ def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):
     })
     assert web_game.mindreading_for_minister(minister)["pending_turn_ids"] == [c2]  # 已落库移出
 
-    # 读心者不在御前近臣位 → 无 eligible → 不返回待读心轮
-    db.conn.execute("UPDATE characters SET office='礼部尚书', office_type='礼部' WHERE name='王承恩'")
-    db.conn.commit()
+    # 终态标（worker 判失败/不适用后落库）移出待读心轮——纯看持久任务态，不看当前资格；
+    # 接受后近臣关系变化不改归属（这正是本轮修复：不因当前资格变了就误判 terminal）。
+    db.set_mindreading_status(c2, "skip")
     assert web_game.mindreading_for_minister(minister)["pending_turn_ids"] == []
 
 
@@ -342,24 +345,24 @@ def test_mindreading_pending_flag_guides_bounded_poll(game):
     db, state, content = game
     web_game = _web_game(db, state, content, _FakeAgent())
 
-    eligible = "温体仁"  # 御前近臣王承恩在位 → 本轮该有读心
-    cid = db.create_chat_turn(state, eligible, "p5-pending", 0)
-    out = web_game.mindreading_for_minister(eligible)
+    # pending 纯看持久任务态：已接受、未落库、未达终态 → pending（不看当前资格）。
+    minister = "温体仁"
+    cid = db.create_chat_turn(state, minister, "p5-pending", 0)
+    out = web_game.mindreading_for_minister(minister)
     assert out["chat_turn_id"] == cid
     assert out["mindreading"] == []
-    assert out["mindreading_pending"] is True  # 尚未落库 → 前端继续轮询
+    assert out["mindreading_pending"] is True  # 未落库、未终态 → 继续轮询
 
     db.record_mindreading(cid, {
-        "reader": "王承恩", "target": eligible, "source": "见闻",
+        "reader": "王承恩", "target": minister, "source": "见闻",
         "precision": "清晰", "narration": "近臣低声。",
     })
-    done = web_game.mindreading_for_minister(eligible)
+    done = web_game.mindreading_for_minister(minister)
     assert done["mindreading"]
-    assert done["mindreading_pending"] is False  # 已落库 → 前端停轮询
+    assert done["mindreading_pending"] is False  # 已落库 → 停轮询
 
-    # 读心者本人为目标 → 本轮不该有读心 → 非 pending，前端对该轮不空转
-    reader = "王承恩"
-    db.create_chat_turn(state, reader, "p5-self", 0)
-    self_out = web_game.mindreading_for_minister(reader)
-    assert self_out["mindreading"] == []
-    assert self_out["mindreading_pending"] is False
+    # worker 判不适用（含读心者==目标）落终态 skip → pending 转 false（不靠当前资格推断）。
+    cid2 = db.create_chat_turn(state, minister, "p5-skip", 0)
+    assert web_game.mindreading_for_minister(minister, cid2)["mindreading_pending"] is True
+    db.set_mindreading_status(cid2, "skip")
+    assert web_game.mindreading_for_minister(minister, cid2)["mindreading_pending"] is False

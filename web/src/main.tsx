@@ -201,23 +201,25 @@ function App() {
     }
   }, [state, closedShown]);
 
-  // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）
+  // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
+  // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
+  // 响应迟到不覆盖新结果；自动弹窗只在该刷新仍是最新代次时触发（onSecretOrders 同代次门控）。
   React.useEffect(() => {
     if (!state) return;
     const currentTurn = state.turn.turn;
     if (currentTurn === secretOrderShown) return;
-    api<{ orders: SecretOrder[] }>("/api/secret_orders")
-      .then(({ orders }) => {
-        setSecretOrders(orders);
+    setSecretOrderShown(currentTurn);
+    void refreshDurableProjection({
+      secretOrders: true,
+      onSecretOrders: (orders) => {
         if (
           shouldAutoOpenSecretOrdersAfterSettlement()
-          && orders.some(o => o.status === "active" || o.status === "pending_review")
+          && orders.some((o) => o.status === "active" || o.status === "pending_review")
         ) {
           setTimeout(() => setActiveModal("secret_orders"), 400);
         }
-        setSecretOrderShown(currentTurn);
-      })
-      .catch(() => {/* 失败静默 */});
+      },
+    });
   }, [state?.turn.turn]);
 
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
@@ -262,6 +264,16 @@ function App() {
   React.useEffect(() => {
     selectedMinisterRef.current = selectedMinister;
   }, [selectedMinister]);
+
+  // #499 唯一 chat-exit 归属：任何离开召对面板的路径（关闭按钮 / 嵌套关闭 / Escape / 转诏书 /
+  // 切模态 / 退菜单）都会把 activeModal 切出 "chat"，此 effect 据此统一取消所有实时流观察者
+  // 并作废重开 poll-batch——各 departure 无需各自记得取消，杜绝 Escape/模态替换绕过。
+  React.useEffect(() => {
+    if (activeModal !== "chat") {
+      cancelChat();
+      cancelReopenPolls();
+    }
+  }, [activeModal, cancelChat, cancelReopenPolls]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -858,6 +870,7 @@ function App() {
     setPausedDecisionError("");
     try {
       const freshState = await loadState();
+      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
       const route = routeRetryDecisions(freshState.turn.phase, freshState.pending_decisions || []);
       if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
       if (route.error !== null) setPausedDecisionError(route.error);
@@ -1112,7 +1125,7 @@ function App() {
       ) : null}
 
       {activeModal === "chat" && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => { cancelChat(); cancelReopenPolls(); setActiveModal("none"); })}>
+        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
           <ChatModal
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
@@ -1135,7 +1148,7 @@ function App() {
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}
-            onClose={guardClose(() => { cancelChat(); cancelReopenPolls(); setActiveModal("none"); })}
+            onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
           />
         </FullscreenModal>

@@ -70,10 +70,7 @@ from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
-from ming_sim.audience_pipeline import (
-    mindreading_eligible,
-    run_mindreading_for_turn,
-)
+from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1586,10 +1583,12 @@ class WebGame:
         不受新一轮成为 latest 影响、旧轮读心不丢失/不错归）；为 0 时取最近活跃轮
         （历史入口首拉）。记录带持久 `id`，前端按 (chat_turn_id, id) 去重/归位。
 
-        `pending`=该轮该有读心（御前近臣在位且目标非其本人）但尚未落库，供单轮轮询
-        判据：pending 才继续、非 pending 立即停，免得对无读心的轮次空转。
-        `pending_turn_ids`=本大臣本回合**所有**待读心轮（不只最新），供重开路径对每一
-        待读心轮各自轮询、且随新一轮发出仍存活（前端按面板归属维持，不按发送作废）。
+        `pending`/`pending_turn_ids` 只读**持久 per-turn 任务态**（记录 + 终态标 failed/skip），
+        不重算当前资格：读心任务在回话完成时被 worker 接受，接受后近臣关系变化不改其归属——
+        「接受但未落库、未达终态」即 pending，直到 worker 写出记录或落 failed/skip 终态。
+        （不因当前近臣关系变了就报 terminal-false，误停仍在跑的已接受任务。）
+        `pending_turn_ids`=本大臣本回合所有待读心轮（不只最新），供重开路径对每一轮各自轮询、
+        随新一轮发出仍存活（前端按面板/poll-batch 归属维持，不按发送作废）。
         """
         records: List[Dict[str, Any]] = []
         pending = False
@@ -1600,18 +1599,14 @@ class WebGame:
                 row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
                 target_turn = int(row["id"]) if row is not None else 0
             chat_turn_id = target_turn
-            eligible = mindreading_eligible(
-                self.db, self.content.characters, minister_name,
-            ) is not None
             if chat_turn_id > 0:
                 records = list(self.db.list_mindreading_records(chat_turn_id))
                 if not records:
-                    # 单轮 pending：eligible 且未落库 且未达终态（failed/skip）——终态即停轮询。
-                    pending = eligible and self.db.get_mindreading_status(chat_turn_id) == ""
-            if eligible:
-                pending_turn_ids = self.db.list_pending_mindreading_turns(
-                    minister_name, self.state.turn,
-                )
+                    # 单轮 pending：未落库 且未达终态——纯看持久任务态，不看当前资格。
+                    pending = self.db.get_mindreading_status(chat_turn_id) == ""
+            pending_turn_ids = self.db.list_pending_mindreading_turns(
+                minister_name, self.state.turn,
+            )
         return {
             "minister": minister_name,
             "chat_turn_id": chat_turn_id,

@@ -55,18 +55,29 @@ describe("持久刷新协调器（#499 App 消费的 useDurableProjection）", (
       return jsonResp({});
     }));
 
-    // 旧 done 刷新（gen1，state+密令都门控挂起）
-    let pOld!: Promise<unknown>;
-    act(() => { pOld = hookRef.current!.refresh({ secretOrders: true }); });
+    // 旧「换回合密令刷新」（gen1，state+密令都门控挂起）——代表旧 turn fetch
+    let pOld!: Promise<GameState | null>;
+    const oldOrdersSeen: string[] = [];
+    act(() => {
+      pOld = hookRef.current!.refresh({
+        secretOrders: true,
+        onSecretOrders: (o) => oldOrdersSeen.push((o[0] as unknown as { tag: string }).tag),
+      });
+    });
     await tick();
-    // 撤回刷新（gen2，即时）→ 应用 undo
-    await act(async () => { await hookRef.current!.refresh({ secretOrders: true }); });
+    // 更新的 done/撤回刷新（gen2，即时）→ 应用 undo，返回非 null（已应用）
+    let undoResult: GameState | null = null;
+    await act(async () => { undoResult = await hookRef.current!.refresh({ secretOrders: true }); });
+    expect(marker(undoResult!)).toBe("undo");   // 新刷新已应用、返回真 state
     expect(states).toEqual(["undo"]);
     expect(orders).toEqual(["undo"]);
 
-    releaseOld();  // 旧 done 的 old-done state/密令迟到——代次已推进，须弃写
-    await act(async () => { await pOld; });
-    expect(states).toEqual(["undo"]);            // old-done 未落（未还原撤回前 UI）
+    releaseOld();  // 旧 turn fetch 的 old-done state/密令迟到——代次已推进，须弃写
+    let staleReturn: GameState | null = null;
+    await act(async () => { staleReturn = await pOld; });
+    expect(staleReturn).toBeNull();              // 陈旧刷新返回 null（消费者据此拒收，不用陈旧 cargo）
+    expect(oldOrdersSeen).toEqual([]);           // onSecretOrders 也按代次门控，旧密令未回调
+    expect(states).toEqual(["undo"]);            // 旧 turn fetch 未覆盖更新的 done/undo 结果
     expect(orders).toEqual(["undo"]);
   });
 });

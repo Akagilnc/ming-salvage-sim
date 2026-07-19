@@ -47,17 +47,26 @@ type HookApi = ReturnType<typeof useAudienceChat>;
 function mount() {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
+  const setModalRef = { current: (_m: string) => {} };
   function Harness() {
     const selectedRef = React.useRef("温体仁");
     const [busy, setBusy] = React.useState("");
+    const [activeModal, setActiveModal] = React.useState("chat");
     busyRef.current = busy;
-    hookRef.current = useAudienceChat(setBusy, selectedRef);
+    setModalRef.current = setActiveModal;
+    const hook = useAudienceChat(setBusy, selectedRef);
+    hookRef.current = hook;
+    // 生产同款「唯一 chat-exit 归属」effect：任何离开 "chat"（关闭/Escape/转诏书/切模态）都
+    // 取消实时流观察者 + 作废重开 poll-batch。测试经此真实退出路径驱动，不直呼 hook 取消法。
+    React.useEffect(() => {
+      if (activeModal !== "chat") { hook.cancelChat(); hook.cancelReopenPolls(); }
+    }, [activeModal, hook.cancelChat, hook.cancelReopenPolls]);
     return (
       <ChatModal
         minister={MINISTER} portraitPrefix="minister_"
-        chat={hookRef.current.chat}
-        pendingUserMessage={hookRef.current.pendingUserMessage}
-        streamingMinisterMessage={hookRef.current.streamingMinisterMessage}
+        chat={hook.chat}
+        pendingUserMessage={hook.pendingUserMessage}
+        streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
         onInput={() => {}} onSend={() => {}} onRetryFailure={() => {}} onUndo={() => {}}
@@ -73,7 +82,7 @@ function mount() {
       const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
       return `${role}:${el.querySelector("p")?.textContent ?? ""}`;
     });
-  return { hookRef, busyRef, rows };
+  return { hookRef, busyRef, rows, setModal: (m: string) => act(() => setModalRef.current(m)) };
 }
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -360,10 +369,10 @@ describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("关闭面板 cancelReopenPolls 停旧 poll-batch（selectedMinister 不变也停，免重开叠加）", async () => {
+  it("经真实 App 退出路径（activeModal 离开 chat）停旧 poll-batch——不直呼 hook 取消法", async () => {
     vi.useFakeTimers();
     try {
-      const { hookRef } = mount();
+      const { hookRef, setModal } = mount();
       let call = 0;
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
         const u = new URL(String(url), "http://t.local");
@@ -373,9 +382,28 @@ describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
       await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
       await advance();
       const before = call;
-      act(() => { hookRef.current!.cancelReopenPolls(); });  // 关闭面板
+      setModal("none");  // 离开召对面板（关闭/Escape/转诏书 等任一 departure 的共同表现）
       await advance(); await advance();
-      expect(call).toBe(before);  // 关闭后旧批停轮询
+      expect(call).toBe(before);  // 退出后 exit-owner effect 停旧批轮询
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("转诏书（activeModal→edict）也停旧 poll-batch（edict transition 不绕过取消）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef, setModal } = mount();
+      let call = 0;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/mindreading")) { call += 1; return jsonResp({ chat_turn_id: 10, mindreading: [], mindreading_pending: true }); }
+        return jsonResp({ minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10] });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      await advance();
+      const before = call;
+      setModal("edict");  // 转入诏书草案
+      await advance(); await advance();
+      expect(call).toBe(before);
     } finally { vi.useRealTimers(); }
   });
 });
