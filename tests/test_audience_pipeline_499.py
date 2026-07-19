@@ -305,6 +305,52 @@ def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
     assert cid not in web_game.mindreading_for_minister(minister)["pending_turn_ids"]
 
 
+def test_startup_reconcile_terminalizes_abandoned_running_tasks(game):
+    """启动对账：'running' 但未落库的遗弃任务（worker 随上次进程消亡）→ 'failed' 终态，
+    重开轮询据此终止、不永挂；已落库的 running 轮不被误杀（record 表达 ready）。"""
+    db, state, content = game
+    minister = "温体仁"
+
+    abandoned = db.create_chat_turn(state, minister, "abandoned", 0)
+    db.mark_mindreading_running(abandoned)  # 接受任务后进程消亡
+    assert db.get_mindreading_status(abandoned) == "running"
+
+    got = db.create_chat_turn(state, minister, "got-record", 0)
+    db.mark_mindreading_running(got)
+    db.record_mindreading(got, {
+        "reader": "王承恩", "target": minister, "source": "见闻", "precision": "清晰", "narration": "x",
+    })
+
+    assert db.reconcile_abandoned_mindreading() >= 1
+    assert db.get_mindreading_status(abandoned) == "failed"   # 遗弃 → 终态化
+    assert db.get_mindreading_status(got) == "running"        # 有记录 → 不动
+
+
+def test_legacy_backfill_upgraded_save_reopen_not_pending(game):
+    """升级存档：mindreading_status 列首次新增前的已完成轮回填 'skip'——重开经 API 不误判
+    pending（否则空默认会被当 accepted 而永挂）。走真实升级路径（删列→init_schema 重加+回填）。"""
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    web_game = _web_game(db, state, content, _FakeAgent())
+    minister = "温体仁"
+
+    uid = db.append_chat_message(minister, int(state.turn), "user", "旧问")
+    mid = db.append_chat_message(minister, int(state.turn), "minister", "旧答")
+    cid = db.create_chat_turn(state, minister, "legacy", 0)
+    db.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
+    assert db.get_mindreading_status(cid) == ""  # 本功能之前的行：空默认、无 worker
+
+    # 真实升级：列不存在 → init_schema 的 ensure_column 重新加列并回填历史行。
+    db.conn.execute("ALTER TABLE chat_turns DROP COLUMN mindreading_status")
+    db.conn.commit()
+    db.init_schema()
+
+    assert db.get_mindreading_status(cid) == "skip"  # 回填终态
+    assert web_game.mindreading_for_minister(minister, cid)["mindreading_pending"] is False
+    assert cid not in web_game.mindreading_for_minister(minister)["pending_turn_ids"]
+
+
 def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):
     """所有已完成回话但读心未落库的轮都进 pending_turn_ids（不只最新）；落库后移出。
 
@@ -321,6 +367,7 @@ def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):
         mid = db.append_chat_message(minister, int(state.turn), "minister", "答" + tag)
         cid = db.create_chat_turn(state, minister, tag, 0)
         db.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
+        db.mark_mindreading_running(cid)  # 回话提交 → 接受读心任务
         return cid
 
     c1 = _completed_turn("a")
@@ -345,13 +392,15 @@ def test_mindreading_pending_flag_guides_bounded_poll(game):
     db, state, content = game
     web_game = _web_game(db, state, content, _FakeAgent())
 
-    # pending 纯看持久任务态：已接受、未落库、未达终态 → pending（不看当前资格）。
+    # 显式任务态：未接受（''）不算 pending；回话提交接受（'running'）后、未落库、未终态 → pending。
     minister = "温体仁"
     cid = db.create_chat_turn(state, minister, "p5-pending", 0)
+    assert web_game.mindreading_for_minister(minister)["mindreading_pending"] is False  # 未接受
+    db.mark_mindreading_running(cid)  # 回话提交 → 接受任务
     out = web_game.mindreading_for_minister(minister)
     assert out["chat_turn_id"] == cid
     assert out["mindreading"] == []
-    assert out["mindreading_pending"] is True  # 未落库、未终态 → 继续轮询
+    assert out["mindreading_pending"] is True  # 已接受、未落库、未终态 → 继续轮询
 
     db.record_mindreading(cid, {
         "reader": "王承恩", "target": minister, "source": "见闻",
@@ -363,6 +412,7 @@ def test_mindreading_pending_flag_guides_bounded_poll(game):
 
     # worker 判不适用（含读心者==目标）落终态 skip → pending 转 false（不靠当前资格推断）。
     cid2 = db.create_chat_turn(state, minister, "p5-skip", 0)
+    db.mark_mindreading_running(cid2)
     assert web_game.mindreading_for_minister(minister, cid2)["mindreading_pending"] is True
     db.set_mindreading_status(cid2, "skip")
     assert web_game.mindreading_for_minister(minister, cid2)["mindreading_pending"] is False

@@ -1479,6 +1479,9 @@ class WebGame:
             message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, minister_message_id=message_id)
+                # #499 回话提交即**显式接受**读心任务（''→'running'）：原子归属，不靠 schema 默认空
+                # 推断 accepted；worker 崩溃遗留的 running 由启动对账终态化，不永挂 pending。
+                self.db.mark_mindreading_running(chat_turn_id)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         return {
             "minister": minister_name,
@@ -1602,8 +1605,8 @@ class WebGame:
             if chat_turn_id > 0:
                 records = list(self.db.list_mindreading_records(chat_turn_id))
                 if not records:
-                    # 单轮 pending：未落库 且未达终态——纯看持久任务态，不看当前资格。
-                    pending = self.db.get_mindreading_status(chat_turn_id) == ""
+                    # 单轮 pending：已接受在办（'running'）且未落库——显式任务态，'' 不算 accepted。
+                    pending = self.db.get_mindreading_status(chat_turn_id) == "running"
             pending_turn_ids = self.db.list_pending_mindreading_turns(
                 minister_name, self.state.turn,
             )

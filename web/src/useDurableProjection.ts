@@ -23,7 +23,7 @@ export function useDurableProjection(
   const refresh = React.useCallback(
     async (opts?: {
       secretOrders?: boolean;
-      onSecretOrders?: (orders: SecretOrder[]) => void;
+      onSecretOrders?: (orders: SecretOrder[], isLatest: () => boolean) => void;
     }): Promise<GameState | null> => {
       const gen = ++genRef.current;
       const isLatest = () => genRef.current === gen;
@@ -32,7 +32,9 @@ export function useDurableProjection(
           .then(({ orders }) => {
             if (!isLatest()) return;
             applySecretOrders(orders);
-            opts.onSecretOrders?.(orders);
+            // 把同代次归属检查交回调：延迟呈现（400ms 弹窗）在触发时据此判是否仍最新，
+            // 更新的撤回/刷新推进代次后陈旧定时器 no-op（延迟呈现纳入可取消的代次归属）。
+            opts.onSecretOrders?.(orders, isLatest);
           })
           .catch(() => {});
       }
@@ -44,5 +46,11 @@ export function useDurableProjection(
     [applyState, applySecretOrders],
   );
 
-  return { refresh };
+  // 直接改持久投影的变更（草案增/改/删/准/驳、撤回、重试）在**应用其响应前**推进代次，
+  // 作废任何在飞的旧刷新——旧 done 刷新迟到 resolve 时代次已变、返 null 弃写，不覆盖本变更结果。
+  const beginMutation = React.useCallback(() => {
+    genRef.current += 1;
+  }, []);
+
+  return { refresh, beginMutation };
 }
