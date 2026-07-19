@@ -1,11 +1,16 @@
 """ADR 0009 person delta normalization behavior."""
 
+import copy
 import json
+import os
+import tempfile
 
 import pytest
 
 import ming_sim.issues as issues
+from ming_sim.db import GameDB
 from ming_sim.models import Character
+from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.simulation import (
     MODULE_FIELDS,
@@ -3936,3 +3941,77 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
         assert release_idx < appoint_idx, f"派生 处置(起复) 须按序落在 任命 之前：{pcs}"
     finally:
         _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
+
+
+def test_apply_office_appointment_new_person_person_title_no_dirty_office_row(game):
+    """#1058 接缝回归钉①：apply_office_appointment 新建档路（不在册）须透传 new_office_type。
+    带 person-title 名分的新人物经【唯一落地核】建档时，office_type 落 名分、不写脏
+    character_offices 行、更不因 infer 兜「待铨」当普通官职而 raise 中止结算。"""
+    db, state, content = game
+    name = "测试名分新降将_1058"
+    assert name not in content.characters
+    try:
+        result = issues.apply_office_appointment(
+            db, state, content, None,
+            name, "听用候铨",
+            reason="降金后授名分",
+            new_office_type="身名分",
+        )
+        assert not result.get("rejected"), result
+        assert result.get("kind") == "appoint"
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row is not None, "名分新人物未落 characters"
+        assert row["office_type"] == "身名分"
+        # 名分守卫：offices 父行不建、character_offices 无脏行
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone() is None
+    finally:
+        content.characters.pop(name, None)
+
+
+def test_fresh_static_seed_person_title_character_no_offices_parent(content):
+    """#1058 接缝回归钉②：全新静态 seed 含名分 office_type 的人物时，_ensure_office_type_parents
+    不得把名分 rematerialize 成 offices 父行（删父行后又从 canonical 集捞回来的接缝回归）。"""
+    seed_content = copy.deepcopy(content)
+    person_title_name = "测试静态名分人物_1058"
+    seed_content.characters[person_title_name] = Character(
+        name=person_title_name,
+        office="听用候铨",
+        office_type="身名分",
+        faction="中立",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50, ability=50, integrity=50, courage=50,
+        style="名分待铨",
+        power_id="ming",
+        status="active",
+    )
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = None
+    try:
+        db = GameDB(path, seed_content)
+        db.seed_static_data()
+        for kind in PERSON_TITLE_KINDS:
+            assert db.conn.execute(
+                "SELECT 1 FROM offices WHERE office_type=?", (kind,)
+            ).fetchone() is None, f"名分 {kind} 被 rematerialize 成 offices 父行"
+        # 名分人物本身落 characters、character_offices 无脏行
+        assert db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (person_title_name,)
+        ).fetchone() is not None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (person_title_name,)
+        ).fetchone() is None
+    finally:
+        if db is not None:
+            db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)

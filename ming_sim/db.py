@@ -2379,6 +2379,10 @@ class GameDB:
             )
 
     def _canonical_office_types(self) -> set[str]:
+        # 名分（PERSON_TITLE_KINDS）按契约不入官职体系：静态 seed 人物的 office_type 可能是名分，
+        # 若混进 canonical 集，_ensure_office_type_parents 会在删除名分父行后又把它 rematerialize
+        # 成 offices 父行（#1058 接缝回归）。在唯一定义点排除，兼作 _ensure_office_type_parent 校验
+        # 的防御——名分永不是合法父类。
         return (
             set(self.content.office_definitions)
             | {
@@ -2391,7 +2395,7 @@ class GameDB:
                 for office_type in (_offices_table().get("allowed_types") or [])
                 if str(office_type).strip()
             }
-        )
+        ) - set(PERSON_TITLE_KINDS)
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
