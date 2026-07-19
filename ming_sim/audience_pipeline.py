@@ -30,13 +30,7 @@ EVT_REPLY_VISIBLE = "reply_visible"
 EVT_MINDREADING_ISSUED = "mindreading_issued"
 EVT_MINDREADING_COMPLETE = "mindreading_complete"
 EVT_MINDREADING_FAILED = "mindreading_failed"
-EVT_PARALLEL_COMPLETE = "parallel_complete"
 EVT_DB_WRITE = "db_write"
-
-# 近臣回奏触发词（与 session._audience_prompt_for_message 同口径）
-RETURN_REPORT_KEYWORDS = (
-    "官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访",
-)
 
 
 @dataclass
@@ -78,13 +72,17 @@ class PipelineTimeline:
 class AudienceTurnPipeline:
     """P5 时序调度器——生产与测试共用的状态机。
 
-    1. `start_parallel(jobs)` —— 不依赖回话输出的调用立刻并发发出
+    1. `note_parallel_issued(name)` —— 记录不依赖回话输出的独立调用已并发发出
     2. `stream_reply(produce)` —— 流式回话；首 token 先于读心
     3. `persist_reply(fn)` —— 回话落库；此后才允许发读心
        或 `accept_persisted_reply(text)` —— 生产路径已落库后接管状态
     4. `mark_reply_visible()` —— 回话对玩家可见（done；不等读心）
     5. `issue_mindreading(fn)` —— 仅在 3 之后；fn 必须接收完整回话
     6. `write_under_gate(fn)` —— 后台结果落库走写锁
+
+    不依赖回话输出的独立调用（动作意图分类等）在各自的 executor 上先于回话
+    发出、跨越回话流式在飞、回话后消费一次；本状态机只在时序日志记其发出，
+    不为「记录一次并发」而空跑第二份任务。
     """
 
     def __init__(
@@ -102,37 +100,20 @@ class AudienceTurnPipeline:
         )
         self._reply_text: Optional[str] = None
         self._reply_persisted = False
-        self._parallel_futures: Dict[str, Future] = {}
         self._mindreading_future: Optional[Future] = None
         self._closed = False
 
     # ── parallel independent calls ──────────────────────────────────────
 
-    def start_parallel(self, jobs: Mapping[str, Callable[[], Any]]) -> Dict[str, Future]:
-        """并发发出不依赖回话输出的调用；时序日志记每条 issued。"""
+    def note_parallel_issued(self, name: str) -> None:
+        """记录不依赖回话输出的独立调用已发出（在其各自 executor 上先于回话在飞）。
+
+        真实调用（如 CLI 动作意图分类）由 session 侧 executor 承载并跨越回话流式
+        运行；此处只把「已并发发出」记入时序日志，供并发时序断言，不再另起线程。
+        """
         if self._closed:
             raise RuntimeError("pipeline 已关闭")
-        for name, job in jobs.items():
-            self.timeline.log(EVT_PARALLEL_ISSUED, job=name)
-            self._parallel_futures[name] = self._executor.submit(self._run_parallel_job, name, job)
-        return dict(self._parallel_futures)
-
-    def _run_parallel_job(self, name: str, job: Callable[[], Any]) -> Any:
-        try:
-            return job()
-        finally:
-            self.timeline.log(EVT_PARALLEL_COMPLETE, job=name)
-
-    def wait_job(self, name: str, timeout: Optional[float] = None) -> Any:
-        if name not in self._parallel_futures:
-            raise KeyError(f"无并行任务：{name}")
-        return self._parallel_futures[name].result(timeout=timeout)
-
-    def collect_parallel(self, timeout: Optional[float] = None) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
-        for name, fut in self._parallel_futures.items():
-            out[name] = fut.result(timeout=timeout)
-        return out
+        self.timeline.log(EVT_PARALLEL_ISSUED, job=name)
 
     # ── minister reply streaming ────────────────────────────────────────
 
@@ -255,17 +236,6 @@ class AudienceTurnPipeline:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-
-def return_report_applicable(character: object, message: str) -> bool:
-    """回奏是否适用本轮问话（不依赖回话输出 → 可并行发出）。"""
-    from ming_sim.mindreading import is_inner_court_attendant
-
-    text = str(message or "")
-    return bool(
-        is_inner_court_attendant(character)
-        and any(word in text for word in RETURN_REPORT_KEYWORDS)
-    )
 
 
 def mindreading_eligible(
