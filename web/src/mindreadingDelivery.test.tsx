@@ -320,4 +320,62 @@ describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
       expect(rows().some((r) => r === "attendant:旧轮读心。")).toBe(true);
     } finally { vi.useRealTimers(); }
   });
+
+  it("轮询前一次 fetch 失败自愈；越过旧 20 次上限的迟到记录仍浮现（寿命系于终态非常数）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef, rows } = mount();
+      let call = 0;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/mindreading")) {
+          call += 1;
+          if (call === 1) throw new Error("net blip");                                    // 首次失败→自愈
+          if (call < 25) return jsonResp({ chat_turn_id: 10, mindreading: [], mindreading_pending: true });  // 长时间空（越过旧 20 上限）
+          return jsonResp({ chat_turn_id: 10, mindreading: [{ id: 1, narration: "迟到读心。" }], mindreading_pending: true });
+        }
+        return jsonResp({ minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10] });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      for (let i = 0; i < 30; i += 1) await advance();  // 推进远超旧 20 次
+      expect(rows().some((r) => r === "attendant:迟到读心。")).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("服务端终态 pending=false 即终止轮询（不空转）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef } = mount();
+      let call = 0;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/mindreading")) { call += 1; return jsonResp({ chat_turn_id: 10, mindreading: [], mindreading_pending: false }); }
+        return jsonResp({ minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10] });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      await advance();               // 第 1 次：pending=false → 停
+      const afterStop = call;
+      await advance(); await advance();
+      expect(call).toBe(afterStop);  // 终态后不再轮询
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("关闭面板 cancelReopenPolls 停旧 poll-batch（selectedMinister 不变也停，免重开叠加）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef } = mount();
+      let call = 0;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/mindreading")) { call += 1; return jsonResp({ chat_turn_id: 10, mindreading: [], mindreading_pending: true }); }
+        return jsonResp({ minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10] });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      await advance();
+      const before = call;
+      act(() => { hookRef.current!.cancelReopenPolls(); });  // 关闭面板
+      await advance(); await advance();
+      expect(call).toBe(before);  // 关闭后旧批停轮询
+    } finally { vi.useRealTimers(); }
+  });
 });

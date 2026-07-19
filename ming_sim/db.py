@@ -1153,6 +1153,8 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
+                -- #499 读心终态：''=待生成 / 'failed'=模型失败 / 'skip'=不适用；用于重开轮询判终止。
+                mindreading_status TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1567,6 +1569,7 @@ class GameDB:
         self._backfill_person_core_character_static_fields()
         self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
+        self.ensure_column("chat_turns", "mindreading_status", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
@@ -7398,16 +7401,18 @@ class GameDB:
         return self._row_dict(row) if row is not None else None
 
     def list_pending_mindreading_turns(self, minister_name: str, turn: int) -> List[int]:
-        """本大臣本回合已完成回话（有大臣消息）但读心尚未落库的活跃轮 id（#499）。
+        """本大臣本回合已完成回话（有大臣消息）但读心尚未落库、且未达终态的活跃轮 id（#499）。
 
         供取消/早重开的前端对**所有**待读心轮各自轮询——不只最新轮，故新一轮发出也不丢
-        旧轮读心；已落库的轮不返回（NOT EXISTS mindreading_records）。
+        旧轮读心；已落库（NOT EXISTS record）或已达终态（mindreading_status=failed/skip）的轮
+        不返回，前端据此终止轮询，不靠魔法次数上限。
         """
         rows = self.conn.execute(
             """
             SELECT ct.id FROM chat_turns ct
             WHERE ct.minister_name = ? AND ct.turn = ? AND ct.status = 'active'
               AND ct.minister_message_id IS NOT NULL
+              AND ct.mindreading_status = ''
               AND NOT EXISTS (
                 SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = ct.id
               )
@@ -7416,6 +7421,25 @@ class GameDB:
             (minister_name, int(turn)),
         ).fetchall()
         return [int(row["id"]) for row in rows]
+
+    def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
+        """标记某轮读心终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。
+
+        只对未落库读心记录的轮打标（已 ready 的轮由 record 存在表达终态）；不覆盖已有非空标。
+        """
+        self.conn.execute(
+            "UPDATE chat_turns SET mindreading_status = ? "
+            "WHERE id = ? AND mindreading_status = ''",
+            (str(status), int(chat_turn_id)),
+        )
+        self.conn.commit()
+
+    def get_mindreading_status(self, chat_turn_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT mindreading_status FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        return str(row["mindreading_status"] or "") if row is not None else ""
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(

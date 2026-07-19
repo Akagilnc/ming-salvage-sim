@@ -93,12 +93,10 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     web_game = _web_game(db, state, content, agent)
 
     seen_replies: List[str] = []
-    release_mind = threading.Event()
-    mind_started = threading.Event()
+    release_mind = threading.Event()  # 阻塞门：done 交付前读心不完成 → 外部可见 done<mindreading
 
     def slow_spy_run(**kwargs):
         seen_replies.append(kwargs.get("minister_reply") or "")
-        mind_started.set()
         release_mind.wait(timeout=2.0)
         payload = {
             "reader": "王承恩",
@@ -126,15 +124,13 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
             mind_before_done = True
         if item.get("type") == "done":
             done_seen = True
-            # done 交付时读心不得已完成（阻塞 fake 未 release）
-            assert pipe_mind_not_complete(mind_started, release_mind)
-            release_mind.set()
+            release_mind.set()  # done 已交付后才放行读心
 
     types = [e.get("type") for e in events]
     assert "delta" in types
-    assert types.index("done") < types.index("end")
-    assert "mindreading" in types
+    # 外部可见时序：done < mindreading < end（阻塞门保证读心不抢在 done 前）
     assert types.index("done") < types.index("mindreading")
+    assert types.index("mindreading") < types.index("end")
     assert not mind_before_done
     done_payload = next(e["payload"] for e in events if e["type"] == "done")
     assert done_payload["answer"] == "臣先陈军务，不敢删节。"
@@ -143,13 +139,6 @@ def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatc
     assert seen_replies == ["臣先陈军务，不敢删节。"]
     assert "军务如何？" not in seen_replies[0]
     assert _wait_for(lambda: web_game._pending_writes_count == 0)
-
-
-def pipe_mind_not_complete(mind_started: threading.Event, release_mind: threading.Event) -> bool:
-    """done 时刻：若读心已 start 则 release 必尚未 set（否则阻塞 fake 已放行=可能已完成）。"""
-    if not mind_started.is_set():
-        return True
-    return not release_mind.is_set()
 
 
 def test_chat_stream_action_intent_overlaps_reply(game, monkeypatch):
@@ -284,6 +273,33 @@ def test_build_chat_projection_weaves_mindreading_by_turn(game):
     a1, a2 = proj[2], proj[5]
     assert (a1["chat_turn_id"], a1["record_id"]) == (cid1, rid1)
     assert (a2["chat_turn_id"], a2["record_id"]) == (cid2, rid2)
+
+
+def test_failed_mindreading_marks_terminal_and_stops_pending(game, monkeypatch):
+    """读心模型失败 → 落终态 failed → 单轮 pending 转 false、pending_turn_ids 移出。
+
+    轮询寿命系于服务端终态而非魔法次数上限：终态一落，重开轮询即终止（#499）。
+    """
+    import web_app as web_app_mod
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+
+    db, state, content = game
+    minister = "温体仁"
+    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣遵旨。"]))
+
+    def boom(**_kwargs):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", boom)
+    list(web_game.chat_stream(minister, "问。"))
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+
+    cid = int(db.get_last_active_chat_turn(minister, state.turn)["id"])
+    assert db.get_mindreading_status(cid) == "failed"  # 终态落库
+    out = web_game.mindreading_for_minister(minister, cid)
+    assert out["mindreading"] == []
+    assert out["mindreading_pending"] is False  # 终态 → 单轮 pending 停
+    assert cid not in web_game.mindreading_for_minister(minister)["pending_turn_ids"]
 
 
 def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):

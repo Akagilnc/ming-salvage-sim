@@ -1606,7 +1606,8 @@ class WebGame:
             if chat_turn_id > 0:
                 records = list(self.db.list_mindreading_records(chat_turn_id))
                 if not records:
-                    pending = eligible
+                    # 单轮 pending：eligible 且未落库 且未达终态（failed/skip）——终态即停轮询。
+                    pending = eligible and self.db.get_mindreading_status(chat_turn_id) == ""
             if eligible:
                 pending_turn_ids = self.db.list_pending_mindreading_turns(
                     minister_name, self.state.turn,
@@ -1879,6 +1880,7 @@ class WebGame:
             if not chat_turn_id or not reply.strip():
                 return None
             # 资格判定唯一入口在 run_mindreading_for_turn 内（不在此重复查询）
+            terminal_status = ""
             try:
                 result = run_mindreading_for_turn(
                     db=self.db,
@@ -1891,8 +1893,20 @@ class WebGame:
                     write_gate=self._runtime_write_gate(),
                 )
             except Exception:
-                # 读心失败：回话已 done，不回滚。
+                # 读心失败：回话已 done，不回滚。落终态 failed 让重开轮询能终止。
                 result = None
+                terminal_status = "failed"
+            else:
+                # 返回非记录（不适用/目标已失效）→ 终态 skip，同样让轮询终止。
+                if not isinstance(result, dict):
+                    terminal_status = "skip"
+            if terminal_status:
+                # 终态落库走 runtime write_gate（单写者纪律）；已 ready 的轮不打标。
+                try:
+                    with self._runtime_write_gate():
+                        self.db.set_mindreading_status(chat_turn_id, terminal_status)
+                except Exception:
+                    pass
             return result if isinstance(result, dict) else None
         finally:
             if owns_pending:

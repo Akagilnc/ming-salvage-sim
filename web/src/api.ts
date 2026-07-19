@@ -159,9 +159,11 @@ export const fetchMindreading = (ministerName: string, chatTurnId: number) =>
 
 /**
  * 取消实时流或读心落库前重开时，历史 GET 可能早于后台读心落库，之后再不浮现
- * （#499 p5-mindreading-player-delivery）。此处锁定 expected 轮 `chatTurnId` 做有界
- * 轮询，就绪即把该轮记录（带持久 id）交 onRecords 浮现；`mindreading_pending===false`
- * 或已浮现即停，避免空转。去重/归位由调用方按 (chat_turn_id, id) 负责——本函数只搬运。
+ * （#499 p5-mindreading-player-delivery）。此处锁定 expected 轮 `chatTurnId` 轮询，
+ * **轮询寿命系于服务端终态、而非魔法次数上限**：就绪（有记录）→ 交 onRecords 浮现并停；
+ * `mindreading_pending===false`（服务端已落 failed/skip 终态）→ 停；否则（仍 pending）继续，
+ * 直到 shouldContinue（面板观察者 / poll-batch 归属）失效。真实模型超时远超旧 20 次×30s，
+ * 迟到记录（如第 21 次）仍能浮现。去重/归位由调用方按 (chat_turn_id, id) 负责。
  */
 export const pollMindreadingUntilReady = async (
   ministerName: string,
@@ -169,23 +171,20 @@ export const pollMindreadingUntilReady = async (
   opts: {
     onRecords: (records: MindreadingRecord[], chatTurnId: number) => void;
     shouldContinue: () => boolean;
-    maxAttempts?: number;
     intervalMs?: number;
     sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<void> => {
-  const maxAttempts = opts.maxAttempts ?? 20;
   const intervalMs = opts.intervalMs ?? 1500;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (!opts.shouldContinue()) return;
+  while (opts.shouldContinue()) {
     await sleep(intervalMs);
     if (!opts.shouldContinue()) return;
     let data: MindreadingSnapshot;
     try {
       data = await fetchMindreading(ministerName, chatTurnId);
     } catch {
-      continue;  // 瞬断重试，不中断轮询
+      continue;  // 瞬断重试，不中断轮询（不计入终止条件）
     }
     const rows = Array.isArray(data.mindreading) ? data.mindreading : [];
     const ready = rows.filter(
@@ -193,8 +192,8 @@ export const pollMindreadingUntilReady = async (
     );
     if (ready.length) {
       opts.onRecords(ready, chatTurnId);  // 固定 expected 轮归位，不读 data.chat_turn_id 的 latest
-      return;
+      return;  // 已就绪 → 终止
     }
-    if (data.mindreading_pending === false) return;  // 本轮不会再有读心
+    if (data.mindreading_pending === false) return;  // 服务端终态（failed/skip）→ 终止
   }
 };
