@@ -357,10 +357,15 @@ def open_night(
     if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
         return existing
     if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
-        close_night(db, state, night_id=int(existing["id"]))
-        existing = get_open_night(db)
-        if existing is not None:
-            return existing
+        # 上一夜收夜中断（closing）。不在此隐式续收：open_night 无 content/registry，
+        # 隐式 close_night 会让缺依赖的已应允任免 terminal failed、夜仍被封=丢合法任免。
+        # 响亮停住——续收必须走携 content/registry 的显式 close/resume（resolve_turn/advance/
+        # auto_close_open_night），不准开新夜、不准封夜。
+        raise AudienceNightError(
+            f"上一夜收夜未完（closing），须先携 content/registry 显式续收再开新夜：{int(existing['id'])}",
+            code="night_closing_incomplete",
+            detail={"night_id": int(existing["id"])},
+        )
 
     roster = resolve_standing_roster(db)
     open_body = body or (

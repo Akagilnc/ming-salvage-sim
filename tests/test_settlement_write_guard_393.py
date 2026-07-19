@@ -215,7 +215,7 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
     monkeypatch.setattr(web_app, "advance_without_edict", lambda *a, **k: game.db.writes.append("advance_without_edict"))
 
     with pytest.raises(HTTPException) as ei:
-        _invoke(web_app.api_advance_without_edict())
+        web_app.api_advance_without_edict()
 
     assert ei.value.status_code == 409
     assert game.db.writes == []
@@ -231,7 +231,7 @@ def test_advance_without_edict_refused_when_gate_held(monkeypatch):
 
     def _run_call():
         try:
-            _invoke(web_app.api_advance_without_edict())
+            web_app.api_advance_without_edict()
         except BaseException as exc:  # record HTTPException from the worker thread
             result["exc"] = exc
         finally:

@@ -15,12 +15,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import types
-from unittest.mock import patch
 
 import pytest
 
 import ming_sim.cli_backend as cb
-from ming_sim.models import FRONT_HALF_DONE_PHASES, TurnPhase
+from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 
 
@@ -831,67 +830,13 @@ def test_no_reply_path_directive_reachable_by_list_directives(game):
     assert db.count_pending_directives(state) == 0
 
 
-# ── ⑥ write_decree() 真实入口覆盖（codex r2 finding [high]）─────────────────
-
-def test_write_decree_commits_pending_directive(game, monkeypatch):
-    """web「拟诏」按钮路径覆盖（codex r2 finding [high]）：
-    玩家口头「拟旨吧」后不显式应允，直接点「拟诏」按钮触发 write_decree()。
-    write_decree() 必须先 commit_pending_actions(kind_filter='directive')，
-    再 list_directives(status='draft')——否则 drafts 为空，raise "无草案不能拟诏"。
-
-    此测试直接调 GameSession.write_decree()（而非只调 db.commit_pending_actions），
-    覆盖 r1 测试照不到的 web 按钮入口。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-
-    draft_text = "奉天承运皇帝诏曰，着兵部整饬三边军务，期三月内完报，钦此。"
-    db.upsert_pending_directive(
-        state.turn, name,
-        payload={"text": draft_text, "actor": name},
-    )
-
-    # write_decree 调用前：turn_directives 为空，pending_actions 有一条
-    assert db.list_directives(state, statuses=("draft",)) == []
-    assert len(db.list_pending_actions(state.turn)) == 1
-
-    # 构造最小 fake session（委派真实 db/state；_refuse_if_settling 直接实现）
-    fake_sess = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=None,
-        registry=None,
-        llm_config=types.SimpleNamespace(channel="cli"),
-        agno_db=None,
-        last_decree="",
-    )
-
-    def _refuse_if_settling():
-        if state.turn_phase in FRONT_HALF_DONE_PHASES:
-            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
-
-    def _pending_count():
-        return db.count_pending_directives(state)
-
-    fake_sess._refuse_if_settling = _refuse_if_settling
-    fake_sess.pending_count = _pending_count
-    fake_sess._draft_fingerprint = lambda directives: GameSession._draft_fingerprint(
-        fake_sess, directives)
-
-    canned_decree = "奉天承运皇帝诏曰，着兵部整饬三边军务，期三月内完报，钦此。"
-    with patch("ming_sim.session.write_decree_with_agno", return_value=canned_decree):
-        result = GameSession.write_decree(fake_sess)
-
-    # write_decree 内 commit_pending_actions 已把暂存升级为 draft
-    drafts = db.list_directives(state, statuses=("draft",))
-    assert len(drafts) == 1
-    assert drafts[0]["text"] == draft_text
-    assert drafts[0]["status"] == "draft"
-
-    # pending_actions 已清空（标 committed）
-    assert db.list_pending_actions(state.turn) == []
-
-    # 返回值是 decree 文本
-    assert result == canned_decree
+# ── ⑥ write_decree() 是 preview，不 default-commit（#498 finding3 / ADR 0006·0038）──
+#
+# 旧行为「write_decree() 先 commit_pending_actions 把未表态 pending 升为 draft」违背
+# ADR 0006（0038 修订）：未表态 pending 只在**颁诏/过回合 checkpoint** 默认同意，拟诏
+# （preview）不得改 pending status。故删除原 test_write_decree_commits_pending_directive
+# （它锁的正是被拆除的违宪行为）；新契约「拟诏不动 pending、无 draft 响亮拒绝」由
+# tests/test_audience_night_498.py::test_write_decree_leaves_unacted_pending_unchanged 覆盖。
 
 
 # ── ⑦ state_payload 暴露 pending_directive_count（codex r3 finding [high]）────
@@ -1959,6 +1904,8 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
 
     monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
 
+    # 草案 A 经应允/默认同意提交为 draft（write_decree 现只 preview、不 default-commit，#498 finding3）
+    db.commit_pending_actions(state, kind_filter="directive")
     decree_v1 = sess.write_decree()
     assert "草案A" in decree_v1
     assert "草案B" not in decree_v1  # 此刻还没 B
@@ -2004,6 +1951,7 @@ def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generati
         return f"诏书[{texts}]"
 
     monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
+    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
     decree_v1 = sess.write_decree()
     assert "清查粮饷" in decree_v1
     assert "加派监察御史" not in decree_v1
@@ -2047,6 +1995,7 @@ def test_manual_saved_decree_survives_after_draft_text_change(game, monkeypatch)
         lambda llm, agno, st, directives, db=None:
             "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
     )
+    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
     assert "草案A" in sess.write_decree()
 
     directive_id = db.conn.execute(
@@ -2095,6 +2044,7 @@ def test_supplement_after_write_decree_updates_committed_draft_not_new_pending(g
         lambda llm, agno, st, directives, db=None:
             "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
     )
+    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
     sess.write_decree()
 
     row = db.conn.execute(
@@ -2160,6 +2110,7 @@ def test_undo_supplement_after_write_decree_restores_committed_draft_text(game, 
         lambda llm, agno, st, directives, db=None:
             "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
     )
+    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
     sess.write_decree()
 
     ctid = db.create_chat_turn(state, name, "sess-undo-committed-draft-supplement", 0)
@@ -2262,6 +2213,9 @@ def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeyp
         lambda llm, agno, st, directives, db=None:
             "诏书：" + "；".join(str(d["text"]) for d in directives))
 
+    # 应允/默认同意把召对内暂存提交为 committed draft（write_decree 现只 preview，#498 finding3）；
+    # 提交在 rollback diff 记录之后发生，故 undo 仍能循 committed_directive_id 删除该 draft。
+    db.commit_pending_actions(state, kind_filter="directive")
     decree = sess.write_decree()
     assert "草案X" in sess.last_decree and "草案X" in decree
 
