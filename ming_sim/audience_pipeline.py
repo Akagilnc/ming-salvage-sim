@@ -296,7 +296,8 @@ def run_mindreading_for_turn(
         with gate:
             if timeline is not None:
                 timeline.log(EVT_DB_WRITE, kind="mindreading")
-            # 撤回安全（ADR 0038）：写前校验目标轮仍存活；failed/undone 不写孤儿
+            # 撤回安全（ADR 0038）：写前校验目标轮仍存活；failed/undone 不写孤儿，
+            # 也不向玩家投递未落库的孤儿读心（无稳定记录身份 → 返 None）。
             if hasattr(db, "conn"):
                 row = db.conn.execute(
                     "SELECT status FROM chat_turns WHERE id=?",
@@ -305,8 +306,10 @@ def run_mindreading_for_turn(
                 if row is not None:
                     status = str(row["status"] if hasattr(row, "keys") else row[0] or "")
                     if status in {"failed", "undone"}:
-                        return payload
-            db.record_mindreading(int(chat_turn_id), payload)
+                        return None
+            record_id = db.record_mindreading(int(chat_turn_id), payload)
+            # 附上持久记录身份，供 SSE 投递与前端 (chat_turn_id, id) 去重/归位。
+            payload = {**payload, "id": int(record_id)}
     return payload
 
 

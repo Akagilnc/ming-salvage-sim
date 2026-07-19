@@ -209,12 +209,15 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     )
     assert payload is not None
     assert payload["narration"] == "近臣低声：此言尚有未尽。"
+    # 持久记录身份 id 附于返回，供 SSE 投递与前端 (chat_turn_id, id) 去重/归位（#499）
+    assert payload["id"] > 0
     assert db.list_mindreading_records(chat_turn_id) == [payload]
 
     db.fail_chat_turn(chat_turn_id)
     db.conn.execute("DELETE FROM mindreading_records WHERE chat_turn_id=?", (chat_turn_id,))
     db.conn.commit()
-    run_mindreading_for_turn(
+    # 撤回轮不落库、也不向玩家投递孤儿读心（无稳定身份）→ 返 None
+    undone = run_mindreading_for_turn(
         db=db,
         state=state,
         content_characters=content.characters,
@@ -224,6 +227,7 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
         chat_turn_id=chat_turn_id,
         mindreading_agent=_Agent(),
     )
+    assert undone is None
     assert db.list_mindreading_records(chat_turn_id) == []
 
 

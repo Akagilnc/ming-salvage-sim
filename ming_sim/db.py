@@ -7062,8 +7062,9 @@ class GameDB:
         return int(cur.lastrowid)
 
     def list_mindreading_records(self, chat_turn_id: int) -> List[Dict[str, object]]:
+        # id 是稳定记录身份（#499）：前端按 (chat_turn_id, id) 去重/归位，不依赖 narration 文本。
         rows = self.conn.execute(
-            "SELECT reader,target,source,precision,narration FROM mindreading_records "
+            "SELECT id,reader,target,source,precision,narration FROM mindreading_records "
             "WHERE chat_turn_id=? ORDER BY id",
             (int(chat_turn_id),),
         ).fetchall()
