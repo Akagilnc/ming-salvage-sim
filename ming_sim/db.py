@@ -8839,6 +8839,17 @@ class GameDB:
             commit=commit,
         )
 
+    def _current_open_night_id(self) -> int:
+        """当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
+        try:
+            row = self.conn.execute(
+                "SELECT id FROM audience_nights "
+                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row["id"]) if row is not None else 0
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
@@ -8863,16 +8874,7 @@ class GameDB:
             if origin_mid is not None:
                 payload_data["origin_chat_message_id"] = int(origin_mid)
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
-        night_id = 0
-        try:
-            row = self.conn.execute(
-                "SELECT id FROM audience_nights "
-                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            if row is not None:
-                night_id = int(row["id"])
-        except sqlite3.OperationalError:
-            night_id = 0
+        night_id = self._current_open_night_id()
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
@@ -8970,9 +8972,13 @@ class GameDB:
             (int(turn), str(minister_name)),
         ).fetchone()
         if row is not None:
+            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
+            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
+            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
             self.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(payload or {}, ensure_ascii=False), int(row["id"])),
+                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+                (json.dumps(payload or {}, ensure_ascii=False),
+                 self._current_open_night_id(), int(row["id"])),
             )
             self.conn.commit()
             return int(row["id"])

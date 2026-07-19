@@ -99,12 +99,21 @@ def _row_dict(row: Any) -> Dict[str, Any]:
     return {k: row[k] for k in row.keys()}
 
 
-def _owns_tx(db: Any) -> bool:
-    return bool(getattr(db, "owns_transaction", lambda: True)())
+def _should_commit(db: Any) -> bool:
+    """本域多语句写各自开隐式事务，故用 owns_transaction() 会因自身 in_transaction 恒 False
+    而永不 durable commit（跨进程恢复丢失）。改与 db.py 同 idiom：仅当外层无显式 atomic/
+    suspend 持有事务时才提交（用 _commit_suspended / _atomic_depth 判据，不看 in_transaction）。"""
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return True
+    return (
+        not bool(getattr(conn, "_commit_suspended", False))
+        and int(getattr(conn, "_atomic_depth", 0) or 0) == 0
+    )
 
 
 def _commit_if_owns(db: Any) -> None:
-    if _owns_tx(db):
+    if _should_commit(db):
         db.conn.commit()
 
 
@@ -330,7 +339,7 @@ def append_ledger_entry(
             json.dumps(tag_list, ensure_ascii=False),
         ),
     )
-    if commit and _owns_tx(db):
+    if commit and _should_commit(db):
         db.conn.commit()
     return int(cur.lastrowid)
 
@@ -401,10 +410,7 @@ def open_night(
             )
         db.conn.execute(f"RELEASE SAVEPOINT {sp}")
         # 非外层 atomic 时提交本夜写入（不用 owns_transaction：in_transaction 时它恒 False）
-        if (
-            not bool(getattr(db.conn, "_commit_suspended", False))
-            and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
-        ):
+        if _should_commit(db):
             db.conn.commit()
     except Exception:
         try:
@@ -525,7 +531,10 @@ def _commit_night_approved(
     registry: Any,
     directive_status: str = "draft",
 ) -> List[Dict[str, object]]:
-    """只交本夜已应允 action ids；失败响亮中止，不推进游标。"""
+    """收夜提交本夜已应允白名单。沿用 commit_pending_actions 既有 terminal 语义：
+    落得了标 committed、落不了标 failed（都不留 pending，故幂等、可续跑）；失败由既有
+    pending_action_failures 渠道显眼上报，不在此另造「可续跑」的假失败阻断（否则第二次
+    只读 pending 会漏交终态 failed）。"""
     if not hasattr(db, "list_night_approved_pending"):
         return []
     rows: List[Dict[str, object]] = []
@@ -541,45 +550,6 @@ def _commit_night_approved(
         action_ids=action_ids,
         directive_status=directive_status,
     )
-    # 任一目标 id 仍 pending 或变 failed → 提交失败
-    failed_ids: List[int] = []
-    still_pending: List[int] = []
-    for aid in action_ids:
-        row = db.conn.execute(
-            "SELECT status FROM pending_actions WHERE id = ?", (aid,)
-        ).fetchone()
-        if row is None:
-            continue
-        st = str(row["status"])
-        if st == "failed":
-            failed_ids.append(aid)
-        elif st == "pending":
-            still_pending.append(aid)
-    if failed_ids or still_pending:
-        message = (
-            f"收夜提交失败：failed={failed_ids} still_pending={still_pending}。"
-            "夜保持 closing，可续跑重试。"
-        )
-        pack = write_audience_error_pack(
-            kind="close_submit_failed",
-            message=message,
-            detail={
-                "night_id": int(night_id),
-                "failed": failed_ids,
-                "still_pending": still_pending,
-                "action_ids": action_ids,
-            },
-        )
-        raise AudienceNightError(
-            message,
-            code="close_submit_failed",
-            error_pack_path=pack,
-            detail={
-                "night_id": int(night_id),
-                "failed": failed_ids,
-                "still_pending": still_pending,
-            },
-        )
     return list(applied or [])
 
 

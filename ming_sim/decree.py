@@ -195,7 +195,8 @@ def write_decree_with_agno(
     return text.strip()
 
 
-def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None) -> None:
+def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
+                          inflight_wait_s: float | None = None) -> None:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -213,7 +214,8 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
     # 放在 atomic 外：收夜自有写与错误包，不与推进事务半嵌。
     from ming_sim.audience_night import auto_close_open_night
-    auto_close_open_night(db, state, content=content, registry=registry)
+    auto_close_open_night(db, state, content=content, registry=registry,
+                          wait_timeout_s=inflight_wait_s)
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:

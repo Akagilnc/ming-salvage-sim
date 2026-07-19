@@ -2037,13 +2037,8 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
-        # #498 AC8：公开拟诏入口最前顺势收夜（在飞 fail-closed；收夜提交后再读候选/拟诏）
-        from ming_sim.audience_night import auto_close_open_night
-        auto_close_open_night(
-            self.db, self.state,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-        )
+        # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
+        # （resolve_turn / advance_without_edict）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         if self.pending_count() > 0:
@@ -2051,7 +2046,6 @@ class GameSession:
         # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
         # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
-        # 收夜已交本夜已应允 directive；此处只交仍 pending 的非 night_approved（跨夜/未应允默认同意）。
         self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
@@ -2078,7 +2072,8 @@ class GameSession:
         self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return self.last_decree
 
-    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:
+    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
+                     inflight_wait_s: float | None = None) -> ResolveResult:
         """颁诏并推演本回合（phase1）。要求无 pending 残留、≥1 条 draft。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
@@ -2141,12 +2136,16 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
-        # #498 AC8：公开颁诏入口最前顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
+        # #498 AC8：颁诏入口顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
+        # inflight_wait_s：web 入口已在 gate 外先等在飞落档（web_app._await_audience_inflight_clear），
+        # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
+        # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
         from ming_sim.audience_night import auto_close_open_night
         auto_close_open_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
+            wait_timeout_s=inflight_wait_s,
         )
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
