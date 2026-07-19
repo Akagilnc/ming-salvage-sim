@@ -133,7 +133,6 @@ describe("#677 real S5 fix-commit path wiring", () => {
           );
         } else if (attempt === 0) {
           // S2: add a non-test code change so S2 has a commit if needed
-          writeFileSync(join(wt.path, "src", "app.ts"), "export const x = 1;\n", "utf8");
           mkdirSync(join(wt.path, "src"), { recursive: true });
           writeFileSync(join(wt.path, "src", "app.ts"), "export const x = 1;\n", "utf8");
           execFileSync("git", ["-C", wt.path, "add", "src/app.ts"], {
