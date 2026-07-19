@@ -22,7 +22,15 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -219,17 +227,21 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   elapsedMs: number;
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
+  const promptFile = join(emptyHome, "stdin");
+  writeFileSync(promptFile, "ping\n");
   const env = emptyAuthEnv(emptyHome);
   const t0 = Date.now();
   if (target.kind === "host") {
+    const promptFd = openSync(promptFile, "r");
     const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
       encoding: "utf8",
-      input: "ping\n",
+      stdio: [promptFd, "pipe", "pipe"],
       env,
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       killSignal: "SIGKILL",
     });
+    closeSync(promptFd);
     const timedOut =
       r.error?.message?.includes("TIMEDOUT") === true ||
       r.signal === "SIGTERM" ||
@@ -248,25 +260,28 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   // Do NOT pass empty XAI_API_KEY= into the container (empty string counts as
   // present credentials → 401, not native "Not signed in"). Host env keys are
   // not auto-forwarded by docker run unless -e is used.
-  // Entrypoint = baked grok ELF (image sleep-infinity entrypoint otherwise).
+  // A pipe-backed fd 0 cannot be reopened through /dev/stdin in every
+  // container environment. Redirect a mounted regular file inside the
+  // container so grok sees the production /dev/stdin argv with a stable fd.
   const r = spawnSync(
     "docker",
     [
       "run",
       "--rm",
-      "-i",
       "--entrypoint",
-      "/usr/local/bin/grok",
+      "/bin/bash",
       "-e",
       "HOME=/tmp/964-empty-home",
       "-v",
       `${emptyHome}:/tmp/964-empty-home`,
+      "-v",
+      `${promptFile}:/tmp/964-probe-stdin:ro`,
       target.image,
-      ...HEADLESS_PRINT_ARGS,
+      "-lc",
+      `exec /usr/local/bin/grok ${HEADLESS_PRINT_ARGS.join(" ")} < /tmp/964-probe-stdin`,
     ],
     {
       encoding: "utf8",
-      input: "ping\n",
       // Real process.env so docker CLI finds its socket/context; isolation is
       // container-side via HOME mount only.
       timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
