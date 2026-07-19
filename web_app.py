@@ -1331,6 +1331,17 @@ class WebGame:
     def _persistent_chat_minister(self, minister_name: str) -> bool:
         return minister_name not in self.session.temporary_characters
 
+    def chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
+        """召对显示投影（#499 单一真源）：持久大臣 → DB turn-identified 投影（含读心
+        递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
+        入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
+        if self._persistent_chat_minister(minister_name):
+            return self.db.build_chat_projection(minister_name)
+        return [
+            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+            for m in self.chat_history.get(minister_name, [])
+        ]
+
     def _minister_agno_session_id(self, minister_name: str) -> str:
         registry = self.session.registry
         if registry is None:
@@ -1435,7 +1446,8 @@ class WebGame:
         return {
             "minister": minister_name,
             "undone_chat_turn_id": int(undone["id"]),
-            "history": self.chat_history.get(minister_name, []),
+            # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
+            "history": self.chat_projection(minister_name),
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "secret_orders": self.db.list_secret_orders(),
@@ -1475,7 +1487,10 @@ class WebGame:
         return {
             "minister": minister_name,
             "answer": answer,
-            "history": self.chat_history[minister_name],
+            # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
+            # 前端 setChat 不再抹掉先前浮现的读心递话。
+            "history": self.chat_projection(minister_name),
+            "chat_turn_id": int(chat_turn_id or 0),
             "court_action": court_action,
             "next_minister": next_minister,
             "proposed_directive": proposed_directive,
@@ -3027,14 +3042,13 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     mind = game.mindreading_for_minister(minister_name)
     return {
         "minister": game.public_character(character),
-        "history": game.chat_history.get(minister_name, []),
+        # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
+        "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
         "can_undo_last_chat": game.can_undo_last_chat(minister_name),
         "pending_action_failures": game.pending_action_failures_for(minister_name),
-        # #499 轮询/恢复：读心落库后可从历史入口浮现（递话 role，ADR 0046）
+        # 最新活跃轮 + 是否仍有待生成读心 → 前端据此对取消/早重开做固定轮有界轮询
         "chat_turn_id": mind["chat_turn_id"],
-        "mindreading": mind["mindreading"],
-        # 本轮该有读心但尚未落库 → 前端对取消/早重开路径启动有界轮询
         "mindreading_pending": mind["mindreading_pending"],
     }
 

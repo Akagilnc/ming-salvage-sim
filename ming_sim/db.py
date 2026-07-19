@@ -7048,6 +7048,57 @@ class GameDB:
             )
         return history
 
+    def build_chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
+        """一份 turn-identified 召对投影（#499）：user/minister 逐条带 chat_turn_id，
+        每轮的读心记录（带持久 id）紧随该轮大臣回话之后归位。
+
+        单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
+        chat_turns 打 turn 身份、按 (chat_turn_id, id) 织入 mindreading_records。
+        前端据此一投影渲染，不再靠 setChat(history) 覆盖抹掉读心递话。
+        """
+        msgs = self.conn.execute(
+            "SELECT id, role, content FROM chat_messages WHERE minister_name=? ORDER BY id",
+            (minister_name,),
+        ).fetchall()
+        turns = self.conn.execute(
+            "SELECT id, user_message_id, minister_message_id FROM chat_turns "
+            "WHERE minister_name=?",
+            (minister_name,),
+        ).fetchall()
+        msg_turn: Dict[int, int] = {}
+        minister_msg_turn: Dict[int, int] = {}
+        for t in turns:
+            tid = int(t["id"])
+            if t["user_message_id"] is not None:
+                msg_turn[int(t["user_message_id"])] = tid
+            if t["minister_message_id"] is not None:
+                msg_turn[int(t["minister_message_id"])] = tid
+                minister_msg_turn[int(t["minister_message_id"])] = tid
+        records_cache: Dict[int, List[Dict[str, object]]] = {}
+        projection: List[Dict[str, Any]] = []
+        for m in msgs:
+            mid = int(m["id"])
+            turn_id = msg_turn.get(mid, 0)
+            projection.append(
+                {"role": m["role"], "content": m["content"], "chat_turn_id": turn_id}
+            )
+            # 读心紧随该轮大臣回话归位（一个轮次可有多条读心，按 id 顺序）
+            if mid in minister_msg_turn:
+                t = minister_msg_turn[mid]
+                if t not in records_cache:
+                    records_cache[t] = self.list_mindreading_records(t)
+                for rec in records_cache[t]:
+                    narration = str(rec.get("narration") or "").strip()
+                    if not narration:
+                        continue
+                    projection.append({
+                        "role": "attendant",
+                        "content": narration,
+                        "chat_turn_id": t,
+                        "record_id": int(rec.get("id") or 0),
+                    })
+        return projection
+
     def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
         """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
         cur = self.conn.execute(

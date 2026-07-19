@@ -405,6 +405,36 @@ def test_mindreading_poll_path_after_stream(game, monkeypatch):
     assert out["mindreading"][0]["narration"] == "近臣低声陈明。"
 
 
+def test_build_chat_projection_weaves_mindreading_by_turn(game):
+    """服务端单一投影：每轮读心紧随该轮大臣回话按 (chat_turn_id, id) 归位。"""
+    db, state, content = game
+    minister = "温体仁"
+
+    def _turn(user_text, reply_text, narration):
+        uid = db.append_chat_message(minister, int(state.turn), "user", user_text)
+        mid = db.append_chat_message(minister, int(state.turn), "minister", reply_text)
+        cid = db.create_chat_turn(state, minister, "proj", 0)
+        db.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
+        rid = db.record_mindreading(cid, {
+            "reader": "王承恩", "target": minister, "source": "见闻",
+            "precision": "清晰", "narration": narration,
+        })
+        return cid, rid
+
+    cid1, rid1 = _turn("问军务？", "臣陈军务。", "近臣低声一。")
+    cid2, rid2 = _turn("问钱粮？", "臣陈钱粮。", "近臣低声二。")
+
+    proj = db.build_chat_projection(minister)
+    assert [(m["role"], m["content"]) for m in proj] == [
+        ("user", "问军务？"), ("minister", "臣陈军务。"), ("attendant", "近臣低声一。"),
+        ("user", "问钱粮？"), ("minister", "臣陈钱粮。"), ("attendant", "近臣低声二。"),
+    ]
+    # 读心递话携稳定身份归位于其轮
+    a1, a2 = proj[2], proj[5]
+    assert (a1["chat_turn_id"], a1["record_id"]) == (cid1, rid1)
+    assert (a2["chat_turn_id"], a2["record_id"]) == (cid2, rid2)
+
+
 def test_mindreading_pending_flag_guides_bounded_poll(game):
     """pending=本轮该有读心但尚未落库——取消/早重开前端据此有界轮询、就绪即停。"""
     from tests.test_audience_background import _FakeAgent, _web_game
