@@ -1476,12 +1476,15 @@ class WebGame:
         # and tore down the shared DB under the worker → SIGSEGV).
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
-            message_id = self.db.append_chat_message(minister_name, turn, "minister", answer)
             if chat_turn_id:
-                # #499 原子：链接大臣回话 + 接受读心任务（''→'running'）同一事务提交——
-                # 杜绝「已链接却空状态」孤儿（否则启动对账漏掉、恢复永不投递）。worker 崩溃
-                # 遗留的 running 由启动对账终态化，不永挂 pending。
-                self.db.commit_minister_reply(chat_turn_id, message_id)
+                # #499 单一事务：插入回话 → 链接 turn → 接受读心任务（''→'running'）→ 一次提交。
+                # 杜绝「回话已 commit 却未链接」孤儿（否则可见回话 chat_turn_id 0、空任务态、
+                # 无对账、无 pending、in-flight 守卫永挡召见）。worker 崩溃遗留的 running 由启动
+                # 对账终态化，不永挂 pending。
+                self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
+            else:
+                # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
+                self.db.append_chat_message(minister_name, turn, "minister", answer)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         return {
             "minister": minister_name,

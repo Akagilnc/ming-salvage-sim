@@ -114,9 +114,9 @@ class _RecordingDB:
     def update_chat_turn_messages(self, *args, **kwargs):
         return None
 
-    def commit_minister_reply(self, chat_turn_id: int, minister_message_id: int):
-        # #499 原子链接回话+接受读心任务（本 stub 不落库，仅满足生产调用）
-        return None
+    def persist_minister_reply(self, minister_name: str, turn: int, content: str, chat_turn_id: int):
+        # #499 单一事务插入回话+链接+接受（本 stub 复用 append_chat_message 记账，返回其 id）
+        return self.append_chat_message(minister_name, turn, "minister", content)
 
     def record_chat_turn_rollback_diffs(self, *args, **kwargs):
         return None
