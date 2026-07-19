@@ -99,11 +99,13 @@ RUN set -eux; \
 
 # Game-side Python test environment (#1054). Install into the agent user's site
 # rather than the externally-managed system Python, before the skill/code layers.
-COPY requirements.txt /tmp/ming-requirements.txt
+# --chown must be numeric: agent's primary group is not named "agent" on this
+# base image (same constraint as the grok chown above). uid 501 = agent.
+COPY --chown=501 requirements.txt /tmp/ming-requirements.txt
 USER agent
 RUN set -eux; \
     python3 -m pip install --user --break-system-packages --no-cache-dir \
-      -r /tmp/ming-requirements.txt pytest python-multipart
+      -r /tmp/ming-requirements.txt "pytest==9.1.1" python-multipart
 USER root
 
 # bun (system-wide) — used by a handful of gstack-ship helper scripts.
