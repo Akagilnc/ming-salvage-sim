@@ -33,7 +33,7 @@ import {
 // 1. Judge verdict three-state encode/decode/validate
 // 2. Finding disposition table (kill rows: four legal reasons + evidence; suppress rows: evidence + exactly one of groundTicket|ownerRecordPointer)
 // 3. Coder refuse envelope (refused + identity keys + cargo pointer; no cargo body)
-// 4. Canonical refused* vocabulary (refuted* / dual fields rejected)
+// 4. Runner projection ignores undeclared vocabulary; SO owns authoring policy
 // 5. Full-wave thin envelopes (judge / coder* / ship / merger / onlineReview)
 
 describe("#921 judge verdict three-state", () => {
@@ -595,8 +595,8 @@ describe("#921 coder refuse envelope (envelope-level only)", () => {
   });
 });
 
-describe("#921 envelope field vocabulary — refused* only", () => {
-  it("rejects refutedFindingIdentityKeys spelling (negative)", () => {
+describe("#921 runner projection sees declared traffic only", () => {
+  it("cannot smuggle refused fate through an undeclared spelling", () => {
     const parsed = decodeCoderEnvelope({
       station: "coderFix",
       status: "refused",
@@ -604,24 +604,28 @@ describe("#921 envelope field vocabulary — refused* only", () => {
     });
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
-      expect(parsed.reason).toMatch(/refuted|refusedFindingIdentityKeys|canonical/i);
+      expect(parsed.reason).toMatch(/refusedFindingIdentityKeys/i);
     }
   });
 
-  it("rejects dual refused* + refuted* fields (negative)", () => {
+  it("ignores undeclared siblings beside valid coder traffic", () => {
     const parsed = decodeCoderEnvelope({
       station: "coderFix",
       status: "refused",
       refusedFindingIdentityKeys: ["k"],
       refutedFindingIdentityKeys: ["k"],
     });
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.reason).toMatch(/refuted|dual|canonical|refused/i);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).toEqual({
+        station: "coderFix",
+        status: "refused",
+        refusedFindingIdentityKeys: ["k"],
+      });
     }
   });
 
-  it("rejects refuted* keys on judge envelopes too (negative)", () => {
+  it("ignores undeclared siblings on judge envelopes too", () => {
     const parsed = decodeJudgeVerdict({
       station: "judge",
       status: "continue",
@@ -629,9 +633,9 @@ describe("#921 envelope field vocabulary — refused* only", () => {
       fixPacketBody: "fixture continue packet",
       refutedFindingIdentityKeys: ["x"],
     });
-    expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
-      expect(parsed.reason).toMatch(/refuted|canonical/i);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value).not.toHaveProperty("refutedFindingIdentityKeys");
     }
   });
 
@@ -649,6 +653,21 @@ describe("#921 envelope field vocabulary — refused* only", () => {
 });
 
 describe("#921 full-wave station thin envelopes", () => {
+  it("decodes judge continue while ignoring findings cargo siblings", () => {
+    const parsed = decodeStationEnvelope({
+      station: "judge",
+      status: "continue",
+      findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
+      findings: [],
+    });
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { status: "continue" },
+    });
+  });
+
   it.each([
     ["judge", { station: "judge", status: "converged" }],
     ["coder", { station: "coder", status: "completed" }],
@@ -761,6 +780,16 @@ describe("#921 full-wave station thin envelopes", () => {
       ok: true,
       value: env,
     });
+  });
+
+  it.each([
+    [decodeShipEnvelope, { station: "ship", status: "completed", fate: "escalate" }],
+    [decodeMergerEnvelope, { station: "merger", status: "completed", fate: "escalate" }],
+    [decodeOnlineReviewEnvelope, { station: "onlineReview", status: "completed", fate: "escalate" }],
+  ] as const)("terminal decoder ignores undeclared fate sibling", (decode, raw) => {
+    const parsed = decode(raw);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value).not.toHaveProperty("fate");
   });
 
   it("rejects ship escalate without reason (negative)", () => {

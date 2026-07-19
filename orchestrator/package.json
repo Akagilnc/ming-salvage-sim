@@ -7,7 +7,8 @@
   "scripts": {
     "postinstall": "node scripts/apply-sandcastle-cancel-patch.mjs",
     "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
-    "test:fast": "tsc -p tsconfig.test.json --noEmit && vitest run --project fast",
+    "test:fast": "tsc -p tsconfig.test.json --noEmit && NODE_OPTIONS=\"--require=./test/fast-tax-preload.cjs${NODE_OPTIONS:+ $NODE_OPTIONS}\" vitest run --config vitest.fast.config.ts",
+    "test:fast:guard": "NODE_OPTIONS=\"--require=./test/fast-tax-preload.cjs${NODE_OPTIONS:+ $NODE_OPTIONS}\" vitest run --config vitest.fast-guard.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",

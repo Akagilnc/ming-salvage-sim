@@ -16,11 +16,11 @@
  * reasons + evidence are validated only on the **judge finding-disposition table**
  * (and later by the judge when reading cargo). Coder refuse cargo is opaque.
  *
- * ## Field vocabulary (canonical unique — envelope field level)
+ * ## Field vocabulary (canonical unique — worker receipt level)
  *
  * - Positive family: `refused*` (`status: "refused"`, `refusedFindingIdentityKeys`)
- * - Rejected spellings: any envelope key matching `^refuted` (e.g.
- *   `refutedFindingIdentityKeys`) — invented dual-field compatibility is banned
+ * - Worker-side SO schemas reject keys matching `^refuted`; runner decoders only
+ *   project fields declared by the self-reported status and never inspect siblings
  * - Findings-store terminal flips `refuted` / `suppressed` (ADR 0129 / #952)
  *   are a **different layer**: judge dispositions use `action: "refute"` /
  *   `action: "suppress"` here and later map to those store flips; the envelope
@@ -140,27 +140,6 @@ export type CoderStationId = (typeof CODER_STATION_IDS)[number];
  * Findings-store status `refuted` is not an envelope field — it never appears here.
  */
 const BANNED_REFUTED_KEY = /^refuted/i;
-
-function bannedRefutedKeys(record: Record<string, unknown>): string[] {
-  return Object.keys(record).filter((k) => BANNED_REFUTED_KEY.test(k));
-}
-
-/**
- * Reject envelopes that carry any `refuted*` field name (canonical is `refused*`).
- * Dual refused*+refuted* is also rejected — no compatibility shims.
- */
-function rejectBannedEnvelopeVocabulary(
-  record: Record<string, unknown>,
-): ContractResult<true> {
-  const banned = bannedRefutedKeys(record);
-  if (banned.length === 0) return ok(true);
-  return fail(
-    `canonical envelope vocabulary is refused* only; banned refuted* field(s): ${banned.join(", ")}` +
-      (record.refusedFindingIdentityKeys !== undefined
-        ? " (dual refused*+refuted* fields are forbidden)"
-        : ""),
-  );
-}
 
 function asRecord(raw: unknown): ContractResult<Record<string, unknown>> {
   if (raw === null || raw === undefined) {
@@ -508,6 +487,19 @@ const judgeVerdictSchema = z.discriminatedUnion("status", [
   judgeEscalateSchema,
 ]);
 
+/** Traffic keys for T2 judge envelopes — cargo siblings stay off strict decode. */
+const JUDGE_BASE_TRAFFIC_KEYS = [
+  "station",
+  "status",
+  "cargoPointer",
+] as const;
+const JUDGE_CONTINUE_TRAFFIC_KEYS = [
+  "findingDispositions",
+  "fixPacketBody",
+  "advanceCoder",
+] as const;
+const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
+
 /** Encode a validated judge verdict into its canonical JSON shape. */
 export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
   // Already typed; return a plain JSON-safe clone of the canonical shape.
@@ -518,9 +510,29 @@ export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
 export function decodeJudgeVerdict(raw: unknown): ContractResult<JudgeVerdict> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
-  const parsed = judgeVerdictSchema.safeParse(record.value);
+  const traffic: Record<string, unknown> = {};
+  const statusKeys =
+    record.value.status === "continue"
+      ? JUDGE_CONTINUE_TRAFFIC_KEYS
+      : record.value.status === "escalate"
+        ? JUDGE_ESCALATE_TRAFFIC_KEYS
+        : [];
+  const keys =
+    record.value.status === "continue"
+      ? [...JUDGE_BASE_TRAFFIC_KEYS, ...statusKeys]
+      // Continue packet fields are declared traffic, so terminal verdicts
+      // carrying repair cargo remain fail-loud instead of silently dropping it.
+      : [
+          ...JUDGE_BASE_TRAFFIC_KEYS,
+          ...statusKeys,
+          ...JUDGE_CONTINUE_TRAFFIC_KEYS,
+        ];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
+  const parsed = judgeVerdictSchema.safeParse(traffic);
   if (!parsed.success) {
     return zodFail("judge verdict", parsed.error);
   }
@@ -704,30 +716,6 @@ export function coderStationReceiptSchema(): z.ZodType {
   return z.union([completed, refused, escalate]);
 }
 
-/**
- * Strip unknown keys before schema parse so opaque cargo body siblings
- * (refuseRecords prose, essays, …) are ignored rather than rejected.
- * Traffic fields + banned-vocabulary check still apply.
- */
-const CODER_TRAFFIC_KEYS = new Set([
-  "station",
-  "status",
-  "cargoPointer",
-  "refusedFindingIdentityKeys",
-  "reason",
-  "diagnosis",
-]);
-
-function pickCoderTraffic(record: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const key of CODER_TRAFFIC_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
-      out[key] = record[key];
-    }
-  }
-  return out;
-}
-
 /** Encode a validated coder-family envelope into its canonical JSON shape. */
 export function encodeCoderEnvelope(
   envelope: CoderStationEnvelope,
@@ -740,7 +728,6 @@ export function encodeCoderEnvelope(
  *
  * - `refused` requires non-empty `refusedFindingIdentityKeys`
  * - cargo body siblings are stripped (not validated)
- * - `refuted*` field names fail closed
  * - `completed` must not carry refuse keys
  */
 export function decodeCoderEnvelope(
@@ -748,8 +735,6 @@ export function decodeCoderEnvelope(
 ): ContractResult<CoderStationEnvelope> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
 
   const status = record.value.status;
   if (status === "completed" && record.value.refusedFindingIdentityKeys !== undefined) {
@@ -758,7 +743,18 @@ export function decodeCoderEnvelope(
     );
   }
 
-  const traffic = pickCoderTraffic(record.value);
+  const traffic: Record<string, unknown> = {};
+  const keys =
+    status === "refused"
+      ? ["station", "status", "cargoPointer", "refusedFindingIdentityKeys"]
+      : status === "escalate"
+        ? ["station", "status", "cargoPointer", "reason", "diagnosis"]
+        : ["station", "status", "cargoPointer"];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
   if (status === "completed") {
     const parsed = coderCompletedSchema.safeParse(traffic);
     if (!parsed.success) return zodFail("coder envelope", parsed.error);
@@ -889,11 +885,12 @@ export function decodeShipEnvelope(
 ): ContractResult<ShipStationEnvelope> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
-  // Strip cargo siblings (branch/pr) before strict traffic decode.
   const traffic: Record<string, unknown> = {};
-  for (const key of ["station", "status", "cargoPointer", "reason", "diagnosis"]) {
+  const keys =
+    record.value.status === "escalate"
+      ? ["station", "status", "cargoPointer", "reason", "diagnosis"]
+      : ["station", "status", "cargoPointer"];
+  for (const key of keys) {
     if (Object.prototype.hasOwnProperty.call(record.value, key)) {
       traffic[key] = record.value[key];
     }
@@ -956,14 +953,6 @@ export type OnlineReviewStationEnvelope =
 export type ThinGateStationEnvelope =
   | MergerStationEnvelope
   | OnlineReviewStationEnvelope;
-
-const THIN_GATE_TRAFFIC_KEYS = [
-  "station",
-  "status",
-  "cargoPointer",
-  "reason",
-  "diagnosis",
-] as const;
 
 function thinGateEnvelopeSchema(
   station: ThinGateStationId,
@@ -1040,18 +1029,6 @@ export function onlineReviewStationReceiptSchema(): z.ZodType {
   return z.union([completed, escalate]);
 }
 
-function pickThinGateTraffic(
-  record: Record<string, unknown>,
-): Record<string, unknown> {
-  const traffic: Record<string, unknown> = {};
-  for (const key of THIN_GATE_TRAFFIC_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
-      traffic[key] = record[key];
-    }
-  }
-  return traffic;
-}
-
 /** Encode a validated merger envelope into its canonical JSON shape. */
 export function encodeMergerEnvelope(
   envelope: MergerStationEnvelope,
@@ -1065,11 +1042,17 @@ export function decodeMergerEnvelope(
 ): ContractResult<MergerStationEnvelope> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
-  const parsed = mergerEnvelopeSchema.safeParse(
-    pickThinGateTraffic(record.value),
-  );
+  const traffic: Record<string, unknown> = {};
+  const keys =
+    record.value.status === "escalate"
+      ? ["station", "status", "cargoPointer", "reason", "diagnosis"]
+      : ["station", "status", "cargoPointer"];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
+  const parsed = mergerEnvelopeSchema.safeParse(traffic);
   if (!parsed.success) {
     return zodFail("merger envelope", parsed.error);
   }
@@ -1089,11 +1072,17 @@ export function decodeOnlineReviewEnvelope(
 ): ContractResult<OnlineReviewStationEnvelope> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
-  const parsed = onlineReviewEnvelopeSchema.safeParse(
-    pickThinGateTraffic(record.value),
-  );
+  const traffic: Record<string, unknown> = {};
+  const keys =
+    record.value.status === "escalate"
+      ? ["station", "status", "cargoPointer", "reason", "diagnosis"]
+      : ["station", "status", "cargoPointer"];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
+  const parsed = onlineReviewEnvelopeSchema.safeParse(traffic);
   if (!parsed.success) {
     return zodFail("onlineReview envelope", parsed.error);
   }
@@ -1118,11 +1107,11 @@ export function decodeStationEnvelope(
 ): ContractResult<StationEnvelope> {
   const record = asRecord(raw);
   if (!record.ok) return record;
-  const banned = rejectBannedEnvelopeVocabulary(record.value);
-  if (!banned.ok) return banned;
 
   const station = record.value.station;
-  if (station === "judge") return decodeJudgeVerdict(record.value);
+  if (station === "judge") {
+    return decodeJudgeVerdict(record.value);
+  }
   if (
     station === "coder" ||
     station === "coderFix" ||

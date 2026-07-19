@@ -4,7 +4,7 @@
  * Gated behind RUN_CMR_E2E (it needs the 2b image `ming-orchestrator-coder:latest`
  * + live codex/agy/claude auth + docker), so the normal suite skips it. Run with:
  *
- *   RUN_CMR_E2E=1 npx vitest run test/family/cmr-worker-e2e-335.test.ts
+ *   RUN_CMR_E2E=1 npx vitest run test/family/review/cmr-worker-e2e.heavy.test.ts
  *
  * It builds a real git repo with a family base whose diff carries an INJECTED
  * cross-slice bug, then drives `RealFamilyBackend.dispatchWorker(cmrWorkerSpec())`

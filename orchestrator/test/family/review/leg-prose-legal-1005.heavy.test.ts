@@ -635,7 +635,7 @@ describe("#1005 ADR 0141 family court — prose transports open the court", () =
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "fb",
-      familyBackend: backend as unknown as FamilyBackend,
+      familyBackend: backend,
       familyHeadAfter: head,
     });
 
@@ -684,7 +684,7 @@ describe("#1005 ADR 0141 family court — prose transports open the court", () =
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "fb",
-      familyBackend: backend as unknown as FamilyBackend,
+      familyBackend: backend,
       familyHeadAfter: head,
     });
 

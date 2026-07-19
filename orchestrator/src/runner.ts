@@ -3483,7 +3483,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 };
               }
               const relayBrief = relayBriefForDispatch(step);
-              const priorJudgeVerdicts = isJudgeSeat({ step })
+              const priorJudgeVerdicts = isJudgeSeat({ step }) || step === "S5"
                 ? priorJudgeVerdictRowsFromLedger(ledger)
                 : undefined;
               const dispatchCtx = {
