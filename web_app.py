@@ -71,7 +71,6 @@ from ming_sim.issues import _format_issue_ongoing, commitment_display_text, comm
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import (
-    AudienceTurnPipeline,
     mindreading_eligible,
     run_mindreading_for_turn,
 )
@@ -1858,30 +1857,23 @@ class WebGame:
         chat_turn_id: int,
         *,
         owns_pending: bool = False,
-        pipeline: Optional[AudienceTurnPipeline] = None,
     ) -> Optional[Dict[str, Any]]:
-        """P5（#499）：回话已可见后尾随读心；失败不回滚回话。
+        """P5（#499）：回话 done 后在本 worker 内直接尾随读心（依赖回话、必串于其后）。
 
-        调用方必须已持有 pending-write ownership（stream worker 整轮持有，或
-        非流式路径在启动线程前 mark）。任何 DB 访问不得发生在 ownership 登记前。
-        owns_pending=True 时本函数在 finally 里 complete_pending。
+        读心是单一依赖任务、调用方随即等其结果——无需另起 executor/Future。回话已完成并
+        落库（读心闸门=非空完整回话，喂真实 reply 而非问句）；写库走 runtime write_gate。
+        调用方必须已持 pending-write ownership；owns_pending=True 时本函数 finally 里 complete。
+        失败不回滚回话。
         """
-        result: Optional[Dict[str, Any]] = None
-        pipe = pipeline
-        owns_pipe = pipe is None
         try:
-            if not chat_turn_id or not str(minister_reply or "").strip():
+            reply = str(minister_reply or "")
+            if not chat_turn_id or not reply.strip():
                 return None
             # eligibility 读 DB——仅在 ownership 已确立后执行
             if mindreading_eligible(self.db, self.content.characters, minister_name) is None:
                 return None
-            if pipe is None:
-                pipe = AudienceTurnPipeline(write_gate=self._runtime_write_gate())
-            if not pipe.reply_persisted:
-                pipe.accept_persisted_reply(str(minister_reply))
-
-            def _job(reply: str):
-                return run_mindreading_for_turn(
+            try:
+                result = run_mindreading_for_turn(
                     db=self.db,
                     state=self.state,
                     content_characters=self.content.characters,
@@ -1891,17 +1883,11 @@ class WebGame:
                     chat_turn_id=chat_turn_id,
                     write_gate=self._runtime_write_gate(),
                 )
-
-            fut = pipe.issue_mindreading(_job, minister_reply=str(minister_reply))
-            try:
-                result = fut.result(timeout=120)
             except Exception:
-                # 读心失败显式记入时序；回话已 done，不回滚。
+                # 读心失败：回话已 done，不回滚。
                 result = None
             return result if isinstance(result, dict) else None
         finally:
-            if owns_pipe and pipe is not None:
-                pipe.close(wait=True)
             if owns_pending:
                 self._complete_pending_write()
 
@@ -1959,7 +1945,6 @@ class WebGame:
 
         def worker() -> None:
             nonlocal gate_released
-            pipe = AudienceTurnPipeline(write_gate=write_gate)
             payload: Optional[Dict[str, Any]] = None
             try:
                 try:
@@ -1970,19 +1955,12 @@ class WebGame:
                     character = self.session._character(minister_name)
                     action_intent_future = self.session._start_cli_action_intent(character, text)
 
-                    def produce(on_delta: Any) -> str:
-                        nonlocal payload
-                        payload = self._chat_stream_payload(
-                            minister_name, text, chat_turn_id, before_snapshot,
-                            accepted_turn, on_delta,
-                            action_intent_future=action_intent_future,
-                        )
-                        return str((payload or {}).get("answer") or "")
-
-                    reply = pipe.stream_reply(produce, on_delta=emit_delta)
-                    # _chat_stream_payload 已落库回话；公开 API 接管状态机（读心闸门据此打开）
-                    if reply:
-                        pipe.accept_persisted_reply(reply)
+                    # 流式回话：装配 payload（含落库）并把 delta 直投 SSE。
+                    payload = self._chat_stream_payload(
+                        minister_name, text, chat_turn_id, before_snapshot,
+                        accepted_turn, emit_delta,
+                        action_intent_future=action_intent_future,
+                    )
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
                     # 否则 error 事件不会被投进 queue、消费者永久挂死。
@@ -2010,7 +1988,6 @@ class WebGame:
                         str((payload or {}).get("answer") or ""),
                         chat_turn_id,
                         owns_pending=False,
-                        pipeline=pipe,
                     )
                 except Exception:
                     mind_payload = None
@@ -2022,7 +1999,6 @@ class WebGame:
                     })
                 ev_queue.put({"type": "end"})
             finally:
-                pipe.close(wait=True)
                 self._complete_pending_write()
 
         thread = threading.Thread(target=worker, daemon=True)

@@ -384,7 +384,11 @@ function App() {
     setChatFailures([]);
     setCanUndoLastChat(false);
     clearPendingText();
-    loadMinisterChat(minister.name).catch((err) => setError(err.message));
+    // 切换大臣时 selected-minister effect 会加载；只有重开同一大臣（effect 不触发）才显式加载，
+    // 免得一次切换发两条同大臣 GET（#499 陈旧快照回覆源头之一）。
+    if (!switchingMinister) {
+      loadMinisterChat(minister.name).catch((err) => setError(err.message));
+    }
   };
 
   const surfacePendingActionFailures = async (failures: PendingActionFailure[] = []) => {
@@ -430,25 +434,21 @@ function App() {
     if (fromComposer) {
       setInput("");
     }
-    // 流式/请求归属/派发由 hook 独占；App 只补外围态，且旧流尾巴不再触碰更新请求的态。
+    // 流式/请求归属/派发由 hook 独占；App 只在 done 到手即幂等消费持久后果 + 面板态。
     await runAudienceTurn(targetMinisterName, message, {
-      // 回话 done（hook 已清待答/流式、落历史投影、清 busy）：补面板建议 / 可撤回。
-      onDone: (doneData) => {
-        setSuggestions(doneData.suggestions);
-        setCanUndoLastChat(!!doneData.can_undo_last_chat);
-      },
-      // 流式收尾（仍归属当前请求）：外围全局态；换人/退下等面板迁移。
-      onComplete: async (data) => {
-        if (selectedMinisterRef.current !== targetMinisterName) return;
-        setSuggestions(data.suggestions);
-        setCanUndoLastChat(!!data.can_undo_last_chat);
+      // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end（读心可延后 end 达
+      // 120s），不按请求 token 门控（后果持久）。全局态无条件落；面板态按当前大臣归属落。
+      onDone: (data) => {
+        // 全局持久后果（幂等）：指令 / pending_count / 全量 state / 密令列表。
         setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
-        await loadState();
-        // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
+        void loadState();
         api<{ orders: SecretOrder[] }>("/api/secret_orders")
           .then(({ orders }) => setSecretOrders(orders))
           .catch(() => {});
+        // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== targetMinisterName) return;
+        setSuggestions(data.suggestions);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
         const responseFailures = data.pending_action_failures || [];
         if (data.secret_order_id) {
           setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
@@ -458,6 +458,7 @@ function App() {
           setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
         }
         if (data.next_minister && !responseFailures.length) {
+          // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。
           resetPanel();
           setSuggestions([]);
           setCanUndoLastChat(false);
@@ -465,7 +466,6 @@ function App() {
           setSelectedMinister(data.next_minister);
           setActiveModal("chat");
           setChatNotice(`已传${data.next_minister}入殿。`);
-          loadMinisterChat(data.next_minister).catch((err) => setError(err.message));
         }
         if (data.court_action === "dismiss") {
           clearPendingText();
