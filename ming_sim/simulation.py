@@ -703,9 +703,6 @@ def _extractor_context_payload(
             "cancellable": r["cancellable"],
             "resolve_condition": resolve_cond or "(未填)",
             "fail_condition": (r["fail_condition"] if "fail_condition" in keys else "") or "(未填)",
-            "ongoing_effects": loads_effect_dict(r["ongoing_effects"]),
-            "effect_on_resolve": loads_effect_dict(r["effect_on_resolve"]),
-            "effect_on_fail": loads_effect_dict(r["effect_on_fail"]),
             **commitment_condition_role(resolve_cond, commitment_kind),
         }
         if commitment_kind:
