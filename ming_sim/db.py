@@ -2391,7 +2391,7 @@ class GameDB:
                 for office_type in (_offices_table().get("allowed_types") or [])
                 if str(office_type).strip()
             }
-        )
+        ) - set(PERSON_TITLE_KINDS)
 
     def _migrate_building_logs_to_durable_audit(self) -> None:
         """Keep building history after its live building has been removed."""
@@ -2562,6 +2562,8 @@ class GameDB:
                 )
         if not self.table_has_rows("character_offices"):
             for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
+                if row["office_type"] in PERSON_TITLE_KINDS:
+                    continue
                 self.conn.execute(
                     """
                     INSERT INTO character_offices (character_name, office_title, office_type, source)
@@ -4747,7 +4749,9 @@ class GameDB:
             character.office_type,
             llm_config or self.llm_config,
         )
-        self._ensure_office_type_parent(character.office_type)
+        is_person_title = character.office_type in PERSON_TITLE_KINDS
+        if not is_person_title:
+            self._ensure_office_type_parent(character.office_type)
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
@@ -4792,18 +4796,19 @@ class GameDB:
                 getattr(character, "summary", "") or "",
             ),
         )
-        self.conn.execute(
-            """
-            INSERT INTO character_offices (character_name, office_title, office_type, source)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(character_name) DO UPDATE SET
-                office_title = excluded.office_title,
-                office_type = excluded.office_type,
-                source = excluded.source,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (character.name, character.office, character.office_type, office_source),
-        )
+        if not is_person_title:
+            self.conn.execute(
+                """
+                INSERT INTO character_offices (character_name, office_title, office_type, source)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(character_name) DO UPDATE SET
+                    office_title = excluded.office_title,
+                    office_type = excluded.office_type,
+                    source = excluded.source,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (character.name, character.office, character.office_type, office_source),
+            )
         # #9 cmr R2 finding#2：新建大臣（经 apply_office_appointment→apply_appointment 任命的不在册者）
         # 入朝即联动其所属派系 leverage（与 set_character_office/status hook 一致，commit 前重算）。
         # 仅对 active + 大明 + 非后宫的朝臣——后宫(consort)不握明官、leverage 另义；非白名单派系
