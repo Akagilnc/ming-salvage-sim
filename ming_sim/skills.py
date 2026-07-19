@@ -10,7 +10,7 @@ from typing import List, Optional
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.models import Character
-from ming_sim.qualitative import qualitative_character_attribute
+from ming_sim.qualitative import qualitative_character_axis
 
 _content: Optional[GameContent] = None
 
@@ -88,10 +88,10 @@ def skill_summary_line(character: Character, skill_id: str, db: Optional[GameDB]
 def print_skill_card(character: Character, db: Optional[GameDB] = None) -> None:
     print(f"\n技能卡：{character.name}（{character.office}，{character.faction}）")
     print(
-        f"属性：忠诚{qualitative_character_attribute('loyalty', character.loyalty)} | "
-        f"能力{qualitative_character_attribute('ability', character.ability)} | "
-        f"清廉{qualitative_character_attribute('integrity', character.integrity)} | "
-        f"胆略{qualitative_character_attribute('courage', character.courage)} | 风格：{character.style}"
+        f"属性：忠诚{qualitative_character_axis('loyalty', character.loyalty)} | "
+        f"能力{qualitative_character_axis('ability', character.ability)} | "
+        f"清廉{qualitative_character_axis('integrity', character.integrity)} | "
+        f"胆略{qualitative_character_axis('courage', character.courage)} | 风格：{character.style}"
     )
     for skill_id in available_skill_ids(character, db):
         print(skill_summary_line(character, skill_id, db))

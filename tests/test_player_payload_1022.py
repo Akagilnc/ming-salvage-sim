@@ -148,8 +148,8 @@ def test_cli_skill_card_command_uses_qualitative_character_bands(capsys, monkeyp
 
     rendered = capsys.readouterr().out
     assert handled == "handled"
-    assert "忠诚深厚" in rendered
-    assert "能力干练" in rendered
-    assert "清廉端谨" in rendered
-    assert "胆略平常" in rendered
+    assert "忠诚可托腹心" in rendered
+    assert "能力才具出众" in rendered
+    assert "清廉操守清正" in rendered
+    assert "胆略进退审慎" in rendered
     assert all(raw not in rendered for raw in ("忠诚88", "能力77", "清廉66", "胆略55"))
