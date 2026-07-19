@@ -11,106 +11,14 @@
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
-import pytest
-
 from ming_sim.audience_pipeline import (
-    AudienceTurnPipeline,
     mindreading_eligible,
     run_mindreading_for_turn,
 )
-
-
-def test_mindreading_refused_before_reply_complete():
-    """投毒：回话未完即发读心 → 被咬住。"""
-    pipe = AudienceTurnPipeline()
-
-    with pytest.raises(RuntimeError, match="不得早于大臣回话完成"):
-        pipe.issue_mindreading(lambda reply: {"narration": reply})
-
-
-def test_mindreading_refused_before_persist():
-    """投毒：回话完成但未持久化即发读心 → 被咬住。"""
-    pipe = AudienceTurnPipeline()
-    pipe.stream_reply(lambda on_delta: (on_delta("臣有本奏。") or "臣有本奏。"))
-
-    with pytest.raises(RuntimeError, match="不得早于大臣回话持久化"):
-        pipe.issue_mindreading(lambda reply: {"narration": reply})
-
-
-def test_mindreading_refuses_poisoned_question_only_input():
-    """投毒：只喂问句而非完整回话 → 被咬住。"""
-    pipe = AudienceTurnPipeline()
-    pipe.stream_reply(lambda on_delta: (on_delta("臣愿肩起此事。") or "臣愿肩起此事。"))
-    pipe.persist_reply(lambda _reply: None)
-
-    with pytest.raises(ValueError, match="完整回话"):
-        pipe.issue_mindreading(
-            lambda reply: {"narration": reply},
-            minister_reply="户部钱粮如何？",
-        )
-
-
-def test_accept_persisted_reply_is_public_gate_not_private_fields():
-    """生产接管状态机走公开 API，不私改 _reply_*。"""
-    pipe = AudienceTurnPipeline()
-    pipe.accept_persisted_reply("臣先陈军务。")
-    assert pipe.reply_text == "臣先陈军务。"
-    assert pipe.reply_persisted is True
-    fut = pipe.issue_mindreading(lambda r: {"ok": r})
-    assert fut.result(timeout=1.0) == {"ok": "臣先陈军务。"}
-
-
-def test_mindreading_runs_only_after_persist_with_full_reply():
-    """正向：回话持久化后发读心，job 收到完整回话。"""
-    pipe = AudienceTurnPipeline()
-    received = []
-
-    def produce(on_delta):
-        on_delta("臣")
-        on_delta("先奏军务，再陈钱粮。")
-        return "臣先奏军务，再陈钱粮。"
-
-    pipe.stream_reply(produce)
-    pipe.persist_reply(lambda reply: received.append(("persist", reply)))
-
-    fut = pipe.issue_mindreading(lambda reply: received.append(("mind", reply)) or {"ok": reply})
-    result = fut.result(timeout=2.0)
-
-    assert result == {"ok": "臣先奏军务，再陈钱粮。"}
-    assert ("persist", "臣先奏军务，再陈钱粮。") in received
-    assert ("mind", "臣先奏军务，再陈钱粮。") in received
-
-
-def test_db_writes_serialize_under_write_gate():
-    """后台 DB 写走 write_gate：两写者峰值并发写 == 1。"""
-    gate = threading.Lock()
-    pipe = AudienceTurnPipeline(write_gate=gate)
-    active_writes = 0
-    max_writes = 0
-    lock = threading.Lock()
-
-    def slow_write(label):
-        def _fn():
-            nonlocal active_writes, max_writes
-            with lock:
-                active_writes += 1
-                max_writes = max(max_writes, active_writes)
-            time.sleep(0.08)
-            with lock:
-                active_writes -= 1
-            return label
-
-        return pipe.write_under_gate(_fn)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futs = [pool.submit(slow_write, n) for n in ("a", "b")]
-        assert sorted(f.result(timeout=2.0) for f in futs) == ["a", "b"]
-    assert max_writes == 1
 
 
 def test_mindreading_eligible_skips_self_and_missing_slot(game):

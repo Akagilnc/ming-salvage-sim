@@ -2,9 +2,9 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useAudienceChat } from "./useAudienceChat";
+import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
 import { ChatModal } from "./components/modals";
-import type { Minister, ServerChatMessage } from "./types";
+import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,24 +15,18 @@ const MINISTER: Minister = {
 
 const U = (content: string, turn: number): ServerChatMessage => ({ role: "user", content, chat_turn_id: turn });
 const M = (content: string, turn: number): ServerChatMessage => ({ role: "minister", content, chat_turn_id: turn });
-const A = (content: string, turn: number, id: number): ServerChatMessage => ({ role: "attendant", content, chat_turn_id: turn, record_id: id });
 
 type SseEvent = { event: string; data: unknown };
 const fmt = (e: SseEvent) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`;
 
-/** 一次性 SSE 响应（真实 streamChat 解析）。 */
-function sseResponse(events: SseEvent[]): Response {
+function sse(events: SseEvent[]): Response {
   const enc = new TextEncoder();
   return new Response(
-    new ReadableStream<Uint8Array>({
-      start(c) { for (const e of events) c.enqueue(enc.encode(fmt(e))); c.close(); },
-    }),
+    new ReadableStream<Uint8Array>({ start(c) { for (const e of events) c.enqueue(enc.encode(fmt(e))); c.close(); } }),
     { status: 200 },
   );
 }
-
-/** 门控 SSE：先发 head，等 gate 再发 tail——模拟 stream 尾巴延迟到下一请求已在飞。 */
-function gatedSseResponse(head: SseEvent[], gate: Promise<void>, tail: SseEvent[]): Response {
+function gatedSse(head: SseEvent[], gate: Promise<void>, tail: SseEvent[]): Response {
   const enc = new TextEncoder();
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -46,6 +40,7 @@ function gatedSseResponse(head: SseEvent[], gate: Promise<void>, tail: SseEvent[
     { status: 200 },
   );
 }
+const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);
 
 type HookApi = ReturnType<typeof useAudienceChat>;
 
@@ -73,7 +68,6 @@ function mount() {
   const host = document.createElement("div");
   document.body.appendChild(host);
   act(() => createRoot(host).render(<Harness />));
-  // 已落定消息（排除在飞的待答/流式 pending 与「思索中」占位）
   const rows = () =>
     Array.from(host.querySelectorAll(".chat-log > .chat-message:not(.pending):not(.thinking)")).map((el) => {
       const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
@@ -83,93 +77,140 @@ function mount() {
 }
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-
-const noopCbs = { onComplete: () => {}, onDone: () => {}, onLeave: () => {}, onError: () => {} };
+const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError: () => {} };
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
-  it("done1 / mind1 / 陈旧 done2 / mind2：陈旧 done2 整串替换不抹掉 mind1（reducer 保住并归位）", async () => {
+  it("迟到的旧流读心：新 send 作废 token 后，旧流 mind1 仍归其轮浮现（不按 token 门控）", async () => {
     const { hookRef, rows } = mount();
     const hook = hookRef.current!;
 
-    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([
-      { event: "done", data: { history: [U("问军务", 10), M("答军务", 10)], suggestions: [], directives: [] } },
-      { event: "mindreading", data: { mindreading: { id: 1, narration: "近臣低声。" }, chat_turn_id: 10 } },
-      { event: "end", data: {} },
-    ])));
-    await act(async () => { await hook.sendChat("温体仁", "问军务", noopCbs); });
-    expect(rows()).toEqual(["user:问军务", "minister:答军务", "attendant:近臣低声。"]);
-
-    // 陈旧 done2：服务端投影早于 mind1 落库、缺 a1；整串替换若不 reconcile 会抹掉 a1
-    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([
-      { event: "done", data: { history: [U("问军务", 10), M("答军务", 10), U("问钱粮", 11), M("答钱粮", 11)], suggestions: [], directives: [] } },
-      { event: "mindreading", data: { mindreading: { id: 2, narration: "近臣低声。" }, chat_turn_id: 11 } },
-      { event: "end", data: {} },
-    ])));
-    await act(async () => { await hook.sendChat("温体仁", "问钱粮", noopCbs); });
-
-    // a1 仍在轮 10 之后（未被 done2 抹掉），a2 随轮 11；同文异记录都留存
-    expect(rows()).toEqual([
-      "user:问军务", "minister:答军务", "attendant:近臣低声。",
-      "user:问钱粮", "minister:答钱粮", "attendant:近臣低声。",
-    ]);
-  });
-
-  it("重叠流归属：旧流尾巴（finally）不清掉更新请求的 busy / 待答文", async () => {
-    const { hookRef, busyRef, rows } = mount();
-    const hook = hookRef.current!;
-
-    let releaseEnd1!: () => void;
-    const end1 = new Promise<void>((r) => { releaseEnd1 = r; });
+    let releaseTail1!: () => void;
+    const gate1 = new Promise<void>((r) => { releaseTail1 = r; });
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {
       call += 1;
       if (call === 1) {
-        // 流 1：done1 后门控挂起，尾巴（end）延迟到流 2 已在飞后才到
-        return gatedSseResponse(
+        // 流 1：done1 后门控挂起；mind1 尾巴延迟到流 2 完成之后才到
+        return gatedSse(
           [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
-          end1,
+          gate1,
+          [{ event: "mindreading", data: { mindreading: { id: 1, narration: "近臣低声。" }, chat_turn_id: 10 } },
+           { event: "end", data: {} }],
+        );
+      }
+      // 流 2：陈旧 done2（无 a1）后立即结束
+      return sse([
+        { event: "done", data: { history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], directives: [] } },
+        { event: "end", data: {} },
+      ]);
+    }));
+
+    let p1!: Promise<void>;
+    act(() => { p1 = hook.sendChat("温体仁", "问1", noCbs); });
+    await tick();  // done1 落 [u1,m1]
+    await act(async () => { await hook.sendChat("温体仁", "问2", noCbs); });  // 流 2 完成 → [u1,m1,u2,m2]
+    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+
+    releaseTail1();  // 流 1 迟到的 mind1（turn10）到达——token 已被流 2 作废
+    await act(async () => { await p1; });
+    // mind1 仍按归属轮 10 插入（回话之后），未因 token 作废而永久丢失
+    expect(rows()).toEqual(["user:问1", "minister:答1", "attendant:近臣低声。", "user:问2", "minister:答2"]);
+  });
+
+  it("持久后果在 done 到手即消费：读心延后 end 期间起新轮，旧轮后果不被丢弃", async () => {
+    const { hookRef } = mount();
+    const hook = hookRef.current!;
+    const durablesSeen: number[] = [];
+    const cb: SendChatCallbacks = { ...noCbs, onDone: (d: ChatResponse) => durablesSeen.push(d.secret_order_id || 0) };
+
+    let releaseEnd1!: () => void;
+    const gate1 = new Promise<void>((r) => { releaseEnd1 = r; });
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        // 流 1：done1 携持久后果（密令 #7），随后门控挂起（模拟读心拖后 end）
+        return gatedSse(
+          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [], secret_order_id: 7 } }],
+          gate1,
           [{ event: "end", data: {} }],
         );
       }
-      // 流 2：尚未 done、保持在飞（busy 应为其所有）——测试期不释放
-      return gatedSseResponse([], new Promise<void>(() => {}), []);
+      return gatedSse([], new Promise<void>(() => {}), []);  // 流 2 保持在飞
     }));
 
-    // 启动流 1（不 await）；done1 清 busy、允许下一轮
     let p1!: Promise<void>;
-    act(() => { p1 = hook.sendChat("温体仁", "问1", noopCbs); });
+    act(() => { p1 = hook.sendChat("温体仁", "问1", cb); });
     await tick();
-    expect(busyRef.current).toBe("");  // done1 已清 busy
+    // done1 到手即消费持久后果（不拖到 end）
+    expect(durablesSeen).toEqual([7]);
 
-    // 启动流 2：busy 重新占用、待答=问2；流 2 尚未 done → busy 保持
-    let p2!: Promise<void>;
-    act(() => { p2 = hook.sendChat("温体仁", "问2", noopCbs); });
+    // 读心尚未就绪、end 未到时起第 2 轮（token 自增作废流 1）
+    act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
+    await tick();
+    releaseEnd1();  // 流 1 收尾——绝不因 token 已变而回补/丢弃已消费的后果
+    await act(async () => { await p1; });
+    expect(durablesSeen).toEqual([7]);  // 仍恰一次，未被丢弃、未重复
+  });
+
+  it("重叠流归属：旧流尾巴（finally）不清掉更新请求的 busy / 待答文", async () => {
+    const { hookRef, busyRef } = mount();
+    const hook = hookRef.current!;
+    let releaseEnd1!: () => void;
+    const gate1 = new Promise<void>((r) => { releaseEnd1 = r; });
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return gatedSse(
+          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
+          gate1, [{ event: "end", data: {} }],
+        );
+      }
+      return gatedSse([], new Promise<void>(() => {}), []);  // 流 2 尚未 done、保持在飞
+    }));
+
+    let p1!: Promise<void>;
+    act(() => { p1 = hook.sendChat("温体仁", "问1", noCbs); });
+    await tick();
+    expect(busyRef.current).toBe("");  // done1 清 busy
+
+    act(() => { void hook.sendChat("温体仁", "问2", noCbs); });
     await tick();
     expect(busyRef.current).toBe("大臣思索中");
     expect(hookRef.current!.pendingUserMessage).toBe("问2");
 
-    // 释放流 1 尾巴：其 finally 运行——绝不能清掉流 2 的 busy / 待答文
     releaseEnd1();
     await act(async () => { await p1; });
-    expect(busyRef.current).toBe("大臣思索中");          // 流 2 的 busy 未被旧流清掉
-    expect(hookRef.current!.pendingUserMessage).toBe("问2");  // 流 2 的待答文未被旧流清掉
-    // 流 1 的 done1 历史仍在（其读心/回话不受影响）
-    expect(rows()).toEqual(["user:问1", "minister:答1"]);
-    void p2;
+    expect(busyRef.current).toBe("大臣思索中");            // 旧流未清掉流 2 的 busy
+    expect(hookRef.current!.pendingUserMessage).toBe("问2");  // 旧流未清掉流 2 的待答文
   });
 
-  it("同一 (chat_turn_id, id) 经历史 + 读心交叠不重复；孤儿轮读心不追加串尾", async () => {
+  it("陈旧同大臣历史响应：更旧的 GET 迟到不抹掉新完成的轮（generation 守卫）", async () => {
     const { hookRef, rows } = mount();
     const hook = hookRef.current!;
-    vi.stubGlobal("fetch", vi.fn(async () => sseResponse([
-      { event: "done", data: { history: [U("问", 5), M("答", 5), A("近臣低声。", 5, 9)], suggestions: [], directives: [] } },
-      { event: "mindreading", data: { mindreading: { id: 9, narration: "近臣低声。" }, chat_turn_id: 5 } },  // 与投影内同记录
-      { event: "mindreading", data: { mindreading: { id: 1, narration: "孤儿。" }, chat_turn_id: 99 } },      // 归属轮不在视图
-      { event: "end", data: {} },
-    ])));
-    await act(async () => { await hook.sendChat("温体仁", "问", noopCbs); });
-    expect(rows()).toEqual(["user:问", "minister:答", "attendant:近臣低声。"]);  // 不重复、孤儿未追加
+    let releaseOld!: () => void;
+    const oldGate = new Promise<void>((r) => { releaseOld = r; });
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/chat")) {
+        call += 1;
+        if (call === 1) { await oldGate; return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10)], suggestions: [], can_undo_last_chat: false }); }
+        return jsonResp({ minister: MINISTER, history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], can_undo_last_chat: false });
+      }
+      return jsonResp({});
+    }));
+
+    // 先发一次历史 GET（更旧快照，门控挂起），再发第二次（更新快照，立即返回）
+    let pOld!: Promise<unknown>;
+    act(() => { pOld = hook.loadHistory("温体仁"); });
+    await act(async () => { await hook.loadHistory("温体仁"); });  // gen2 落新快照
+    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
+
+    releaseOld();  // 更旧的 GET 迟到——generation 已推进，须丢弃、不回退
+    await act(async () => { await pOld; });
+    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
   });
 });
