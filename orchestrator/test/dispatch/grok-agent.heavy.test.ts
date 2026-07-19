@@ -128,6 +128,47 @@ describe("#807 grokAgent AgentProvider", () => {
     }
   });
 
+  it("does not start Grok when prompt staging fails", async () => {
+    const root = transportDir("grok-transport-staging-failure-");
+    const bin = join(root, "bin");
+    const staging = join(root, "staging");
+    const pathOut = join(root, "prompt-path");
+    const childPidOut = join(root, "child-pid");
+    mkdirSync(bin);
+    mkdirSync(staging);
+    fakeGrokPath(bin);
+    const failingCat = join(bin, "cat");
+    writeFileSync(
+      failingCat,
+      "#!/bin/sh\necho 'simulated prompt staging write failure' >&2\nexit 42\n",
+      "utf8",
+    );
+    chmodSync(failingCat, 0o755);
+    const built = grokAgent("grok-4.5").buildPrintCommand({
+      prompt: "must not reach Grok",
+      dangerouslySkipPermissions: true,
+    });
+    const result = await new Promise<{
+      code: number | null;
+      stderr: string;
+    }>((resolve) => {
+      const child = spawn("sh", ["-c", built.command], {
+        env: transportEnv(bin, staging, pathOut, childPidOut),
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8").on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("close", (code) => resolve({ code, stderr }));
+      child.stdin.end(built.stdin);
+    });
+    expect(result.code).toBe(42);
+    expect(result.stderr).toContain("simulated prompt staging write failure");
+    expect(() => readFileSync(pathOut, "utf8")).toThrow();
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
   it.each(["SIGHUP", "SIGINT", "SIGTERM"] as const)(
     "removes the staged prompt and preserves %s worker interruption semantics",
     async (signal) => {

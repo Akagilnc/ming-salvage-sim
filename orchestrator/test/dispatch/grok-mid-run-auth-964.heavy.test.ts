@@ -89,7 +89,7 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
         "/bin/sh",
         ["-c", 'echo $$ > "$PID_FILE"; exec sleep 60'],
         { ...process.env, PID_FILE: pidFile },
-        250,
+        2_000,
       );
       expect(hang.timedOut).toBe(true);
       const childPid = Number(readFileSync(pidFile, "utf8").trim());
