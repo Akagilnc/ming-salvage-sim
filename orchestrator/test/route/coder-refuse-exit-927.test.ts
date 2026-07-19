@@ -509,13 +509,16 @@ describe("#927 AC: refuse does not burn iterations (#899 morning death)", () => 
         expect(parsed.value.refusedFindingIdentityKeys).toEqual([key]);
       }
     }
-    // Pre-#910 invent spelling has no legal envelope path
+    // Undeclared sibling is invisible and cannot change completed fate.
     const invent = decodeCoderEnvelope({
       station: "coderFix",
       status: "completed",
       refutedFindingIdentityKeys: [key],
     });
-    expect(invent.ok).toBe(false);
+    expect(invent).toEqual({
+      ok: true,
+      value: { station: "coderFix", status: "completed" },
+    });
   });
 
   it("e2e: one S5 refuse dispatch → S6; never multi-dispatch S5 for the same refuse", async () => {

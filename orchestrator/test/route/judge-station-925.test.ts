@@ -632,6 +632,117 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     );
   });
 
+  it("two continue verdicts reach S5 with keys, body, and prior verdict history", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "judge-to-fixer-packet-"));
+    const worktreePath = join(parent, "wt-1023");
+    mkdirSync(worktreePath, { recursive: true });
+    const stateDir = join(parent, "state-1023");
+    mkdirSync(stateDir, { recursive: true });
+    const finding = sampleFinding("fix packet must reach S5", "src/traffic.ts:1023");
+    const findingKey = findingIdentityKey(finding);
+    const fixPacketBody = "repair the #1023 continue finding";
+    const observedLandings: Array<{
+      readonly blockingFindingIdentityKeys?: readonly string[];
+      readonly fixPacketBody?: string;
+      readonly priorJudgeVerdicts?: ReadonlyArray<{
+        readonly step?: string;
+        readonly status?: string;
+      }>;
+    }> = [];
+    let s6Round = 0;
+
+    const backend: Backend = {
+      async smokeModelRoute(route) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
+      async findResumeState() {
+        return undefined;
+      },
+      async resumeSession() {
+        throw new Error("resumeSession not expected in #1023 packet tracer");
+      },
+      async fetchIssueMeta(issueNumber) {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      },
+      async prepareWorktree() {
+        return {
+          branch: "fix/1023-packet",
+          base: "main",
+          path: worktreePath,
+          stateDir,
+        };
+      },
+      async writeLedger() {},
+      async runStep(spec, _worktree, options) {
+        if (spec.id === "S2" || spec.id === "S5") {
+          if (spec.id === "S5") {
+            const landingPath = options?.fixFindingsLanding?.path;
+            expect(landingPath).toBeDefined();
+            observedLandings.push(
+              JSON.parse(
+                readFileSync(landingPath!, "utf8"),
+              ) as (typeof observedLandings)[number],
+            );
+          }
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        if (spec.id === "S3") {
+          return {
+            output: judgeContinue([finding], { fixPacketBody }),
+            sessionId: "judge-1023",
+          };
+        }
+        if (spec.id === "S6") {
+          s6Round += 1;
+          return s6Round === 1
+            ? judgeContinue([finding], { fixPacketBody })
+            : judgeConverged();
+        }
+        throw new Error(`unexpected runStep ${spec.id}`);
+      },
+    };
+
+    const result = await runOrchestrator({ issueNumber: 1023, backend });
+    expect(result.status).toBe("completed");
+    expect(observedLandings).toHaveLength(2);
+    expect(observedLandings[0]?.blockingFindingIdentityKeys).toEqual([
+      findingKey,
+    ]);
+    expect(observedLandings[0]?.fixPacketBody).toBe(fixPacketBody);
+    expect(observedLandings[0]?.priorJudgeVerdicts).toEqual([
+      {
+        step: "S3",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+        sessionId: "judge-1023",
+      },
+    ]);
+    expect(observedLandings[1]?.blockingFindingIdentityKeys).toEqual([
+      findingKey,
+    ]);
+    expect(observedLandings[1]?.fixPacketBody).toBe(fixPacketBody);
+    expect(observedLandings[1]?.priorJudgeVerdicts).toEqual([
+      {
+        step: "S3",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+        sessionId: "judge-1023",
+      },
+      {
+        step: "S6",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+      },
+    ]);
+  });
+
   it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
     // #919 M6 / family M1 isomorphic: status:continue with empty live open set
     // is court contract drift. openFindingsForFixer may yield [] for cargo filter;

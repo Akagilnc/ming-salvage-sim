@@ -1,425 +1,31 @@
-/**
- * #964 — mid-run grok auth death → typed failure; no headless device-auth wait.
- *
- * Seams under test (real entry, not internals):
- *   1. grokAgent buildPrintCommand — headless-only CLI shape (never interactive login form)
- *   2. Containerfile grok pin — production mechanism for fail-fast non-interactive auth
- *      (0.2.102+; 0.2.93 entered device-code wait under headless empty auth)
- *   3. Live headless empty-auth probe against real/baked grok — short hard timeout proves
- *      fail-fast ("Not signed in") rather than interactive device-auth hang
- *   4. runMergerAgent / resolveMergeConflict / mergeChild — Sandcastle AgentError becomes
- *      Action-typed failure (structured non-resolve → conflicted + reason), never uncaught
- *      FiberFailure
- *   5. public ABI — no new cause token like auth_expired
- *   6. route-smoke bare-ping shape — startup auth probe not rewritten
- *   7. Generic Worker Invocation (non-merger): dispatchFamilyWorker / dispatchWorker /
- *      withMechanicalRetry convert AgentError → host-synthesized escalated typed failure
- *      (always-on CI court; live CLI probe may soft-skip)
- *
- * Authority: #964 AC + voided owner comment (native fail-fast only; no log parse /
- * monitor kill / run fuse / auth_expired public cause). Pin 0.2.102 is the production
- * hang fix; the live probe guards regression if a hangy CLI reappears on PATH / image.
- */
-
 import {
-  execFileSync,
-  spawnSync,
-  type SpawnSyncReturns,
-} from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdtempSync,
-  openSync,
   readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-
-import {
-  MAX_DISPATCH_ATTEMPTS,
+  join,
+  describe,
+  expect,
+  it,
   withMechanicalRetry,
-} from "../../src/dispatchRetry.js";
-import { dispatchWorker } from "../../src/dispatchWorker.js";
-import {
+  dispatchWorker,
   dispatchFamilyWorker,
   familyCoderFixWorkerSpec,
-} from "../../src/family/dispatchFamilyWorker.js";
-import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
-import { mergeChild } from "../../src/family/merger.js";
-import {
-  RealFamilyBackend,
-  type RealFamilyBackendOptions,
-} from "../../src/family/realFamilyBackend.js";
-import type {
-  ConflictResolveRequest,
   FamilyBackend,
-  MergeRequest,
-  MergeResult,
-} from "../../src/family/types.js";
-import { grokAgent } from "../../src/grokAgent.js";
-import {
-  resolveRouteModels,
-  routeSmokeEntries,
-  type ResolvedModelRoute,
-} from "../../src/modelRoutes.js";
-import { PUBLIC_FAILED_CAUSES } from "../../src/publicResult.js";
-import { barePingArgv } from "../../src/realBackend.js";
-import { isRunnerSynthesizedFailureEscalation } from "../../src/runnerEscalation.js";
-import {
+  grokAgent,
+  PUBLIC_FAILED_CAUSES,
+  barePingArgv,
+  isRunnerSynthesizedFailureEscalation,
   isSandcastleAgentError,
   workerResultFromAgentError,
-} from "../../src/sandcastleAgentError.js";
-import type {
   Backend,
   DispatchContext,
   WorkerResult,
   WorkerSpec,
-} from "../../src/types.js";
-import {
-  dockerAvailable,
-  dockerUnavailableReason,
-} from "./docker.shared.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const orchestratorRoot = join(here, "..", "..");
-const promptsDir = join(orchestratorRoot, "prompts");
-const soulsDir = join(orchestratorRoot, "image", "souls");
-
-/** Production pin (Containerfile); live probe prefers a binary matching this. */
-const GROK_FAIL_FAST_PIN = "0.2.102";
-const GROK_FAIL_FAST_MIN_VERSION = [0, 2, 102] as const;
-/** Short hard wall — hangy device-auth wait must not survive this (8–15s band). */
-const HEADLESS_AUTH_PROBE_TIMEOUT_MS = 15_000;
-const DEFAULT_GROK_PROBE_IMAGE = "ming-orchestrator-coder:latest";
-
-const tmpDirs: string[] = [];
-function mkDir(prefix: string): string {
-  const d = mkdtempSync(join(tmpdir(), prefix));
-  tmpDirs.push(d);
-  return d;
-}
-afterEach(() => {
-  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
-  tmpDirs.length = 0;
-});
-
-function binaryOnPath(name: string): string | null {
-  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-    if (dir.length === 0) continue;
-    const candidate = join(dir, name);
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-/** Collection-time candidate only; version/pin validation stays in the test body. */
-function hostGrokCandidate(): string | null {
-  const fromEnv = process.env.GROK_BIN?.trim();
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  return binaryOnPath("grok");
-}
-
-function hostGrokUnavailableReason(): string | null {
-  if (hostGrokCandidate()) return null;
-  const fromEnv = process.env.GROK_BIN?.trim();
-  return fromEnv
-    ? `host grok unavailable: GROK_BIN does not exist (${fromEnv}) and grok is not on PATH`
-    : "host grok unavailable: GROK_BIN is unset and grok is not on PATH";
-}
-
-function hostGrokVersion(bin: string): string {
-  const r = spawnSync(bin, ["--version"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
-  return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
-}
-
-function isFailFastGrokVersion(version: string): boolean {
-  const match = version.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
-  if (!match) return false;
-  const actual = match.slice(1).map(Number);
-  for (let i = 0; i < GROK_FAIL_FAST_MIN_VERSION.length; i += 1) {
-    if (actual[i] !== GROK_FAIL_FAST_MIN_VERSION[i]) {
-      return actual[i] > GROK_FAIL_FAST_MIN_VERSION[i];
-    }
-  }
-  return true;
-}
-
-function dockerGrokVersion(image: string): string | null {
-  const r = spawnSync(
-    "docker",
-    ["run", "--rm", "--entrypoint", "/usr/local/bin/grok", image, "--version"],
-    { encoding: "utf8", timeout: 60_000 },
-  );
-  if (r.status !== 0) return null;
-  return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
-}
-
-type GrokProbeTarget =
-  | { kind: "host"; bin: string; version: string }
-  | { kind: "docker"; image: string; version: string };
-
-/**
- * Resolve a real grok that matches the production fail-fast pin.
- * Prefer host (GROK_BIN / PATH); fall back to docker image with baked pin.
- * The live test gates host Docker once before calling this resolver.
- */
-function resolveGrokProbeTarget(): GrokProbeTarget | null {
-  const fromEnv = process.env.GROK_BIN?.trim();
-  const hostCandidates = [
-    fromEnv && existsSync(fromEnv) ? fromEnv : null,
-    binaryOnPath("grok"),
-  ].filter((p): p is string => typeof p === "string" && p.length > 0);
-
-  for (const bin of hostCandidates) {
-    const version = hostGrokVersion(bin);
-    if (isFailFastGrokVersion(version)) {
-      return { kind: "host", bin, version };
-    }
-  }
-
-  const image =
-    process.env.GROK_PROBE_IMAGE?.trim() || DEFAULT_GROK_PROBE_IMAGE;
-  // Cheap presence check — missing image → no docker target.
-  const inspect = spawnSync("docker", ["image", "inspect", image], {
-    encoding: "utf8",
-    timeout: 15_000,
-  });
-  if (inspect.status !== 0) return null;
-  const version = dockerGrokVersion(image);
-  if (version && isFailFastGrokVersion(version)) {
-    return { kind: "docker", image, version };
-  }
-  return null;
-}
-
-/** Env for empty/no credentials: isolated HOME, strip API-key auth env. */
-function emptyAuthEnv(home: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-  delete env.XAI_API_KEY;
-  delete env.GROK_API_KEY;
-  delete env.XAI_KEY;
-  return env;
-}
-
-/**
- * Production worker print shape (grokAgent buildPrintCommand): prompt-file stdin +
- * streaming-json + always-approve. Never `grok login` / device-code.
- */
-const HEADLESS_PRINT_ARGS = [
-  "--prompt-file",
-  "/dev/stdin",
-  "--output-format",
-  "streaming-json",
-  "--always-approve",
-  "--permission-mode",
-  "bypassPermissions",
-] as const;
-
-function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
-  status: number | null;
-  signal: NodeJS.Signals | null;
-  timedOut: boolean;
-  combined: string;
-  elapsedMs: number;
-} {
-  const emptyHome = mkDir("964-empty-auth-home-");
-  const env = emptyAuthEnv(emptyHome);
-  const promptFile = join(emptyHome, "auth-probe-prompt.txt");
-  writeFileSync(promptFile, "Reply with exactly: auth-probe-964");
-  const t0 = Date.now();
-  if (target.kind === "host") {
-    let r: SpawnSyncReturns<string>;
-    // Production grok consumes --prompt-file; the probe supplies the same bytes via file-backed stdin.
-    const promptFd = openSync(promptFile, "r");
-    try {
-      r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
-        encoding: "utf8",
-        stdio: [promptFd, "pipe", "pipe"],
-        env,
-        timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-        maxBuffer: 2 * 1024 * 1024,
-        killSignal: "SIGKILL",
-      });
-    } finally {
-      closeSync(promptFd);
-    }
-    const timedOut =
-      r.error?.message?.includes("TIMEDOUT") === true ||
-      r.signal === "SIGTERM" ||
-      r.signal === "SIGKILL";
-    return {
-      status: r.status,
-      signal: r.signal,
-      timedOut,
-      combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
-      elapsedMs: Date.now() - t0,
-    };
-  }
-  // Docker: empty HOME for *container* grok only (mount + -e HOME=).
-  // Host docker CLI must keep real HOME — emptyAuthEnv(HOME=tmp) breaks client
-  // config / socket resolution ("failed to connect to the docker API ... sock").
-  // Do NOT pass empty XAI_API_KEY= into the container (empty string counts as
-  // present credentials → 401, not native "Not signed in"). Host env keys are
-  // not auto-forwarded by docker run unless -e is used.
-  let r: SpawnSyncReturns<string>;
-  const promptFd = openSync(promptFile, "r");
-  try {
-    r = spawnSync(
-      "docker",
-      [
-        "run",
-        "-i",
-        "--rm",
-        "--entrypoint",
-        "/usr/local/bin/grok",
-        "-e",
-        "HOME=/tmp/964-empty-home",
-        "-v",
-        `${emptyHome}:/tmp/964-empty-home`,
-        target.image,
-        ...HEADLESS_PRINT_ARGS,
-      ],
-      {
-        encoding: "utf8",
-        stdio: [promptFd, "pipe", "pipe"],
-        // Real process.env so docker CLI finds its socket/context; isolation is
-        // container-side via HOME mount only.
-        timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-        maxBuffer: 2 * 1024 * 1024,
-        killSignal: "SIGKILL",
-      },
-    );
-  } finally {
-    closeSync(promptFd);
-  }
-  const timedOut =
-    r.error?.message?.includes("TIMEDOUT") === true ||
-    r.signal === "SIGTERM" ||
-    r.signal === "SIGKILL";
-  return {
-    status: r.status,
-    signal: r.signal,
-    timedOut,
-    combined: `${r.stdout ?? ""}\n${r.stderr ?? ""}`,
-    elapsedMs: Date.now() - t0,
-  };
-}
-
-function makeRepo(): string {
-  const repo = mkDir("964-merger-repo-");
-  execFileSync("git", ["init", "-q"], { cwd: repo });
-  execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
-  execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], {
-    cwd: repo,
-  });
-  return repo;
-}
-
-function baseOpts(repo: string): RealFamilyBackendOptions {
-  return {
-    workingRepo: repo,
-    familyBase: "family/964-base",
-    ledgerDir: mkDir("964-ledger-"),
-    repo: "Akagilnc/ming-salvage-sim",
-    base: "main",
-    promptsDir,
-    soulsDir,
-    imageName: "img",
-  };
-}
-
-/** FiberFailure-shaped AgentError as observed when Sandcastle wraps sc.run. */
-function fiberAgentError(message: string): Error {
-  const agent = Object.assign(new Error(message), {
-    name: "AgentError",
-    _tag: "AgentError",
-  });
-  return Object.assign(
-    new Error(`${message} (after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`),
-    {
-      name: "(FiberFailure) AgentError",
-      cause: agent,
-    },
-  );
-}
-
-class AgentErrorSandboxBackend extends RealFamilyBackend {
-  resolveLandingLiveHooks(input: {
-    prUrl: string;
-    convergedHeadOid: string;
-    familyBase: string;
-  }) {
-    return buildExplicitLandingLiveHooks({
-      prUrl: input.prUrl,
-      headOid: input.convergedHeadOid,
-      remoteBranchName: input.familyBase,
-    });
-  }
-
-  public run(req: ConflictResolveRequest) {
-    return this.runMergerAgent(req);
-  }
-
-  protected override async runAgentSandbox(): Promise<never> {
-    throw Object.assign(
-      new Error(
-        "grok exited with code 1:\n\nError: Not signed in. To authenticate without a browser, run:\n  grok login --device-code",
-      ),
-      { name: "AgentError", _tag: "AgentError" },
-    );
-  }
-
-  protected override mountMergerAuth() {
-    // Pass missing-auth preflight so we reach sc.run (mid-run expiry, not absent mount).
-    return {
-      claudeToken: "tok",
-      grokAuthDir: mkDir("964-grok-auth-"),
-    };
-  }
-
-  protected override sh(file: string, args: string[]): string {
-    if (file === "git" && args[0] === "rev-parse") {
-      if (args[1] === this.opts.familyBase) return "family-head";
-      return "child-head";
-    }
-    return "";
-  }
-
-  protected override mergeInProgress(): boolean {
-    return true;
-  }
-
-  protected override isAncestorOf(): boolean {
-    return false;
-  }
-
-  protected override isMergeCommit(): boolean {
-    return false;
-  }
-}
-
-/** Deterministic merge already conflicted → mergeChild routes to resolveMergeConflict. */
-class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
-  override async mergeChildIntoFamilyBase(
-    _child: MergeRequest,
-  ): Promise<MergeResult> {
-    return {
-      familyHead: "family-head",
-      familyHeadBefore: "family-head",
-      childHead: "child-head",
-      conflicted: true,
-    };
-  }
-}
+  orchestratorRoot,
+  fiberAgentError,
+  AgentErrorSandboxBackend,
+  smokedRoute,
+  midRunAgentError,
+  CoderAgentErrorFamilyBackend,
+} from "./grok-mid-run-auth-964.shared.js";
 
 describe("#964 grok headless auth — native fail-fast surface", () => {
   it("grokAgent print command stays headless (prompt-file + streaming-json; no login subcommand)", () => {
@@ -428,7 +34,9 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       dangerouslySkipPermissions: true,
     });
     expect(cmd.command).toContain("grok ");
-    expect(cmd.command).toContain("--prompt-file /dev/stdin");
+    expect(cmd.command).toContain("prompt_file=$(mktemp)");
+    expect(cmd.command).toContain('cat > "$prompt_file"');
+    expect(cmd.command).toContain('--prompt-file "$prompt_file"');
     expect(cmd.command).toContain("--output-format streaming-json");
     expect(cmd.command).toContain("--always-approve");
     expect(cmd.command).not.toMatch(/\blogin\b/);
@@ -452,60 +60,6 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     expect(containerfile).not.toMatch(/@xai-official\/grok@0\.2\.93/);
   });
 
-  const liveHostGrokCandidate = hostGrokCandidate();
-  const liveDockerAvailable = dockerAvailable();
-  const liveProbeTargetPossible =
-    liveHostGrokCandidate !== null || liveDockerAvailable;
-  const liveProbeSkipReason = [
-    hostGrokUnavailableReason(),
-    liveDockerAvailable ? null : `docker unavailable: ${dockerUnavailableReason()}`,
-  ]
-    .filter((reason): reason is string => reason !== null)
-    .join("; ");
-  if (!liveProbeTargetPossible) {
-    console.warn(`[#964] skipping live probe: ${liveProbeSkipReason}`);
-  }
-
-  it.skipIf(!liveProbeTargetPossible)(
-    liveProbeTargetPossible
-      ? "live headless empty-auth fails fast before timeout (no device-auth hang)"
-      : `live headless empty-auth fails fast before timeout [skipped: ${liveProbeSkipReason}]`,
-    () => {
-      // #964 AC: real worker print shape + empty credentials must not enter
-      // interactive device-code wait. Pin 0.2.102 is the production hang fix;
-      // this probe exercises a real binary (host pin or baked image pin).
-      // At least one host/docker candidate exists here; pin validation remains
-      // a residual soft-skip in case neither candidate resolves to the real target.
-      const target = resolveGrokProbeTarget();
-      if (!target) {
-        // Loud skip reason — CI with rebaked image / host pin / live docker should not hit this.
-        console.warn(
-          `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN, ` +
-          `or no docker image with that pin ` +
-            `(set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
-            `override image via GROK_PROBE_IMAGE). Pin ${GROK_FAIL_FAST_PIN} remains the production mechanism.`,
-        );
-        return;
-      }
-
-      const result = runHeadlessEmptyAuthProbe(target);
-      // Must exit on its own (non-zero fail-fast), not be killed by our wall clock.
-      expect(
-        result.timedOut,
-        `grok empty-auth hung until hard timeout (${HEADLESS_AUTH_PROBE_TIMEOUT_MS}ms) ` +
-          `via ${target.kind}=${target.kind === "host" ? target.bin : target.image} ` +
-          `version=${target.version}; expected native fail-fast (pin ${GROK_FAIL_FAST_PIN})`,
-      ).toBe(false);
-      expect(result.status, result.combined).not.toBeNull();
-      expect(result.status, result.combined).not.toBe(0);
-      // Fail-fast class outcome (native CLI message on pin ≥0.2.102).
-      expect(result.combined).toMatch(/Not signed in|unauthenticated|Unauthorized/i);
-      // Well under the wall — hang regression would burn the full timeout.
-      expect(result.elapsedMs).toBeLessThan(HEADLESS_AUTH_PROBE_TIMEOUT_MS);
-    },
-    HEADLESS_AUTH_PROBE_TIMEOUT_MS + 30_000,
-  );
-
   it("route-smoke bare-ping keeps the same headless shape (startup auth not rewritten)", () => {
     const built = barePingArgv(
       "grok",
@@ -513,11 +67,10 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
       "Reply with exactly: nonce-964",
     );
     expect(built.file).toBe("grok");
-    expect(built.args).toContain("--prompt-file");
-    expect(built.args).toContain("/dev/stdin");
+    expect(built.args).toContain("-p");
+    expect(built.args).toContain("Reply with exactly: nonce-964");
     expect(built.args).toContain("--always-approve");
-    expect(built.args).not.toContain("-p");
-    expect(built.input).toBe("Reply with exactly: nonce-964");
+    expect(built.input).toBeUndefined();
   });
 
   it("does not introduce an auth_expired (or other new) public failed cause", () => {
@@ -535,77 +88,7 @@ describe("#964 AgentError → Action typed failure (merger worker entry)", () =>
     expect(isSandcastleAgentError(new Error("plain crash"))).toBe(false);
   });
 
-  it("runMergerAgent maps AgentError to structured non-resolve (owning Action, no throw)", async () => {
-    const be = new AgentErrorSandboxBackend(baseOpts(makeRepo()));
-    const outcome = await be.run({
-      childIssue: 964,
-      childBranch: "feat/964",
-    });
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.reason).toMatch(/Not signed in|AgentError|invocation failed/i);
-  });
-
-  it("resolveMergeConflict turns AgentError into conflicted typed result with reason (no uncaught throw)", async () => {
-    const be = new AgentErrorSandboxBackend(baseOpts(makeRepo()));
-    const result = await be.resolveMergeConflict({
-      childIssue: 964,
-      childBranch: "feat/964",
-    });
-    expect(result.conflicted).toBe(true);
-    expect(result.escalation).toBeUndefined();
-    expect(result.familyHeadBefore).toBe("family-head");
-    expect(result.childHead).toBe("child-head");
-    // #964 S3: non-empty agent reason survives MergeResult for re-login ops.
-    expect(result.reason).toMatch(/Not signed in|invocation failed/i);
-  });
-
-  it("mergeChild wires AgentError → Action-owned conflicted (no process throw)", async () => {
-    // #964 S4: thinnest real entry above resolveMergeConflict (Action path).
-    const be = new MergeChildAgentErrorBackend(baseOpts(makeRepo()));
-    const result = await mergeChild(be, {
-      childIssue: 964,
-      childBranch: "feat/964",
-    });
-    expect(result.conflicted).toBe(true);
-    expect(result.escalation).toBeUndefined();
-    expect(result.conflictResolvedByLlm).toBeUndefined();
-    expect(result.reason).toMatch(/Not signed in|invocation failed/i);
-  });
 });
-
-function smokedRoute(): ResolvedModelRoute {
-  const base = resolveRouteModels("normal", {});
-  const smoke = Object.fromEntries(
-    routeSmokeEntries(base).map((entry) => [
-      entry.key,
-      {
-        state: "passed" as const,
-        at: new Date().toISOString(),
-        cliVersion: `cli-${entry.slug}`,
-      },
-    ]),
-  );
-  return resolveRouteModels("normal", {}, {}, smoke);
-}
-
-function midRunAgentError(): Error {
-  return Object.assign(
-    new Error(
-      "grok exited with code 1:\n\nError: Not signed in. To authenticate without a browser, run:\n  grok login --device-code",
-    ),
-    { name: "AgentError", _tag: "AgentError" },
-  );
-}
-
-/** Non-merger family seat: runAgentSandbox throws mid-run AgentError (coder-fix path). */
-class CoderAgentErrorFamilyBackend extends AgentErrorSandboxBackend {
-  protected override mountShipAuth() {
-    return {
-      claudeToken: "tok",
-      grokAuthDir: mkDir("964-coder-grok-auth-"),
-    };
-  }
-}
 
 describe("#964 AgentError → Action typed failure (generic Worker Invocation)", () => {
   it("workerResultFromAgentError maps AgentError to host-synthesized escalated (single court)", () => {
@@ -622,23 +105,6 @@ describe("#964 AgentError → Action typed failure (generic Worker Invocation)",
     );
     expect(workerResultFromAgentError(new Error("plain crash"), "coder")).toBe(
       undefined,
-    );
-  });
-
-  it("dispatchFamilyWorker converts AgentError on non-merger coder seat (no uncaught throw)", async () => {
-    // Real free-function Worker Invocation seam (production path for family seats).
-    const route = smokedRoute();
-    const be = new CoderAgentErrorFamilyBackend(baseOpts(makeRepo()));
-    const result = await dispatchFamilyWorker(
-      be,
-      familyCoderFixWorkerSpec(route),
-      { familyBase: "family/964-base", modelRoute: route },
-    );
-    expect(result.kind).toBe("escalated");
-    if (result.kind !== "escalated") throw new Error("expected escalated");
-    expect(isRunnerSynthesizedFailureEscalation(result.escalation)).toBe(true);
-    expect(result.escalation.reason).toMatch(
-      /agent invocation failed|Not signed in/i,
     );
   });
 

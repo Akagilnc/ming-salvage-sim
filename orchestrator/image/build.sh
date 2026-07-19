@@ -258,6 +258,7 @@ echo "[build]   baked-skills manifest sha256: $MANIFEST_SHA"
 
 # ── 2. Repo-root CLAUDE.md (carries the machine-executable ## Skill routing) ──
 cp "$REPO_ROOT/CLAUDE.md" "$STAGE/CLAUDE.routing.md"
+cp "$REPO_ROOT/requirements.txt" "$STAGE/requirements.txt"
 if ! grep -q '^## Skill routing' "$STAGE/CLAUDE.routing.md"; then
   echo "[build] ERROR: repo CLAUDE.md is missing the '## Skill routing' section (#332)" >&2
   exit 1
