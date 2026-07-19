@@ -2455,6 +2455,31 @@ class GameDB:
             ),
         )
 
+    def _record_character_office(
+        self, name: str, office: str, office_type: str, source: str
+    ) -> None:
+        """写 character_offices 备档，镜像 person-title 守卫（唯一接缝，set_character_office /
+        add_character / seed 三路同源）：名分（PERSON_TITLE_KINDS）不入官职体系——删既有备档、
+        不建 offices 父行；否则确保父行在场（#1056 严格官类校验）后 upsert。"""
+        if office_type in PERSON_TITLE_KINDS:
+            self.conn.execute(
+                "DELETE FROM character_offices WHERE character_name=?", (name,)
+            )
+            return
+        self._ensure_office_type_parent(office_type)
+        self.conn.execute(
+            """
+            INSERT INTO character_offices (character_name, office_title, office_type, source)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(character_name) DO UPDATE SET
+                office_title = excluded.office_title,
+                office_type = excluded.office_type,
+                source = excluded.source,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (name, office, office_type, source),
+        )
+
     def _ensure_event_parents(self) -> None:
         event_ids = {
             str(event.id).strip()
@@ -2562,12 +2587,9 @@ class GameDB:
                 )
         if not self.table_has_rows("character_offices"):
             for row in self.conn.execute("SELECT name, office, office_type FROM characters").fetchall():
-                self.conn.execute(
-                    """
-                    INSERT INTO character_offices (character_name, office_title, office_type, source)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (row["name"], row["office"], row["office_type"], "存档迁移"),
+                # 同 add_character/set_character_office 走 person-title 守卫接缝：名分不写脏行。
+                self._record_character_office(
+                    row["name"], row["office"], row["office_type"], "存档迁移"
                 )
 
         is_fresh_factions_seed = not self.table_has_rows("factions")
@@ -4513,21 +4535,7 @@ class GameDB:
                 "UPDATE characters SET office=? WHERE name=?",
                 (office, name),
             )
-        if is_person_title:
-            self.conn.execute("DELETE FROM character_offices WHERE character_name=?", (name,))
-        else:
-            self.conn.execute(
-                """
-                INSERT INTO character_offices (character_name, office_title, office_type, source)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(character_name) DO UPDATE SET
-                    office_title = excluded.office_title,
-                    office_type = excluded.office_type,
-                    source = excluded.source,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (name, office, eff_type, source),
-            )
+        self._record_character_office(name, office, eff_type, source)
         # #9：授官改了 office_type/品级权重 → 全重算该人物所属朝堂派系 leverage（commit 前）。
         faction_row = self.conn.execute(
             "SELECT faction FROM characters WHERE name=?", (name,)
@@ -4747,7 +4755,10 @@ class GameDB:
             character.office_type,
             llm_config or self.llm_config,
         )
-        self._ensure_office_type_parent(character.office_type)
+        # person-title 名分不入官职体系（镜像 set_character_office 守卫）：仅非名分才
+        # 建 offices 父行——否则 #1056 严格官类校验对名分直接 ValueError 中止结算。
+        if character.office_type not in PERSON_TITLE_KINDS:
+            self._ensure_office_type_parent(character.office_type)
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
@@ -4792,17 +4803,8 @@ class GameDB:
                 getattr(character, "summary", "") or "",
             ),
         )
-        self.conn.execute(
-            """
-            INSERT INTO character_offices (character_name, office_title, office_type, source)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(character_name) DO UPDATE SET
-                office_title = excluded.office_title,
-                office_type = excluded.office_type,
-                source = excluded.source,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (character.name, character.office, character.office_type, office_source),
+        self._record_character_office(
+            character.name, character.office, character.office_type, office_source
         )
         # #9 cmr R2 finding#2：新建大臣（经 apply_office_appointment→apply_appointment 任命的不在册者）
         # 入朝即联动其所属派系 leverage（与 set_character_office/status hook 一致，commit 前重算）。
