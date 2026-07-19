@@ -1159,6 +1159,8 @@ class GameDB:
                 night_id INTEGER NOT NULL DEFAULT 0,
                 -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
                 night_seq INTEGER NOT NULL DEFAULT 0,
+                -- #499 读心终态：''=待生成 / 'failed'=模型失败 / 'skip'=不适用；用于重开轮询判终止。
+                mindreading_status TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1607,6 +1609,11 @@ class GameDB:
         self._backfill_person_core_character_static_fields()
         self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
+        if self.ensure_column("chat_turns", "mindreading_status", "TEXT NOT NULL DEFAULT ''"):
+            # 列首次新增：历史已完成轮无 worker，回填 'skip' 终态（不被当 accepted 永挂）。
+            self._backfill_legacy_mindreading_status()
+        # 进程启动对账：上次进程遗留的 'running' 未落库轮 → 终态化 failed（不永挂）。
+        self.reconcile_abandoned_mindreading()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
@@ -7103,6 +7110,57 @@ class GameDB:
             )
         return history
 
+    def build_chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
+        """一份 turn-identified 召对投影（#499）：user/minister 逐条带 chat_turn_id，
+        每轮的读心记录（带持久 id）紧随该轮大臣回话之后归位。
+
+        单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
+        chat_turns 打 turn 身份、按 (chat_turn_id, id) 织入 mindreading_records。
+        前端据此一投影渲染，不再靠 setChat(history) 覆盖抹掉读心递话。
+        """
+        msgs = self.conn.execute(
+            "SELECT id, role, content FROM chat_messages WHERE minister_name=? ORDER BY id",
+            (minister_name,),
+        ).fetchall()
+        turns = self.conn.execute(
+            "SELECT id, user_message_id, minister_message_id FROM chat_turns "
+            "WHERE minister_name=?",
+            (minister_name,),
+        ).fetchall()
+        msg_turn: Dict[int, int] = {}
+        minister_msg_turn: Dict[int, int] = {}
+        for t in turns:
+            tid = int(t["id"])
+            if t["user_message_id"] is not None:
+                msg_turn[int(t["user_message_id"])] = tid
+            if t["minister_message_id"] is not None:
+                msg_turn[int(t["minister_message_id"])] = tid
+                minister_msg_turn[int(t["minister_message_id"])] = tid
+        records_cache: Dict[int, List[Dict[str, object]]] = {}
+        projection: List[Dict[str, Any]] = []
+        for m in msgs:
+            mid = int(m["id"])
+            turn_id = msg_turn.get(mid, 0)
+            projection.append(
+                {"role": m["role"], "content": m["content"], "chat_turn_id": turn_id}
+            )
+            # 读心紧随该轮大臣回话归位（一个轮次可有多条读心，按 id 顺序）
+            if mid in minister_msg_turn:
+                t = minister_msg_turn[mid]
+                if t not in records_cache:
+                    records_cache[t] = self.list_mindreading_records(t)
+                for rec in records_cache[t]:
+                    narration = str(rec.get("narration") or "").strip()
+                    if not narration:
+                        continue
+                    projection.append({
+                        "role": "attendant",
+                        "content": narration,
+                        "chat_turn_id": t,
+                        "record_id": int(rec.get("id") or 0),
+                    })
+        return projection
+
     def record_mindreading(self, chat_turn_id: int, payload: Mapping[str, object]) -> int:
         """持久化近臣私语；独立于召对逐字稿与共享见闻轨。"""
         cur = self.conn.execute(
@@ -7117,8 +7175,9 @@ class GameDB:
         return int(cur.lastrowid)
 
     def list_mindreading_records(self, chat_turn_id: int) -> List[Dict[str, object]]:
+        # id 是稳定记录身份（#499）：前端按 (chat_turn_id, id) 去重/归位，不依赖 narration 文本。
         rows = self.conn.execute(
-            "SELECT reader,target,source,precision,narration FROM mindreading_records "
+            "SELECT id,reader,target,source,precision,narration FROM mindreading_records "
             "WHERE chat_turn_id=? ORDER BY id",
             (int(chat_turn_id),),
         ).fetchall()
@@ -7477,6 +7536,110 @@ class GameDB:
             (minister_name, int(turn)),
         ).fetchone()
         return self._row_dict(row) if row is not None else None
+
+    def list_pending_mindreading_turns(self, minister_name: str, turn: int) -> List[int]:
+        """本大臣本回合已完成回话（有大臣消息）但读心尚未落库、且未达终态的活跃轮 id（#499）。
+
+        显式 per-turn 任务态（#499）：''=未接受（回话未提交）/'running'=已接受在办 /
+        'failed'/'skip'=终态；record 存在=ready。**只返回 'running' 且未落库**的轮——
+        「已接受、在办、未落库」才 pending，杜绝把 schema 默认空当作 accepted 而永挂。
+        """
+        rows = self.conn.execute(
+            """
+            SELECT ct.id FROM chat_turns ct
+            WHERE ct.minister_name = ? AND ct.turn = ? AND ct.status = 'active'
+              AND ct.minister_message_id IS NOT NULL
+              AND ct.mindreading_status = 'running'
+              AND NOT EXISTS (
+                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = ct.id
+              )
+            ORDER BY ct.id
+            """,
+            (minister_name, int(turn)),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+    def persist_minister_reply(
+        self, minister_name: str, turn: int, content: str, chat_turn_id: int,
+    ) -> int:
+        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 升 active → 接受读心任务
+        （''→'running'）→ 单次提交。返回 message_id（#499）。
+
+        杜绝「回话消息已 commit 但未链接」孤儿：分两次提交时，插入回话已落库、链接+接受
+        未落库时崩溃 → 可见的持久回话却 chat_turn_id 0、active 未链接轮、空任务态、无启动
+        对账、无 pending、in-flight 守卫永挡后续召见。合并进单一事务后此孤儿态整体回滚、不可达。
+        知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
+        status 升级同 update_chat_turn_messages（#498 挂夜轮以 generating 起笔，回话落库后升 active）——
+        本函数是 update_chat_turn_messages(minister_message_id=...) 的原子替代，须同做该升级。
+        """
+        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）
+            cur = self.conn.execute(
+                "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+                "VALUES (?, ?, 'minister', ?, 'held')",
+                (minister_name, int(turn), content),
+            )
+            message_id = int(cur.lastrowid)
+            self.conn.execute(
+                """
+                UPDATE chat_turns
+                SET minister_message_id = ?,
+                    status = CASE WHEN status = 'generating' THEN 'active' ELSE status END,
+                    mindreading_status = CASE WHEN mindreading_status = ''
+                                             THEN 'running' ELSE mindreading_status END
+                WHERE id = ?
+                """,
+                (message_id, int(chat_turn_id)),
+            )
+        return message_id
+
+    def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
+        """把在办任务落终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。
+
+        只从非终态（''/'running'）转入，不覆盖已有终态；已 ready 的轮由 record 存在表达终态。
+        """
+        self.conn.execute(
+            "UPDATE chat_turns SET mindreading_status = ? "
+            "WHERE id = ? AND mindreading_status IN ('', 'running')",
+            (str(status), int(chat_turn_id)),
+        )
+        self.conn.commit()
+
+    def get_mindreading_status(self, chat_turn_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT mindreading_status FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        return str(row["mindreading_status"] or "") if row is not None else ""
+
+    def reconcile_abandoned_mindreading(self) -> int:
+        """进程启动时对账：'running' 但未落库的轮 = 其 worker 已随上次进程消亡，任务被遗弃
+        → 确定性终态化为 'failed'（重开轮询据此终止，不会永挂）。返回对账条数。"""
+        cur = self.conn.execute(
+            """
+            UPDATE chat_turns SET mindreading_status = 'failed'
+            WHERE mindreading_status = 'running'
+              AND NOT EXISTS (
+                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = chat_turns.id
+              )
+            """
+        )
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def _backfill_legacy_mindreading_status(self) -> None:
+        """列首次新增时回填历史行：本功能之前的已完成召对轮（有大臣回话、无读心记录）无对应
+        worker，显式落 'skip' 终态——免得空默认被当作 accepted 而在升级存档里永挂 pending。"""
+        self.conn.execute(
+            """
+            UPDATE chat_turns SET mindreading_status = 'skip'
+            WHERE mindreading_status = ''
+              AND minister_message_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM mindreading_records mr WHERE mr.chat_turn_id = chat_turns.id
+              )
+            """
+        )
+        self.conn.commit()
 
     def is_global_last_active_chat_turn(self, chat_turn_id: int) -> bool:
         row = self.conn.execute(

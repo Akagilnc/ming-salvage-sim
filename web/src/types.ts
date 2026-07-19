@@ -289,9 +289,25 @@ export type EndingPayload = {
   status: string; label: string; summary: string; timeline: EndingTimelineItem[];
 };
 
-export type ChatMessage = { role: "user" | "minister"; content: string };
+export type ChatMessage = {
+  /** user=朕 / minister=大臣 / attendant=递话（王承恩读心，ADR 0046） */
+  role: "user" | "minister" | "attendant";
+  content: string;
+  /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
+  chatTurnId?: number;
+  recordId?: number;
+};
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
+
+/** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，
+ *  attendant 递话额外带 record_id；前端映射为 ChatMessage 后渲染。 */
+export type ServerChatMessage = {
+  role: "user" | "minister" | "attendant";
+  content: string;
+  chat_turn_id?: number;
+  record_id?: number;
+};
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
 
@@ -377,7 +393,7 @@ export type PendingActionFailure = {
 
 export type ChatResponse = {
   answer: string;
-  history: ChatMessage[];
+  history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count?: number;
@@ -391,7 +407,7 @@ export type ChatResponse = {
 };
 
 export type ChatUndoResponse = {
-  history: ChatMessage[];
+  history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
   pending_count: number;

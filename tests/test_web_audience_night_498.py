@@ -215,7 +215,8 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
     night, chat_events, issue_events = asyncio.run(scenario())
 
-    assert chat_events[-1]["event"] == "done"
+    # #499：done 先于读心可见，end 才是终态终止事件。
+    assert chat_events[-1]["event"] == "end"
     # 回话真实入档 + 对话轮升 active
     assert game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
@@ -261,8 +262,8 @@ def test_asgi_hanging_chat_makes_issue_fail_closed(web_game, monkeypatch):
     assert mid_status == "open"          # 夜保持开
     assert mid_turn == turn_before       # turn 不变
     assert chat_row == "generating"      # 在飞轮仍在
-    # 放行后回话正常收尾
-    assert _parse_sse(chat_text)[-1]["event"] == "done"
+    # 放行后回话正常收尾（#499：end 才是终态终止事件）
+    assert _parse_sse(chat_text)[-1]["event"] == "end"
 
 
 # ── ③ 同步退朝端点 offload 不冻结 event loop（真实 ASGI + 并发在飞 + ticker）──────

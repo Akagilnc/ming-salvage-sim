@@ -1,0 +1,194 @@
+import React from "react";
+import { api, pollMindreadingUntilReady, streamChat } from "./api";
+import { chatReducer } from "./mindreading";
+import type { ChatMessage, ChatResponse, PendingActionFailure, Minister, ServerChatMessage, Suggestion } from "./types";
+
+/**
+ * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流、历史加载、读心轮询、
+ * reducer 派发。事件归属分三层，按最小必要门控（不多加 token/缓存/executor）：
+ *
+ * - 短暂请求态（待答文 / 流式文 / busy / 取消句柄）：归 requestToken。更新的 send 接手即
+ *   旧流尾巴不得改动——只门控这四样。
+ * - 历史快照（/chat 加载、回话 done 的整串投影）：归 generation + 当前大臣。send/reset/新
+ *   load 都推进 generation，陈旧快照（更旧的 GET 迟到）据此丢弃，不抹掉新完成的轮。
+ * - 读心事件（持久、turn-identified）：只认当前大臣面板即入 reducer（不按 token/gen）。迟到的
+ *   旧流读心仍按归属轮定位插入——绝不因新 send 作废 token 而永久丢失。
+ * - 持久后果（草案/密令/换人/退下/loadState 等）：done 载荷到手即由 App 幂等消费（不按 token
+ *   门控），不拖到 SSE end——读心可延后 end 达 120s，期间起新轮不得吞掉已完成的旧轮后果。
+ */
+
+export type AudienceHistoryData = {
+  minister: Minister;
+  history: ServerChatMessage[];
+  suggestions: Suggestion[];
+  can_undo_last_chat: boolean;
+  pending_action_failures?: PendingActionFailure[];
+  chat_turn_id?: number;
+  mindreading_pending?: boolean;
+  /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
+  pending_turn_ids?: number[];
+};
+
+export type SendChatCallbacks = {
+  /** 回话 done：done 载荷到手即消费持久后果 + 面板态（App 自行区分全局/面板归属）。 */
+  onDone?: (data: ChatResponse) => void;
+  /** 观察者离开实时流（AbortError） */
+  onLeave?: () => void;
+  /** 失败（非 Abort） */
+  onError?: (err: unknown) => void;
+};
+
+export function useAudienceChat(
+  setBusy: (value: string) => void,
+  selectedMinisterRef: React.MutableRefObject<string>,
+  // 召对面板是否打开（App 传 activeModal==="chat"）。本 hook 内置**唯一 chat-exit 归属**：
+  // 面板一关（任何 departure：关闭/Escape/转诏书/切模态/退菜单都令其为 false）即取消实时流
+  // 观察者 + 作废重开 poll-batch。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
+  chatOpen: boolean,
+) {
+  const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
+  const [pendingUserMessage, setPendingUserMessage] = React.useState("");
+  const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
+  // 短暂请求归属：每次 sendChat 自增。
+  const requestTokenRef = React.useRef(0);
+  const abortRef = React.useRef<AbortController | null>(null);
+  // 历史快照 generation：load / send / reset 都推进；陈旧历史响应据此丢弃。
+  const chatGenRef = React.useRef(0);
+  // 读心 poll-batch 归属：一次「面板观察会话」的全部待读心轮轮询共此代次。close / reset /
+  // 新接受的历史快照替换旧批（推进代次作废旧批）；**send 不推进**（同面板同待读心轮仍有效，
+  // 旧轮读心不该因新一轮发出而停）。给 hook 唯一 poll-batch 归属，避免同大臣重开叠加重复轮询环。
+  const pollBatchRef = React.useRef(0);
+
+  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch（selectedMinister 不变也停）。
+  React.useEffect(() => {
+    if (!chatOpen) {
+      abortRef.current?.abort();
+      pollBatchRef.current += 1;
+    }
+  }, [chatOpen]);
+
+  const resetPanel = React.useCallback(() => {
+    chatGenRef.current += 1;   // 作废在飞的历史加载
+    pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
+    dispatchChat({ type: "reset" });
+    setPendingUserMessage("");
+    setStreamingMinisterMessage("");
+  }, []);
+
+  const clearPendingText = React.useCallback(() => {
+    setPendingUserMessage("");
+    setStreamingMinisterMessage("");
+  }, []);
+
+  // 非流式历史投影（撤回后重投）：新一代快照，走同一 reducer history 动作（含读心保住/归位）。
+  const applyHistory = React.useCallback((history: ServerChatMessage[]) => {
+    chatGenRef.current += 1;
+    dispatchChat({ type: "history", history });
+  }, []);
+
+  const loadHistory = React.useCallback(
+    // 返回投影快照（已应用）或 null（被 generation 守卫拒收）——拒收时**不做任何面板写入**，
+    // App 据 null 早退，杜绝陈旧快照的建议/可撤回/失败/临时大臣元数据回覆（#499）。
+    async (minister: string): Promise<AudienceHistoryData | null> => {
+      const gen = ++chatGenRef.current;
+      const data = await api<AudienceHistoryData>(
+        `/api/ministers/${encodeURIComponent(minister)}/chat`,
+      );
+      // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
+      if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
+      dispatchChat({ type: "history", history: data.history });
+      // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
+      const batch = ++pollBatchRef.current;
+      const batchAlive = () =>
+        selectedMinisterRef.current === minister && pollBatchRef.current === batch;
+      // 每一待读心轮各自轮询：寿命系于服务端终态（api 层），存活系于本 poll-batch 归属——
+      // close/reset/新快照停之，send 不停之。覆盖所有待读心轮，不止最新轮。
+      const pendingTurns = Array.isArray(data.pending_turn_ids) ? data.pending_turn_ids : [];
+      for (const turnId of pendingTurns) {
+        void pollMindreadingUntilReady(minister, turnId, {
+          shouldContinue: batchAlive,
+          onRecords: (records, tid) => {
+            if (batchAlive()) dispatchChat({ type: "mindreading", chatTurnId: tid, records });
+          },
+        });
+      }
+      return data;
+    },
+    [selectedMinisterRef],
+  );
+
+  const sendChat = React.useCallback(
+    async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
+      const token = ++requestTokenRef.current;
+      const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
+      const abort = new AbortController();
+      abortRef.current = abort;
+      const ownsEphemeral = () => requestTokenRef.current === token;
+      const panelMatches = () => selectedMinisterRef.current === minister;
+      const historyFresh = () => chatGenRef.current === gen && panelMatches();
+      setPendingUserMessage(message);
+      setStreamingMinisterMessage("");
+      setBusy("大臣思索中");
+      try {
+        await streamChat(
+          minister,
+          message,
+          (delta) => {
+            if (ownsEphemeral() && panelMatches()) setStreamingMinisterMessage((current) => current + delta);
+          },
+          {
+            signal: abort.signal,
+            onDone: (doneData) => {
+              // 短暂请求态按 token 回收
+              if (ownsEphemeral()) {
+                setPendingUserMessage("");
+                setStreamingMinisterMessage("");
+                setBusy("");
+              }
+              // 历史快照：generation + 面板守卫（幂等 turn-identified，仍不越面板）
+              if (historyFresh()) dispatchChat({ type: "history", history: doneData.history });
+              // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
+              cb.onDone?.(doneData);
+            },
+            onMindreading: (mind) => {
+              // 持久 turn-identified 事件：仅认当前面板即入 reducer（不按 token/gen；迟到旧流读心仍归其轮）
+              if (panelMatches() && mind.mindreading) {
+                dispatchChat({
+                  type: "mindreading",
+                  chatTurnId: Number(mind.chat_turn_id || 0),
+                  records: [mind.mindreading],
+                });
+              }
+            },
+          },
+        );
+      } catch (err) {
+        if (!ownsEphemeral()) return;  // 旧流尾巴：绝不触碰更新请求的短暂态
+        setPendingUserMessage("");
+        setStreamingMinisterMessage("");
+        if (err instanceof Error && err.name === "AbortError") cb.onLeave?.();
+        else cb.onError?.(err);
+      } finally {
+        if (ownsEphemeral()) setBusy("");
+        if (abortRef.current === abort) abortRef.current = null;
+      }
+    },
+    [setBusy, selectedMinisterRef],
+  );
+
+  const cancelChat = React.useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  return {
+    chat,
+    pendingUserMessage,
+    streamingMinisterMessage,
+    resetPanel,
+    clearPendingText,
+    applyHistory,
+    loadHistory,
+    sendChat,
+    cancelChat,
+  };
+}
