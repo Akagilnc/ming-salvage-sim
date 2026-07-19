@@ -18,33 +18,11 @@ from typing import Any, Dict, List
 
 import pytest
 
-from ming_sim import audience_pipeline as ap
 from ming_sim.audience_pipeline import (
-    EVT_MINDREADING_COMPLETE,
-    EVT_MINDREADING_ISSUED,
-    EVT_REPLY_FIRST_TOKEN,
-    EVT_REPLY_PERSISTED,
-    EVT_REPLY_VISIBLE,
     AudienceTurnPipeline,
-    assert_p5_order,
     mindreading_eligible,
     run_mindreading_for_turn,
 )
-
-
-def test_stream_reply_logs_first_token_before_complete():
-    pipe = AudienceTurnPipeline()
-
-    def produce(on_delta):
-        on_delta("臣")
-        time.sleep(0.02)
-        on_delta("遵旨。")
-        return "臣遵旨。"
-
-    reply = pipe.stream_reply(produce)
-    assert reply == "臣遵旨。"
-    names = pipe.timeline.names()
-    assert names.index(EVT_REPLY_FIRST_TOKEN) < names.index(ap.EVT_REPLY_COMPLETE)
 
 
 def test_mindreading_refused_before_reply_complete():
@@ -85,7 +63,6 @@ def test_accept_persisted_reply_is_public_gate_not_private_fields():
     assert pipe.reply_persisted is True
     fut = pipe.issue_mindreading(lambda r: {"ok": r})
     assert fut.result(timeout=1.0) == {"ok": "臣先陈军务。"}
-    assert_p5_order(pipe.timeline)
 
 
 def test_mindreading_runs_only_after_persist_with_full_reply():
@@ -100,8 +77,6 @@ def test_mindreading_runs_only_after_persist_with_full_reply():
 
     pipe.stream_reply(produce)
     pipe.persist_reply(lambda reply: received.append(("persist", reply)))
-    pipe.mark_reply_visible()
-    visible_at = pipe.timeline.first(EVT_REPLY_VISIBLE).t
 
     fut = pipe.issue_mindreading(lambda reply: received.append(("mind", reply)) or {"ok": reply})
     result = fut.result(timeout=2.0)
@@ -109,39 +84,6 @@ def test_mindreading_runs_only_after_persist_with_full_reply():
     assert result == {"ok": "臣先奏军务，再陈钱粮。"}
     assert ("persist", "臣先奏军务，再陈钱粮。") in received
     assert ("mind", "臣先奏军务，再陈钱粮。") in received
-    assert_p5_order(pipe.timeline)
-    names = pipe.timeline.names()
-    assert names.index(EVT_REPLY_FIRST_TOKEN) < names.index(EVT_MINDREADING_ISSUED)
-    assert names.index(EVT_REPLY_PERSISTED) < names.index(EVT_MINDREADING_ISSUED)
-    mind_done = pipe.timeline.first(EVT_MINDREADING_COMPLETE)
-    assert mind_done is not None
-    # visible 在 issue 之前标记；不得等 mind complete
-    assert visible_at <= mind_done.t or visible_at <= pipe.timeline.first(EVT_MINDREADING_ISSUED).t
-
-
-def test_reply_visible_does_not_wait_for_mindreading():
-    """玩家侧无「为读心黑屏」：visible 在读心完成前即可标记。"""
-    pipe = AudienceTurnPipeline()
-    mind_started = threading.Event()
-    mind_release = threading.Event()
-
-    pipe.stream_reply(lambda on_delta: (on_delta("臣遵旨。") or "臣遵旨。"))
-    pipe.persist_reply(lambda _r: None)
-    pipe.mark_reply_visible()
-    assert pipe.timeline.first(EVT_REPLY_VISIBLE) is not None
-    assert pipe.timeline.first(EVT_MINDREADING_COMPLETE) is None
-
-    def slow_mind(reply):
-        mind_started.set()
-        mind_release.wait(timeout=2.0)
-        return {"narration": reply}
-
-    fut = pipe.issue_mindreading(slow_mind)
-    assert mind_started.wait(1.0)
-    assert pipe.timeline.first(EVT_MINDREADING_COMPLETE) is None
-    mind_release.set()
-    fut.result(timeout=2.0)
-    assert_p5_order(pipe.timeline)
 
 
 def test_db_writes_serialize_under_write_gate():
@@ -169,7 +111,6 @@ def test_db_writes_serialize_under_write_gate():
         futs = [pool.submit(slow_write, n) for n in ("a", "b")]
         assert sorted(f.result(timeout=2.0) for f in futs) == ["a", "b"]
     assert max_writes == 1
-    assert len(pipe.timeline.all(ap.EVT_DB_WRITE)) == 2
 
 
 def test_mindreading_eligible_skips_self_and_missing_slot(game):

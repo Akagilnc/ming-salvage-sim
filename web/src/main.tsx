@@ -1,8 +1,8 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
-import { api, pollMindreadingUntilReady, streamChat } from "./api";
-import { chatReducer, type MindreadingRecord } from "./mindreading";
+import { api } from "./api";
+import { useAudienceChat } from "./useAudienceChat";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -17,7 +17,7 @@ import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDeci
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, ServerChatMessage, Suggestion } from "./types";
+import type { AppView, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -53,12 +53,7 @@ function App() {
   const [selectedMinister, setSelectedMinister] = React.useState<string>("");
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
   const [activeModal, setActiveModal] = React.useState<ModalName>("none");
-  // #499：召对串走单一 production reducer（chatReducer），所有显示态转移都过它——
-  // history（/chat・done・撤回统一投影）、mindreading（按归属轮定位插入）、reset（切人/清屏）。
-  const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
-  const [pendingUserMessage, setPendingUserMessage] = React.useState("");
-  const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [chatNotice, setChatNotice] = React.useState("");
   const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
@@ -98,21 +93,21 @@ function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
-  // AbortController for the in-flight minister chat stream; null when idle.
-  const chatAbortRef = React.useRef<AbortController | null>(null);
-  // #499：取消/早重开路径的读心有界轮询 token；每次重开自增以作废旧轮询。
-  const mindPollTokenRef = React.useRef(0);
 
-  // 读心递话经 reducer 按归属轮定位插入（#499）——SSE 实时 / 固定轮轮询增量共用。
-  // reducer 按 (chat_turn_id, record_id) 去重、插在归属轮回话之后；绝不按 narration 正文
-  // 去重，也不追加串尾（不同轮同文都显示、迟到读心仍归其轮）。
-  const surfaceMindreading = React.useCallback(
-    (chatTurnId: number, records: MindreadingRecord[]) => {
-      if (!(chatTurnId > 0) || !records.length) return;
-      dispatchChat({ type: "mindreading", chatTurnId, records });
-    },
-    [],
-  );
+  // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
+  // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
+  // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
+  const {
+    chat,
+    pendingUserMessage,
+    streamingMinisterMessage,
+    resetPanel,
+    clearPendingText,
+    applyHistory,
+    loadHistory: loadHistoryProjection,
+    sendChat: runAudienceTurn,
+    cancelChat,
+  } = useAudienceChat(setBusy, selectedMinisterRef);
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -125,33 +120,15 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
-    // 重开即作废上一轮读心轮询：新 token 让旧的 in-flight 轮询在 shouldContinue 处自停。
-    mindPollTokenRef.current += 1;
-    const pollToken = mindPollTokenRef.current;
-    const data = await api<{
-      minister: Minister;
-      history: ServerChatMessage[];
-      suggestions: Suggestion[];
-      can_undo_last_chat: boolean;
-      pending_action_failures?: PendingActionFailure[];
-      chat_turn_id?: number;
-      mindreading_pending?: boolean;
-    }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
-    // Staleness guard (#325, broad-scope): the player may have switched ministers
-    // while this history fetch was in flight. Dropping the UI write prevents the
-    // late history from bleeding into the now-selected minister's panel — this path
-    // reproduces the bleed WITHOUT sending a message (just switch fast). Same
-    // selectedMinisterRef gate as sendChat. loadMinisterChat writes ONLY
-    // minister-panel state, so a blanket early return is safe (nothing global to skip).
+    // #499：历史投影 + 读心轮询由 hook 独占派发（含 turn-identified 归位、固定轮轮询、
+    // 切人/重开 token 作废）；App 只补面板外围态。切人守卫同 selectedMinisterRef。
+    const data = await loadHistoryProjection(ministerName);
     if (selectedMinisterRef.current !== ministerName) return;
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
     ];
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
-    // #499 恢复路径：服务端已把读心递话按轮归位于 turn-identified 投影，直接映射渲染。
-    const expectedTurnId = data.chat_turn_id || 0;
-    dispatchChat({ type: "history", history: data.history });
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     if (options?.mergeFailures) {
@@ -160,20 +137,7 @@ function App() {
     } else {
       setChatFailures(data.pending_action_failures || []);
     }
-    // #499 取消/早重开修复：历史 GET 可能早于后台读心落库。本轮该有读心但尚未浮现时，
-    // 锁定 expected 轮做有界轮询，就绪即按 (chat_turn_id, id) 归位——不阻塞回话展示，
-    // 且固定该轮：新一轮成为 latest 也不截断/错归旧轮读心。
-    if (data.mindreading_pending && expectedTurnId > 0) {
-      void pollMindreadingUntilReady(ministerName, expectedTurnId, {
-        shouldContinue: () =>
-          selectedMinisterRef.current === ministerName && mindPollTokenRef.current === pollToken,
-        onRecords: (records, chatTurnId) => {
-          if (selectedMinisterRef.current !== ministerName || mindPollTokenRef.current !== pollToken) return;
-          surfaceMindreading(chatTurnId, records);
-        },
-      });
-    }
-  }, [state, surfaceMindreading]);
+  }, [state, loadHistoryProjection]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -293,10 +257,8 @@ function App() {
 
   React.useEffect(() => {
     if (!selectedMinister) {
-      dispatchChat({ type: "reset" });
+      resetPanel();
       setSuggestions([]);
-      setPendingUserMessage("");
-      setStreamingMinisterMessage("");
       setChatNotice("");
       if (!failureRecoveryMode) {
         setChatFailures([]);
@@ -305,10 +267,8 @@ function App() {
       setComposerHint("");
       return;
     }
-    dispatchChat({ type: "reset" });
+    resetPanel();
     setSuggestions([]);
-    setPendingUserMessage("");
-    setStreamingMinisterMessage("");
     if (!failureRecoveryMode) {
       setChatFailures([]);
     }
@@ -410,7 +370,7 @@ function App() {
     }
     const switchingMinister = selectedMinister !== minister.name;
     if (switchingMinister) {
-      dispatchChat({ type: "reset" });
+      resetPanel();
       setSuggestions([]);
       setTemporaryActiveMinister(null);
       setCanUndoLastChat(false);
@@ -423,8 +383,7 @@ function App() {
     setChatNotice("");
     setChatFailures([]);
     setCanUndoLastChat(false);
-    setPendingUserMessage("");
-    setStreamingMinisterMessage("");
+    clearPendingText();
     loadMinisterChat(minister.name).catch((err) => setError(err.message));
   };
 
@@ -442,8 +401,7 @@ function App() {
       setSelectedMinister(targetName);
       setActiveModal("chat");
       setChatNotice("");
-      setPendingUserMessage("");
-      setStreamingMinisterMessage("");
+      clearPendingText();
     } finally {
       setBusy("");
     }
@@ -466,115 +424,66 @@ function App() {
 
     const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
-    setPendingUserMessage(message);
-    setStreamingMinisterMessage("");
-    setBusy("大臣思索中");
     setError("");
     setComposerHint("");
     setChatNotice("");
     if (fromComposer) {
       setInput("");
     }
-    const abort = new AbortController();
-    chatAbortRef.current = abort;
-    try {
-      const data = await streamChat(
-        targetMinisterName,
-        message,
-        (delta) => {
-          if (selectedMinisterRef.current === targetMinisterName) {
-            setStreamingMinisterMessage((current) => current + delta);
-          }
-        },
-        {
-          signal: abort.signal,
-          // 回话 done 立刻清 busy / 落历史——不等读心（#499 无「为读心黑屏」）
-          onDone: (doneData) => {
-            if (selectedMinisterRef.current !== targetMinisterName) return;
-            setPendingUserMessage("");
-            setStreamingMinisterMessage("");
-            // #499：投影已含既往各轮读心递话，history reducer 不再抹掉先前浮现的读心。
-            dispatchChat({ type: "history", history: doneData.history });
-            setSuggestions(doneData.suggestions);
-            setCanUndoLastChat(!!doneData.can_undo_last_chat);
-            setBusy("");
-          },
-          // 读心就绪即浮现（ADR 0046 递话 role）；与历史/轮询路共用 (chat_turn_id, id) 归位/去重
-          onMindreading: (mind) => {
-            if (selectedMinisterRef.current !== targetMinisterName) return;
-            if (!mind.mindreading) return;
-            surfaceMindreading(Number(mind.chat_turn_id || 0), [mind.mindreading]);
-          },
-        },
-      );
-      // Staleness guard: player switched ministers while the request was in-flight;
-      // discard all minister-specific UI updates to avoid cross-minister notice bleed.
-      if (selectedMinisterRef.current !== targetMinisterName) return;
-      // onDone 已落回话历史；此处只补全局态，不 setChat(data.history) 以免抹掉已浮现的读心递话
-      setPendingUserMessage("");
-      setStreamingMinisterMessage("");
-      setSuggestions(data.suggestions);
-      setCanUndoLastChat(!!data.can_undo_last_chat);
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
-      await loadState();
-      // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
-      api<{ orders: SecretOrder[] }>("/api/secret_orders")
-        .then(({ orders }) => setSecretOrders(orders))
-        .catch(() => {});
-      if (selectedMinisterRef.current !== targetMinisterName) return;
-      const responseFailures = data.pending_action_failures || [];
-      if (data.secret_order_id) {
-        setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
-      }
-      setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-      if (data.proposed_directive) {
-        setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
-      }
-      if (data.next_minister && !responseFailures.length) {
-        dispatchChat({ type: "reset" });
-        setSuggestions([]);
-        setStreamingMinisterMessage("");
-        setCanUndoLastChat(false);
-        setChatFailures([]);
-        setSelectedMinister(data.next_minister);
-        setActiveModal("chat");
-        setChatNotice(`已传${data.next_minister}入殿。`);
-        loadMinisterChat(data.next_minister).catch((err) => setError(err.message));
-      }
-      if (data.court_action === "dismiss") {
-        setPendingUserMessage("");
-        setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
-      }
-    } catch (err) {
-      // Staleness guard (mirrors the success path at line ~386 + the #325 broad-scope
-      // load/undo guards): if the player switched ministers while this request was
-      // in flight, drop ALL minister-specific UI writes (input restore / cancel /
-      // error notice) to avoid cross-minister bleed onto the now-active panel.
-      // The finally block below still clears busy + chatAbortRef globally.
-      if (selectedMinisterRef.current !== targetMinisterName) return;
-      if (err instanceof Error && err.name === "AbortError") {
-        // Observer left the live stream; after the server accepts the question,
-        // the audience turn continues in the background and history is the rejoin path.
-        setPendingUserMessage("");
-        setStreamingMinisterMessage("");
+    // 流式/请求归属/派发由 hook 独占；App 只补外围态，且旧流尾巴不再触碰更新请求的态。
+    await runAudienceTurn(targetMinisterName, message, {
+      // 回话 done（hook 已清待答/流式、落历史投影、清 busy）：补面板建议 / 可撤回。
+      onDone: (doneData) => {
+        setSuggestions(doneData.suggestions);
+        setCanUndoLastChat(!!doneData.can_undo_last_chat);
+      },
+      // 流式收尾（仍归属当前请求）：外围全局态；换人/退下等面板迁移。
+      onComplete: async (data) => {
+        if (selectedMinisterRef.current !== targetMinisterName) return;
+        setSuggestions(data.suggestions);
+        setCanUndoLastChat(!!data.can_undo_last_chat);
+        setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
+        await loadState();
+        // 刷新密令列表（含历史，大臣可能调了 issue_secret_order tool）
+        api<{ orders: SecretOrder[] }>("/api/secret_orders")
+          .then(({ orders }) => setSecretOrders(orders))
+          .catch(() => {});
+        if (selectedMinisterRef.current !== targetMinisterName) return;
+        const responseFailures = data.pending_action_failures || [];
+        if (data.secret_order_id) {
+          setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
+        }
+        setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
+        if (data.proposed_directive) {
+          setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
+        }
+        if (data.next_minister && !responseFailures.length) {
+          resetPanel();
+          setSuggestions([]);
+          setCanUndoLastChat(false);
+          setChatFailures([]);
+          setSelectedMinister(data.next_minister);
+          setActiveModal("chat");
+          setChatNotice(`已传${data.next_minister}入殿。`);
+          loadMinisterChat(data.next_minister).catch((err) => setError(err.message));
+        }
+        if (data.court_action === "dismiss") {
+          clearPendingText();
+          setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
+        }
+      },
+      // 观察者离开实时流：召对在后台续跑，重开经历史重入。
+      onLeave: () => {
         setChatNotice("已离开实时回话；大臣会继续回奏，稍后重开可见。");
         setError("");
-      } else {
+      },
+      onError: (err) => {
         if (fromComposer) {
           setInput(message);
         }
-        setPendingUserMessage("");
-        setStreamingMinisterMessage("");
         setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      chatAbortRef.current = null;
-      setBusy("");
-    }
-  };
-
-  const cancelChat = () => {
-    chatAbortRef.current?.abort();
+      },
+    });
   };
 
   const undoLastChat = async () => {
@@ -586,8 +495,7 @@ function App() {
     setError("");
     setChatNotice("");
     setComposerHint("");
-    setPendingUserMessage("");
-    setStreamingMinisterMessage("");
+    clearPendingText();
     try {
       const data = await api<ChatUndoResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/chat/undo`, {
         method: "POST",
@@ -605,7 +513,7 @@ function App() {
       // during the awaits above), mirroring sendChat's post-await check.
       if (selectedMinisterRef.current === targetMinisterName) {
         // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
-        dispatchChat({ type: "history", history: data.history });
+        applyHistory(data.history);
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
         setChatFailures(data.pending_action_failures || []);
