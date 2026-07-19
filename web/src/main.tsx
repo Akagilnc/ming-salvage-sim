@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
-import { api, streamChat } from "./api";
+import { api, pollMindreadingUntilReady, streamChat } from "./api";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -97,6 +97,20 @@ function App() {
   const suppressNextReportRef = React.useRef(false);
   // AbortController for the in-flight minister chat stream; null when idle.
   const chatAbortRef = React.useRef<AbortController | null>(null);
+  // #499：取消/早重开路径的读心有界轮询 token；每次重开自增以作废旧轮询。
+  const mindPollTokenRef = React.useRef(0);
+
+  // 读心递话按记录身份（narration 正文）去重浮现——SSE 实时、历史 GET、轮询三路共用，
+  // 避免同一条读心在重开/轮询交叠时重复递话（#499 按 chat_turn_id/记录身份去重）。
+  const appendAttendantNarration = React.useCallback((narration: string) => {
+    const content = narration.trim();
+    if (!content) return;
+    setChat((current) =>
+      current.some((m) => m.role === "attendant" && m.content === content)
+        ? current
+        : [...current, { role: "attendant", content }],
+    );
+  }, []);
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -109,6 +123,9 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
+    // 重开即作废上一轮读心轮询：新 token 让旧的 in-flight 轮询在 shouldContinue 处自停。
+    mindPollTokenRef.current += 1;
+    const pollToken = mindPollTokenRef.current;
     const data = await api<{
       minister: Minister;
       history: ChatMessage[];
@@ -117,6 +134,7 @@ function App() {
       pending_action_failures?: PendingActionFailure[];
       chat_turn_id?: number;
       mindreading?: Array<{ narration?: string }>;
+      mindreading_pending?: boolean;
     }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
@@ -145,7 +163,19 @@ function App() {
     } else {
       setChatFailures(data.pending_action_failures || []);
     }
-  }, [state]);
+    // #499 取消/早重开修复：历史 GET 可能早于后台读心落库。本轮该有读心但尚未浮现时，
+    // 启动有界轮询，就绪即去重递话——不阻塞回话展示（回话已在上面落好）。
+    if (data.mindreading_pending && !mindMessages.length && (data.chat_turn_id || 0) > 0) {
+      void pollMindreadingUntilReady(ministerName, {
+        shouldContinue: () =>
+          selectedMinisterRef.current === ministerName && mindPollTokenRef.current === pollToken,
+        onNarration: (narration) => {
+          if (selectedMinisterRef.current !== ministerName || mindPollTokenRef.current !== pollToken) return;
+          appendAttendantNarration(narration);
+        },
+      });
+    }
+  }, [state, appendAttendantNarration]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -470,17 +500,14 @@ function App() {
             setCanUndoLastChat(!!doneData.can_undo_last_chat);
             setBusy("");
           },
-          // 读心就绪即浮现（ADR 0046 递话 role）
+          // 读心就绪即浮现（ADR 0046 递话 role）；与历史/轮询路共用去重
           onMindreading: (mind) => {
             if (selectedMinisterRef.current !== targetMinisterName) return;
             const narration = String(
               (mind.mindreading && (mind.mindreading as { narration?: string }).narration) || "",
             ).trim();
             if (!narration) return;
-            setChat((current) => [
-              ...current,
-              { role: "attendant", content: narration },
-            ]);
+            appendAttendantNarration(narration);
           },
         },
       );

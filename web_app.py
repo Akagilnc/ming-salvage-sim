@@ -19,6 +19,7 @@ import shutil
 import sys
 import time
 import threading
+from concurrent.futures import Future
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
@@ -72,7 +73,6 @@ from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import (
     AudienceTurnPipeline,
     mindreading_eligible,
-    return_report_applicable,
     run_mindreading_for_turn,
 )
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -1564,62 +1564,30 @@ class WebGame:
             raise
 
     def mindreading_for_minister(self, minister_name: str) -> Dict[str, Any]:
-        """轮询/恢复读取路径：最近一轮召对的读心记录（#499 就绪即浮现）。"""
+        """轮询/恢复读取路径：最近一轮召对的读心记录（#499 就绪即浮现）。
+
+        `pending`=本轮该有读心（御前近臣在位且目标非其本人）但尚未落库，供
+        取消/早重开的前端有界轮询判据：pending 才继续轮询、非 pending 立即停，
+        免得对无读心的轮次空转。
+        """
         chat_turn_id = 0
         records: List[Dict[str, Any]] = []
+        pending = False
         if self._persistent_chat_minister(minister_name):
             row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
             if row is not None:
                 chat_turn_id = int(row["id"])
                 records = list(self.db.list_mindreading_records(chat_turn_id))
+                if not records:
+                    pending = mindreading_eligible(
+                        self.db, self.content.characters, minister_name,
+                    ) is not None
         return {
             "minister": minister_name,
             "chat_turn_id": chat_turn_id,
             "mindreading": records,
+            "mindreading_pending": pending,
         }
-
-    def _build_parallel_audience_jobs(
-        self,
-        minister_name: str,
-        text: str,
-        chat_turn_id: int,
-    ) -> Dict[str, Any]:
-        """不依赖回话输出的真实调用，供 AudienceTurnPipeline.start_parallel。"""
-        jobs: Dict[str, Any] = {}
-        character = self.session._character(minister_name)
-        if return_report_applicable(character, text):
-            state = self.state
-            db = self.db
-            name = character.name
-
-            def _return_report():
-                return db.persist_return_report(
-                    state, name, text, chat_turn_id=chat_turn_id,
-                )
-
-            jobs["return_report"] = _return_report
-
-        # CLI 动作意图分类只读皇帝消息，与回话可并行（与 session._start_cli_action_intent 同口径）
-        start_intent = getattr(self.session, "_start_cli_action_intent", None)
-        if start_intent is not None:
-            def _action_intent():
-                fut = start_intent(character, text)
-                if fut is None:
-                    return None
-                try:
-                    return fut.result(timeout=120)
-                except Exception:
-                    return {"kind": "none"}
-
-            # 仅当后端允许并发时才挂进并行池；否则 _start 会立刻返 None，空跑无意义
-            from ming_sim.cli_backend import cli_backend_from_env, cli_backend_parallel_safe
-            channel = (getattr(getattr(self.session, "llm_config", None), "channel", "") or "").strip().lower()
-            if channel == "cli" or (
-                channel != "api" and cli_backend_from_env() is not None
-            ):
-                if cli_backend_parallel_safe(getattr(self.session, "llm_config", None)):
-                    jobs["action_intent"] = _action_intent
-        return jobs
 
     def _chat_stream_payload(
         self,
@@ -1629,11 +1597,13 @@ class WebGame:
         before_snapshot: Dict[str, Any],
         accepted_turn: int,
         emit_delta,
+        action_intent_future: Optional[Future] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
         agent = self.session.registry.get(character)
-        action_intent_future = self.session._start_cli_action_intent(character, text)
+        # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
+        # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
         run_output = None
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
@@ -1973,16 +1943,14 @@ class WebGame:
             payload: Optional[Dict[str, Any]] = None
             try:
                 try:
-                    # P5：不依赖回话输出的真实调用并发发出（回奏 / CLI 动作意图）
-                    jobs = self._build_parallel_audience_jobs(minister_name, text, chat_turn_id)
-                    if jobs:
-                        pipe.start_parallel(jobs)
-                        # 回奏若需写入见闻再喂 prompt，须在流式回话前取回；其它并行任务继续跑
-                        if "return_report" in jobs:
-                            try:
-                                pipe.wait_job("return_report", timeout=120)
-                            except Exception:
-                                pass
+                    # P5：唯一不依赖回话输出的独立调用 = CLI 动作意图分类（只读皇帝消息）。
+                    # 先于回话在其自有 executor 上发出，跨越回话流式在飞，回话后消费一次。
+                    # 回奏（return_report）须先写见闻再组回话 prompt，是回话前置依赖、非并行调用，
+                    # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
+                    character = self.session._character(minister_name)
+                    action_intent_future = self.session._start_cli_action_intent(character, text)
+                    if action_intent_future is not None:
+                        pipe.note_parallel_issued("action_intent")
 
                     def produce(on_delta: Any) -> str:
                         nonlocal payload
@@ -1993,6 +1961,7 @@ class WebGame:
                         payload = self._chat_stream_payload(
                             minister_name, text, chat_turn_id, before_snapshot,
                             accepted_turn, _emit,
+                            action_intent_future=action_intent_future,
                         )
                         return str((payload or {}).get("answer") or "")
 
@@ -3058,6 +3027,8 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         # #499 轮询/恢复：读心落库后可从历史入口浮现（递话 role，ADR 0046）
         "chat_turn_id": mind["chat_turn_id"],
         "mindreading": mind["mindreading"],
+        # 本轮该有读心但尚未落库 → 前端对取消/早重开路径启动有界轮询
+        "mindreading_pending": mind["mindreading_pending"],
     }
 
 

@@ -141,3 +141,56 @@ export const streamChat = async (
   if (donePayload) return donePayload;
   throw new Error("流式回复中断，未收到完成事件。");
 };
+
+export type MindreadingSnapshot = {
+  chat_turn_id: number;
+  mindreading: Array<{ narration?: string }>;
+  mindreading_pending?: boolean;
+};
+
+export const fetchMindreading = (ministerName: string) =>
+  api<MindreadingSnapshot>(
+    `/api/ministers/${encodeURIComponent(ministerName)}/chat/mindreading`,
+  );
+
+/**
+ * 取消实时流或读心落库前重开时，历史 GET 可能早于后台读心落库，之后再不浮现
+ * （#499 p5-mindreading-player-delivery）。此处对该轮做有界轮询，就绪即经
+ * onNarration 递话浮现；`mindreading_pending===false` 或已浮现即停，避免空转。
+ * 去重由调用方按记录身份（narration 正文）负责——本函数只搬运，不改写。
+ */
+export const pollMindreadingUntilReady = async (
+  ministerName: string,
+  opts: {
+    onNarration: (narration: string, chatTurnId: number) => void;
+    shouldContinue: () => boolean;
+    maxAttempts?: number;
+    intervalMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<void> => {
+  const maxAttempts = opts.maxAttempts ?? 20;
+  const intervalMs = opts.intervalMs ?? 1500;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!opts.shouldContinue()) return;
+    await sleep(intervalMs);
+    if (!opts.shouldContinue()) return;
+    let data: MindreadingSnapshot;
+    try {
+      data = await fetchMindreading(ministerName);
+    } catch {
+      continue;  // 瞬断重试，不中断轮询
+    }
+    const rows = Array.isArray(data.mindreading) ? data.mindreading : [];
+    const narrations = rows
+      .map((row) => String(row?.narration || "").trim())
+      .filter(Boolean);
+    if (narrations.length) {
+      const turnId = Number(data.chat_turn_id || 0);
+      for (const narration of narrations) opts.onNarration(narration, turnId);
+      return;  // 已浮现
+    }
+    if (data.mindreading_pending === false) return;  // 本轮不会再有读心
+  }
+};
