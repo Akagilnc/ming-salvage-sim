@@ -69,6 +69,11 @@ from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
+from ming_sim.audience_pipeline import (
+    AudienceTurnPipeline,
+    mindreading_eligible,
+    run_mindreading_for_turn,
+)
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1535,6 +1540,15 @@ class WebGame:
                 accepted_turn=accepted_turn,
             )
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
+            answer_text = str(getattr(result, "answer", "") or "")
+            if chat_turn_id and answer_text:
+                threading.Thread(
+                    target=self._trail_mindreading_after_reply,
+                    args=(minister_name, answer_text, chat_turn_id),
+                    daemon=True,
+                    name="audience-p5-mindreading",
+                ).start()
             return payload
         except Exception:
             if chat_turn_id:
@@ -1783,6 +1797,54 @@ class WebGame:
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return payload
 
+    def _trail_mindreading_after_reply(
+        self,
+        minister_name: str,
+        minister_reply: str,
+        chat_turn_id: int,
+    ) -> None:
+        """P5（#499）：回话已可见后后台尾随读心；失败不回滚回话。
+
+        读心请求只在回话完成并持久化后发出；输入为该轮完整回话。
+        DB 写走 runtime write_gate（与后台召对 / 月末并发同纪律）。
+        """
+        if not chat_turn_id or not str(minister_reply or "").strip():
+            return
+        if mindreading_eligible(self.db, self.content.characters, minister_name) is None:
+            return
+        if not self._mark_pending_write():
+            return
+        pipe = AudienceTurnPipeline(write_gate=self._runtime_write_gate())
+        try:
+            # 回放已完成的回话边界，使 issue 闸门与时序日志一致。
+            pipe._reply_text = str(minister_reply)
+            pipe._reply_persisted = True
+            pipe.timeline.log("reply_persisted", length=len(minister_reply), source="trail")
+            pipe.timeline.log("reply_visible", source="trail")
+
+            def _job(reply: str):
+                return run_mindreading_for_turn(
+                    db=self.db,
+                    state=self.state,
+                    content_characters=self.content.characters,
+                    minister_name=minister_name,
+                    minister_reply=reply,
+                    llm_config=getattr(self.session, "llm_config", None),
+                    chat_turn_id=chat_turn_id,
+                    write_gate=self._runtime_write_gate(),
+                    timeline=pipe.timeline,
+                )
+
+            fut = pipe.issue_mindreading(_job, minister_reply=minister_reply)
+            try:
+                fut.result(timeout=120)
+            except Exception:
+                # 读心失败显式可见于时序日志；回话已 done，不回滚。
+                pass
+        finally:
+            pipe.close()
+            self._complete_pending_write()
+
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
@@ -1856,7 +1918,16 @@ class WebGame:
                     write_gate.release()
                     gate_released = True
                 self._complete_pending_write()
+            # P5：先让回话 done 可见，再后台尾随读心——玩家无「为读心黑屏」。
             ev_queue.put({"type": "done", "payload": payload})
+            try:
+                self._trail_mindreading_after_reply(
+                    minister_name,
+                    str((payload or {}).get("answer") or ""),
+                    chat_turn_id,
+                )
+            except Exception:
+                pass
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
