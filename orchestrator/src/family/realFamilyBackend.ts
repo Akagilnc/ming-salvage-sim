@@ -3809,7 +3809,17 @@ function pickJudgeTraffic(
       : record.status === "escalate"
         ? JUDGE_ESCALATE_TRAFFIC_KEYS
         : [];
-  for (const key of [...JUDGE_BASE_TRAFFIC_KEYS, ...statusKeys]) {
+  const conflictingKeys =
+    record.status === "converged"
+      ? [...JUDGE_CONTINUE_TRAFFIC_KEYS, ...JUDGE_ESCALATE_TRAFFIC_KEYS]
+      : record.status === "escalate"
+        ? JUDGE_CONTINUE_TRAFFIC_KEYS
+        : [];
+  for (const key of [
+    ...JUDGE_BASE_TRAFFIC_KEYS,
+    ...statusKeys,
+    ...conflictingKeys,
+  ]) {
     if (Object.prototype.hasOwnProperty.call(record, key)) {
       traffic[key] = record[key];
     }
