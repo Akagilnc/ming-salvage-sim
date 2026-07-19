@@ -1355,14 +1355,17 @@ class WebGame:
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
 
-        in-flight = `status='active'` 且 `minister_message_id` 仍空；已完成的可撤回 turn 其
-        `minister_message_id` 已写、不算 in-flight，不挡新问。#383 把召对回合改成后台 worker
-        续跑后，「离开实时流（前端 busy 已清）→ 重开同大臣 → 再问」会并发开两轮，两个后台
-        worker 竞写同一 SQLite 连接（ADR0008 单写者不变式）并让历史错序——#383 Out of Scope
-        明令「不允许同大臣并发未答 turn」。本守卫在两个召对入口（流式 chat_stream + 非流式
-        chat）创建新 turn 前拒掉这种并发（integrated cmr Gate2，三模型一致 P1）。"""
+        in-flight = `status='generating'`，或 `status='active'` 且 `minister_message_id` 仍空
+        （#498 挂夜轮以 generating 起笔，回话入档后升 active）。走 GameDB 查询 seam，
+        不直摸 db.conn（测试替身可 stub list_in_flight_chat_turns）。"""
         if not self._persistent_chat_minister(minister_name):
             return False
+        if hasattr(self.db, "list_in_flight_chat_turns"):
+            rows = self.db.list_in_flight_chat_turns(
+                minister_name=minister_name, turn=int(self.state.turn),
+            )
+            return bool(rows)
+        # 极薄兜底：旧替身无接口时不挡（与 get_last_active 语义接近）
         existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
         return existing is not None and not existing.get("minister_message_id")
 
@@ -1370,12 +1373,24 @@ class WebGame:
         agno_session_id = self._minister_agno_session_id(minister_name)
         runs_before = self.db.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
-        chat_turn_id = self.db.create_chat_turn(
-            self.state,
-            minister_name,
-            agno_session_id,
-            runs_before,
-        )
+        # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
+        # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import attach_chat_turn_to_night
+            _night_id, chat_turn_id = attach_chat_turn_to_night(
+                self.db,
+                self.state,
+                minister_name,
+                agno_session_id=agno_session_id,
+                agno_runs_before=runs_before,
+            )
+        else:
+            chat_turn_id = self.db.create_chat_turn(
+                self.state,
+                minister_name,
+                agno_session_id,
+                runs_before,
+            )
         return chat_turn_id, snapshot
 
     def _record_chat_rollback_items(
@@ -1486,27 +1501,35 @@ class WebGame:
         }
 
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
-        with self._runtime_write_gate():
-            return self._chat_with_write_gate_held(minister_name, message)
-
-    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
+        # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
+        # 仅 prologue/epilogue 写库持锁。
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
-        if self._audience_turn_in_flight(minister_name):
-            raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-        accepted_turn = int(self.state.turn)
+        # #498：结算/亲裁相位不得召对——否则开的夜会随 submit_decisions 跨月推进而不收（夜不跨月）。
+        # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
+        # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
+        gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
-        if self._persistent_chat_minister(minister_name):
-            chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-        self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-        if minister_name not in self.session.temporary_characters:
-            message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-            if chat_turn_id:
-                self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        accepted_turn = 0
+        with gate:
+            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+                raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
+            if self._audience_turn_in_flight(minister_name):
+                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+            accepted_turn = int(self.state.turn)
+            if self._persistent_chat_minister(minister_name):
+                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+            if minister_name not in self.session.temporary_characters:
+                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                if chat_turn_id:
+                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         try:
             chat_signature = inspect.signature(self.session.chat)
             try:
@@ -1520,29 +1543,31 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-            # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
-            # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-            payload = self._chat_payload(
-                minister_name, result.answer,
-                court_action=result.court_action, next_minister=result.next_minister,
-                proposed_directive=proposed, appointed_minister=result.appointed_minister,
-                registered_minister=result.registered_minister,
-                displaced_minister=result.displaced_minister,
-                secret_order_id=result.secret_order_id,
-                pending_action_id=getattr(result, "pending_action_id", 0),
-                pending_action_failures=getattr(result, "pending_action_failures", []),
-                chat_turn_id=chat_turn_id,
-                accepted_turn=accepted_turn,
-            )
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            return payload
-        except Exception:
-            if chat_turn_id:
+            with gate:
+                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
+                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
+                payload = self._chat_payload(
+                    minister_name, result.answer,
+                    court_action=result.court_action, next_minister=result.next_minister,
+                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                    registered_minister=result.registered_minister,
+                    displaced_minister=result.displaced_minister,
+                    secret_order_id=result.secret_order_id,
+                    pending_action_id=getattr(result, "pending_action_id", 0),
+                    pending_action_failures=getattr(result, "pending_action_failures", []),
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                self.db.fail_chat_turn(chat_turn_id)
-                self.chat_history = {name: [] for name in self.session.content.characters}
-                for name, msgs in self.db.load_all_chat_history().items():
-                    self.chat_history.setdefault(name, []).extend(msgs)
+                return payload
+        except Exception:
+            with gate:
+                if chat_turn_id:
+                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                    self.db.fail_chat_turn(chat_turn_id)
+                    self.chat_history = {name: [] for name in self.session.content.characters}
+                    for name, msgs in self.db.load_all_chat_history().items():
+                        self.chat_history.setdefault(name, []).extend(msgs)
             raise
 
     def _chat_stream_payload(
@@ -1553,6 +1578,7 @@ class WebGame:
         before_snapshot: Dict[str, Any],
         accepted_turn: int,
         emit_delta,
+        write_gate: Optional[threading.Lock] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
@@ -1564,6 +1590,7 @@ class WebGame:
         agent_prompt = _audience_prompt_for_web_chat(
             self.session, text, character, chat_turn_id,
         )
+        # LLM 流在无锁窗口跑（#498 AC10 可达熔断）
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
@@ -1583,6 +1610,26 @@ class WebGame:
             answer = extract_agent_text(run_output)
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
+
+        cm = write_gate if write_gate is not None else contextlib.nullcontext()
+        with cm:
+            return self._chat_stream_payload_commit(
+                minister_name, text, character, answer, run_output,
+                action_intent_future, chat_turn_id, before_snapshot, accepted_turn,
+            )
+
+    def _chat_stream_payload_commit(
+        self,
+        minister_name: str,
+        text: str,
+        character: Any,
+        answer: str,
+        run_output: Any,
+        action_intent_future: Any,
+        chat_turn_id: int,
+        before_snapshot: Dict[str, Any],
+        accepted_turn: int,
+    ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
         appointed = ""
@@ -1791,18 +1838,28 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
+        # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
+        # （见下），防 TOCTOU——SUMMONING 通过后等 gate 时被结算改相位仍会开夜。
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
+            return
         if not self._mark_pending_write():
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
         write_gate = self._runtime_write_gate()
-        write_gate.acquire()
-        gate_released = False
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
+        accepted_turn = 0
+        # #498 AC10：prologue 持锁写库后立刻释放，LLM 不持 write_gate——
+        # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
+        write_gate.acquire()
         try:
+            # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
+            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+                self._complete_pending_write()
+                yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
+                return
             if self._audience_turn_in_flight(minister_name):
-                write_gate.release()
-                gate_released = True
                 self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
                 return
@@ -1815,19 +1872,14 @@ class WebGame:
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
-            # 已建 chat_turn 但 prologue 写途中崩 → 必须失败该轮，否则留下 active 且无大臣回复的
-            # 孤儿轮，_audience_turn_in_flight 会永久挡住该大臣（cmr Gate2 F-B）。
-            # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
-            # 否则 write_gate 与 _pending_writes_count 泄漏，drain 永久挂起、所有写入被永久挡。
             try:
                 self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
-            if not gate_released:
-                write_gate.release()
-                gate_released = True
             self._complete_pending_write()
             raise
+        finally:
+            write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
 
@@ -1835,15 +1887,16 @@ class WebGame:
             ev_queue.put({"type": "delta", "content": delta})
 
         def worker() -> None:
-            nonlocal gate_released
             try:
+                # LLM 在无锁窗口跑；落库/会话动作再抢 write_gate
                 payload = self._chat_stream_payload(
-                    minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
+                    minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta,
+                    write_gate=write_gate,
+                )
             except Exception as error:  # noqa: BLE001
-                # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
-                # 否则 error 事件不会被投进 queue、消费者永久挂死。
                 try:
-                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    with write_gate:
+                        self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                 except Exception:
                     pass
                 if isinstance(error, LLMUnavailable):
@@ -1852,9 +1905,6 @@ class WebGame:
                     ev_queue.put({"type": "error", "message": str(error)})
                 return
             finally:
-                if not gate_released:
-                    write_gate.release()
-                    gate_released = True
                 self._complete_pending_write()
             ev_queue.put({"type": "done", "payload": payload})
 
@@ -1862,16 +1912,11 @@ class WebGame:
         try:
             thread.start()
         except Exception:
-            # worker 没起来 → prologue 已建的 chat_turn 不会有 worker 去失败它，须就地善后，
-            # 否则同样留下孤儿轮永久挡该大臣（cmr Gate2 F-B）。
-            # R3 self-check: 同 prologue except——_fail_chat_turn_and_reload 自身再抛时也须释放锁与计数。
             try:
-                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
-            if not gate_released:
-                write_gate.release()
-                gate_released = True
             self._complete_pending_write()
             raise
         while True:
@@ -1928,6 +1973,22 @@ def _next_or_none(iterator):
         return next(iterator)
     except StopIteration:
         return None
+
+
+def _await_audience_inflight_clear(game) -> None:
+    """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
+    让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
+    inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op；超时抛
+    AudienceNightError（夜保持开、可原地重试，端点映射 409）。
+
+    走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。"""
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "conn"):
+        return
+    from ming_sim.audience_night import get_open_night, wait_in_flight_clear
+    open_n = get_open_night(db)
+    if open_n is not None:
+        wait_in_flight_clear(db, int(open_n["id"]))
 
 
 def _game_write_gate(game) -> threading.Lock:
@@ -3018,8 +3079,8 @@ async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
 async def api_write_decree() -> Dict[str, Any]:
     game = get_game()
     try:
-        # write_decree 先 commit_pending_actions（真 DB 写）再润色——DB 写同样不能骑进结算
-        # pre_settle 原子窗口；走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面）。
+        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
+        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
         with _serialized_web_write(game):
             decree = game.session.write_decree()
     except ValueError as e:
@@ -3028,11 +3089,17 @@ async def api_write_decree() -> Dict[str, Any]:
 
 
 @app.post("/api/decree/advance_without_edict")
-async def api_advance_without_edict() -> Dict[str, Any]:
+def api_advance_without_edict() -> Dict[str, Any]:
+    # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
+    # 用同步 def 交给 FastAPI threadpool 跑，绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    from ming_sim.audience_night import AudienceNightError
     try:
+        # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
+        # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
+        _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
             pending_directive_actions = [
                 action for action in game.db.list_pending_actions(turn_before)
@@ -3045,6 +3112,7 @@ async def api_advance_without_edict() -> Dict[str, Any]:
                 game.db,
                 content=game.content,
                 registry=getattr(game.session, "registry", None),
+                inflight_wait_s=0.0,
             )
             game.refresh_turn()
     except ValueError as e:
@@ -3055,6 +3123,9 @@ async def api_advance_without_edict() -> Dict[str, Any]:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
+    except AudienceNightError as e:
+        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "state": game.state_payload(),
         "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
@@ -3086,15 +3157,22 @@ class IssueDecreeRequest(BaseModel):
 
 
 @app.post("/api/decree/issue")
-async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
-    """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
+def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
+    """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
+
+    同步 def：内部 _await_audience_inflight_clear + resolve_turn 是阻塞同步调用（含至多 30s
+    在飞等待），交给 FastAPI threadpool，不冻结 async event loop。"""
     game = get_game()
     was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    from ming_sim.audience_night import AudienceNightError
     try:
+        # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
+        # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
+        _await_audience_inflight_clear(game)
         with _game_write_gate(game):
-            result = game.session.resolve_turn(cheat_directive=body.cheat)
+            result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
             failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
@@ -3131,6 +3209,9 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
+    except AudienceNightError as e:
+        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
+        raise HTTPException(status_code=409, detail=str(e)) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -3152,8 +3233,12 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
+            # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
+            _await_audience_inflight_clear(game)
             with _game_write_gate(game):
-                result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+                result = game.session.resolve_turn(
+                    on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
                 decree = game.session.last_decree
                 failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:

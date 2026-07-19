@@ -332,8 +332,14 @@ def minister_chat(session: GameSession, character: Character) -> str:
             if persistent_chat:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
-                    chat_turn_id = session.db.create_chat_turn(
-                        session.state, character.name, f"cli:{character.name}", 0,
+                    # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
+                    from ming_sim.audience_night import attach_chat_turn_to_night
+                    _night_id, chat_turn_id = attach_chat_turn_to_night(
+                        session.db,
+                        session.state,
+                        character.name,
+                        agno_session_id=f"cli:{character.name}",
+                        agno_runs_before=0,
                     )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
