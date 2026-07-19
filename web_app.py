@@ -1509,7 +1509,8 @@ class WebGame:
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
         # #498：结算/亲裁相位不得召对——否则开的夜会随 submit_decisions 跨月推进而不收（夜不跨月）。
-        # 须在建任何 chat turn / 开夜之前响亮拒绝。
+        # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
+        # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
         gate = self._runtime_write_gate()
@@ -1517,6 +1518,8 @@ class WebGame:
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
         with gate:
+            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+                raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
             accepted_turn = int(self.state.turn)
@@ -1835,7 +1838,8 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
-        # #498：结算/亲裁相位不得召对（夜不跨月）——建 chat turn / 开夜之前先响亮拒绝。
+        # #498：结算/亲裁相位不得召对（夜不跨月）。锁前查仅快速失败；权威判定在持 gate 后复查
+        # （见下），防 TOCTOU——SUMMONING 通过后等 gate 时被结算改相位仍会开夜。
         if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
             yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
             return
@@ -1850,6 +1854,11 @@ class WebGame:
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
         write_gate.acquire()
         try:
+            # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
+            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+                self._complete_pending_write()
+                yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
+                return
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
