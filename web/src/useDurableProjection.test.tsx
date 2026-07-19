@@ -104,40 +104,6 @@ describe("持久刷新协调器（#499 App 消费的 useDurableProjection）", (
     expect(states).toEqual([]);    // 未落陈旧 state（本变更结果不被覆盖）
   });
 
-  it("延迟呈现由协调器归属：最新代次时 400ms 定时器 fire→open()；beginMutation 后陈旧定时器 no-op", async () => {
-    vi.useFakeTimers();
-    try {
-      const states: string[] = [];
-      const orders: string[] = [];
-      const hookRef = mount(states, orders);
-      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-        const u = new URL(String(url), "http://t.local");
-        if (u.pathname.endsWith("/secret_orders")) return jsonResp({ orders: [{ tag: "x", status: "active" }] });
-        return jsonResp({ marker: "s", map_nodes: [] });
-      }));
-
-      // 正向：无更新代次 → 定时器 fire 时仍最新 → open() 被调用
-      let opened = 0;
-      await act(async () => {
-        await hookRef.current!.refresh({
-          secretOrders: true,
-          autoOpen: { afterMs: 400, when: (o) => o.some((x) => (x as unknown as { status: string }).status === "active"), open: () => { opened += 1; } },
-        });
-      });
-      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-      expect(opened).toBe(1);
-
-      // 反向：定时器计时期间 beginMutation（撤回移除全部 active 单）→ 陈旧定时器 fire no-op
-      let opened2 = 0;
-      await act(async () => {
-        await hookRef.current!.refresh({
-          secretOrders: true,
-          autoOpen: { afterMs: 400, when: () => true, open: () => { opened2 += 1; } },
-        });
-      });
-      act(() => { hookRef.current!.beginMutation(); });   // 更新代次
-      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-      expect(opened2).toBe(0);   // 陈旧定时器 no-op：不弹已作废窗
-    } finally { vi.useRealTimers(); }
-  });
+  // 延迟呈现定时器归属（正/反两路）已由真实 App tracer 覆盖，见 appDurableWiring.test.tsx
+  // 「延迟呈现正路 / 负路」——此处不再重复 hook-only 定时器断言。
 });

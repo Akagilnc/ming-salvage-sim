@@ -76,7 +76,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     expect(findButton(host, "删")).toBeFalsy();        // 新 DOM 权威：陈旧刷新返 null 弃写，草案不复活
   });
 
-  it("延迟呈现（协调器所属定时器）：最新代次时 fake time 到点弹密令模态", async () => {
+  // 真实密令进度弹窗 = FullscreenModal 渲染的 <section role="dialog" aria-label="密令进度">；
+  // HUD 常驻指令槽也含「密令」字样，故只认这个真实对话框，不认自由文本（否则空断言）。
+  const secretDialog = (host: HTMLElement) => host.querySelector("[role='dialog'][aria-label='密令进度']");
+
+  it("延迟呈现正路（协调器所属定时器）：最新代次时 fake time 到点弹密令进度对话框", async () => {
     vi.useFakeTimers();
     try {
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -91,9 +95,38 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       document.body.appendChild(host);
       await act(async () => { createRoot(host).render(<App />); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载 fetch，换回合 effect 起 autoOpen 定时器
-      expect(host.querySelector(".secret-orders-modal, [aria-label='密令']")).toBeNull();  // 未到点
+      expect(secretDialog(host)).toBeNull();                             // 未到点：真实对话框未开
       await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 400ms 到点、仍最新代次 → open()
-      expect(host.textContent).toContain("密令");                         // 密令模态已弹（协调器定时器 fire）
+      expect(secretDialog(host)).not.toBeNull();                         // 密令进度对话框已弹（协调器定时器 fire）
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("延迟呈现负路：定时器计时中经真实变更(删草案)推进代次→陈旧定时器 no-op，密令进度不弹", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/api/directives/1") && init?.method === "DELETE") return jsonResp({ directives: [] });
+        if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+        if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [{ id: 1, title: "密", content: "", status: "active", minister_name: "", year_issued: 1627, period_issued: 10 }] });
+        if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+        if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [directive()]));
+        return jsonResp({});
+      }));
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      await act(async () => { createRoot(host).render(<App />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // 冲刷挂载：autoOpen 400ms 定时器已排程（尚未到点）
+      expect(secretDialog(host)).toBeNull();
+
+      // 计时期间执行一次真实变更（删草案）：deleteDirective 调 beginDurableMutation 推进代次
+      await act(async () => { (findButton(host, "拟诏/结束回合"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { (findButton(host, "删"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // DELETE 完成、代次已推进
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); }); // 定时器到点但陈旧 → no-op
+      expect(secretDialog(host)).toBeNull();                             // 密令进度对话框未弹（已作废窗不弹）
     } finally { vi.useRealTimers(); }
   });
 
