@@ -4525,7 +4525,13 @@ class GameDB:
         )["office_type"]
         if not current_type:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
-        eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
+        # 显式声明的名分（office_type ∈ PERSON_TITLE_KINDS）是权威身份，office 文本反推不得
+        # 覆盖它（例 office='诸生'→infer 改写成 '生员'，令名分守卫失效，#1059 codex 同源）；
+        # office_type 留空回落 current_type 时仍照常重推（授实职即脱名分，不短路）。
+        if office_type in PERSON_TITLE_KINDS:
+            eff_type = office_type
+        else:
+            eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
         is_person_title = eff_type in PERSON_TITLE_KINDS
         if not is_person_title:
             self._ensure_office_type_parent(eff_type)
@@ -4754,11 +4760,15 @@ class GameDB:
         if existing is not None:
             return
         character.office = normalize_office(character.office)
-        character.office_type = infer_office_type_from_office(
-            character.office,
-            character.office_type,
-            llm_config or self.llm_config,
-        )
+        # 显式声明的名分（PERSON_TITLE_KINDS）是权威身份，office 文本反推不得覆盖它：
+        # 例 office='诸生'（亦为 offices.json 生员词干）会被 infer 改写成 '生员'，令下方
+        # 名分守卫失效、误建 offices 父行并写 character_offices 脏行（#1059 codex）。
+        if character.office_type not in PERSON_TITLE_KINDS:
+            character.office_type = infer_office_type_from_office(
+                character.office,
+                character.office_type,
+                llm_config or self.llm_config,
+            )
         # person-title 名分不入官职体系（镜像 set_character_office 守卫）：仅非名分才
         # 建 offices 父行——否则 #1056 严格官类校验对名分直接 ValueError 中止结算。
         if character.office_type not in PERSON_TITLE_KINDS:
