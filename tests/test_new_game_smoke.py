@@ -6,12 +6,14 @@ restore 接续。含 #66 省级财政基座 shadow 推进的真实链路验证�
 """
 import json
 import os
+import sqlite3
 import tempfile
 
 import pytest
 
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
+from ming_sim.db import GameDB
 import ming_sim.issues as issues_mod
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession
@@ -86,6 +88,49 @@ def test_unknown_office_type_fails_without_synthesizing_parent(fresh_game_dir):
     assert sess.db.conn.execute(
         "SELECT 1 FROM offices WHERE office_type='__unknown_office_1026__'"
     ).fetchone() is None
+
+
+def test_person_title_kind_does_not_materialize_office_parent(fresh_game_dir):
+    sess, _dbp, _content = fresh_game_dir
+    minister = sess.db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' LIMIT 1"
+    ).fetchone()[0]
+    sess.db.set_character_office(minister, "降臣", "身名分")
+    assert sess.db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert sess.db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (minister,)
+    ).fetchone() is None
+
+
+def test_existing_office_fk_violation_is_normalized_on_reopen(fresh_game_dir):
+    sess, dbp, content = fresh_game_dir
+    character = sess.db.conn.execute(
+        "SELECT name, office_type FROM characters ORDER BY name LIMIT 1"
+    ).fetchone()
+    sess.close()
+    raw = sqlite3.connect(dbp)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    raw.execute(
+        "UPDATE character_offices SET office_type='__stale_office_1026__' "
+        "WHERE character_name=?",
+        (character["name"],),
+    )
+    raw.commit()
+    raw.close()
+
+    reopened = GameDB(dbp, content=content)
+    try:
+        office = reopened.conn.execute(
+            "SELECT office_type FROM character_offices WHERE character_name=?",
+            (character["name"],),
+        ).fetchone()
+        assert office["office_type"] == character["office_type"]
+        assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert reopened.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        reopened.close()
 
 
 def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_dir):
