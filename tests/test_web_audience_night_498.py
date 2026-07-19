@@ -67,11 +67,11 @@ class _FakeAgent:
 
 
 def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清。", delta=None):
-    """只 fake 月末推演的 simulator/extractor LLM 种子；resolve_directives 结算核真跑。"""
+    """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
+    build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
-    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", lambda *a, **k: "")
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno",
@@ -156,37 +156,60 @@ async def _start_hanging_chat(game, client, minister):
     return task, allow
 
 
-# ── ① AC8/AC10 happy：真实 /chat/stream SSE → /decree/issue/stream SSE（结算核真跑）──
-def test_asgi_completed_chat_then_issue_advances_and_closes(web_game, monkeypatch):
+# ── ① AC10 成功等待分支：在飞时触发颁诏 → 回话在超时内落档 → 收夜后颁诏、推进回合 ──
+def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monkeypatch):
+    """AC10「回话完成入档后才收夜再颁诏」：颁诏在真实在飞等待中观测到 generating 轮，
+    回话在正超时内落档→在飞清空→颁诏续跑收夜、真实结算核推进回合。"""
     game = web_game
     minister = _active_minister(game)
-    game.session.registry.get = lambda ch: _FakeAgent()
     _fake_settlement_llm(monkeypatch)
+    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 5.0)  # 正超时
     turn_before = int(game.state.turn)
 
+    # 入口栅栏：只在颁诏 worker 进入真实在飞等待时置信号，随后原样委派（不改行为、不断结构）。
+    entered_wait = threading.Event()
+    real_wait = an.wait_in_flight_clear
+
+    def signal_then_wait(*args, **kwargs):
+        entered_wait.set()
+        return real_wait(*args, **kwargs)
+
+    monkeypatch.setattr("ming_sim.audience_night.wait_in_flight_clear", signal_then_wait)
+
     async def scenario():
-        async with _client() as client:
-            chat_resp = await client.post(
-                f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"})
-            chat_events = _parse_sse(chat_resp.text)
-            # 待颁诏有候选（issue 的 default-agree 会提交为 draft）
+        async with _client() as chat_client, _client() as issue_client:
+            chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
+            night = an.get_open_night(game.db)
+            # 持久化行确认在飞
+            row0 = game.db.conn.execute(
+                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()
+            assert row0["status"] == "generating"
+            # 待颁诏有候选
             game.db.upsert_pending_directive(
                 game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
-            issue_resp = await client.post("/api/decree/issue/stream", json={})
-            return chat_events, _parse_sse(issue_resp.text)
 
-    chat_events, issue_events = asyncio.run(scenario())
+            issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
+            await _await_event(entered_wait)  # 颁诏已进入真实在飞等待（观测到 generating）
+            allow.set()                        # 正超时内放行 → 回话落档 → 在飞清空
+
+            chat_resp = await chat_task
+            issue_resp = await issue_task
+            return night, _parse_sse(chat_resp.text), _parse_sse(issue_resp.text)
+
+    night, chat_events, issue_events = asyncio.run(scenario())
 
     assert chat_events[-1]["event"] == "done"
-    # 回话真实入档
+    # 回话真实入档 + 对话轮升 active
     assert game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM chat_messages WHERE minister_name=? AND role='minister'",
         (minister,)).fetchone()["c"] == 1
-    # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化到 DB
+    assert game.db.conn.execute(
+        "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "active"
+    # 颁诏成功（done）+ 真实结算核：收夜封夜 + 推进回合 + 持久化
     assert issue_events[-1]["event"] == "done"
-    assert an.get_night(game.db, 1)["status"] == "closed"
+    assert an.get_night(game.db, night["id"])["status"] == "closed"
     assert int(game.state.turn) == turn_before + 1
-    assert int(game.db.load_state().turn) == turn_before + 1  # 持久化
+    assert int(game.db.load_state().turn) == turn_before + 1
 
 
 # ── ② AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
