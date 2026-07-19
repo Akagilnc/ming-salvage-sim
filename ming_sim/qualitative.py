@@ -30,14 +30,19 @@ INTRIGUE_QUALITATIVE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表�
 def qualitative_character_axes(character: object) -> Mapping[str, str]:
     """Project all available character axes for player-facing LLM inputs."""
     projected = {
-        CHARACTER_AXIS_LABELS[field]: qualitative_band(
-            getattr(character, field), CHARACTER_QUALITATIVE_BANDS[field]
+        CHARACTER_AXIS_LABELS[field]: qualitative_character_axis(
+            field, getattr(character, field)
         )
         for field in CHARACTER_QUALITATIVE_BANDS
     }
     projected["党派认同"] = identity_band(getattr(character, "identity"))
     projected["阴谋"] = INTRIGUE_QUALITATIVE_PLACEHOLDER
     return projected
+
+
+def qualitative_character_axis(field: str, value: object) -> str:
+    """Project one character score through the canonical ADR 0122 bands."""
+    return qualitative_band(value, CHARACTER_QUALITATIVE_BANDS[field])
 
 
 # 历史邸报/章节正文是 LLM 产物，不能假定它已经遵守 P4。只拦截
