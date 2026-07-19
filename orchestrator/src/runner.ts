@@ -55,6 +55,13 @@ import {
 import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  emitExitProgress,
+  emitJudgeProgress,
+  getProgressBroadcastConfig,
+} from "./progressBroadcast.js";
+import {
   withMechanicalRetry,
   type MechanicalRetryOptions,
 } from "./dispatchRetry.js";
@@ -75,6 +82,7 @@ import {
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
   relaySlotForSingleSliceWallStep,
+  applyRelayBatonToRoute,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
@@ -1436,19 +1444,83 @@ function latestLedgerStopSummary(
   return undefined;
 }
 
+/** #1019 — family may redispatch past a durable terminal (not completed / corrupt). */
+function familyMayRedispatchTerminal(
+  input: Pick<RunInput, "family" | "familyEscalationAnswer">,
+  plan: {
+    readonly terminalStatus?: "completed" | "parked" | "failed";
+    readonly terminalCause?: string;
+  },
+): boolean {
+  if (input.family === undefined) return false;
+  if (plan.terminalStatus === undefined || plan.terminalStatus === "completed") {
+    return false;
+  }
+  if (plan.terminalCause === "resume_state_invalid") return false;
+  // Failed children always redispatch inside a family run.
+  if (plan.terminalStatus === "failed") return true;
+  // Parked / failed with a family-carried answer: skip terminal replay.
+  return input.familyEscalationAnswer !== undefined;
+}
+
+/** #1019 — map family answer cargo into a dispatch EscalationAnswerEvent. */
+function familyAnswerToEscalationEvent(
+  answer: NonNullable<RunInput["familyEscalationAnswer"]>,
+  fallbackStep: SliceStepId = "S2",
+): EscalationAnswerEvent {
+  return {
+    event: "escalation_answered",
+    answer: answer.answer,
+    source: answer.source ?? "human",
+    forStep: (answer.forStep ?? fallbackStep) as SliceStepId,
+    ...(answer.note !== undefined ? { note: answer.note } : {}),
+    ...(answer.sessionId !== undefined ? { sessionId: answer.sessionId } : {}),
+  };
+}
+
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
     input.now !== undefined ? input.now() : new Date();
 
+  // #1007 / #1017: process progress feed is one-invocation-owned.
+  // Standalone clears any prior same-process family binding so this run rebinds
+  // to its own stateDir. Family children (input.family set) inherit the family
+  // ledger already configured by runFamily / familyDriver — never overwrite.
+  if (input.family === undefined) {
+    clearProgressBroadcastConfig();
+  }
+
   // #936 / #934 ID-005: Scene Recovery first — resident discovery before
   // admission network work when a durable scene may already exist.
   const scene = await discoverResidentScene(backend, issueNumber);
+  // #1007: bind progress feed as soon as resident stateDir is known so early
+  // terminal/fail exits can dual-write this invocation's progress.jsonl.
+  {
+    const existing = getProgressBroadcastConfig();
+    if (existing.ledgerDir === undefined && scene.kind === "resident") {
+      const residentStateDir = scene.state.stateDir;
+      if (
+        typeof residentStateDir === "string" &&
+        residentStateDir.length > 0
+      ) {
+        configureProgressBroadcast({ ledgerDir: residentStateDir });
+      }
+    }
+  }
   if (scene.kind === "corrupted") {
     const reason = scene.reason;
     const stopSummary = infraFailureStopSummary({
       summary: reason,
       repairHint: "repair or clear the resident worksite/ledger before re-entry",
+    });
+    // #1007: startup fail before shared helpers — dual-write terminal (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
     });
     return failedRunResult({
       cause: "resume_state_invalid",
@@ -1463,47 +1535,70 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // finished completed/failed/parked terminal (zero meta/smoke).
   // Skip early short-circuit when a repairIntent is present — that path must
   // still durable-write the intent (and surface write failures) before planResume.
+  // #1019: inside a family run, prior S8(failed) is NOT terminal-replayed —
+  // unmerged children may redispatch (failure history stays on the ledger).
+  // familyEscalationAnswer also skips early parked/failed replay so a dead
+  // session can fresh-redispatch with the answer. resume_state_invalid still
+  // fails closed (corrupt residue).
   if (scene.kind === "resident" && input.repairIntent === undefined) {
     const earlyPlan = planResume(scene.state.ledger);
     if (earlyPlan.terminalStatus !== undefined) {
-      const worktree = scene.state.worktree;
-      const ledger = earlyPlan.priorLedger;
-      if (earlyPlan.terminalStatus === "failed") {
-        const reason =
-          earlyPlan.terminalCause === "resume_state_invalid"
-            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
-            : "prior run terminated with a failed handoff (re-fed after completion)";
-        const errorPackage: ErrorPackage = {
-          failedStep: lastAgentStep(ledger) ?? "S8",
-          reason,
-          branchHead: worktree.branch,
-        };
-        const stopSummary =
-          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return failedRunResult({
-          cause: earlyPlan.terminalCause ?? "runner_internal_error",
-          errorPackage,
+      if (!familyMayRedispatchTerminal(input, earlyPlan)) {
+        const worktree = scene.state.worktree;
+        const ledger = earlyPlan.priorLedger;
+        if (earlyPlan.terminalStatus === "failed") {
+          const reason =
+            earlyPlan.terminalCause === "resume_state_invalid"
+              ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+              : "prior run terminated with a failed handoff (re-fed after completion)";
+          const errorPackage: ErrorPackage = {
+            failedStep: lastAgentStep(ledger) ?? "S8",
+            reason,
+            branchHead: worktree.branch,
+          };
+          const stopSummary =
+            latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+          // #1007: durable terminal replay must self-describe this invocation's feed.
+          emitExitProgress({
+            issue: issueNumber,
+            step: "S8",
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
+          });
+          return failedRunResult({
+            cause: earlyPlan.terminalCause ?? "runner_internal_error",
+            errorPackage,
+            stepLedger: ledger,
+            stopSummary,
+          });
+        }
+        const stopSummary: StopSummary =
+          earlyPlan.terminalStatus === "completed"
+            ? {
+                reason: "already_done",
+                summary: "prior run already reached a completed handoff",
+              }
+            : latestLedgerStopSummary(ledger) ?? {
+                reason: "spec_conflict",
+                summary: "prior run is paused at an unanswered escalation",
+                repairHint: "answer the escalation and rerun",
+              };
+        // #1007: durable completed/parked replay — emit terminal (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: earlyPlan.terminalStatus,
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return {
+          status: earlyPlan.terminalStatus,
+          branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
           stepLedger: ledger,
           stopSummary,
-        });
+        };
       }
-      const stopSummary: StopSummary =
-        earlyPlan.terminalStatus === "completed"
-          ? {
-              reason: "already_done",
-              summary: "prior run already reached a completed handoff",
-            }
-          : latestLedgerStopSummary(ledger) ?? {
-              reason: "spec_conflict",
-              summary: "prior run is paused at an unanswered escalation",
-              repairHint: "answer the escalation and rerun",
-            };
-      return {
-        status: earlyPlan.terminalStatus,
-        branch: earlyPlan.terminalStatus === "completed" ? worktree.branch : undefined,
-        stepLedger: ledger,
-        stopSummary,
-      };
     }
   }
 
@@ -1519,6 +1614,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       : /coder-rec|coder_rec/i.test(admitted.escalation.reason)
         ? "coder_rec_invalid"
         : "route_config_invalid";
+    // #1007: startup route fail before shared helpers — dual-write terminal.
+    emitExitProgress({
+      issue: issueNumber,
+      step: "S0",
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage: {
@@ -1664,9 +1767,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
-    // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
+    // #926 / #1002: judge-advanced repair seat holds against Coder-Rec
+    // withCoderSlot dual-rewrite of coderFix. Implement seat (coder) stays.
     if (stickyJudgeAdvanceCoderSlug !== undefined) {
-      return holdCoderSticky(stickyJudgeAdvanceCoderSlug);
+      if (modelRoute.slots.coderFix !== stickyJudgeAdvanceCoderSlug) {
+        const admitted = admitRelayBaton(
+          modelRoute,
+          { slug: stickyJudgeAdvanceCoderSlug },
+          "S5",
+        );
+        if (admitted.kind === "stop") return admitted;
+        modelRoute = admitted.route;
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
+      }
+      return undefined;
     }
     // #936: Admission Action owns Coder-Rec + tight re-check (no env skip).
     const admittedRec = admitCoderRec(modelRoute, coderRecIssueBody);
@@ -1729,6 +1852,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       /route/i.test(escalation.reason)
         ? "route_config_invalid"
         : "coder_rec_invalid";
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage: {
@@ -1793,20 +1923,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   /**
-   * #926 / #919 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
-   * Shared topology via {@link executeAdvanceCoderSuggestion}; this court only
-   * owns bookkeeping + sticky state. Never terminals for roster unusability.
+   * #926 / #919 / #1002 — execute a judge `advanceCoder` suggestion (or stay-put
+   * + audit). Shared topology via {@link executeAdvanceCoderSuggestion}; this
+   * court only owns bookkeeping + sticky state. Never terminals for roster
+   * unusability. #1002 07-18: rewrite **coderFix** repair seat only (S2 already
+   * delivered; rewriting coder is unreachable speculative generality).
    */
   const applyJudgeAdvanceCoder = async (
     suggestion: string,
     forStep: "S3" | "S6",
   ): Promise<void> => {
-    const currentSlug = modelRoute.slots.coder;
+    const currentSlug = modelRoute.slots.coderFix;
     const effect = await executeAdvanceCoderSuggestion({
       suggestion,
       currentSlug,
       route: modelRoute,
-      applySlug: (route, slug) => withCoderSlot(route, slug),
+      applySlug: (route, slug) =>
+        applyRelayBatonToRoute(route, { slug }, "S5", { slots: ["coderFix"] }),
       probe: probeRouteSmoke,
     });
 
@@ -1830,18 +1963,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    // advanced — hold sticky seat; retire prior coder session; follow billing pool.
+    // advanced — hold sticky repair seat; retire prior coder session (S5 model
+    // changed); billing pool follows the repair seat.
     modelRoute = effect.route;
     stickyJudgeAdvanceCoderSlug = effect.toSlug;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Candidate already smoked — skip the next ensureRouteSmoke gate.
     routeSmokeChecked = true;
-    // New coder: fresh session (memory = worktree git history + ledger only).
+    // New repair seat: fresh session (cannot resume across model change).
     coderSessionId = undefined;
     coderSessionModel = undefined;
-    // Billing pool follows the new seat (same as Coder-Rec slot change).
     currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coder),
+      poolForModelRef(modelRoute.slots.coderFix),
     );
 
     await persistAdvanceBookkeeping(
@@ -2429,6 +2562,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       (reason.startsWith("record_persist_failed")
         ? "record_persist_failed"
         : "runner_internal_error");
+    // #1007: shared terminal helper emits progress (fail-open).
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedRunResult({
       cause,
       errorPackage,
@@ -2495,6 +2636,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       reason: `${failedStep} worker escalated: ${escalation.reason} — ${escalation.diagnosis}`,
       branchHead: worktree?.branch,
     };
+    // #1007: decision escalate → park+terminal (notify via park); failure → terminal.
+    // Shared helper so every escalateTermination consumer dual-writes progress.
+    emitExitProgress({
+      issue: issueNumber,
+      step: failedStep,
+      status: publicStatus,
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary ?? escalation.diagnosis ?? escalation.reason,
+    });
     if (publicStatus === "failed") {
       return failedRunResult({
         cause: "runner_internal_error",
@@ -2517,7 +2667,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
   // (resume truth), reuse the worktree, and continue from the recorded
   // breakpoint — no re-cut from S0, no re-running done steps.
-  logDriverStage("reconcile", `issue #${issueNumber}`);
+  logDriverStage("reconcile", undefined, { issue: issueNumber });
+  // #1007: progress feed already bound at scene recovery when resident stateDir
+  // was known; S1 still binds after prepareWorktree for fresh runs.
   let resumeState: ResumeState | undefined =
     scene.kind === "resident" ? scene.state : undefined;
   const recordedRouteDegradations = new Set(
@@ -2545,7 +2697,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let resumeFor:
     | { step: SliceStepId; sessionId: string; sessionModel?: string }
     | undefined;
-  let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
+  // #1019: family fresh redispatch may carry the human answer before any
+  // planResume inject; plan.escalationAnswer overwrites this when present.
+  let resumedEscalationAnswer: EscalationAnswerEvent | undefined =
+    input.familyEscalationAnswer !== undefined
+      ? familyAnswerToEscalationEvent(input.familyEscalationAnswer)
+      : undefined;
   // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
   let resumeMonitorHandle:
     | import("./types.js").WorkerMonitorHandle
@@ -2555,18 +2712,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let dispatchStageLogged = false;
 
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
-    if (typeof backend.smokeModelRoute !== "function") {
-      const reason =
-        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute";
+    const smokeFailed = (reason: string): RunResult => {
+      const stopSummary = infraFailureStopSummary({
+        summary: reason,
+        repairHint:
+          reason.includes("did not provide smokeModelRoute")
+            ? "provide a real model×pipe smoke executor before dispatching workers"
+            : reason.startsWith("route smoke failed:")
+              ? "repair the selected model×pipe tool smoke before dispatching workers"
+              : "rerun the route smoke or repair the selected model×pipe",
+      });
+      // #1007: smoke/startup fail — dual-write terminal (fail-open).
+      emitExitProgress({
+        issue: issueNumber,
+        step: "S0",
+        status: "failed",
+        stopReason: stopSummary.reason,
+        gateSummary: stopSummary.summary,
+      });
       return failedRunResult({
         cause: "route_smoke_failed",
         errorPackage: { failedStep: "S0", reason },
         stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: reason,
-          repairHint: "provide a real model×pipe smoke executor before dispatching workers",
-        }),
+        stopSummary,
       });
+    };
+    if (typeof backend.smokeModelRoute !== "function") {
+      return smokeFailed(
+        "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      );
     }
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
@@ -2587,15 +2761,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return failedRunResult({
-        cause: "route_smoke_failed",
-        errorPackage: { failedStep: "S0", reason: `route smoke failed: ${reason}` },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: `route smoke failed: ${reason}`,
-          repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
-        }),
-      });
+      return smokeFailed(`route smoke failed: ${reason}`);
     }
     const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
     modelRoute = degradation.route;
@@ -2606,15 +2772,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions,
     );
     if (smokeFailure !== undefined) {
-      return failedRunResult({
-        cause: "route_smoke_failed",
-        errorPackage: { failedStep: "S0", reason: smokeFailure },
-        stepLedger: [],
-        stopSummary: infraFailureStopSummary({
-          summary: smokeFailure,
-          repairHint: "rerun the route smoke or repair the selected model×pipe",
-        }),
-      });
+      return smokeFailed(smokeFailure);
     }
     for (const dropped of degradation.dropped) {
       console.error(
@@ -2747,40 +2905,48 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #955 r7: only real agent dispatch rows — bookkeeping/audit events
     // (session_continuity_lost, worker_monitor_spawned, …) also carry step +
     // sessionId but must not resurrect a dropped id after r5 identity loss.
-    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-      const entry = plan.priorLedger[i]!;
-      if (isBookkeepingEntry(entry)) continue;
-      if (
-        (entry.step === "S2" || entry.step === "S5") &&
-        typeof entry.sessionId === "string"
-      ) {
-        coderSessionId = entry.sessionId;
-        coderSessionModel =
-          typeof entry.modelSlug === "string"
-            ? entry.modelSlug
-            : entry.step === "S5"
-              ? stepSpecs.S5.model
-              : stepSpecs.S2.model;
-        break;
+    // #1019: family redispatch must NOT revive a dead session lineage from a
+    // prior terminal — force a fresh worker session (history stays).
+    const familyRedispatch = familyMayRedispatchTerminal(input, plan);
+    if (!familyRedispatch) {
+      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+        const entry = plan.priorLedger[i]!;
+        if (isBookkeepingEntry(entry)) continue;
+        if (
+          (entry.step === "S2" || entry.step === "S5") &&
+          typeof entry.sessionId === "string"
+        ) {
+          coderSessionId = entry.sessionId;
+          coderSessionModel =
+            typeof entry.modelSlug === "string"
+              ? entry.modelSlug
+              : entry.step === "S5"
+                ? stepSpecs.S5.model
+                : stepSpecs.S2.model;
+          break;
+        }
       }
     }
     // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
     // #955 r7: same bookkeeping exclusion as coder rebuild above.
-    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-      const entry = plan.priorLedger[i]!;
-      if (isBookkeepingEntry(entry)) continue;
-      if (
-        isJudgeSeat({ step: entry.step }) &&
-        typeof entry.sessionId === "string"
-      ) {
-        judgeSessionId = entry.sessionId;
-        judgeSessionModel =
-          typeof entry.modelSlug === "string"
-            ? entry.modelSlug
-            : entry.step === "S6"
-              ? stepSpecs.S6.model
-              : stepSpecs.S3.model;
-        break;
+    // #1019: same fresh-session rule as coder on family redispatch.
+    if (!familyRedispatch) {
+      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+        const entry = plan.priorLedger[i]!;
+        if (isBookkeepingEntry(entry)) continue;
+        if (
+          isJudgeSeat({ step: entry.step }) &&
+          typeof entry.sessionId === "string"
+        ) {
+          judgeSessionId = entry.sessionId;
+          judgeSessionModel =
+            typeof entry.modelSlug === "string"
+              ? entry.modelSlug
+              : entry.step === "S6"
+                ? stepSpecs.S6.model
+                : stepSpecs.S3.model;
+          break;
+        }
       }
     }
 
@@ -2791,44 +2957,78 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // an already-finished run's reported status). Report the
       // TRUE public terminal status (completed | parked | failed), never a
       // hardcoded completed (#255/#942: a prior failed/parked must not masquerade).
-      if (plan.terminalStatus === "failed") {
-        const reason =
-          plan.terminalCause === "resume_state_invalid"
-            ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
-            : "prior run terminated with a failed handoff (re-fed after completion)";
-        const errorPackage: ErrorPackage = {
-          failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
-          reason,
-          branchHead: worktree.branch,
-        };
-        const stopSummary =
-          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
-        return failedRunResult({
-          cause: plan.terminalCause ?? "runner_internal_error",
-          errorPackage,
+      //
+      // #1019: family children redispatch prior S8(failed) productively (keep
+      // failure history). resume_state_invalid still fails closed.
+      if (!familyMayRedispatchTerminal(input, plan)) {
+        if (plan.terminalStatus === "failed") {
+          const reason =
+            plan.terminalCause === "resume_state_invalid"
+              ? "prior durable handoff used a non-current public status token (fail-closed, no dual-read)"
+              : "prior run terminated with a failed handoff (re-fed after completion)";
+          const errorPackage: ErrorPackage = {
+            failedStep: lastAgentStep(plan.priorLedger) ?? "S8",
+            reason,
+            branchHead: worktree.branch,
+          };
+          const stopSummary =
+            latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+          // #1007: late durable terminal replay (e.g. repairIntent path) still emits.
+          emitExitProgress({
+            issue: issueNumber,
+            step: "S8",
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
+          });
+          return failedRunResult({
+            cause: plan.terminalCause ?? "runner_internal_error",
+            errorPackage,
+            stepLedger: ledger,
+            stopSummary,
+          });
+        }
+        const stopSummary: StopSummary =
+          plan.terminalStatus === "completed"
+            ? {
+                reason: "already_done",
+                summary: "prior run already reached a completed handoff",
+              }
+            : latestLedgerStopSummary(ledger) ?? {
+                reason: "spec_conflict",
+                summary: "prior run is paused at an unanswered escalation",
+                repairHint: "answer the escalation and rerun",
+              };
+        // #1007: late durable completed/parked replay — emit terminal (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: plan.terminalStatus,
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return {
+          status: plan.terminalStatus,
+          branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
           stepLedger: ledger,
           stopSummary,
-        });
+        };
       }
-      const stopSummary: StopSummary =
-        plan.terminalStatus === "completed"
-          ? {
-              reason: "already_done",
-              summary: "prior run already reached a completed handoff",
-            }
-          : latestLedgerStopSummary(ledger) ?? {
-              reason: "spec_conflict",
-              summary: "prior run is paused at an unanswered escalation",
-              repairHint: "answer the escalation and rerun",
-            };
-      return {
-        status: plan.terminalStatus,
-        branch: plan.terminalStatus === "completed" ? worktree.branch : undefined,
-        stepLedger: ledger,
-        stopSummary,
-      };
-    }
-
+      // Family failed / answer redispatch: re-enter last non-terminal step with a
+      // FRESH session (keep committed worktree + full ledger history). Dead prior
+      // sessions are not resumed; answer cargo rides familyEscalationAnswer.
+      step =
+        lastNonTerminalStep(
+          plan.priorLedger as ReadonlyArray<PersistentLedgerEntry>,
+        ) ?? "S0";
+      resumeFor = undefined;
+      if (input.familyEscalationAnswer !== undefined) {
+        resumedEscalationAnswer = familyAnswerToEscalationEvent(
+          input.familyEscalationAnswer,
+          isValidStepId(step) ? step : "S2",
+        );
+      }
+    } else {
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
     // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
     // commits + baton state are the payload. Relay state is read from the
@@ -2848,7 +3048,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           : {}),
       };
     }
-    resumedEscalationAnswer = plan.escalationAnswer;
+    resumedEscalationAnswer =
+      plan.escalationAnswer ?? resumedEscalationAnswer;
+    }
     // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
     // into S5 landing only. Runner still does not filter blockingFindings.
     const repairScope = plan.continueFixingRepair?.event.findingScope;
@@ -2885,18 +3087,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
 
-    // #926 — rebuild judge-advanced sticky seat from the latest successful
-    // coder_advance row (before resource-relay, which still wins when present).
-    // #934 R7 F3: re-admit tight after sticky re-hold.
+    // #926 / #1002 — rebuild judge-advanced sticky **coderFix** seat from the
+    // latest successful coder_advance row (before resource-relay, which still
+    // wins when present). #934 R7 F3: re-admit tight after sticky re-hold.
     for (let i = resumeLedger.length - 1; i >= 0; i--) {
       const row = resumeLedger[i]!;
       if (row.event === "coder_advance" && typeof row.toModelId === "string") {
         const advanced = lookupCoderRosterEntry(row.toModelId);
         const slug = advanced?.slug ?? row.toModelId;
         stickyJudgeAdvanceCoderSlug = slug;
-        const held = holdCoderSticky(slug);
-        if (held?.kind === "stop") {
-          return await stopForCoderRecTightRoutePolicy(held.escalation);
+        if (modelRoute.slots.coderFix !== slug) {
+          const admitted = admitRelayBaton(modelRoute, { slug }, "S5");
+          if (admitted.kind === "stop") {
+            return await stopForCoderRecTightRoutePolicy(admitted.escalation);
+          }
+          modelRoute = admitted.route;
+          stepSpecs = stepSpecsForRoute(modelRoute);
+          routeSmokeChecked = false;
         }
         break;
       }
@@ -2978,7 +3185,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         let meta: IssueMeta;
         try {
           // #884: admission = S0 input gate / live issue metadata fetch.
-          logDriverStage("admission", `issue #${issueNumber}`);
+          logDriverStage("admission", undefined, {
+            issue: issueNumber,
+          });
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
           // #934 ID-003: GitHub auth needs external human login → typed decision
@@ -3093,6 +3302,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Fix the stateDir to be a true sibling of the worktree root (#249) as
         // soon as the worktree exists so later error terminations persist.
         stateDir = deriveStateDir(worktree.path, issueNumber);
+        // #1007: bind progress feed to child ledger when family has not already.
+        {
+          const existing = getProgressBroadcastConfig();
+          if (existing.ledgerDir === undefined) {
+            configureProgressBroadcast({ ledgerDir: stateDir });
+          }
+        }
         break;
       }
 
@@ -3106,10 +3322,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // #924: S2 establishes a coder session; S5 rounds resume it (same
         // model). #925: S3 establishes a judge session; S6 rounds resume it.
         // Crash/escalate `resumeFor` still wins when set.
-        if (!dispatchStageLogged) {
-          logDriverStage("dispatch", `step=${step}`);
-          dispatchStageLogged = true;
-        }
+        // #1007 / #975 ④: every productive step gets an issue-numbered stage line
+        // (and progress.jsonl row when feed is configured). First entry also
+        // flips dispatchStageLogged for any callers that still gate on it.
+        logDriverStage("dispatch", `step=${step}`, {
+          issue: issueNumber,
+          step,
+        });
+        dispatchStageLogged = true;
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
@@ -3564,6 +3784,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   resolveBranchHEAD,
                   hashPrompt: (promptFile, s) =>
                     hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
                 });
               } catch (writeErr) {
                 return await errorTermination(
@@ -3629,6 +3850,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   resolveBranchHEAD,
                   hashPrompt: (promptFile, s) =>
                     hashPrompt(promptFile, s, backend),
+                  issue: issueNumber,
                 });
               } catch (writeErr) {
                 return await errorTermination(
@@ -3664,6 +3886,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   true,
                 ),
                 now: relayNow(),
+                issue: issueNumber,
               });
             } catch (writeErr) {
               return await errorTermination(
@@ -3818,6 +4041,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
+        // #1007 AC1: always echo typed judge tri-state (including escalate) so
+        // latest verdict/counts are on the feed. Park/terminal alone do not fill
+        // AC1. Open-set projection stays gated on !carriesEscalate below.
+        if (isJudgeSeat({ step }) && output?.kind === "judge") {
+          const judgeRound =
+            ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
+          emitJudgeProgress({
+            issue: issueNumber,
+            step,
+            round: judgeRound,
+            verdict: output.status,
+            findingDispositions: output.findingDispositions,
+            findings: output.findings,
+            cargoPointer:
+              typeof output.fixPacketBody === "string" &&
+              output.fixPacketBody.length > 0
+                ? `ledger://issue-${issueNumber}/${step}/fixPacketBody`
+                : null,
+          });
+        }
         if (!carriesEscalate) {
           // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
           // Production role is always "verify" on those seats; expectedKind OR
@@ -4167,6 +4410,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           undefined,
           stopSummary,
         );
+        // #1007: S8 handoff persist fail — dual-write terminal (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step: "S8",
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
         return failedRunResult({
           cause: "record_persist_failed",
           errorPackage,
@@ -4184,6 +4435,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason,
           branchHead: worktree?.branch,
         };
+        // #1007: terminal broadcast via shared dual-write helper (fail-open).
+        emitExitProgress({
+          issue: issueNumber,
+          step,
+          status: "failed",
+          stopReason: handoffStopSummary.reason,
+          gateSummary: handoffStopSummary.summary,
+        });
         return failedRunResult({
           cause: "runner_internal_error",
           errorPackage,
@@ -4191,6 +4450,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stopSummary: handoffStopSummary,
         });
       }
+
+      // #1007: park / completed terminal echo (typed stop reason only).
+      emitExitProgress({
+        issue: issueNumber,
+        step,
+        status: decision.status,
+        stopReason: handoffStopSummary.reason,
+        gateSummary: handoffStopSummary.summary,
+      });
 
       return {
         status: decision.status,

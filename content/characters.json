@@ -68,7 +68,12 @@
       "birth_year": 1559,
       "historical_death_year": 1637,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "张瑞图",
@@ -94,7 +99,12 @@
       "birth_year": 1570,
       "historical_death_year": 1641,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 45,
+      "seed_guilt": {
+        "crime": "内阁大学士,为魏生祠书匾书额、党附(无血债)",
+        "severity": "轻"
+      }
     },
     {
       "name": "来宗道",
@@ -119,7 +129,12 @@
       "birth_year": 1560,
       "historical_death_year": 1632,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 45,
+      "seed_guilt": {
+        "crime": "礼书东阁大学士,附逆阁臣、署名颂功、不能谏阻(无血债)",
+        "severity": "轻"
+      }
     },
     {
       "name": "施凤来",
@@ -145,7 +160,12 @@
       "birth_year": 1563,
       "historical_death_year": 1642,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 45,
+      "seed_guilt": {
+        "crime": "内阁次辅,庸附取容、阁中阿附、不能谏阻(无血债)",
+        "severity": "轻"
+      }
     },
     {
       "name": "黄立极",
@@ -171,7 +191,12 @@
       "birth_year": 1568,
       "historical_death_year": 1637,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "内阁首辅,魏当国时首揆、票拟多顺魏意、署颂(身为首辅而附逆,但无直接血债故仍列五等)",
+        "severity": "中"
+      }
     },
     {
       "name": "王绍徽",
@@ -197,7 +222,12 @@
       "birth_year": 1564,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 80,
+      "seed_guilt": {
+        "crime": "吏部尚书,作《东林点将录》献魏以编排东林、罗织正人之具(构陷正人之罪可坐)",
+        "severity": "重"
+      }
     },
     {
       "name": "毕自严",
@@ -224,7 +254,12 @@
       "birth_year": 1569,
       "historical_death_year": 1638,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "郭允厚",
@@ -312,7 +347,12 @@
       "birth_year": 1588,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 80,
+      "seed_guilt": {
+        "crime": "无(『四正六隅十面网』主抚之争议是数年后事,不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "温体仁",
@@ -338,7 +378,12 @@
       "birth_year": 1573,
       "historical_death_year": 1638,
       "historical_death_month": 7,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 18,
+      "seed_guilt": {
+        "crime": "无(品性污点:工心计、枚卜案讦钱谦益以自进、柄国专务逢迎不引正人——《明史》列奸臣传,属品性污点非可坐之现行罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "钱龙锡",
@@ -363,7 +408,12 @@
       "birth_year": 1579,
       "historical_death_year": 1645,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 78,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "刘鸿训",
@@ -388,7 +438,12 @@
       "birth_year": 1565,
       "historical_death_year": 1634,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 72,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "钱谦益",
@@ -413,7 +468,12 @@
       "birth_year": 1582,
       "historical_death_year": 1664,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 58,
+      "seed_guilt": {
+        "crime": "枚卜之争/钱柄之议中结党营私、植党排异;科场关节(钱千秋舞弊案)之讦——属轻度污点非血债,此刻无重罪可坐",
+        "severity": "轻"
+      }
     },
     {
       "name": "李标",
@@ -438,7 +498,12 @@
       "birth_year": 1571,
       "historical_death_year": 1642,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 75,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "孙承宗",
@@ -465,7 +530,12 @@
       "birth_year": 1563,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 88,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "崔呈秀",
@@ -492,7 +562,12 @@
       "birth_year": 1584,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 98,
+      "seed_guilt": {
+        "crime": "兵书兼左都御史、五虎之首,纳贿构陷正人、为魏谋主(贪墨与构陷皆坐实)",
+        "severity": "重"
+      }
     },
     {
       "name": "王在晋",
@@ -517,7 +592,12 @@
       "birth_year": 1567,
       "historical_death_year": 1643,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 65,
+      "seed_guilt": {
+        "crime": "无(主『修筑重关』之议与孙承宗辽东战略分歧属政见之争非罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "徐光启",
@@ -543,7 +623,12 @@
       "birth_year": 1562,
       "historical_death_year": 1633,
       "historical_death_month": 10,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 90,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "李之藻",
@@ -572,7 +657,7 @@
         "crime": "",
         "severity": "无"
       },
-      "identity": 72,
+      "identity": 75,
       "status": "offstage",
       "debut_year": 1629,
       "debut_month": 0,
@@ -637,7 +722,7 @@
         "crime": "",
         "severity": "无"
       },
-      "identity": 66,
+      "identity": 72,
       "status": "offstage",
       "debut_year": 1630,
       "debut_month": 0,
@@ -651,7 +736,6 @@
       "faction": "东林",
       "aliases": [
         "袁可立",
-        "袁巡抚",
         "袁节寰"
       ],
       "personal_skills": [
@@ -667,7 +751,12 @@
       "birth_year": 1562,
       "historical_death_year": 1633,
       "historical_death_month": 10,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 86,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "周延儒",
@@ -692,7 +781,12 @@
       "birth_year": 1593,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 16,
+      "seed_guilt": {
+        "crime": "无(品性污点:投机贪权、与温体仁合谋排钱谦益——《明史》列奸臣传,属品性污点非可坐之现行罪;首辅任内贪纵赐死是后事)",
+        "severity": "无"
+      }
     },
     {
       "name": "倪元璐",
@@ -717,7 +811,12 @@
       "birth_year": 1593,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 87,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "黄道周",
@@ -743,7 +842,12 @@
       "birth_year": 1585,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 94,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曹化淳",
@@ -769,7 +873,12 @@
       "birth_year": 1589,
       "historical_death_year": 1659,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 78,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王体乾",
@@ -794,7 +903,12 @@
       "birth_year": 1571,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "司礼监掌印,名位在魏之上而实附魏、党附中枢(非血手;定案时因回护天启/张皇后获网开、未与魏同诛,减罪)",
+        "severity": "中"
+      }
     },
     {
       "name": "王承恩",
@@ -820,7 +934,12 @@
       "birth_year": 1610,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 95,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "魏忠贤",
@@ -848,7 +967,12 @@
       "birth_year": 1568,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 100,
+      "seed_guilt": {
+        "crime": "乱政矫诏、构陷东林六君子/七君子、专擅东厂缇骑、立生祠秽政(皆史载可坐实,非罗织)",
+        "severity": "重"
+      }
     },
     {
       "name": "田尔耕",
@@ -876,7 +1000,12 @@
       "birth_year": 1565,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 90,
+      "seed_guilt": {
+        "crime": "锦衣卫都督、五彪之首,缇骑酷刑、害六君子/七君子(手上有血)",
+        "severity": "重"
+      }
     },
     {
       "name": "许显纯",
@@ -901,7 +1030,12 @@
       "birth_year": 1572,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 90,
+      "seed_guilt": {
+        "crime": "北镇抚司理刑,亲手拷杀杨涟、左光斗等六君子,屈打成招(血债最直)",
+        "severity": "重"
+      }
     },
     {
       "name": "李若琏",
@@ -926,7 +1060,12 @@
       "birth_year": 1598,
       "historical_death_year": 1644,
       "historical_death_month": 3,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "客氏",
@@ -951,7 +1090,12 @@
       "birth_year": 1588,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 100,
+      "seed_guilt": {
+        "crime": "奉圣夫人与魏表里乱宫、秽乱宫闱、害皇嗣妃嫔(史载坐实)",
+        "severity": "重"
+      }
     },
     {
       "name": "袁崇焕",
@@ -960,7 +1104,6 @@
       "faction": "军队",
       "aliases": [
         "袁崇焕",
-        "袁巡抚",
         "前辽东"
       ],
       "personal_skills": [
@@ -977,7 +1120,12 @@
       "birth_year": 1584,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 80,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曹文诏",
@@ -1002,7 +1150,12 @@
       "birth_year": 1590,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 82,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "祖大寿",
@@ -1028,7 +1181,12 @@
       "birth_year": 1579,
       "historical_death_year": 1656,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 55,
+      "seed_guilt": {
+        "crime": "无(大凌河诈降、再叛、终降清皆后事,坚决不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "满桂",
@@ -1053,7 +1211,12 @@
       "birth_year": 1594,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "赵率教",
@@ -1078,7 +1241,12 @@
       "birth_year": 1569,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王之臣",
@@ -1103,7 +1271,12 @@
       "birth_year": 1570,
       "historical_death_year": 1631,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 68,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "毛文龙",
@@ -1130,7 +1303,12 @@
       "historical_death_year": 0,
       "historical_death_month": 0,
       "power_id": "ming",
-      "location": "dongjiang_area"
+      "location": "dongjiang_area",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "东江镇跋扈、虚报兵额冒饷(争议非定谳;通敌之议后世聚讼,不坐实)——存疑",
+        "severity": "轻"
+      }
     },
     {
       "name": "阎鸣泰",
@@ -1155,7 +1333,12 @@
       "birth_year": 1568,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 55,
+      "seed_guilt": {
+        "crime": "蓟辽总督,首倡为魏建生祠、献祠最力者之一(谀颂阿附,无直接血债)",
+        "severity": "中"
+      }
     },
     {
       "name": "洪承畴",
@@ -1180,7 +1363,12 @@
       "birth_year": 1593,
       "historical_death_year": 1665,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 80,
+      "seed_guilt": {
+        "crime": "无(松锦战败后降清是崇祯十五年后事,铁律不预坐;此刻陕西督粮参政忠勤明臣)",
+        "severity": "无"
+      }
     },
     {
       "name": "孙传庭",
@@ -1205,20 +1393,24 @@
       "birth_year": 1593,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 82,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "胡廷宴",
-      "office": "陕西巡抚",
-      "office_type": "地方",
-      "faction": "阉党",
+      "office": "原三边总督，革职候勘",
+      "office_type": "督抚",
+      "faction": "中立",
       "aliases": [
         "胡廷宴",
-        "胡巡抚"
+        "胡总督"
       ],
       "personal_skills": [
-        "陕西赈济",
-        "巡抚地方",
+        "三边军务",
         "边镇调度"
       ],
       "loyalty": 50,
@@ -1229,9 +1421,11 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "status": "active",
+      "status": "dismissed",
+      "status_reason": "延绥兵变弹压不力，革职候勘",
+      "reason_code": "获罪削籍",
       "seed_guilt": {
-        "crime": "请建魏忠贤生祠",
+        "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
         "severity": "轻"
       },
       "identity": 50,
@@ -1293,7 +1487,12 @@
       "birth_year": 1600,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 90,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "史可法",
@@ -1317,7 +1516,12 @@
       "birth_year": 1601,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 94,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "周皇后",
@@ -1838,7 +2042,12 @@
       "debut_year": 1631,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "liaodong"
+      "location": "liaodong",
+      "identity": 45,
+      "seed_guilt": {
+        "crime": "无(引清入关是十余年后事,坚决不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "左良玉",
@@ -1867,7 +2076,12 @@
       "debut_year": 1630,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "liaodong"
+      "location": "liaodong",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "无(后期拥兵自重、剽掠地方军阀化是后事,存疑不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "高迎祥",
@@ -1960,7 +2174,7 @@
       "name": "高起潜",
       "office": "司礼监太监，知兵监军",
       "office_type": "内臣",
-      "faction": "阉党",
+      "faction": "中立",
       "aliases": [
         "高起潜"
       ],
@@ -1982,7 +2196,9 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "beizhili"
+      "location": "beizhili",
+      "identity": 40,
+      "seed_guilt": {}
     },
     {
       "name": "孙元化",
@@ -2011,7 +2227,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "beizhili"
+      "location": "beizhili",
+      "identity": 82,
+      "seed_guilt": {
+        "crime": "无(登莱之变孔有德兵变后孙被弃市属政治替罪之后事,非现行罪,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "陈新甲",
@@ -2039,7 +2260,12 @@
       "debut_year": 1640,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 55,
+      "seed_guilt": {
+        "crime": "无(后任兵书因泄议和事被诛是后事)",
+        "severity": "无"
+      }
     },
     {
       "name": "傅宗龙",
@@ -2068,7 +2294,12 @@
       "debut_year": 1639,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "丁启睿",
@@ -2095,7 +2326,12 @@
       "debut_year": 1640,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "无(后督师剿闯朱仙镇溃败是后事,败绩非此刻之罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "朱常洵",
@@ -2124,7 +2360,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "henan"
+      "location": "henan",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "贪吝聚敛、广田厚禄而吝啬不恤民(《明史·诸王传》;性质污点,非现行可坐之罪——按ground从轻标)",
+        "severity": "轻"
+      }
     },
     {
       "name": "朱常瀛",
@@ -2152,7 +2393,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "huguang"
+      "location": "huguang",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "朱由崧",
@@ -2180,7 +2426,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "henan"
+      "location": "henan",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无(后为弘光帝其失政皆十余年后事,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "懿安皇后",
@@ -2210,7 +2461,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "beizhili"
+      "location": "beizhili",
+      "identity": 40,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "张延登",
@@ -2238,7 +2494,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 63,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "吴甡",
@@ -2267,7 +2528,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "吴昌时",
@@ -2295,7 +2561,9 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 35,
+      "seed_guilt": {}
     },
     {
       "name": "张凤翼",
@@ -2323,7 +2591,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 48,
+      "seed_guilt": {
+        "crime": "无(后任兵书畏敌避战、自请视师服毒求免责是后事)",
+        "severity": "无"
+      }
     },
     {
       "name": "朱燮元",
@@ -2352,7 +2625,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "guizhou"
+      "location": "guizhou",
+      "identity": 78,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "邹维琏",
@@ -2380,7 +2658,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "fujian"
+      "location": "fujian",
+      "identity": 66,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "练国事",
@@ -2407,7 +2690,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "shaanxi"
+      "location": "shaanxi",
+      "identity": 58,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "李待问",
@@ -2434,7 +2722,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 56,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "焦源溥",
@@ -2461,7 +2754,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "shanxi"
+      "location": "shanxi",
+      "identity": 62,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "曾樱",
@@ -2489,7 +2787,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "fujian"
+      "location": "fujian",
+      "identity": 68,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "余大成",
@@ -2516,7 +2819,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 55,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "王尊德",
@@ -2544,7 +2852,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "guangdong"
+      "location": "guangdong",
+      "identity": 60,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "郑芝龙",
@@ -2573,7 +2886,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "fujian"
+      "location": "fujian",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "出身污点:海盗/海商出身,崇祯元年受熊文灿招抚授海防游击——『盗』是事实身份污点,受抚后此刻已为明朝命官,不以现行罪论",
+        "severity": "轻"
+      }
     },
     {
       "name": "何腾蛟",
@@ -2602,7 +2920,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 68,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "瞿式耜",
@@ -2631,7 +2954,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 85,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "郑成功",
@@ -2660,7 +2988,12 @@
       "debut_year": 1645,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "fujian"
+      "location": "fujian",
+      "identity": 40,
+      "seed_guilt": {
+        "crime": "无(此刻仅郑芝龙之子、童子;抗清复台是数十年后事,坚决不预判)",
+        "severity": "无"
+      }
     },
     {
       "name": "李定国",
@@ -2745,7 +3078,12 @@
       "debut_year": 1642,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "zhejiang"
+      "location": "zhejiang",
+      "identity": 88,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "孔有德",
@@ -2773,7 +3111,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "dongjiang_area"
+      "location": "dongjiang_area",
+      "identity": 40,
+      "seed_guilt": {
+        "crime": "无(此刻东江毛部将之明军武弁未叛;崇祯六年起降清是后事,务必勿预坐叛罪)",
+        "severity": "无"
+      }
     },
     {
       "name": "耿仲明",
@@ -2801,7 +3144,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "dongjiang_area"
+      "location": "dongjiang_area",
+      "identity": 40,
+      "seed_guilt": {
+        "crime": "无(此刻东江毛部将之明军武弁未叛;后随孔有德降清是后事,勿预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "尚可喜",
@@ -2829,7 +3177,12 @@
       "debut_year": 0,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "dongjiang_area"
+      "location": "dongjiang_area",
+      "identity": 42,
+      "seed_guilt": {
+        "crime": "无(此刻东江明将未叛;崇祯七年降清是后事,勿预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "多铎",
@@ -2995,7 +3348,12 @@
       "debut_year": 1646,
       "debut_month": 0,
       "power_id": "ming",
-      "location": "huguang"
+      "location": "huguang",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "无(此刻约四五岁孩童;后为永历帝南明末事,铁律不预坐)",
+        "severity": "无"
+      }
     },
     {
       "name": "许誉卿",
@@ -3082,7 +3440,32 @@
       "debut_year": 1645,
       "debut_month": 0,
       "power_id": "ming",
-      "location": ""
+      "location": "",
+      "identity": 60,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
+    },
+    {
+      "name": "乔允升",
+      "office": "刑部尚书",
+      "office_type": "刑部",
+      "faction": "中立",
+      "aliases": ["乔允升", "乔尚书"],
+      "personal_skills": ["刑名审谳", "狱案覆核", "律例持守"],
+      "loyalty": 58,
+      "ability": 67,
+      "integrity": 66,
+      "courage": 52,
+      "style": "持法谨慎",
+      "birth_year": 1550,
+      "historical_death_year": 1631,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "天启末任刑部尚书，熟谙刑名与狱案覆核。",
+      "power_id": "ming",
+      "location": "beijing"
     }
   ]
 }

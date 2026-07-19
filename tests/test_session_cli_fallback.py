@@ -144,9 +144,9 @@ def test_staged_action_reply_gets_confirmation_cue(game, monkeypatch):
     assert "请陛下定夺准驳" in result.answer
 
 
-def test_tool_call_pending_directive_reply_gets_confirmation_cue(game):
+def test_tool_call_pending_directive_reply_gets_confirmation_cue(read_game):
     """#412: agno/tool-call staged directives also need the visible approval cue."""
-    db, state, _ = game
+    db, state, _ = read_game
     result = _result()
     result.pending_action_id = 42
     result.answer = "臣领旨。"
@@ -159,9 +159,9 @@ def test_tool_call_pending_directive_reply_gets_confirmation_cue(game):
     assert "请陛下定夺准驳" in result.answer
 
 
-def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(game):
+def test_tool_call_pending_secret_order_reply_gets_confirmation_cue(read_game):
     """#413: agno/tool-call staged secret orders also need the visible approval cue."""
-    db, state, _ = game
+    db, state, _ = read_game
     result = _result()
     result.pending_action_id = 43
     result.answer = "臣领密旨。"
@@ -398,6 +398,27 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1
     assert pending[0]["action"] == "记进展"
+
+
+def test_chat_prompt_builder_internal_typeerror_is_not_retried_without_turn_scope(game):
+    """真实 builder 的 TypeError 不能被误判为旧签名兼容而改走无 turn 的调用。"""
+    _db, _state, content = game
+    minister = "毕自严"
+    calls = []
+    sess = GameSession.__new__(GameSession)
+    sess.content = content
+    sess.registry = SimpleNamespace(get=lambda _character: object())
+    sess.temporary_characters = set()
+
+    def prompt_builder(message, character, *, chat_turn_id=0):
+        calls.append((message, character.name, chat_turn_id))
+        raise TypeError("production prompt failure")
+
+    sess._audience_prompt_for_message = prompt_builder
+
+    with pytest.raises(TypeError, match="^production prompt failure$"):
+        GameSession.chat(sess, minister, "请奏", chat_turn_id=7)
+    assert calls == [("请奏", minister, 7)]
 
 
 def test_propose_directive_tool_arguments_stages_draft(game):
@@ -1166,7 +1187,7 @@ def test_legacy_registered_secret_order_marker_parser_restages(game):
     assert db.list_pending_actions(state.turn)[0]["kind"] == "secret_order"
 
 
-def test_secret_order_extract_fallback_preserves_structured_metadata(game, monkeypatch):
+def test_secret_order_extract_fallback_preserves_structured_metadata(monkeypatch):
     """API/按钮兼容文本带出的标签/期限，在 extractor 空结果时也不能丢。"""
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: ("{}", 1))
 
@@ -1287,9 +1308,9 @@ def test_secret_prefix_confirmation_uses_recent_context_for_order_body(game, mon
     assert "督办陕西赈灾" in row["content"]
 
 
-def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(game, monkeypatch):
+def test_api_tool_created_secret_order_skips_prefix_fallback_extraction(read_game, monkeypatch):
     """Codex ship review: API tool-call 已建密令时，前缀 fallback 不得再发起一次会被丢弃的抽取。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "魏忠贤"
 
@@ -1340,7 +1361,10 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
     db, state, _ = game
     minister = "魏忠贤"
-    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    oid = db.create_secret_order(
+        state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3,
+        excluded_names=["毕自严"], excluded_offices=["户部"],
+    )
     s = _session(db, state)
 
     pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
@@ -1356,6 +1380,11 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     assert payload["assignee"] == minister
     assert payload["tags"] == ["辽饷"]
     assert payload["deadline_months"] == 3
+    assert "毕自严" in payload["excluded_names"]
+    assert payload["excluded_offices"] == ["户部"]
+    assert not db.conn.execute(
+        "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)
+    ).fetchone()
 
 
 def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):
@@ -1385,9 +1414,9 @@ def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_f
     ).fetchone()[0] == 1
 
 
-def test_noop_appointment_intent_is_not_staged(game, monkeypatch):
+def test_noop_appointment_intent_is_not_staged(read_game, monkeypatch):
     """#354: 背景里提到“某人已任某职”被抽成任命时，若其当前已在该职，确定性丢弃。"""
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     target = next(
         ch for ch in content.characters.values()
@@ -1944,10 +1973,10 @@ def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
     assert "本轮确认" not in body
 
 
-def test_noop_appointment_alias_target_is_not_staged(game, monkeypatch):
+def test_noop_appointment_alias_target_is_not_staged(read_game, monkeypatch):
     """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
     其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""
-    db, state, content = game
+    db, state, content = read_game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     target = next(
         ch for ch in content.characters.values()
@@ -2064,9 +2093,9 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
     assert row["text"] == merged_text
 
 
-def test_chat_starts_cli_action_classification_before_reply_finishes(game, monkeypatch):
+def test_chat_starts_cli_action_classification_before_reply_finishes(read_game, monkeypatch):
     """CLI 召对动作判断只看皇帝消息，应与大臣回话并发；无动作消息回话后不再跑抽取器。"""
-    db, state, content = game
+    db, state, content = read_game
     minister = next(
         ch for ch in content.characters.values()
         if getattr(ch, "office_type", "") not in ("后宫",)
@@ -2119,10 +2148,10 @@ def test_chat_starts_cli_action_classification_before_reply_finishes(game, monke
     assert calls == ["classify"]
 
 
-def test_non_parallel_safe_runner_skips_concurrent_classifier(game, monkeypatch):
+def test_non_parallel_safe_runner_skips_concurrent_classifier(read_game, monkeypatch):
     """非并发安全 runner（agy）不得把动作分类器与回话并发跑（会撞 keychain auth-race，
     cmr Gate2 F-E）：_start_cli_action_intent 返 None → 回话后回落串行抽取，动作不丢。"""
-    db, state, content = game
+    db, state, content = read_game
     minister = next(
         ch for ch in content.characters.values()
         if getattr(ch, "office_type", "") not in ("后宫",)
@@ -2210,9 +2239,9 @@ def test_chat_rollback_refresh_syncs_offices_with_runtime_llm_config(monkeypatch
     assert seen == [cfg]
 
 
-def test_no_backend_is_noop(game, monkeypatch):
+def test_no_backend_is_noop(read_game, monkeypatch):
     """未启 CLI 后端（走原 api 路径）时，胶水不动任何东西。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     result = _result()
     result.answer = "臣领旨。敕谕户部发银三万两。钦此。"
@@ -2374,9 +2403,9 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     assert refreshed.count(who) == 2
 
 
-def test_existing_directive_not_overwritten(game, monkeypatch):
+def test_existing_directive_not_overwritten(read_game, monkeypatch):
     """agno 工具已产 directive 时，胶水不重复入档（result.proposed_directive 非空）。"""
-    db, state, _ = game
+    db, state, _ = read_game
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     _no_conv_action(monkeypatch)
     sentinel = SimpleNamespace(id=999, text="原工具产出", status="draft")
@@ -2418,6 +2447,36 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
     db.commit_pending_actions(state)
     assert db.conn.execute(
         "SELECT content FROM secret_orders WHERE id=?", (oid,)).fetchone()["content"] == "改后内容"
+
+
+@pytest.mark.parametrize("action, payload_key", [("提交核议", "claim"), ("记进展", "note")])
+def test_secret_conversation_actions_persist_complete_minister_reply(
+    game, monkeypatch, action, payload_key,
+):
+    db, state, _content = game
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
+    who = "长回话承办官"
+    oid = db.create_secret_order(state, who, "查核边饷", "逐项查核", [])
+    if action == "记进展":
+        db.conn.execute("UPDATE secret_orders SET turn_issued=? WHERE id=?", (state.turn - 1, oid))
+        db.conn.commit()
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": action, "order_id": oid, "new_title": "",
+        "new_content": "", "deadline_months": 0,
+        "cultivate_skill": "", "cultivate_trait": "",
+    })
+    reply = "臣已逐册查核。" + "甲乙丙丁戊己庚辛壬癸" * 30 + "末尾凭据完整。"
+    session = _session(db, state, registry=SimpleNamespace(refresh=lambda _name: None))
+
+    result = session.apply_cli_conversation_actions(
+        SimpleNamespace(name=who, office_type="兵部"), action, reply,
+        has_directive=False, secret_order_id=None,
+    )
+
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (result["pending_action_id"],)
+    ).fetchone()
+    assert json.loads(row["payload_json"])[payload_key] == reply
 
 
 def test_preclassified_secret_update_uses_reply_aware_extractor(game, monkeypatch):

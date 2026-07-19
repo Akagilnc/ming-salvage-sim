@@ -8,6 +8,7 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import time
 import uuid
@@ -37,6 +38,8 @@ from ming_sim.decree import (
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
+from ming_sim.knowledge import render_character_knowledge
+from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
@@ -467,7 +470,7 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
     rows = db.conn.execute(
         """
         SELECT name, office, office_type, faction, aliases, personal_skills,
-               loyalty, ability, integrity, courage, style,
+               loyalty, ability, integrity, courage, style, identity, seed_guilt,
                birth_year, historical_death_year, historical_death_month,
                debut_year, debut_month, status, status_reason, reason_code,
                portrait_id, power_id, location, transit_to, summary
@@ -499,6 +502,12 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             personal_skills = []
         if not isinstance(personal_skills, list):
             personal_skills = []
+        try:
+            seed_guilt = _json.loads(row["seed_guilt"] or "{}")
+        except (TypeError, ValueError):
+            seed_guilt = {}
+        if not isinstance(seed_guilt, dict):
+            seed_guilt = {}
         characters[name] = Character(
             name=name,
             office=row["office"],
@@ -524,6 +533,8 @@ def _sync_offices_from_db_impl(content: GameContent, db: "GameDB", llm_config: O
             transit_to=row["transit_to"] or "",
             portrait_id=row["portrait_id"],
             summary=row["summary"],
+            identity=int(row["identity"]),
+            seed_guilt={str(key): str(value) for key, value in seed_guilt.items()},
         )
     content.characters = characters
 
@@ -710,27 +721,8 @@ class GameSession:
         return character_from_name(name)
 
     def _retrieve_memories_for_message(self, message: str) -> str:
-        """注入近几回合章节记忆，让大臣知道近来朝局大事。章节记忆是回合粒度全局摘要，
-        直接取最近 N 回合，不再按关键词检索（旧原子记忆已废）。"""
-        from ming_sim.token_stats import tlog
-        try:
-            chapters = self.db.list_chapter_memories(upto_turn=self.state.turn, recent=4)
-            if not chapters:
-                return message
-            lines = ["【近来朝局（近几月章节）】"]
-            for c in chapters:
-                body = (c.get("body") or "").strip()
-                if not body:
-                    continue
-                lines.append(f"- {c['year']}年{c['period']}月：{body}")
-            if len(lines) == 1:
-                return message
-            new_msg = "\n".join(lines) + "\n\n" + message
-            tlog(f"[chat/chapter-recall] hit={len(chapters)} ({len(new_msg)}字)")
-            return new_msg
-        except Exception as exc:
-            tlog(f"[chat/chapter-recall] 失败跳过：{exc}")
-            return message
+        """Compatibility shim; character context owns all historical reads."""
+        return message
 
     def _temporary_character(self, name: str) -> Character:
         clean_name = str(name or "").strip()
@@ -889,7 +881,7 @@ class GameSession:
             return {"kind": "confirmation", "confirmation": confirm}
         return intent
 
-    def chat(self, minister_name: str, message: str) -> ChatTurnResult:
+    def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
         作为 pending_action_id 返回，确认/驳回由对话或颁诏 checkpoint 处理。"""
@@ -899,7 +891,24 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._audience_prompt_for_message(message)
+        # Keep the public seam compatible with lightweight web/test session
+        # doubles that predate the optional character-aware audience context.
+        audience_prompt = self._audience_prompt_for_message
+        try:
+            prompt_signature = inspect.signature(audience_prompt)
+        except (TypeError, ValueError):
+            # The production bound method has an inspectable signature.  For
+            # opaque callables, preserve the character-aware production call;
+            # do not catch its runtime TypeError as a signature fallback.
+            augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
+        else:
+            try:
+                prompt_signature.bind(message, character, chat_turn_id=chat_turn_id)
+            except TypeError:
+                prompt_signature.bind(message)
+                augmented = audience_prompt(message)
+            else:
+                augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
@@ -954,10 +963,13 @@ class GameSession:
                         self.state.turn, character.name,
                         payload={"text": draft_text, "actor": character.name},
                     )
-            elif tool_name == "propose_appointment" or tool_result.startswith("__pending_appointment__"):
+            elif (tool_name == "propose_appointment"
+                  or tool_result.startswith("__pending_appointment__")
+                  or tool_result.startswith("__pending_recommendation__")):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
-                payload = tool_result.removeprefix("__pending_appointment__").strip()
+                payload = tool_result.removeprefix("__pending_recommendation__")
+                payload = payload.removeprefix("__pending_appointment__").strip()
                 result.pending_action_id = self._stage_appointment_candidate(payload, character)
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
@@ -994,6 +1006,12 @@ class GameSession:
                             order_id = 0
                         payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
                         if action and order_id:
+                            # Pin only when non-create carries new oral body (更新).
+                            # 催办/记进展/提交核议 must not auto-pin pure-public held.
+                            if action == "更新":
+                                payload = self.db.attach_secret_oral_pin(
+                                    character.name, int(self.state.turn), payload,
+                                )
                             result.pending_action_id = self.db.stage_pending_action(
                                 self.state.turn, kind="secret_order", action=action,
                                 minister_name=character.name, target_id=order_id,
@@ -1015,6 +1033,8 @@ class GameSession:
                                 "assignee": str(payload.get("assignee") or character.name).strip(),
                                 "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                 "deadline_months": payload.get("deadline_months") or 0,
+                                "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1035,13 +1055,43 @@ class GameSession:
         )
         return result
 
-    def _audience_prompt_for_message(self, message: str) -> str:
-        augmented = self._retrieve_memories_for_message(message)
-        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
-        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
-        draft_line = self.registry.build_draft_line() if self.registry is not None else ""
-        if draft_line and draft_line != "无":
-            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+    def _audience_prompt_for_message(self, message: str, character: Character, *, chat_turn_id: int = 0) -> str:
+        # Chapter summaries are a global narrative cache and may contain secret
+        # or off-stage facts.  Character knowledge is the only audience input
+        # allowed to cross this boundary; public reports are projected there
+        # with their source-level exclusions applied.
+        augmented = message
+        try:
+            knowledge = self.db.get_character_knowledge(self.state, character.name)
+        except Exception:
+            # Legacy projection trouble may fall back to ordinary chat, but it
+            # must be visible rather than silently authorising a factual reply.
+            return "【近臣回奏暂不可用：见闻记录读取失败；不得据此臆答事实。】\n\n" + message
+        if (
+            is_inner_court_attendant(character)
+            and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访"))
+        ):
+            try:
+                # The report is written to the durable, character-scoped
+                # knowledge source before rebuilding the projection.  This
+                # prevents a keyword hit from injecting a global snapshot into
+                # every minister's prompt and leaves restore with the same
+                # source/audience boundary.
+                self.db.persist_return_report(
+                    self.state, character.name, message,
+                    chat_turn_id=chat_turn_id,
+                )
+                knowledge = self.db.get_character_knowledge(self.state, character.name)
+            except Exception:
+                return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
+        try:
+            brief = render_character_knowledge(knowledge, character.name)
+        except Exception:
+            return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
+        if brief:
+            augmented = brief + "\n\n" + augmented
+        # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
+        # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented
 
     def apply_cli_conversation_actions(
@@ -1194,6 +1244,8 @@ class GameSession:
                     "assignee": assignee,
                     "tags": so.get("tags") or [],
                     "deadline_months": so.get("deadline_months", 0),
+                    "excluded_names": so.get("excluded_names") or [],
+                    "excluded_offices": so.get("excluded_offices") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:
@@ -1299,14 +1351,18 @@ class GameSession:
                     target_active = str(target.get("status") or "active") == "active"
                     if target_active and sa == "更新":
                         # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
+                        # #976：仅「更新」有新口谕正文 → 钉 held pin → commit withhold。
+                        # 催办/记进展/提交核议无新正文，不 pin（纯公开 held 不得吞）。
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="更新",
                             minister_name=minister_name, target_id=oid,
-                            payload={
-                                "new_title": act["new_title"] or str(target.get("title") or ""),
-                                "new_content": act["new_content"] or str(target.get("content") or ""),
-                                "deadline_months": act["deadline_months"],
-                            },
+                            payload=self.db.attach_secret_oral_pin(
+                                minister_name, int(self.state.turn), {
+                                    "new_title": act["new_title"] or str(target.get("title") or ""),
+                                    "new_content": act["new_content"] or str(target.get("content") or ""),
+                                    "deadline_months": act["deadline_months"],
+                                },
+                            ),
                         )
                     elif target_active and sa == "催办":
                         rush_deadline = int(act.get("deadline_months") or 0)
@@ -1318,17 +1374,23 @@ class GameSession:
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="催办",
                             minister_name=minister_name, target_id=oid,
-                            payload={"deadline_months": rush_deadline, "reason": player_message[:80]})
+                            payload={
+                                "deadline_months": rush_deadline,
+                                "reason": player_message[:80],
+                            },
+                        )
                     elif target_active and sa == "提交核议":
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="提交核议",
                             minister_name=minister_name, target_id=oid,
-                            payload={"claim": reply[:200]})
+                            payload={"claim": reply.strip()},
+                        )
                     elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
                         out["pending_action_id"] = self.db.stage_pending_action(
                             self.state.turn, kind="secret_order", action="记进展",
                             minister_name=minister_name, target_id=oid,
-                            payload={"note": reply[:200]})
+                            payload={"note": reply.strip()},
+                        )
                     # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
                     # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
                     # (ADR 0006),且 commit 在月末 next_period 前、次回合 agent 本就重建,无须刷新。
@@ -1667,6 +1729,9 @@ class GameSession:
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:
                 staged_payload[key] = value
+        recommendation = data.get("recommendation")
+        if isinstance(recommendation, dict):
+            staged_payload["recommendation"] = recommendation
         return self.db.stage_pending_action(
             self.state.turn,
             kind="office",
@@ -1754,7 +1819,8 @@ class GameSession:
             return 0
         if not isinstance(data, dict):
             return 0
-        title = str(data.get("title") or "").strip()[:20]
+        # No formal title hard-cap (align with tools/web extract paths).
+        title = str(data.get("title") or "").strip()
         content = str(data.get("content") or "").strip()
         if not title or not content:
             return 0
@@ -1766,7 +1832,14 @@ class GameSession:
         except (TypeError, ValueError):
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
-        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
+        excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
+        excluded_offices = data.get("excluded_offices") if isinstance(data.get("excluded_offices"), list) else []
+        return self.db.create_secret_order(
+            self.state, assignee, title, content, tags, deadline_months=deadline,
+            excluded_names=excluded, excluded_offices=excluded_offices,
+            # minister_name = audience speaker (may differ from assignee).
+            origin_minister_name=minister_name,
+        )
 
     def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
         """Convert a legacy already-registered same-turn secret order into a pending candidate.
@@ -1789,6 +1862,21 @@ class GameSession:
             tags = []
         if not isinstance(tags, list):
             tags = []
+        try:
+            excluded_names = json.loads(row["excluded_names"] or "[]")
+        except (ValueError, TypeError):
+            excluded_names = []
+        if not isinstance(excluded_names, list):
+            excluded_names = []
+        try:
+            excluded_targets = json.loads(row["excluded_targets"] or "{}")
+        except (ValueError, TypeError):
+            excluded_targets = {}
+        if not isinstance(excluded_targets, dict):
+            excluded_targets = {}
+        excluded_offices = excluded_targets.get("offices") or []
+        if not isinstance(excluded_offices, list):
+            excluded_offices = []
         due_turn = int(row["due_turn"] or 0)
         deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
         from ming_sim.applier import atomic
@@ -1804,6 +1892,8 @@ class GameSession:
                     "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
                     "tags": [str(t).strip() for t in tags if str(t).strip()],
                     "deadline_months": deadline,
+                    "excluded_names": [str(name).strip() for name in excluded_names if str(name).strip()],
+                    "excluded_offices": [str(office).strip() for office in excluded_offices if str(office).strip()],
                 },
             )
             cur = self.db.conn.execute(
@@ -1812,6 +1902,13 @@ class GameSession:
             )
             if cur.rowcount != 1:
                 raise RuntimeError("legacy secret order conversion lost source row")
+            self.db.conn.execute(
+                "DELETE FROM character_knowledge_sources WHERE source_id=?",
+                (f"secret_order:{int(order_id)}",),
+            )
+            self.db.conn.execute(
+                "DELETE FROM secret_order_briefs WHERE order_id=?", (int(order_id),)
+            )
         return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:

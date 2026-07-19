@@ -4,7 +4,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { executeAdvanceCoderSuggestion } from "../../src/advanceCoderEffect.js";
+import {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+} from "../../src/advanceCoderEffect.js";
 import { lookupCoderRosterEntry } from "../../src/coderRoster.js";
 import {
   applyRelayBatonToRoute,
@@ -15,30 +19,8 @@ import {
 describe("#919 pure: executeAdvanceCoderSuggestion", () => {
   const baseRoute = () => resolveActiveModelRoute({});
 
-  it("advanced applies applySlug (coder seat)", async () => {
-    const route = baseRoute();
-    const current = route.slots.coder;
-    const effect = await executeAdvanceCoderSuggestion({
-      suggestion: "sol@med",
-      currentSlug: current,
-      route,
-      applySlug: (r, slug) => withCoderSlot(r, slug),
-    });
-    expect(effect.kind).toBe("advanced");
-    if (effect.kind !== "advanced") return;
-    expect(effect.toSlug).toBe("gpt-5.6-sol");
-    expect(effect.route.slots.coder).toBe("gpt-5.6-sol");
-    expect(effect.route.slots.coderFix).toBe("gpt-5.6-sol");
-    expect(effect.entry).toEqual(lookupCoderRosterEntry("sol@med"));
-    expect(effect.audit).toMatchObject({
-      event: "coder_advance",
-      fromModelId: current,
-      toModelId: "gpt-5.6-sol",
-      state_summary: "sol@med",
-    });
-  });
-
-  it("advanced applies coderFix-only applySlug (family seat shape)", async () => {
+  it("advanced applies coderFix-only applySlug (single-slice / family repair seat)", async () => {
+    // #1002 owner 07-18: advanceCoder only rewrites repair seats (coderFix / fixer).
     const route = baseRoute();
     const currentFix = route.slots.coderFix;
     const effect = await executeAdvanceCoderSuggestion({
@@ -50,9 +32,36 @@ describe("#919 pure: executeAdvanceCoderSuggestion", () => {
     });
     expect(effect.kind).toBe("advanced");
     if (effect.kind !== "advanced") return;
+    expect(effect.toSlug).toBe("gpt-5.6-sol");
     expect(effect.route.slots.coderFix).toBe("gpt-5.6-sol");
-    // coder seat untouched — family court difference
+    // implement seat untouched
     expect(effect.route.slots.coder).toBe(route.slots.coder);
+    expect(effect.entry).toEqual(lookupCoderRosterEntry("sol@med"));
+    expect(effect.audit).toMatchObject({
+      event: "coder_advance",
+      fromModelId: currentFix,
+      toModelId: "gpt-5.6-sol",
+      state_summary: "sol@med",
+    });
+  });
+
+  it("advanced applies fixer-only applySlug (online review repair seat)", async () => {
+    const route = baseRoute();
+    const currentFixer = route.slots.fixer;
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion: "sol@med",
+      currentSlug: currentFixer,
+      route,
+      applySlug: (r, slug) =>
+        applyRelayBatonToRoute(r, { slug }, "S10", { slots: ["fixer"] }),
+    });
+    expect(effect.kind).toBe("advanced");
+    if (effect.kind !== "advanced") return;
+    expect(effect.route.slots.fixer).toBe("gpt-5.6-sol");
+    // other seats untouched
+    expect(effect.route.slots.coder).toBe(route.slots.coder);
+    expect(effect.route.slots.coderFix).toBe(route.slots.coderFix);
+    expect(effect.route.slots.verify).toBe(route.slots.verify);
   });
 
   it("unknown → stay_put (never invents a seat)", async () => {
@@ -139,5 +148,63 @@ describe("#919 pure: executeAdvanceCoderSuggestion", () => {
     expect(effect.kind).toBe("advanced");
     if (effect.kind !== "advanced") return;
     expect(effect.route).toBe(smoked);
+  });
+});
+
+describe("#1017 latestCoderAdvanceToSlug seat filter", () => {
+  it("returns only matching advanceSeat; ignores other seat and unscoped rows", () => {
+    const ledger = [
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "coderFix" as const,
+      },
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.4",
+        // unscoped legacy — fail closed
+      },
+      {
+        event: "coder_advance_stay_put",
+        status: "coder_advance_stay_put",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer" as const,
+      },
+    ];
+    expect(latestCoderAdvanceToSlug(ledger, "fixer")).toBeUndefined();
+    expect(latestCoderAdvanceToSlug(ledger, "coderFix")).toBe("gpt-5.6-sol");
+
+    const withFixer = [
+      ...ledger,
+      {
+        event: "coder_advance",
+        status: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer" as const,
+      },
+    ];
+    expect(latestCoderAdvanceToSlug(withFixer, "fixer")).toBe("gpt-5.6-sol");
+  });
+
+  it("familyAdvanceCoderAuditFields stamps advanceSeat", async () => {
+    const route = resolveActiveModelRoute({});
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion: "sol@med",
+      currentSlug: route.slots.fixer,
+      route,
+      applySlug: (r, slug) =>
+        applyRelayBatonToRoute(r, { slug }, "S10", { slots: ["fixer"] }),
+    });
+    expect(effect.kind).toBe("advanced");
+    if (effect.kind !== "advanced") return;
+    expect(familyAdvanceCoderAuditFields(effect, "sol@med", "fixer")).toMatchObject(
+      {
+        event: "coder_advance",
+        toModelId: "gpt-5.6-sol",
+        advanceSeat: "fixer",
+      },
+    );
   });
 });

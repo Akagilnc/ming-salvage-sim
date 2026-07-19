@@ -4,6 +4,69 @@
 
 ## [未发布]
 
+## [0.36.0.0] - 2026-07-19
+
+### Added
+- **#484 / #488 / #494 人物底色补全**：新增郭允厚、李之藻、张缙彦、李从心、汤若望等史实人物，并为朝臣补齐党派认同、既往罪责、个人档料与派系立场；同一问题会因人而得到不同判断。
+- **#491 近侍察言观色**：内廷近侍可依据自身所知，对大臣言外之意作定性回奏；结果随召对留档，撤销回合时一并回退。
+- **#492 近臣查访**：可向近臣询问官缺、欠饷、军情等事项；回奏按其职分与实际见闻生成并持久留档。
+- **#493 大臣荐人**：大臣可从本派网络或亲历见闻中具名推荐在职、候铨或起复人选；皇帝确认任用后保留举荐人和依据。
+
+### Changed
+- **#487 / #489 召对改为逐人视角**：每位大臣只依据本职、亲历事件、公开消息和获准密事作答；未参与、被排除或尚未明发的内容不再进入其上下文。
+- 人物能力、忠诚、党派认同、城防、军备、建筑与势力等抽象量表统一改为定性表达，同时保留银两、兵额、月份、火炮等可核实数量。
+- **#490 见闻与历史按来源延续**：邸报、章节记忆、结算叙事和回合恢复保留公开/私密来源边界；大臣回看旧事时仍只看到自己当时可知的部分。
+
+### Fixed
+- **#883 / #976 密旨隔离**：口谕在判定为密旨前先暂存，成旨后只进入承办人私密简报；以消息级来源追踪跨回合口谕、更新与确认，防止密旨正文及其改写泄入其他大臣、邸报或章节记忆。
+- 修复召对、工具查询、流式 Web/CLI、历史档案和回合撤销中的越权读取与裸数值泄露；公开信息仍可正常传播，明确披露后的密旨才转为公共事件。
+
+## [0.35.1.0] — 2026-07-19
+
+### Fixed
+- **#1019 跨 launcher 复飞**：答闸后的 park 子片在 session 已死/缺 resume 时降级为 fresh re-dispatch（答案进新 worker 上下文），不再终态回放旧 park/failed；failed 子片新 launcher 可重派且失败史留台账；mixed-wave 仍 durable 写 `child_decision_parked` 供后续答闸；真 infra 再派仍响亮失败。
+- **#964 live probe 假红**：docker 路径不再把空 `HOME` 传给宿主机 CLI（修 sock 连不上）；选 target 前要求 `docker info` 通，无 daemon 则 soft-skip。
+
+### Changed
+- 废除 `child_answer_without_parked_state` fail-closed；改 `child_answer_fresh_redispatch` 审计路径；#970/#604 相关测试与契约注释对齐 #1019。
+
+## [0.35.0.0] — 2026-07-18
+
+### Added
+- **#1009 编排器维护战役 III（八票并发）**：双舰实战修正合波。
+- **#1002** 在线评审环 fixer 席接 `advanceCoder` 粘性通道（只改修理席）。
+- **#1005 / ADR 0141** 腿散文合法：删 content-shape 拒收；transport 在场即开庭。
+- **#1006** family fan-out 前 baseline 健康闸（容器 full；红不扇出 + 台账）。
+- **#1007** 主动进度播报：`progress.jsonl` + 票号 stage/判词/处置 + `npm run status` + fail-open notify。
+- **#1010** Sandcastle 取消缝：abort/idle 杀容器内 shell + 清临时文件（本地 pin 0.12.0 patch）。
+- **#1012** fix-findings 挂载前 ensure 正规文件；EISDIR 不机械六连。
+- **#1014** provision/ensure 写入 `.ledger-*/` 与 `.sandcastle/` 到 `.git/info/exclude`。
+- **#1016** botPolling GraphQL reviewThreads 查询收尾括号修正（4 外层）。
+- **ADR 0140 落地**：`npm run test:fast` vs full `npm test`；coder/fixer 自检走 fast。
+
+### Fixed
+- Baseline 红出口 dual-write progress terminal（#1007×#1006）。
+- 生产 dist 可加载 cancel patch（TS emit，非仅 src .mjs）。
+- GraphQL errors 仍 fail-closed（#1016 负向钉）。
+
+### Changed
+- vitest 机械 heavy 池（path + harness nature）；义务面对齐 souls / coder_fix / README。
+
+
+## [0.34.0.0] — 2026-07-18
+
+### Added
+- **#985 pytest 套件瘦身（family/985）**：session 级只读 `read_game` fixture（真实 seed + SQLite `query_only`），纯读用例不再逐测重建整库。
+- **#998 拒收矩阵共享 section helper**：`tests/section_rejection_helpers.py` 合并 ~10+ 文件重复 setup。
+- **#995/#996 轻量盘面迁移账**：`tests/game_fixture_retained_inventory.tsv` + 选用约定 `tests/README.md`。
+
+### Fixed
+- **#994 settle_channel 全量离群**：隔离 chapter LLM / settle channel 共享态，根因后修而非标 slow。
+- **#997 scout_report_label 固定税**：缩扫描范围至消费者，契约面保留。
+
+### Changed
+- 写库路径仍走 function-scope `game`（真实 `GameDB → seed_static_data → load_state`），不 mock 被测系统。
+
 ## [0.33.0.0] — 2026-07-17
 
 ### Added

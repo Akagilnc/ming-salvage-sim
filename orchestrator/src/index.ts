@@ -31,6 +31,44 @@ export type {
   DispatchWorkerWithMonitorOutcome,
   LegacyDispatchBackend,
 } from "./dispatchWorker.js";
+// ── #1007 active progress broadcast (typed signals; fail-open) ──────────────
+export {
+  PROGRESS_FILENAME,
+  PROGRESS_NOTIFY_ENV,
+  PROGRESS_SCHEMA_VERSION,
+  clearProgressBroadcastConfig,
+  configureProgressBroadcast,
+  countJudgeDispositions,
+  countSeverityFromFindings,
+  emitExitProgress,
+  emitJudgeProgress,
+  emitLandingProgress,
+  emitMergeProgress,
+  emitParkProgress,
+  emitProgressEvent,
+  emitShipProgress,
+  emitStageProgress,
+  emitTerminalProgress,
+  emitWaveCloseProgress,
+  formatDriverStageLine,
+  formatProgressLogLine,
+  getProgressBroadcastConfig,
+  progressPath,
+  readProgressEvents,
+  renderFamilyStatus,
+  renderFamilyStatusFromDir,
+  tryAppendProgressEvent,
+} from "./progressBroadcast.js";
+export type {
+  FamilyStatusSnapshot,
+  IssueProgressSnapshot,
+  ProgressDispositionCounts,
+  ProgressEvent,
+  ProgressEventKind,
+  ProgressSeverityCounts,
+  NotifySpawn,
+} from "./progressBroadcast.js";
+
 // ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
 export {
   TELEMETRY_FILENAME,
@@ -280,10 +318,15 @@ export type {
   CoderRosterEntry,
 } from "./coderRoster.js";
 // ── #919 / #926 one advanceCoder execution path (slice + family) ────────────
-export { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
+export {
+  executeAdvanceCoderSuggestion,
+  familyAdvanceCoderAuditFields,
+  latestCoderAdvanceToSlug,
+} from "./advanceCoderEffect.js";
 export type {
   AdvanceCoderEffectResult,
   AdvanceCoderProbe,
+  AdvanceRepairSeat,
 } from "./advanceCoderEffect.js";
 export {
   applyCoderRecToRoute,

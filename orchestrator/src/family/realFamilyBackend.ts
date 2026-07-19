@@ -41,7 +41,16 @@
  */
 
 import { shWithClock } from "../externalCall.js";
-import { gitExitStatus, isFileNotFound } from "../fsErrors.js";
+import { formatExecFailureOutput } from "../execFailureOutput.js";
+import {
+  ensureRegularFileForBindMount,
+  gitExitStatus,
+  isFileNotFound,
+} from "../fsErrors.js";
+import {
+  appendGitInfoExclude,
+  ensureGitInfoExclude,
+} from "../gitInfoExclude.js";
 import {
   appendFileSync,
   existsSync,
@@ -87,7 +96,12 @@ import {
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
 } from "../judgeStation.js";
+import {
+  successfulLegsFromTransports,
+  type LegTransport,
+} from "../legPaper.js";
 
+import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
@@ -1059,7 +1073,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -1822,13 +1836,17 @@ export class RealFamilyBackend implements FamilyBackend {
         const typed = requireTypedTrafficSignal(
           (result as { readonly output?: unknown }).output,
           "family CMR",
-        )
+        );
+        // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
+        // host rebuilds successfulLegs transport-only (production panel path).
+        const legTransports = legTransportsFromCmrSandboxResult(result);
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
             output: typed,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
+            ...(legTransports !== undefined ? { legTransports } : {}),
           }),
           lastSessionIdIfPresent(result),
         );
@@ -1981,9 +1999,9 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
-    this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
-    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_STDOUT_SANDBOX_FILE);
-    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
     // Host monitor paths are not visible inside the family coder-fix container.
     // Materialise into the sandbox cwd (workingRepo) and rewrite pointers (#899).
@@ -2002,6 +2020,8 @@ export class RealFamilyBackend implements FamilyBackend {
       blockingFindingIdentityKeys: identityKeys,
       blockingFindingCount: ctx.blockingFindingCount,
     });
+    // #1012: same host-file guarantee as single-slice landing writer.
+    ensureRegularFileForBindMount(path);
     writeFileSync(
       path,
       `${JSON.stringify(
@@ -2054,7 +2074,7 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const path = join(dir, "outcome.json");
       writeFileSync(path, "", "utf8");
-      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
       success = true;
       return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
     } finally {
@@ -2071,7 +2091,7 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const path = join(dir, "outcome.json");
       writeFileSync(path, "", "utf8");
-      this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+      ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
       success = true;
       return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
     } finally {
@@ -2283,7 +2303,7 @@ export class RealFamilyBackend implements FamilyBackend {
         "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
       );
     }
-    this.excludeOptionalRuntimeFileFromGit(ONLINE_REVIEW_LANDING_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     writeFileSync(
       path,
@@ -2546,37 +2566,15 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
   /** Add a transient cmr runtime file to the worktree's local git excludes. */
   protected excludeFromGit(filename: string): void {
     try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
-        );
-      }
+      // Shared info/exclude write (#1014 DRY); throw-through for CMR must-exclude.
+      appendGitInfoExclude(this.opts.workingRepo, filename);
     } catch (err) {
       throw new Error(
         `excludeFromGit: failed to exclude transient CMR runtime file "${filename}": ` +
@@ -2976,7 +2974,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
-    this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
 
@@ -3011,40 +3009,8 @@ export class RealFamilyBackend implements FamilyBackend {
         : "");
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
     const target = join(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
-    this.excludeOptionalRuntimeFileFromGit(SHIP_FOCUS_FILENAME);
+    ensureGitInfoExclude(this.opts.workingRepo, SHIP_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
-  }
-
-  /** Best-effort exclude for optional runtime files that must never be committed. */
-  protected excludeOptionalRuntimeFileFromGit(filename: string): void {
-    try {
-      const excludePath = join(
-        this.sh("git", ["rev-parse", "--git-dir"], this.opts.workingRepo),
-        "info",
-        "exclude",
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : join(this.opts.workingRepo, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") + filename + "\n",
-          "utf8",
-        );
-      }
-    } catch {
-      // Best-effort: if excludes can't be written the file is still produced; the
-      // ship worker delivers the family base, and a stray untracked focus file is
-      // harmless (gstack-ship ships the family base's TRACKED commits).
-    }
   }
 
   /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
@@ -3424,31 +3390,65 @@ export type MergerAuth = FamilyWorkerAuthCore;
  * Sidecar/stdout are cargo only — never override a schema-validated judge
  * envelope or admit an unvalidated decision bell into the human loop (#899).
  * Residual open-count paper is transport-only (project at worker boundary).
+ *
+ * #1005 / ADR 0141: when host-observed {@link LegTransport}s are supplied
+ * (argument or soft cargo `legTransports`), rebuild `successfulLegs` via
+ * {@link successfulLegsFromTransports} — pure prose / unanchored exit0
+ * stdout is present paper; content shape is never a gate.
  */
 export function cmrOutcomeFromResult(result: {
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
+  /**
+   * Host-observed per-leg transports. When present, authority for
+   * `successfulLegs` presence under ADR 0141 (overlays cargo lists).
+   */
+  legTransports?: ReadonlyArray<LegTransport>;
   outcomePath?: string;
   output?: unknown;
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
   // Typed Output.object is the sole live fate channel (judge tri-state + gate).
+  let outcome: CmrWorkerOutcome;
   if (result.output !== undefined) {
-    return classifyCmrOutcomePayload(result.output, "CMR typed receipt");
-  }
-  // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
-  // findingsCount or escalate as process fate from untyped transports (#899).
-  if (result.outcomePath !== undefined) {
+    outcome = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
+  } else if (result.outcomePath !== undefined) {
+    // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
+    // findingsCount or escalate as process fate from untyped transports (#899).
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyCmrCargoOnly(sidecar);
+        outcome = classifyCmrCargoOnly(sidecar);
+      } else {
+        outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
       }
     } catch {
       // Unreadable sidecar → try stdout cargo below.
+      outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
     }
+  } else {
+    outcome = classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
   }
-  return classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
+  return overlaySuccessfulLegsFromTransports(outcome, result.legTransports);
+}
+
+/**
+ * #1005 / ADR 0141: when host-observed leg transports are present, they are
+ * the authority for panel presence — rebuild successfulLegs transport-only
+ * and overlay any cargo list (including a stale []). Content shape is never
+ * a gate; monorepo does not park on empty successfulLegs cargo.
+ * Escalate outcomes are fate-only and carry no leg cargo.
+ */
+function overlaySuccessfulLegsFromTransports(
+  outcome: CmrWorkerOutcome,
+  transports: ReadonlyArray<LegTransport> | undefined,
+): CmrWorkerOutcome {
+  if (transports === undefined) return outcome;
+  if (outcome.kind !== "judge" && outcome.kind !== "verdict") return outcome;
+  return {
+    ...outcome,
+    successfulLegs: successfulLegsFromTransports(transports),
+  };
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
@@ -3476,6 +3476,68 @@ function softParseSuccessfulLegs(raw: unknown): string[] {
     }
   }
   return kept;
+}
+
+/**
+ * Soft-parse optional per-leg transports from cargo (#1005 / ADR 0141).
+ * Non-array / undefined → undefined (fall back to successfulLegs list).
+ * Empty array or all-invalid rows after filter → undefined (same fall-back
+ * as transport-absent — chatty garbage must not force successfulLegs=[]).
+ * Well-formed rows (including dead transports) feed
+ * {@link successfulLegsFromTransports}.
+ */
+function softParseLegTransports(
+  raw: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (raw === undefined || !Array.isArray(raw)) return undefined;
+  const kept: LegTransport[] = [];
+  for (const item of raw) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.slug !== "string" || rec.slug.trim().length === 0) continue;
+    if (typeof rec.exitCode !== "number" || !Number.isFinite(rec.exitCode)) {
+      continue;
+    }
+    if (
+      rec.stdout !== null &&
+      rec.stdout !== undefined &&
+      typeof rec.stdout !== "string"
+    ) {
+      continue;
+    }
+    kept.push({
+      slug: rec.slug.trim(),
+      exitCode: rec.exitCode,
+      stdout: rec.stdout as string | null | undefined,
+    });
+  }
+  // No legal rows after filter ≡ transport-absent (fall back).
+  return kept.length > 0 ? kept : undefined;
+}
+
+/**
+ * Production panel path: pull host-observed leg transports off a sandbox
+ * result when present (ADR 0141). Looks at real production shapes:
+ *   1. top-level `result.legTransports` (host / producer field)
+ *   2. typed-output soft cargo `result.output.legTransports` (SO passthrough)
+ * Absent → undefined; cargo soft path may still rebuild from payload.
+ */
+function legTransportsFromCmrSandboxResult(
+  result: unknown,
+): ReadonlyArray<LegTransport> | undefined {
+  if (result === null || typeof result !== "object") return undefined;
+  const rec = result as Record<string, unknown>;
+  const topLevel = softParseLegTransports(rec.legTransports);
+  if (topLevel !== undefined) return topLevel;
+  const output = rec.output;
+  if (output !== null && typeof output === "object" && !Array.isArray(output)) {
+    return softParseLegTransports(
+      (output as Record<string, unknown>).legTransports,
+    );
+  }
+  return undefined;
 }
 function softParseSkippedLegs(
   raw: unknown,
@@ -3725,22 +3787,39 @@ function classifyCmrOutcomePayload(
 }
 
 /** Traffic keys for T2 judge envelopes — cargo siblings stay off the strict decode. */
-const JUDGE_TRAFFIC_KEYS = new Set([
+const JUDGE_BASE_TRAFFIC_KEYS = [
   "station",
   "status",
   "cargoPointer",
+] as const;
+const JUDGE_CONTINUE_TRAFFIC_KEYS = [
   "findingDispositions",
   "fixPacketBody",
   "advanceCoder",
-  "reason",
-  "diagnosis",
-]);
+] as const;
+const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
 
 function pickJudgeTraffic(
   record: Record<string, unknown>,
 ): Record<string, unknown> {
   const traffic: Record<string, unknown> = {};
-  for (const key of JUDGE_TRAFFIC_KEYS) {
+  const statusKeys =
+    record.status === "continue"
+      ? JUDGE_CONTINUE_TRAFFIC_KEYS
+      : record.status === "escalate"
+        ? JUDGE_ESCALATE_TRAFFIC_KEYS
+        : [];
+  const conflictingKeys =
+    record.status === "converged"
+      ? [...JUDGE_CONTINUE_TRAFFIC_KEYS, ...JUDGE_ESCALATE_TRAFFIC_KEYS]
+      : record.status === "escalate"
+        ? JUDGE_CONTINUE_TRAFFIC_KEYS
+        : [];
+  for (const key of [
+    ...JUDGE_BASE_TRAFFIC_KEYS,
+    ...statusKeys,
+    ...conflictingKeys,
+  ]) {
     if (Object.prototype.hasOwnProperty.call(record, key)) {
       traffic[key] = record[key];
     }
@@ -3778,9 +3857,20 @@ function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
+  // #1005 / ADR 0141: when cargo lands per-leg transports, host rebuilds
+  // successfulLegs transport-only (isLegalLegPaper). Content shape is never
+  // a gate; transports overlay any cargo successfulLegs (including []).
+  // Monorepo is consumer+overlay only — it does not park on empty lists.
+  const cargoTransports = softParseLegTransports(
+    normalizedParsed.legTransports,
+  );
+  const successfulLegs =
+    cargoTransports !== undefined
+      ? successfulLegsFromTransports(cargoTransports)
+      : softParseSuccessfulLegs(normalizedParsed.successfulLegs);
   return {
     ...(findings !== undefined ? { findings } : {}),
-    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
+    successfulLegs,
     ...(skippedLegs !== undefined ? { skippedLegs } : {}),
     ...(claimedFixedFindingIdentityKeys !== undefined
       ? { claimedFixedFindingIdentityKeys }
@@ -3970,31 +4060,12 @@ function summarizeError(
 ): string {
   // execFileSync on a non-zero exit throws an Error whose `.message` is only the
   // status line ("Command failed: npx tsc --noEmit") — the ACTUAL compiler / test
-  // output (the locatable reason) is on `.stderr` / `.stdout`. Reading only
-  // `.message` drops it, so the ledger could not name WHY verify went red,
-  // breaking decision 3④/5 "reason locatable from the ledger alone" (agy R1).
-  let detail = err instanceof Error ? err.message : String(err);
-  if (err !== null && typeof err === "object") {
-    const e = err as { stderr?: unknown; stdout?: unknown };
-    // Append BOTH streams (labeled), not just the first non-empty one: some tools
-    // put warnings/noise on stderr and the actual failure body on stdout (tsc/
-    // vitest do), so taking stderr-OR-stdout would drop the locatable reason
-    // (codex R3). The 600-char tail below keeps the trailing end where the real
-    // failure lands.
-    const stderr = decodeChildOutput(e.stderr);
-    const stdout = decodeChildOutput(e.stdout);
-    if (stderr.length > 0) detail += `\nstderr: ${stderr}`;
-    if (stdout.length > 0) detail += `\nstdout: ${stdout}`;
-  }
+  // output (the locatable reason) is on `.stderr` / `.stdout`. Shared capture
+  // keeps BOTH streams labeled (formatExecFailureOutput; codex R3 / #1006 DRY).
+  // The 600-char tail keeps the trailing end where the real failure lands.
+  const detail = formatExecFailureOutput(err);
   const tail = detail.length > 600 ? detail.slice(-600) : detail;
   return `family verify (${phase}) failed: ${tail}`;
-}
-
-/** Decode an execFileSync `stderr`/`stdout` field (string | Buffer | undefined) to trimmed text. */
-function decodeChildOutput(v: unknown): string {
-  if (typeof v === "string") return v.trim();
-  if (v instanceof Buffer) return v.toString("utf8").trim();
-  return "";
 }
 
 /**
@@ -4228,6 +4299,10 @@ export function parseVerifyOutcome(
     parsed.terminalState === "decision_gate_raised"
       ? parsed.terminalState
       : undefined;
+  const advanceCoder =
+    typeof parsed.advanceCoder === "string" && parsed.advanceCoder.trim().length > 0
+      ? parsed.advanceCoder.trim()
+      : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
     converged: parsed.converged,
@@ -4244,6 +4319,7 @@ export function parseVerifyOutcome(
       : {}),
     ...(terminalState !== undefined ? { terminalState } : {}),
     ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
+    ...(advanceCoder !== undefined ? { advanceCoder } : {}),
   };
   return candidate;
 }

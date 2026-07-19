@@ -186,8 +186,8 @@ def test_apply_score_extraction_applies_person_change_power_move(game):
         content.characters[name].power_id = old_power
 
 
-def test_apply_score_extraction_rejects_person_change_power_move_without_way(game):
-    db, state, content = game
+def test_apply_score_extraction_rejects_person_change_power_move_without_way(read_game):
+    db, state, content = read_game
     name = active_ming_character(db, content)
     old_power = content.characters[name].power_id
 
@@ -740,8 +740,8 @@ def test_apply_score_extraction_applies_person_change_office_action(game):
         content.characters[name].office_type = old_office_type
 
 
-def test_apply_score_extraction_rejects_unknown_person_change_new_appointment(game):
-    db, state, content = game
+def test_apply_score_extraction_rejects_unknown_person_change_new_appointment(read_game):
+    db, state, content = read_game
     name = "测试新任官员"
 
     applied = issues.apply_score_extraction(
@@ -1553,8 +1553,8 @@ def test_apply_score_extraction_preserves_legacy_consort_appointment_rejection(g
         content.characters.pop(name, None)
 
 
-def test_apply_score_extraction_rejects_consort_title_for_unknown_candidate(game):
-    db, state, content = game
+def test_apply_score_extraction_rejects_consort_title_for_unknown_candidate(read_game):
+    db, state, content = read_game
     name = "不存在宫女XYZ"
 
     try:
@@ -1881,8 +1881,8 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
         ),
     ],
 )
-def test_apply_score_extraction_rejects_invalid_person_dispositions(game, item, expected):
-    db, state, _ = game
+def test_apply_score_extraction_rejects_invalid_person_dispositions(read_game, item, expected):
+    db, state, _ = read_game
 
     applied = issues.apply_score_extraction(
         db,
@@ -1895,8 +1895,8 @@ def test_apply_score_extraction_rejects_invalid_person_dispositions(game, item, 
 
 
 @pytest.mark.parametrize("with_content", [True, False])
-def test_apply_score_extraction_rejects_unknown_person_change(game, with_content):
-    db, state, content = game
+def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_content):
+    db, state, content = read_game
     item = {"name": "不存在的人", "动作": "处置", "status": "dismissed"}
 
     applied = issues.apply_score_extraction(
@@ -2015,11 +2015,11 @@ def test_simulator_court_roster_is_active_only_dismissed_in_talent_pool(game):
     assert name in pool_names, "被削籍者应在人才名单 offstage_ministers（可起复）"
 
 
-def test_talent_pool_ming_noncourt_only(game):
+def test_talent_pool_ming_noncourt_only(read_game):
     """5b r8（gemini-R5，roster-scope coverage-drift）：人才池 offstage_ministers 须与 court_roster
     同口径含 power_id='ming' AND office_type!='后宫'。否则后金/流寇（offstage bandits 如李自成）漏进，
     被当「可起复的大明官」给裁判/玩家看（违 ADR 决定10：池=皇帝可起复的大明官）。"""
-    db, state, content = game
+    db, state, content = read_game
     payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
     pool = payload["offstage_ministers"]
     pidx = pool["cols"].index("power_id")
@@ -2069,10 +2069,10 @@ def _materialize_active_prince(db, state, content):
     return name
 
 
-def test_simulator_court_roster_excludes_active_prince(game):
+def test_simulator_court_roster_excludes_active_prince(read_game):
     """PR#121 cmr R3 cross-section：web 隐藏宗藩后，simulator 在朝盘面 court_roster 也须排除
     active 宗藩，否则裁判仍把宗室当可任命的在朝官（sim 幻觉任命风险）。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
     roster = payload["court_roster"]
@@ -2080,9 +2080,9 @@ def test_simulator_court_roster_excludes_active_prince(game):
     assert name not in [r[nidx] for r in roster["rows"]], f"宗藩 {name} 漏进 simulator court_roster"
 
 
-def test_extractor_active_ministers_excludes_active_prince(game):
+def test_extractor_active_ministers_excludes_active_prince(read_game):
     """extractor 上下文 active_ministers 与 court_roster 同口径排除宗藩。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     payload = _extractor_context_payload(db, state, narrative="", decree_text="")
     am = payload["active_ministers"]
@@ -2119,13 +2119,13 @@ def test_talent_pool_excludes_prince_unfilled_and_future_debut(saved_game):
             assert n not in names, f"{why} {n} 漏进起复人才池 offstage_ministers"
 
 
-def test_registry_and_tools_court_roster_exclude_active_prince(game):
+def test_registry_and_tools_court_roster_exclude_active_prince(read_game):
     """registry.build_court_roster(_index) + tools.get_active_ministers / query_court_roster
     与 simulator/web 同口径排除 active 宗藩（cmr R3 cross-section，全 roster 面一致）。"""
     from ming_sim.models import CourtContext
     from ming_sim import registry as reg
     from ming_sim.tools import build_board_query_tools, build_minister_tools
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     reg.bind_content(content)
     ctx = CourtContext(state=state, db=db, previous_summary="")
@@ -2159,10 +2159,10 @@ def test_apply_office_appointment_rejects_vassal_prince(game):
     assert row["status"] == "offstage", "宗藩被授官路径翻成 active"
 
 
-def test_list_ministers_excludes_active_prince(game):
+def test_list_ministers_excludes_active_prince(read_game):
     """召见阶段名册 GameSession.list_ministers 与各 roster 同口径排除 active 宗藩（cmr R5）。"""
     from ming_sim.session import GameSession
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -2170,21 +2170,21 @@ def test_list_ministers_excludes_active_prince(game):
     assert name not in [v.name for v in sess.list_ministers()], f"宗藩 {name} 漏进 list_ministers"
 
 
-def test_create_secret_order_rejects_vassal_prince(game):
+def test_create_secret_order_rejects_vassal_prince(read_game):
     """密令创建唯一 DB 写口 create_secret_order 拒宗藩——集中守此一处覆盖 API/大臣工具/CLI/upsert
     回落 create 全路（cmr R6：web 端点单守不够，工具/CLI 路径绕过）。"""
     import pytest
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     with pytest.raises(ValueError, match="宗室"):
         db.create_secret_order(state, name, "密查", "着尔暗中查访", [])
 
 
-def test_create_secret_order_rejects_vassal_prince_by_alias(game):
+def test_create_secret_order_rejects_vassal_prince_by_alias(read_game):
     """密令 assignee 用别名（如「福王」）也须被宗藩闸挡——create_secret_order 先 _find_existing_minister
     把别名规范化到在册 key 再校（cmr R2 online codex+CodeRabbit concur：原仅按 raw 名 .get，别名绕过）。"""
     import pytest
-    db, state, content = game
+    db, state, content = read_game
     prince = next(
         (n for n, c in content.characters.items()
          if c.office_type == "宗藩" and any(a != n for a in (c.aliases or []))),
@@ -2267,19 +2267,19 @@ def test_create_secret_order_allows_returned_defector(game):
     assert oid > 0  # DB 已归明 → 不被资格闸拒
 
 
-def test_pending_dismiss_rejects_vassal_prince(game):
+def test_pending_dismiss_rejects_vassal_prince(read_game):
     """pending 罢免落库（_commit_office_action 罢免路）拒宗藩——宗室非朝臣，不可作朝臣罢免（cmr R6）。"""
-    db, state, content = game
+    db, state, content = read_game
     name = _materialize_active_prince(db, state, content)
     ok = db._commit_office_action(state, {"action": "罢免"}, {"name": name}, content, None)
     assert ok is False
     assert db.get_character_status(name)[0] == "active"  # 未被罢、状态不变
 
 
-def test_extractor_active_ministers_ming_noncourt_only(game):
+def test_extractor_active_ministers_ming_noncourt_only(read_game):
     """5b r1 PR#106（CodeRabbit Major，roster-scope coverage-drift 第 4 处）：extractor 上下文的
     active_ministers 须与 court_roster 同口径 = 大明、非后宫。否则 active 外臣（皇太极）/active 后宫漏入。"""
-    db, state, content = game
+    db, state, content = read_game
     payload = _extractor_context_payload(db, state, narrative="", decree_text="")
     am = payload["active_ministers"]
     pidx = am["cols"].index("power_id")
@@ -2339,8 +2339,8 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
     ]
 
 
-def test_apply_score_extraction_rejects_unknown_person_travel_region(game):
-    db, state, content = game
+def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
+    db, state, content = read_game
     name = active_ming_character(db, content)
 
     applied = issues.apply_score_extraction(
@@ -3134,10 +3134,10 @@ def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
     assert ch.reason_code == "" and ch.status_reason == "", f"content 未清，实得 {ch.reason_code!r}/{ch.status_reason!r}"
 
 
-def test_migration_does_not_write_nonregion_location(game):
+def test_migration_does_not_write_nonregion_location(read_game):
     """5b R1：老档迁移罢居地名（府名，非 region_id）不得写进 location（region_id 列）。
     7 个 seed 旧臣迁移后 location 应为空（罢居地信息留 status_reason），不破 region_id 不变式。"""
-    db, _, _ = game
+    db, _, _ = read_game
     region_ids = {r["id"] for r in db.conn.execute("SELECT id FROM regions").fetchall()}
     rows = db.conn.execute(
         "SELECT name, location FROM characters WHERE status IN ('offstage','dismissed') "

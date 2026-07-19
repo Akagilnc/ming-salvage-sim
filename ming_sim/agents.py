@@ -313,6 +313,22 @@ def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agen
     )
 
 
+def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
+    """Create an isolated, one-shot near-attendant reading role."""
+    return Agent(
+        name="御前近臣读心",
+        id="mindreading",
+        model=create_chat_model(llm_config, temperature=0.4, max_tokens=240),
+        instructions=[
+            "你是御前近臣。只依据用户提供的定性底账、当轮完整回话和你自己的见闻，"
+            "低声向皇帝点明大臣未说尽的潜台词。",
+            "只输出一句简短旁白；不虚构新事实，不复述材料，不提机器字段或数值。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def _is_cols_rows_table(v: object) -> bool:
     """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
     return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}

@@ -60,9 +60,10 @@ Rules:
   on continue). Residual `findingsCount` / `<cmr>` shapes are not family closers
   (#930). Other fields below are **soft cargo**.
 - On any converged verdict, `successfulLegs` **should** list the CMR
-  leg slugs that actually produced usable reviews in this pass. Use `opus` for
-  the Claude/Opus reviewer leg, `gpt-5.6-sol` for the Codex Sol officer leg, and `agy` for the
-  Gemini/agy leg.
+  leg slugs that were **present** this pass (ADR 0141: transport success =
+  exit 0 + non-empty raw stdout; pure prose / unanchored candidates still
+  count). Use `opus` for the Claude/Opus reviewer leg, `gpt-5.6-sol` for the
+  Codex Sol officer leg, and `agy` for the Gemini/agy leg.
 - If a declared leg was unavailable at runtime, omit it from `successfulLegs` and
   include it in `skippedLegs` with a short visible flag reason. Omit
   `skippedLegs` only when no declared leg was skipped.

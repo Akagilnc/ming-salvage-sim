@@ -7,6 +7,7 @@ agy 生成内容非确定、不可断言；但其周围的解析、前缀分派�
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -75,6 +76,99 @@ def test_secret_prefix_merges_emperor_intent_with_reply(monkeypatch):
     assert "李若琏" in so["content"]              # 大臣补充的承办人并入
     assert so["assignee"] == "李若琏"
     assert so["deadline_months"] == 3
+
+
+def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
+    canned = json.dumps({
+        "标题": "密查",
+        "内容": "查账",
+        "承办人": "毕自严",
+        "排除对象": {"人物": ["魏忠贤"], "机构": ["司礼监"]},
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    result = cb._extract_secret_order("密查账目", "臣领旨", "毕自严")
+    assert result["excluded_names"] == ["魏忠贤"]
+    assert result["excluded_offices"] == ["司礼监"]
+    assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
+
+
+def test_extract_secret_order_preserves_long_title_without_formal_cap(monkeypatch):
+    """Prefix/extract create path must keep full 标题 after formal title-cap removal."""
+    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+    assert len(long_title) > 20
+    canned = json.dumps({
+        "标题": long_title,
+        "内容": "查明事实并回奏。",
+        "承办人": "毕自严",
+        "期限月数": 0,
+        "标签": ["辽饷"],
+    }, ensure_ascii=False)
+    def fake_json_extractor(prompt, llm_config=None, tag=""):
+        return canned, 1
+
+    monkeypatch.setattr(cb, "_run_json_extractor_for_config", fake_json_extractor)
+    result = cb._extract_secret_order(
+        "密令如下：查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员\n查明事实并回奏。",
+        "臣领密旨",
+        "毕自严",
+    )
+    assert result["title"] == long_title
+    assert len(result["title"]) == len(long_title)
+
+
+def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
+    """LLM omission cannot merge two named people into one ineffective target."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，瞒住魏忠贤、王体乾和曹化淳，勿使他们知晓。", "臣领旨", "毕自严"
+    )
+
+    assert result["excluded_names"] == ["魏忠贤", "王体乾", "曹化淳"]
+
+
+@pytest.mark.parametrize("wording", ["对魏忠贤保密", "莫让魏忠贤知晓"])
+def test_secret_exclusion_recovery_covers_target_first_and_imperative(wording, monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+    result = cb._extract_secret_order(f"密查此案，{wording}。", "臣领旨", "毕自严")
+    assert result["excluded_names"] == ["魏忠贤"]
+
+
+def test_secret_exclusion_recovery_covers_common_clause_and_shipped_office(monkeypatch):
+    """CLI recovery keeps an omitted institutional exclusion structured."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，不得告知翰林院编修，亦不许户部尚书过问。", "臣领旨", "毕自严"
+    )
+
+    assert "翰林院编修" in result["excluded_offices"]
+    assert "户部尚书" in result["excluded_offices"]
+
+
+def test_secret_exclusion_recovery_covers_non_disclosure_clause(monkeypatch):
+    """不同措辞也必须走与落库相同的机构排除语义。"""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，不可令翰林院侍读学士知情。", "臣领旨", "毕自严"
+    )
+
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["翰林院侍读学士"]
+
+
+def test_cli_and_durable_secret_exclusion_share_the_same_parser(game, monkeypatch):
+    from ming_sim.db import canonical_secret_order_exclusions
+
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+    cli = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
+    people, offices = canonical_secret_order_exclusions(
+        game[2], [], [], "密查账目，不走户部。"
+    )
+
+    assert cli["excluded_names"] == people == []
+    assert cli["excluded_offices"] == offices == ["户部"]
 
 
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
@@ -586,14 +680,72 @@ def test_secret_extract_backend_error_falls_back(monkeypatch):
     assert so["deadline_months"] == 0
 
 
-# ── 底层流式不实现（高层 response_stream 委托非流式）──
+def test_secret_extract_recovers_explicit_exclusion_when_backend_omits_it(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ('{"标题":"密查","内容":"查账"}', 1))
+    result = cb._extract_secret_order("密查账目，瞒住魏忠贤。", "臣领旨", "毕自严")
+    assert result["excluded_names"] == ["魏忠贤"]
 
-def test_clichat_low_level_stream_not_implemented():
-    cc = cb.CliChat(id="m", backend="agy")
-    with pytest.raises(NotImplementedError):
-        cc.invoke_stream()
-    with pytest.raises(NotImplementedError):
-        cc.ainvoke_stream()
+
+def test_secret_extract_recovers_office_exclusion_when_backend_fails(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+
+    result = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
+
+    assert result["excluded_offices"] == ["户部"]
+
+
+def test_secret_extract_merges_office_exclusion_when_backend_omits_it(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ('{"标题":"密查","内容":"查账"}', 1))
+
+    result = cb._extract_secret_order("密查账目，勿经户部。", "臣领旨", "毕自严")
+
+    assert result["excluded_offices"] == ["户部"]
+
+
+def test_secret_extract_classifies_institutional_knowledge_ban_as_office(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+    result = cb._extract_secret_order("密查账目，勿使户部知晓。", "臣领旨", "毕自严")
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["户部"]
+
+
+def test_secret_extract_classifies_institutional_title_knowledge_ban_as_office(monkeypatch):
+    """Institutional wording must not become a nonexistent person blacklist key."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+    result = cb._extract_secret_order("密查账目，勿使户部诸官知晓。", "臣领旨", "毕自严")
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["户部"]
+
+
+def test_secret_extract_classifies_office_title_knowledge_ban_as_office(monkeypatch):
+    """具体官职同样是机构目标，不能落成无效的人名黑名单。"""
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+
+    result = cb._extract_secret_order("密查账目，勿使户部尚书知晓。", "臣领旨", "毕自严")
+
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["户部尚书"]
+
+
+def test_secret_extract_classifies_grand_secretariat_title_knowledge_ban_as_office(monkeypatch):
+    """内阁首辅是职名，不得作为无效人名黑名单持久化。"""
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+
+    result = cb._extract_secret_order("密查账目，勿使内阁首辅知晓。", "臣领旨", "毕自严")
+
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["内阁首辅"]
+
+
+@pytest.mark.parametrize("target", ["翰林院", "翰林院编修"])
+def test_secret_extract_classifies_shipped_hanlin_targets_as_offices(monkeypatch, target):
+    """CLI fallback must preserve shipped office types and titles as targets."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+
+    result = cb._extract_secret_order(f"密查账目，勿使{target}知晓。", "臣领旨", "毕自严")
+
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == [target]
 
 
 # ── codex 后端工程修复（实测撞出来的坑）──
@@ -688,6 +840,8 @@ def test_codex_streaming_runner_degrades_to_oneshot_final(monkeypatch):
 
 
 def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
+    from agno.models.message import Message
+
     seen = {}
 
     def fake_chunks(prompt, *, model=None, timeout=None, reasoning_strength=None):
@@ -697,9 +851,9 @@ def test_clichat_codex_response_stream_passes_reasoning_strength(monkeypatch):
     monkeypatch.setattr(cb, "_iter_codex_stream_chunks", fake_chunks)
     chat = cb.CliChat(id="gpt-test", backend="codex", reasoning_strength="low")
 
-    chunks = list(chat.response_stream([SimpleNamespace(role="user", content="请写邸报")]))
+    chunks = list(chat.response_stream([Message(role="user", content="请写邸报")]))
 
-    assert [chunk.content for chunk in chunks] == ["邸报"]
+    assert [chunk.content for chunk in chunks if chunk.content] == ["邸报"]
     assert seen["reasoning_strength"] == "low"
 
 
@@ -1151,6 +1305,26 @@ def test_extract_minister_actions_update(monkeypatch):
     assert act["secret_action"] == "更新"
     assert act["order_id"] == 6
     assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
+
+
+def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
+    """Update extract must not silently hard-truncate 新标题 after formal title-cap removal."""
+    import json as _j
+    long_title = "查核辽饷转运与沿途侵蚀及军粮实数并追索责任官员"
+    assert len(long_title) > 20
+    canned = _j.dumps({
+        "密令动作": "更新", "目标密令编号": 6,
+        "新标题": long_title, "新内容": "查明事实并回奏",
+        "期限月数": 3,
+    }, ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (canned, 1))
+    act = cb.extract_minister_actions(
+        "把标题改全些", "臣遵旨",
+        [{"id": 6, "title": "旧标题", "content": "旧内容"}], is_consort=False,
+    )
+    assert act["secret_action"] == "更新"
+    assert act["new_title"] == long_title
+    assert len(act["new_title"]) == len(long_title)
 
 def test_extract_minister_actions_none(monkeypatch):
     monkeypatch.setattr(cb, "_run_backend", lambda p: ('{"密令动作":"无","目标密令编号":0}', 1))

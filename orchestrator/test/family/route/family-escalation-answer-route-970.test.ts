@@ -3,18 +3,19 @@
  *
  * Field failure (#485): a family-level correctness-park answer whose TEXT mentions
  * a child (e.g. "先完成 #883") was treated as a child decision-gate resume and
- * injected into runChild. Without a parked child session the #604 fail-closed path
- * returned silent `failed` → wave ends incomplete (`owning_issue_still_red`) with
- * zero durable progress and a swallowed reason.
+ * injected into runChild. Without a parked child session the old #604 fail-closed
+ * path returned silent `failed` → incomplete with a swallowed reason.
  *
- * Contract:
+ * Contract (post-#1019):
  *   1. Mentioning a child issue in answer text ≠ that child has a decision park.
  *      Inject into runChild only when the family ledger proves a decision-kind park
  *      (escalationKind=decision + parked sessionId) for that child.
  *   2. Otherwise the answer is a family-level directive: noop for runChild, still
  *      consumed as a family answer.
- *   3. True child answer without parked single-slice state fails closed with loud
- *      typed reason `child_answer_without_parked_state` and a durable ledger row.
+ *   3. True child-bound answer without injectable single-slice resume → #1019
+ *      fresh redispatch with answer cargo (`child_answer_fresh_redispatch` audit),
+ *      not fail-closed `child_answer_without_parked_state`. Canonical tracer:
+ *      `cross-launcher-redispatch-1019.test.ts` AC1.
  */
 
 import { describe, expect, it } from "vitest";
@@ -315,10 +316,10 @@ describe("#970 — park without sessionId is NOT a child decision resume", () =>
   });
 });
 
-describe("#970 — true child answer without parked state fails loud", () => {
-  it("child decision park answered + missing single-slice resume state → failed with typed reason + durable row", async () => {
-    // Park path writes child_decision_parked; then hide resume state so injection
-    // cannot reopen the parked session — must fail closed loudly, not silently.
+describe("#970 / #1019 — true child answer without parked resume → fresh redispatch", () => {
+  it("child decision park answered + missing single-slice resume state → fresh redispatch completes", async () => {
+    // #1019 overturns #970 fail-closed: dead/missing session degrades to fresh
+    // redispatch carrying the answer, not child_answer_without_parked_state.
     const singleSliceBackend = new ParkThenMissingResumeBackend(883, true);
     const familyBackend = new FakeFamilyBackend();
 
@@ -354,27 +355,23 @@ describe("#970 — true child answer without parked state fails loud", () => {
       familyBase: "family/485-base",
     });
 
-    const child = second.children.find((c) => c.issue === 883);
-    expect(child?.status).toBe("failed");
-    expect(child?.failureCause).toBe("child_answer_without_parked_state");
-    // Must not re-run the child from scratch on a true child-answer bind.
     const s2After = singleSliceBackend.runStepCalls.filter(
       (c) => c.issue === 883 && c.step === "S2",
     ).length;
-    expect(s2After).toBe(s2Before);
-    // Durable ledger row so the reason is not swallowed on re-entry diagnostics.
+    expect(s2After).toBeGreaterThan(s2Before);
     expect(
       familyBackend.ledger.some(
         (e) =>
-          e.childIssue === 883 && e.reason === "child_answer_without_parked_state",
+          e.childIssue === 883 && e.reason === "child_answer_fresh_redispatch",
       ),
     ).toBe(true);
-    expect(second.status).not.toBe("completed");
+    expect(second.status).toBe("completed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
   });
 
-  it("park + answer + resume ledger step missing sessionId → failed with typed reason", async () => {
-    // Resume state exists and has a re-openable step, but that step has no
-    // sessionId — the other fail-closed arm (not the hide-resume branch).
+  it("park + answer + parked step missing sessionId → fresh redispatch audit, not fail-closed", async () => {
+    // Family park+answer bind exists; child residue has S8 decision-park but no
+    // sessionId on the re-openable step → #1019 degrades to fresh redispatch.
     const singleSliceBackend = new FreshChildBackend();
     const familyBackend = new FakeFamilyBackend();
 
@@ -400,14 +397,19 @@ describe("#970 — true child answer without parked state fails loud", () => {
       } as FamilyLedgerEntry,
     );
 
-    // Child single-slice residue: escalated S2 present but sessionId absent
-    // (corrupt/legacy residue) — injection must fail closed loudly.
     singleSliceBackend.childLedgers.set(883, [
       {
         step: "S2",
         prompt_hash: "parked",
         branchHEAD: "head-parked",
         ts: "2026-07-17T00:00:00.000Z",
+        // deliberately no sessionId on the re-openable step
+      } as unknown as PersistentLedgerEntry,
+      {
+        step: "S8",
+        prompt_hash: "parked",
+        branchHEAD: "head-parked",
+        ts: "2026-07-17T00:00:01.000Z",
         handoffStatus: "parked",
         escalationKind: "decision",
       } as unknown as PersistentLedgerEntry,
@@ -421,21 +423,19 @@ describe("#970 — true child answer without parked state fails loud", () => {
       familyBase: "family/485-base",
     });
 
-    const child = result.children.find((c) => c.issue === 883);
-    expect(child?.status).toBe("failed");
-    expect(child?.failureCause).toBe("child_answer_without_parked_state");
-    expect(singleSliceBackend.resumeSessionCalls).toEqual([]);
-    expect(
-      singleSliceBackend.childLedgers
-        .get(883)
-        ?.some((e) => e.event === "escalation_answered"),
-    ).toBe(false);
     expect(
       familyBackend.ledger.some(
         (e) =>
-          e.childIssue === 883 && e.reason === "child_answer_without_parked_state",
+          e.childIssue === 883 && e.reason === "child_answer_fresh_redispatch",
       ),
     ).toBe(true);
-    expect(result.status).not.toBe("completed");
+    // Fresh redispatch must actually run coder S2 (not terminal-replay-only).
+    expect(
+      singleSliceBackend.runStepCalls.some(
+        (c) => c.issue === 883 && c.step === "S2",
+      ),
+    ).toBe(true);
+    expect(result.status).toBe("completed");
+    expect(familyBackend.merges.some((m) => m.childIssue === 883)).toBe(true);
   });
 });

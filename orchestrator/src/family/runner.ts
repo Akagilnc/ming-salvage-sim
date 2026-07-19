@@ -57,6 +57,14 @@ import {
 import { parkOrRelayQuotaWall } from "../quotaParkRelay.js";
 import { MAX_RELAY_HANDOFFS } from "../relayDispatch.js";
 import { logDriverStage } from "../stageLog.js";
+import {
+  configureProgressBroadcast,
+  emitExitProgress,
+  emitLandingProgress,
+  emitMergeProgress,
+  emitShipProgress,
+  emitWaveCloseProgress,
+} from "../progressBroadcast.js";
 import { isAnyStepId, isStepId } from "../types.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
@@ -71,6 +79,7 @@ import { escalateOf, isValidEscalation } from "../validate.js";
 import { assertAcyclic, DependencyCycleError, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
+  latestChildBoundAnswer,
   familyEscalationState,
   familyReviewLoopConvergedForHead,
   familyShippedRecordForReviewLoopResume,
@@ -286,6 +295,16 @@ async function decideFamilyQuotaWall(opts: {
     escalation?: { readonly reason: string; readonly diagnosis: string },
   ): Promise<FamilyQuotaWallDecision> => {
     const children = await familyChildrenSnapshot(opts);
+    // #1007: quota / relay-admission park (all barrier.kind==="park" early returns).
+    emitExitProgress({
+      epic: opts.epicIssue,
+      status: "parked",
+      stopReason: stopSummary.reason,
+      gateSummary:
+        escalation?.diagnosis ??
+        escalation?.reason ??
+        stopSummary.summary,
+    });
     return {
       kind: "park",
       result: {
@@ -429,6 +448,9 @@ async function decideFamilyQuotaWall(opts: {
   // #934 R6 F4: family Recovery only reads family-ledger.jsonl. Do not also
   // write slice steps.jsonl via parkOrRelayQuotaWall (half dual court). The
   // sole durable boundary is appendFamilyLedger below (fail-closed).
+  // #1007 R5: helper would dual-write; family owns a single park+terminal emit
+  // in buildParkResult (epic-attributed). Suppress helper emit to avoid double
+  // park/terminal rows + double notify.
   const outcome = await parkOrRelayQuotaWall({
     step: parkStep,
     err: opts.err,
@@ -466,6 +488,7 @@ async function decideFamilyQuotaWall(opts: {
     pools,
     now: opts.now ?? new Date(),
     state_summary: `family ${opts.phase} quota wall on ${currentPool}; barrier continues on baton when live`,
+    emitProgress: false,
   });
 
   if (outcome.kind === "park") {
@@ -861,6 +884,10 @@ function readChildDecisionEscalation(
  * The escalated (last non-terminal) step in a child's parked single-slice ledger
  * (#604 slice 5) — the `forStep` a family-level answer must target so the child's
  * own `planResume` reopens THAT step in its recorded session.
+ *
+ * Shape-kin to single-slice `lastNonTerminalStep` in runner.ts (same reverse
+ * scan). Kept local: family uses `isStepId` + PersistentLedgerEntry; runner's
+ * helper is not exported and sits on a different module boundary.
  */
 function escalatedChildStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
@@ -872,39 +899,36 @@ function escalatedChildStep(
   return undefined;
 }
 
-/**
- * #970 typed fail-closed reason: a TRUE child-bound decision answer was present
- * (ledger-proven park + answer) but the child's single-slice parked resume state
- * is missing. Must never be silent / generic — field #485 triple-fail swallowed
- * this path into `owning_issue_still_red` with no durable cause.
- */
-export const CHILD_ANSWER_WITHOUT_PARKED_STATE =
-  "child_answer_without_parked_state" as const;
+/** #1019 audit: answered park degraded to fresh redispatch (dead/missing session). */
+const CHILD_ANSWER_FRESH_REDISPATCH =
+  "child_answer_fresh_redispatch" as const;
 
-/**
- * Fail closed when a true child decision answer cannot resume in place (#604 P1-b
- * + #970 loud reason). Writes a durable family-ledger audit row so the typed
- * reason survives re-entry diagnostics (not just in-memory failureCause).
- */
-async function failClosedChildAnswerWithoutParkedState(
-  familyBackend: FamilyBackend,
-  childIssue: number,
-): Promise<FamilyChildResult> {
-  // Audit-only durable marker (worker_dispatched) — do NOT write phase `aborted`
-  // / family `escalated` here: those would poison barrier terminal resolution or
-  // next re-entry park state. The child outcome remains `"failed"` + failureCause.
-  await familyBackend.appendFamilyLedger({
-    childIssue,
-    status: "worker_dispatched",
-    event: "worker_dispatched",
-    workerStep: "child_answer_resume",
-    reason: CHILD_ANSWER_WITHOUT_PARKED_STATE,
-  });
-  return {
-    issue: childIssue,
-    status: "failed",
-    failureCause: CHILD_ANSWER_WITHOUT_PARKED_STATE,
-  };
+function lastChildHandoffStatus(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): "completed" | "parked" | "failed" | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step !== "S8") continue;
+    const status = entry.handoffStatus;
+    if (status === "completed" || status === "parked" || status === "failed") {
+      return status;
+    }
+  }
+  return undefined;
+}
+
+function lastChildEscalationKind(
+  ledger: ReadonlyArray<PersistentLedgerEntry>,
+): string | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.step !== "S8") continue;
+    const kind = entry.escalationKind;
+    // Align with lastChildHandoffStatus: skip invalid/empty kinds and keep
+    // scanning older S8 rows; only return when a non-empty kind is found.
+    if (typeof kind === "string" && kind.length > 0) return kind;
+  }
+  return undefined;
 }
 
 async function runChild(
@@ -915,59 +939,95 @@ async function runChild(
   familyChildIssues: ReadonlySet<number>,
   familyBackend: FamilyBackend,
   /**
-   * A family-ledger-proven answer to THIS child's parked decision escalation
-   * (#604 slice 5 / #970). Only set when the ledger proves a decision-kind park
-   * with sessionId for this child — family-level answers (or free-text mentions of
-   * a child issue number) must NOT reach here. When present, it is INJECTED into
-   * the child's own single-slice ledger (as an `escalation_answered` row targeting
-   * the escalated step) BEFORE re-running `runOrchestrator`, so the child's
-   * `planResume` reopens the paused step in its recorded session (原地 resume).
-   * Absent ⇒ a normal fresh/continued child run.
+   * A family-ledger (or child-bound) answer for THIS child's decision gate
+   * (#604 slice 5 / #970 / #1019). When single-slice residue is still a
+   * decision-park with sessionId, the answer is INJECTED for 原地 resume.
+   * When residue is dead/missing/failed, #1019 degrades to fresh redispatch
+   * carrying the answer into the new worker context — never fail-closed.
    */
   escalationAnswer?: EscalationAnswerPayload,
 ): Promise<FamilyChildResult> {
-  // ── #604 slice 5 resume: inject the answer into the child's single-slice ledger
-  // so the reused runOrchestrator's planResume → resumeSession reopens the paused
-  // step IN PLACE (原 sessionId), never from scratch. We only inject when the child
-  // actually has parked residue (findResumeState returns a ledger) whose last
-  // non-terminal step is the one to reopen.
+  // ── #604 / #1019 answer re-entry ───────────────────────────────────────────
+  // Prefer in-place inject when the child still has a decision-parked ledger
+  // with a session lineage. Otherwise fresh-redispatch with answer cargo.
+  let familyEscalationAnswer: EscalationAnswerPayload | undefined;
   if (escalationAnswer !== undefined) {
     const resumeState = await singleSliceBackend.findResumeState(child.issue);
     const forStep =
       resumeState !== undefined ? escalatedChildStep(resumeState.ledger) : undefined;
-    if (resumeState !== undefined && forStep !== undefined) {
-      const parkedSessionId = [...resumeState.ledger]
-        .reverse()
-        .find((entry) => entry.step === forStep)?.sessionId;
-      if (parkedSessionId === undefined) {
-        // #970: loud typed fail-closed (was silent bare `"failed"`).
-        return failClosedChildAnswerWithoutParkedState(familyBackend, child.issue);
+    const handoff =
+      resumeState !== undefined
+        ? lastChildHandoffStatus(resumeState.ledger)
+        : undefined;
+    const escKind =
+      resumeState !== undefined
+        ? lastChildEscalationKind(resumeState.ledger)
+        : undefined;
+    const canInjectInPlace =
+      resumeState !== undefined &&
+      forStep !== undefined &&
+      handoff === "parked" &&
+      escKind === "decision";
+    const parkedSessionId =
+      canInjectInPlace
+        ? [...resumeState!.ledger]
+            .reverse()
+            .find((entry) => entry.step === forStep)?.sessionId
+        : undefined;
+    // #1019 CodeRabbit: old answer must not bind a new decision session.
+    const answerSessionId =
+      typeof escalationAnswer.sessionId === "string"
+        ? escalationAnswer.sessionId.trim()
+        : "";
+    const staleAnswerForNewSession =
+      canInjectInPlace &&
+      typeof parkedSessionId === "string" &&
+      parkedSessionId.length > 0 &&
+      answerSessionId.length > 0 &&
+      answerSessionId !== parkedSessionId;
+    if (staleAnswerForNewSession) {
+      // New gate (different sessionId) — do not inject, do not carry answer cargo.
+    } else if (
+      canInjectInPlace &&
+      typeof parkedSessionId === "string" &&
+      parkedSessionId.length > 0
+    ) {
+      // Skip re-write when this forStep already carries the same answer text
+      // (planResume will consume the existing escalation_answered row).
+      const alreadyConsumed = resumeState!.ledger.some(
+        (e) =>
+          e.event === "escalation_answered" &&
+          e.forStep === forStep &&
+          e.answer === escalationAnswer.answer,
+      );
+      if (!alreadyConsumed) {
+        const answerEntry: PersistentLedgerEntry = {
+          step: forStep!,
+          sessionId: escalationAnswer.sessionId ?? parkedSessionId,
+          prompt_hash: "family-answer",
+          branchHEAD: resumeState!.worktree.branch,
+          ts: new Date().toISOString(),
+          event: "escalation_answered",
+          forStep: forStep!,
+          answer: escalationAnswer.answer,
+          source: escalationAnswer.source ?? "human",
+          ...(escalationAnswer.note !== undefined
+            ? { note: escalationAnswer.note }
+            : {}),
+        } as PersistentLedgerEntry;
+        await singleSliceBackend.writeLedger(answerEntry, resumeState!.stateDir);
       }
-      const answerEntry: PersistentLedgerEntry = {
-        step: forStep,
-        // Keep the answer row in the same session lineage as the parked worker.
-        // The durable child step is the fallback truth for legacy family answer
-        // rows that predate sessionId forwarding.
-        sessionId: escalationAnswer.sessionId ?? parkedSessionId,
-        prompt_hash: "family-answer",
-        branchHEAD: resumeState.worktree.branch,
-        ts: new Date().toISOString(),
-        event: "escalation_answered",
-        forStep,
-        answer: escalationAnswer.answer,
-        source: "human",
-        ...(escalationAnswer.note !== undefined ? { note: escalationAnswer.note } : {}),
-      } as PersistentLedgerEntry;
-      await singleSliceBackend.writeLedger(answerEntry, resumeState.stateDir);
     } else {
-      // #604 correctness r1 (P1-b): a human answered THIS child's decision gate,
-      // but its parked resume state is MISSING (findResumeState returned undefined,
-      // or no re-openable non-terminal step exists). We MUST NOT fall through to a
-      // fresh `runOrchestrator` (that would re-run the child FROM SCRATCH, losing
-      // committed progress and violating 原地-resume / never-from-scratch, ADR 0062).
-      // #970: fail-closed with loud typed reason + durable ledger row — never a
-      // silent bare `"failed"` that collapses into owning_issue_still_red with no cause.
-      return failClosedChildAnswerWithoutParkedState(familyBackend, child.issue);
+      // Missing resume / failed terminal / park without sessionId → #1019
+      // fresh redispatch with answer cargo (not fail-closed).
+      familyEscalationAnswer = escalationAnswer;
+      await familyBackend.appendFamilyLedger({
+        childIssue: child.issue,
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: CHILD_ANSWER_FRESH_REDISPATCH,
+        reason: CHILD_ANSWER_FRESH_REDISPATCH,
+      });
     }
   }
   const result = await runOrchestrator({
@@ -994,6 +1054,9 @@ async function runChild(
       familyBase,
       mergedBlockers: child.blockedBy.filter((b) => familyChildIssues.has(b)),
     },
+    ...(familyEscalationAnswer !== undefined
+      ? { familyEscalationAnswer }
+      : {}),
   });
   if (result.status === "completed" && result.branch !== undefined) {
     // The single-slice run succeeded and produced a reviewed branch — but it is
@@ -1183,7 +1246,14 @@ async function ensureLandingForResume(input: {
       ? { billingPoolSlots: input.billingPoolSlots }
       : {}),
   });
-  if (landing.ok) return undefined;
+  if (landing.ok) {
+    // #1007: landing success echo.
+    emitLandingProgress({
+      epic: input.familyIssue,
+      pr: input.prUrl,
+    });
+    return undefined;
+  }
   // family/914 CR — single durable exit (recordLandingActionFailure); not dual-
   // written park/abort next to verifyCmr.
   const recorded = await recordLandingActionFailure(
@@ -1192,6 +1262,13 @@ async function ensureLandingForResume(input: {
     { phase: "final", familyHeadAfter: input.familyHeadAfter },
   );
   if (recorded.kind === "park") {
+    // #1007: landing park early-return (bypasses finalize).
+    emitExitProgress({
+      epic: input.familyIssue,
+      status: "parked",
+      stopReason: recorded.stopSummary.reason,
+      gateSummary: recorded.stopSummary.summary,
+    });
     return {
       status: "parked",
       familyBase: input.familyBase,
@@ -1203,6 +1280,13 @@ async function ensureLandingForResume(input: {
         : {}),
     };
   }
+  // #1007: landing hard-fail early-return.
+  emitExitProgress({
+    epic: input.familyIssue,
+    status: "failed",
+    stopReason: recorded.stopSummary.reason,
+    gateSummary: recorded.stopSummary.summary,
+  });
   return failedFamilyResult({
     cause: "landing_worker_failed",
     familyBase: input.familyBase,
@@ -1512,6 +1596,23 @@ export async function runFamily(
   // A durable family sidecar is shared across restarts, so it needs an
   // invocation-scoped identity just like the single-slice runner.
   const runId = mintRunId();
+  // #1007: bind progress feed to family durable ledgerDir when resolvable.
+  {
+    let familyLedgerDir: string | undefined;
+    try {
+      familyLedgerDir = familyBackend.resolveTelemetryDir?.({
+        runId,
+      } as import("../types.js").DispatchContext);
+    } catch {
+      familyLedgerDir = undefined;
+    }
+    if (familyLedgerDir !== undefined && familyLedgerDir.length > 0) {
+      configureProgressBroadcast({
+        ledgerDir: familyLedgerDir,
+        epic: input.epic.issue,
+      });
+    }
+  }
   // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
   // No env slot overrides, no interactive continue.
   const admitted = input.admittedRoute === undefined
@@ -1523,6 +1624,18 @@ export async function runFamily(
       status: "skipped" as const,
     }));
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
+    const stopSummary = infraFailureStopSummary({
+      summary: `${admitted.escalation.reason}: ${diagnosis}`,
+      repairHint:
+        "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
+    });
+    // #1007: family startup route fail — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_config_invalid",
       familyBase: input.familyBase,
@@ -1530,11 +1643,7 @@ export async function runFamily(
         reason: admitted.escalation.reason,
         diagnosis,
       },
-      stopSummary: infraFailureStopSummary({
-        summary: `${admitted.escalation.reason}: ${diagnosis}`,
-        repairHint:
-          "repair ORCHESTRATOR_ROUTE preset or issue Coder-Rec staffing before rerun",
-      }),
+      stopSummary,
       children,
       ...(input.epic.admissionSkipped !== undefined &&
       input.epic.admissionSkipped.length > 0
@@ -1550,14 +1659,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
+    });
+    // #1007: family smoke missing executor — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: reason },
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1583,14 +1700,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: `route smoke failed: ${reason}`,
+      repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
+    });
+    // #1007: family smoke throw — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: `route smoke failed: ${reason}` },
-      stopSummary: infraFailureStopSummary({
-        summary: `route smoke failed: ${reason}`,
-        repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1602,14 +1727,22 @@ export async function runFamily(
       issue: child.issue,
       status: "skipped" as const,
     }));
+    const stopSummary = infraFailureStopSummary({
+      summary: smokeFailure,
+      repairHint: "rerun the route smoke or repair the selected model×pipe",
+    });
+    // #1007: family smoke failure — dual-write terminal.
+    emitExitProgress({
+      epic: input.epic.issue,
+      status: "failed",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return failedFamilyResult({
       cause: "route_smoke_failed",
       familyBase,
       escalation: { reason: "startup route smoke failure", diagnosis: smokeFailure },
-      stopSummary: infraFailureStopSummary({
-        summary: smokeFailure,
-        repairHint: "rerun the route smoke or repair the selected model×pipe",
-      }),
+      stopSummary,
       children,
     });
   }
@@ -1708,6 +1841,13 @@ export async function runFamily(
         decisionGatePark: decisionPark,
       });
       if (publicStatus === "failed") {
+        // #1007: prior escalation re-entry terminal (bypasses finalize).
+        emitExitProgress({
+          epic: input.epic.issue,
+          status: "failed",
+          stopReason: stopSummary.reason,
+          gateSummary: escalationPayload.reason,
+        });
         return failedFamilyResult({
           cause: "runner_internal_error",
           familyBase,
@@ -1717,6 +1857,13 @@ export async function runFamily(
           children,
         });
       }
+      // #1007: prior decision escalation re-entry park (bypasses finalize).
+      emitExitProgress({
+        epic: input.epic.issue,
+        status: "parked",
+        stopReason: stopSummary.reason,
+        gateSummary: escalationPayload.reason,
+      });
       return {
         status: "parked",
         familyBase,
@@ -1753,16 +1900,12 @@ export async function runFamily(
   //     Supports multiple children parked + answered separately.
   const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
   {
-    // #970 type-split: inject into runChild ONLY when the ledger proves a
-    // decision-kind park (child_decision_parked + escalationKind=decision +
-    // non-empty parked sessionId) AND a later matching child-bound answer.
-    // Family-level answers (no childIssue), free-text mentions of a child issue
-    // number, or park rows without sessionId are NOT child decision resumes —
-    // they must not enter parkedChildAnswers (noop for runChild).
-    // `unansweredChildEscalations` returns ONLY the still-unanswered parked
-    // children. To also resume the ANSWERED ones we look up each parked child's
-    // answer directly: answered → feed it into runChild (resume in place);
-    // unanswered → keep the family paused (return public parked).
+    // #970 / #1019: feed runChild when a child-bound answer exists.
+    // Prefer park-row-scoped answers (childEscalationAnswer); also accept
+    // child-bound answers without a park row (latestChildBoundAnswer) so
+    // mixed-wave drops and progress-only answers still redispatch.
+    // Family-level answers (no childIssue) never match. Unanswered parks still
+    // early-return public parked before the wave loop.
     // Single reverse pass → latest park per child (ledger authority predicate).
     const latestParkByChild = new Map<
       number,
@@ -1784,17 +1927,22 @@ export async function runFamily(
         unanswered.push(parkRow);
         continue;
       }
-      // Injection requires a parked sessionId on the durable park row (#970).
-      // Without it the bind is not a proven child decision resume — leave the
-      // answer consumed at family ledger level and run the child fresh/normal.
-      const parkedSessionId =
-        typeof parkRow.sessionId === "string" ? parkRow.sessionId.trim() : "";
-      if (parkedSessionId.length === 0) continue;
+      // #1019: feed answers even when park row lost sessionId — runChild
+      // degrades to fresh redispatch when in-place inject is impossible.
       const answer = childEscalationAnswer(initialFamilyLedger, childIssue);
       if (answer !== undefined) parkedChildAnswers.set(childIssue, answer);
     }
+    // #1019: child-bound answers without a family park row (mixed-wave drop /
+    // human answered from progress) still feed runChild for redispatch.
+    // One mergedSet for answer-feed skip + unanswered early-exit children map.
+    const ledgerMerged = mergedSet(initialFamilyLedger);
+    for (const child of epic.children) {
+      if (ledgerMerged.has(child.issue)) continue;
+      if (parkedChildAnswers.has(child.issue)) continue;
+      const bound = latestChildBoundAnswer(initialFamilyLedger, child.issue);
+      if (bound !== undefined) parkedChildAnswers.set(child.issue, bound);
+    }
     if (unanswered.length > 0) {
-      const ledgerMerged = mergedSet(initialFamilyLedger);
       const first = unanswered[0]!;
       // #604 F8: an UNANSWERED parked child re-entered before the wave loop must
       // map child status to internal `"escalated"` (decision-gate park payload),
@@ -1827,6 +1975,25 @@ export async function runFamily(
         return { issue: c.issue, status: "skipped" as const };
       });
       const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
+      const childParkStop = familyStopSummary({
+        status: "parked",
+        familyBase,
+        ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
+          ? { familyHead: first.familyHeadAfter }
+          : {}),
+        children,
+        escalationReason,
+        decisionGatePark: true,
+      });
+      // #1007: unanswered child decision park re-entry (bypasses finalizeDecisionPark).
+      emitExitProgress({
+        epic: epic.issue,
+        issue: first.childIssue,
+        status: "parked",
+        stopReason: childParkStop.reason,
+        gateSummary:
+          first.diagnosis ?? first.reason ?? escalationReason,
+      });
       return {
         status: "parked",
         familyBase,
@@ -1839,16 +2006,7 @@ export async function runFamily(
             first.diagnosis ??
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
         },
-        stopSummary: familyStopSummary({
-          status: "parked",
-          familyBase,
-          ...(typeof first.familyHeadAfter === "string" && first.familyHeadAfter.trim().length > 0
-            ? { familyHead: first.familyHeadAfter }
-            : {}),
-          children,
-          escalationReason,
-          decisionGatePark: true,
-        }),
+        stopSummary: childParkStop,
         children,
       };
     }
@@ -2030,6 +2188,15 @@ export async function runFamily(
         ? { admissionSkipped: epic.admissionSkipped }
         : {}),
     };
+    // #1007: family exit progress. Parked finalize must emit park+terminal
+    // (same contract as early-return parks); completed/failed emit terminal only.
+    emitExitProgress({
+      epic: epic.issue,
+      status,
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
+
     // #942 CR R2 S3: status:"failed" always carries a mandatory ID-001 cause.
     if (status === "failed") {
       return attachDiagnostics(
@@ -2074,6 +2241,14 @@ export async function runFamily(
       return { issue: c.issue, status: "skipped" as const };
     });
     const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
+    // #1007: shared dual-write helper (DELETE local park+terminal dup).
+    emitExitProgress({
+      issue: parked.issue,
+      epic: epic.issue,
+      status: "parked",
+      stopReason: "decision_gate_park",
+      gateSummary: parked.escalation.diagnosis || parked.escalation.reason,
+    });
     return {
       status: "parked",
       familyBase,
@@ -2137,18 +2312,26 @@ export async function runFamily(
         reason: "family reconcile found the live family-base HEAD inconsistent with the ledger",
         familyHeadAfter: plan.liveHead,
       });
+      const reconcileStop = familyStopSummary({
+        status: "failed",
+        familyBase,
+        familyHead,
+        children,
+        escalationReason:
+          "family reconcile found the live family-base HEAD inconsistent with the ledger",
+      });
+      // #1007: reconcile fail-closed bypasses finalize — dual-write terminal.
+      emitExitProgress({
+        epic: epic.issue,
+        status: "failed",
+        stopReason: reconcileStop.reason,
+        gateSummary: reconcileStop.summary,
+      });
       return failedFamilyResult({
         cause: "runner_internal_error",
         familyBase,
         familyHead,
-        stopSummary: familyStopSummary({
-          status: "failed",
-          familyBase,
-          familyHead,
-          children,
-          escalationReason:
-            "family reconcile found the live family-base HEAD inconsistent with the ledger",
-        }),
+        stopSummary: reconcileStop,
         children,
       });
     }
@@ -2345,6 +2528,13 @@ export async function runFamily(
             escalationKind: "failure",
             phase: "wave",
           });
+          // #1007: dependency-cycle fail bypasses finalize — dual-write terminal.
+          emitExitProgress({
+            epic: epic.issue,
+            status: "failed",
+            stopReason: stopSummary.reason,
+            gateSummary: stopSummary.summary,
+          });
           return attachDiagnostics(
             failedFamilyResult({
               cause: "dependency_cycle",
@@ -2368,7 +2558,11 @@ export async function runFamily(
     // #938: rethrow-first deleted — keep every sibling outcome.
     logDriverStage(
       "dispatch",
-      `wave n=${wave.length} issues=${wave.map((c) => c.issue).join(",")}`,
+      `wave n=${wave.length}`,
+      {
+        issues: wave.map((c) => c.issue),
+        epic: epic.issue,
+      },
     );
     for (const child of wave) attempted.add(child.issue);
     const settled = await Promise.allSettled(
@@ -2380,7 +2574,9 @@ export async function runFamily(
           familyBase,
           familyChildIssues,
           familyBackend,
-          // #604 slice 5 / #970: only ledger-proven decision parks with sessionId.
+          // #604 / #970 / #1019: child-bound answer from park row or
+          // latestChildBoundAnswer; runChild injects in-place when sessionId
+          // exists, else degrades to fresh redispatch (sessionId-less ok).
           parkedChildAnswers.get(child.issue),
         ),
       ),
@@ -2542,6 +2738,14 @@ export async function runFamily(
             escalationKind: "decision",
             phase: "wave",
           });
+          // #1007: merger decision park early-return (bypasses finalizeDecisionPark).
+          emitExitProgress({
+            epic: epic.issue,
+            issue: r.issue,
+            status: "parked",
+            stopReason: stopSummary.reason,
+            gateSummary: escalation.diagnosis ?? escalation.reason,
+          });
           return attachDiagnostics({
             status: "parked",
             familyBase,
@@ -2581,10 +2785,22 @@ export async function runFamily(
         familyHead = mergeResult.familyHead;
         waveMergedAny = true;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
+        // #1007: merge echo (typed issue only).
+        emitMergeProgress({
+          issue: r.issue,
+          epic: epic.issue,
+          childHead: mergeResult.familyHead,
+        });
       } else {
         recordWaveSibling(r);
       }
     }
+
+    // #1007: wave close after serial merge drain (issues that ran this wave).
+    emitWaveCloseProgress({
+      epic: epic.issue,
+      issues: ran.map((r) => r.issue),
+    });
 
     // ── #604 slice 5: a CHILD decision escalation PARKS the family (stop-wave) ───
     // A child that returned `"escalated"` hit a product/design题. Record an
@@ -2599,32 +2815,28 @@ export async function runFamily(
         r.status === "escalated" && r.escalation !== undefined,
     );
     if (escalatedChildren.length > 0) {
-      // #604 correctness r1 (P1-a ②): A-class failure优先于 B-class decision park.
-      // A wave can carry BOTH a real `failed` child (infra/protocol failure — the
-      // A-class incomplete/failure outcome) AND a decision-escalated child. The
-      // old code parked (B-class) as soon as ANY decision-escalated child existed,
-      // silently MASKING the real failure behind an answerable park. If this wave
-      // produced a genuine failure, do NOT park: fall through to the honest
-      // `incomplete` finalize (the failed child is never merged, the run is not
-      // shippable) rather than a `decision_gate_park` that hides it.
+      // #604 correctness r1 (P1-a ②): A-class failure优先于 B-class family park.
+      // A wave can carry BOTH a real `failed` child and a decision-escalated
+      // child. Do NOT finalize as decision_gate_park when a genuine failure
+      // exists (that would mask A-class incomplete). #1019: STILL durable-write
+      // `child_decision_parked` for escalated siblings so a later human answer
+      // can re-open them (flight5 #991/#992 had answers but no park rows).
       const hasRealFailure = ran.some((r) => r.status === "failed");
+      for (const child of escalatedChildren) {
+        await recordChildDecisionParked(familyBackend, {
+          childIssue: child.issue,
+          reason: child.escalation.reason,
+          diagnosis: child.escalation.diagnosis,
+          ...(child.escalation.sessionId !== undefined
+            ? { sessionId: child.escalation.sessionId }
+            : {}),
+          ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+        });
+      }
       if (!hasRealFailure) {
-        for (const child of escalatedChildren) {
-          await recordChildDecisionParked(familyBackend, {
-            childIssue: child.issue,
-            reason: child.escalation.reason,
-            diagnosis: child.escalation.diagnosis,
-            ...(child.escalation.sessionId !== undefined
-              ? { sessionId: child.escalation.sessionId }
-              : {}),
-            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-          });
-        }
         return await finalizeDecisionPark(escalatedChildren[0]!, childResults);
       }
-      // A real failure is present: finalize honestly as incomplete (A-class). The
-      // escalated child's payload is preserved in `childResults` (recorded above
-      // via the else branch of the merge loop), so the driver still sees it.
+      // A real failure is present: parks recorded above; finalize incomplete.
       return await finalize();
     }
 
@@ -2808,6 +3020,13 @@ export async function runFamily(
         },
       },
     };
+    // #1007: already-converged completed early return bypasses finalize — emit.
+    emitExitProgress({
+      epic: epic.issue,
+      status: "completed",
+      stopReason: alreadyDoneSummary.reason,
+      gateSummary: alreadyDoneSummary.summary,
+    });
     return {
       status: "completed",
       familyBase,
@@ -2829,6 +3048,12 @@ export async function runFamily(
     preFinalFamilyHead,
   );
   if (shippedRecord !== undefined) {
+    // #1007: ship checkpoint echo (typed pr + head only).
+    emitShipProgress({
+      epic: epic.issue,
+      pr: shippedRecord.pr,
+      familyHead: shippedRecord.familyHeadAfter,
+    });
     const ledgerMerged = await currentMerged(familyBackend);
     const children: FamilyChildResult[] = epic.children.map((child) =>
       ledgerMerged.has(child.issue)
@@ -2919,6 +3144,13 @@ export async function runFamily(
         });
       }
       if (terminal.status === "parked") {
+        // #1007: online-review parked on shipped-resume (bypasses finalize).
+        emitExitProgress({
+          epic: epic.issue,
+          status: "parked",
+          stopReason: terminal.stopSummary.reason,
+          gateSummary: terminal.stopSummary.summary,
+        });
         return {
           status: "parked",
           familyBase,
@@ -2927,6 +3159,13 @@ export async function runFamily(
           children,
         };
       }
+      // #1007: online-review hard-fail on shipped-resume.
+      emitExitProgress({
+        epic: epic.issue,
+        status: "failed",
+        stopReason: terminal.stopSummary.reason,
+        gateSummary: terminal.stopSummary.summary,
+      });
       return failedFamilyResult({
         cause: terminal.cause,
         familyBase,
@@ -2981,6 +3220,14 @@ export async function runFamily(
     if (landingWall.relayBilling !== undefined) {
       runRelayBilling = landingWall.relayBilling;
     }
+    // #1007: shipped-resume completed early return bypasses finalize.
+    emitExitProgress({
+      epic: epic.issue,
+      status: "completed",
+      stopReason: "already_done",
+      gateSummary:
+        "family review loop resumed from the shipped checkpoint and converged",
+    });
     return {
       status: "completed",
       familyBase,
@@ -3102,6 +3349,14 @@ export async function runFamily(
               stopSummary: terminal.stopSummary,
             });
           }
+          // #1007: online-review park/fail on open-shipped re-entry (returned later
+          // without finalize — emit here at construction).
+          emitExitProgress({
+            epic: epic.issue,
+            status: terminal.status === "parked" ? "parked" : "failed",
+            stopReason: terminal.stopSummary.reason,
+            gateSummary: terminal.stopSummary.summary,
+          });
           openShippedTerminal =
             terminal.status === "parked"
               ? {
@@ -3166,6 +3421,14 @@ export async function runFamily(
           openShippedTerminal = landingBlocked;
           return { ok: false, ran: true };
         }
+        // #1007: open-shipped completed early return bypasses finalize.
+        emitExitProgress({
+          epic: epic.issue,
+          status: "completed",
+          stopReason: "already_done",
+          gateSummary:
+            "family review loop resumed from the open-shipped checkpoint and converged",
+        });
         openShippedTerminal = {
           status: "completed",
           familyBase,

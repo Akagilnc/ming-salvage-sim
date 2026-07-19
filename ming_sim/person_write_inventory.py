@@ -26,6 +26,12 @@ PERSON_WRITE_POINT_INVENTORY = (
         "reason": "#191 旧档静态字段补丁（init 时幂等，仅补缺省值），不产 RejectedItem。",
     },
     {
+        "location": "ming_sim/db.py:_migrate_character_identity_seed",
+        "owner": "migration",
+        "disposition": "adr0009_exempt",
+        "reason": "#488 旧档身份/污点补丁（init 时幂等，仅补未初始化字段及缺失名册），不产 RejectedItem。",
+    },
+    {
         "location": "ming_sim/db.py:_backfill_bandit_power_split",
         "owner": "migration",
         "disposition": "adr0009_exempt",

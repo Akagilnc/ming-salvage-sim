@@ -1007,6 +1007,41 @@ def test_fallback_path_commits_pending(game, monkeypatch):
     assert title == "fallback标题"
 
 
+def test_fallback_persists_sources_created_by_inertia_before_archive(game, monkeypatch):
+    """降级结算也须在 inertia 产生见闻后再投影聚合档案。"""
+    db, state, content = game
+    turn = state.turn
+    dm = decree_mod
+    original = dm.apply_issue_inertia_and_ongoing
+    minister = next(
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    )
+
+    def _inertia_with_source(*args, **kwargs):
+        db.register_character_knowledge_source(
+            state,
+            [{"character_id": minister.name, "tier": "inertia"}],
+            "inertia",
+            "降级见闻",
+            "inertia 受限事项",
+            source_id="test:fallback-inertia-source",
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dm, "apply_issue_inertia_and_ongoing", _inertia_with_source)
+    _drive_fallback(db, state, content, monkeypatch)
+
+    row = db.conn.execute(
+        "SELECT body FROM character_knowledge_events "
+        "WHERE character_name='' AND turn=? AND source_id=?",
+        (turn, "test:fallback-inertia-source"),
+    ).fetchone()
+    assert row is not None
+    assert row["body"] == "inertia 受限事项"
+
+
 def test_recovery_restores_last_decree_for_web_display(game, monkeypatch):
     """重放路恢复 session.last_decree——跨进程恢复后 web 响应诏书字段不为空（cmr S7 r7）。"""
     import ming_sim.decree as dm
