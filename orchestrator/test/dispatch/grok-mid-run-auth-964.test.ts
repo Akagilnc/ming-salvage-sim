@@ -24,7 +24,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -68,6 +68,10 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import {
+  dockerAvailable,
+  dockerUnavailableReason,
+} from "./docker.shared.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const orchestratorRoot = join(here, "..", "..");
@@ -76,6 +80,7 @@ const soulsDir = join(orchestratorRoot, "image", "souls");
 
 /** Production pin (Containerfile); live probe prefers a binary matching this. */
 const GROK_FAIL_FAST_PIN = "0.2.102";
+const GROK_FAIL_FAST_MIN_VERSION = [0, 2, 102] as const;
 /** Short hard wall — hangy device-auth wait must not survive this (8–15s band). */
 const HEADLESS_AUTH_PROBE_TIMEOUT_MS = 15_000;
 const DEFAULT_GROK_PROBE_IMAGE = "ming-orchestrator-coder:latest";
@@ -91,11 +96,28 @@ afterEach(() => {
   tmpDirs.length = 0;
 });
 
-function whichBinary(name: string): string | null {
-  const r = spawnSync("which", [name], { encoding: "utf8" });
-  if (r.status !== 0) return null;
-  const p = (r.stdout ?? "").trim();
-  return p.length > 0 ? p : null;
+function binaryOnPath(name: string): string | null {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (dir.length === 0) continue;
+    const candidate = join(dir, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** Collection-time candidate only; version/pin validation stays in the test body. */
+function hostGrokCandidate(): string | null {
+  const fromEnv = process.env.GROK_BIN?.trim();
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  return binaryOnPath("grok");
+}
+
+function hostGrokUnavailableReason(): string | null {
+  if (hostGrokCandidate()) return null;
+  const fromEnv = process.env.GROK_BIN?.trim();
+  return fromEnv
+    ? `host grok unavailable: GROK_BIN does not exist (${fromEnv}) and grok is not on PATH`
+    : "host grok unavailable: GROK_BIN is unset and grok is not on PATH";
 }
 
 function hostGrokVersion(bin: string): string {
@@ -104,6 +126,18 @@ function hostGrokVersion(bin: string): string {
     timeout: 5_000,
   });
   return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
+}
+
+function isFailFastGrokVersion(version: string): boolean {
+  const match = version.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+  if (!match) return false;
+  const actual = match.slice(1).map(Number);
+  for (let i = 0; i < GROK_FAIL_FAST_MIN_VERSION.length; i += 1) {
+    if (actual[i] !== GROK_FAIL_FAST_MIN_VERSION[i]) {
+      return actual[i] > GROK_FAIL_FAST_MIN_VERSION[i];
+    }
+  }
+  return true;
 }
 
 function dockerGrokVersion(image: string): string | null {
@@ -121,40 +155,24 @@ type GrokProbeTarget =
   | { kind: "docker"; image: string; version: string };
 
 /**
- * Live docker daemon reachable (not merely `docker` on PATH).
- * Same gate as #1010 cancel tests — missing sock / stopped daemon must skip
- * live probes, never fail red with "failed to connect to the docker API".
- */
-function dockerDaemonAvailable(): boolean {
-  if (!whichBinary("docker")) return false;
-  const info = spawnSync("docker", ["info"], {
-    encoding: "utf8",
-    timeout: 15_000,
-  });
-  return info.status === 0;
-}
-
-/**
  * Resolve a real grok that matches the production fail-fast pin.
  * Prefer host (GROK_BIN / PATH); fall back to docker image with baked pin.
- * Skip when neither yields a pin-matching binary, or docker daemon is down.
+ * The live test gates host Docker once before calling this resolver.
  */
 function resolveGrokProbeTarget(): GrokProbeTarget | null {
   const fromEnv = process.env.GROK_BIN?.trim();
   const hostCandidates = [
     fromEnv && existsSync(fromEnv) ? fromEnv : null,
-    whichBinary("grok"),
+    binaryOnPath("grok"),
   ].filter((p): p is string => typeof p === "string" && p.length > 0);
 
   for (const bin of hostCandidates) {
     const version = hostGrokVersion(bin);
-    if (version.includes(GROK_FAIL_FAST_PIN)) {
+    if (isFailFastGrokVersion(version)) {
       return { kind: "host", bin, version };
     }
   }
 
-  // CLI-on-PATH is not enough: no sock / stopped daemon → skip (not red).
-  if (!dockerDaemonAvailable()) return null;
   const image =
     process.env.GROK_PROBE_IMAGE?.trim() || DEFAULT_GROK_PROBE_IMAGE;
   // Cheap presence check — missing image → no docker target.
@@ -164,7 +182,7 @@ function resolveGrokProbeTarget(): GrokProbeTarget | null {
   });
   if (inspect.status !== 0) return null;
   const version = dockerGrokVersion(image);
-  if (version && version.includes(GROK_FAIL_FAST_PIN)) {
+  if (version && isFailFastGrokVersion(version)) {
     return { kind: "docker", image, version };
   }
   return null;
@@ -408,20 +426,37 @@ describe("#964 grok headless auth — native fail-fast surface", () => {
     expect(containerfile).not.toMatch(/@xai-official\/grok@0\.2\.93/);
   });
 
-  it(
-    "live headless empty-auth fails fast before timeout (no device-auth hang)",
+  const liveHostGrokCandidate = hostGrokCandidate();
+  const liveDockerAvailable = dockerAvailable();
+  const liveProbeTargetPossible =
+    liveHostGrokCandidate !== null || liveDockerAvailable;
+  const liveProbeSkipReason = [
+    hostGrokUnavailableReason(),
+    liveDockerAvailable ? null : `docker unavailable: ${dockerUnavailableReason()}`,
+  ]
+    .filter((reason): reason is string => reason !== null)
+    .join("; ");
+  if (!liveProbeTargetPossible) {
+    console.warn(`[#964] skipping live probe: ${liveProbeSkipReason}`);
+  }
+
+  it.skipIf(!liveProbeTargetPossible)(
+    liveProbeTargetPossible
+      ? "live headless empty-auth fails fast before timeout (no device-auth hang)"
+      : `live headless empty-auth fails fast before timeout [skipped: ${liveProbeSkipReason}]`,
     () => {
       // #964 AC: real worker print shape + empty credentials must not enter
       // interactive device-code wait. Pin 0.2.102 is the production hang fix;
       // this probe exercises a real binary (host pin or baked image pin).
-      // Skip only when neither GROK_BIN/PATH pin nor docker image pin is present.
+      // At least one host/docker candidate exists here; pin validation remains
+      // a residual soft-skip in case neither candidate resolves to the real target.
       const target = resolveGrokProbeTarget();
       if (!target) {
         // Loud skip reason — CI with rebaked image / host pin / live docker should not hit this.
         console.warn(
           `[#964] skip live empty-auth probe: no grok ${GROK_FAIL_FAST_PIN} on PATH/GROK_BIN, ` +
-            `or docker daemon unavailable / no image with that pin ` +
-            `(set GROK_BIN, start docker, or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
+          `or no docker image with that pin ` +
+            `(set GROK_BIN or rebake ${DEFAULT_GROK_PROBE_IMAGE}; ` +
             `override image via GROK_PROBE_IMAGE). Pin ${GROK_FAIL_FAST_PIN} remains the production mechanism.`,
         );
         return;
