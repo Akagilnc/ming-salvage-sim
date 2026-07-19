@@ -120,6 +120,9 @@ class _RecordingDB:
     def get_last_active_chat_turn(self, minister_name: str, turn: int):
         return None
 
+    def list_in_flight_chat_turns(self, *, night_id=None, minister_name=None, turn=None):
+        return []
+
 
 def _runtime_for_stream_race():
     allow_finish = threading.Event()

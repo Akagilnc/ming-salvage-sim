@@ -1153,6 +1153,12 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
+                -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
+                -- night_id 列可能由 ensure_column 后补；索引不得写在本 CREATE 块
+                -- （旧档 chat_turns 已存在时 CREATE TABLE IF NOT EXISTS 不重建，索引会引用缺列失败）
+                night_id INTEGER NOT NULL DEFAULT 0,
+                -- 与 story_ledger_entries.seq 共用夜内单调序（allocate_night_seq）
+                night_seq INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1160,6 +1166,40 @@ class GameDB:
                 ON chat_turns(minister_name, turn, status, id);
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
+
+            -- #498 召对夜一等容器 + 故事账本（ADR 0035）
+            CREATE TABLE IF NOT EXISTS audience_nights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                time_of_day TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
+                close_commit_cursor INTEGER NOT NULL DEFAULT 0,
+                -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
+                next_event_seq INTEGER NOT NULL DEFAULT 0,
+                opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status
+                ON audience_nights(turn, status, id);
+
+            CREATE TABLE IF NOT EXISTS story_ledger_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                night_id INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                person_names TEXT NOT NULL DEFAULT '[]',
+                audibility TEXT NOT NULL DEFAULT '殿上公开',
+                body TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(night_id, seq),
+                FOREIGN KEY(night_id) REFERENCES audience_nights(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
+                ON story_ledger_entries(night_id, seq);
 
             CREATE TABLE IF NOT EXISTS mindreading_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1609,6 +1649,21 @@ class GameDB:
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
         self.ensure_column(
             "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
+        # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
+        # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
+        self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column("chat_turns", "night_seq", "INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
+            "ON chat_turns(night_id, id)"
+        )
+        self.ensure_column(
+            "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
+        # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
+        self.ensure_column(
+            "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "pending_actions", "night_approved", "INTEGER NOT NULL DEFAULT 0")
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -7133,18 +7188,86 @@ class GameDB:
             for table, pk in self._ROLLBACK_TABLE_PK.items()
         }
 
+    def allocate_night_seq(self, night_id: int) -> int:
+        """夜内单调事件序：账本 seq 与 chat_turns.night_seq 共用（AC4 可合流对齐）。"""
+        nid = int(night_id)
+        if nid <= 0:
+            return 0
+        row = self.conn.execute(
+            "SELECT next_event_seq FROM audience_nights WHERE id = ?",
+            (nid,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"audience night not found: {nid}")
+        nxt = int(row["next_event_seq"] or 0) + 1
+        self.conn.execute(
+            "UPDATE audience_nights SET next_event_seq = ? WHERE id = ?",
+            (nxt, nid),
+        )
+        return nxt
+
+    def list_in_flight_chat_turns(
+        self,
+        *,
+        night_id: Optional[int] = None,
+        minister_name: Optional[str] = None,
+        turn: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """未完成回话：generating，或 active 且尚无大臣回话。
+
+        WebGame / 收夜守卫走此接口，不直接摸 conn（测试替身可 stub）。
+        """
+        clauses = [
+            "("
+            "status = 'generating' OR "
+            "(status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))"
+            ")"
+        ]
+        params: List[Any] = []
+        if night_id is not None and int(night_id) > 0:
+            clauses.append("night_id = ?")
+            params.append(int(night_id))
+        if minister_name is not None:
+            clauses.append("minister_name = ?")
+            params.append(str(minister_name))
+        if turn is not None:
+            clauses.append("turn = ?")
+            params.append(int(turn))
+        where = " AND ".join(clauses)
+        rows = self.conn.execute(
+            f"SELECT * FROM chat_turns WHERE {where} ORDER BY id ASC",
+            params,
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
     def create_chat_turn(
         self,
         state: GameState,
         minister_name: str,
         agno_session_id: str,
         agno_runs_before: int,
+        *,
+        night_id: int = 0,
+        status: Optional[str] = None,
+        night_seq: Optional[int] = None,
     ) -> int:
+        # #498：挂夜的对话轮以 generating 起笔，回话落库后 update_chat_turn_messages 升 active。
+        # 未挂夜路径保持历史默认 active，避免旧调用方/测试面语义漂移。
+        initial_status = status
+        if initial_status is None:
+            initial_status = "generating" if int(night_id or 0) else "active"
+        if initial_status not in {"active", "generating", "failed", "undone"}:
+            raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
+        nid = int(night_id or 0)
+        seq = int(night_seq) if night_seq is not None else (
+            self.allocate_night_seq(nid) if nid > 0 else 0
+        )
         cur = self.conn.execute(
             """
             INSERT INTO chat_turns
-                (minister_name, turn, year, period, agno_session_id, agno_runs_before)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (minister_name, turn, year, period, agno_session_id, agno_runs_before,
+                 night_id, night_seq, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 minister_name,
@@ -7153,9 +7276,16 @@ class GameDB:
                 int(state.period),
                 agno_session_id,
                 max(0, int(agno_runs_before)),
+                nid,
+                seq,
+                initial_status,
             ),
         )
-        self.conn.commit()
+        if (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
         return int(cur.lastrowid)
 
     def update_chat_turn_messages(
@@ -7172,6 +7302,8 @@ class GameDB:
         if minister_message_id is not None:
             assignments.append("minister_message_id = ?")
             params.append(int(minister_message_id))
+            # 回话入档 = 轮完成：generating → active（#498 完成态）
+            assignments.append("status = CASE WHEN status = 'generating' THEN 'active' ELSE status END")
         if not assignments:
             return
         params.append(int(chat_turn_id))
@@ -7183,7 +7315,8 @@ class GameDB:
 
     def mark_chat_turn_failed(self, chat_turn_id: int) -> None:
         self.conn.execute(
-            "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+            "UPDATE chat_turns SET status = 'failed' "
+            "WHERE id = ? AND status IN ('active', 'generating')",
             (int(chat_turn_id),),
         )
         self.conn.commit()
@@ -7197,7 +7330,7 @@ class GameDB:
         if row is None:
             return
         turn_row = self._row_dict(row)
-        if turn_row["status"] != "active":
+        if turn_row["status"] not in {"active", "generating"}:
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
                 (int(chat_turn_id),),
@@ -8706,6 +8839,17 @@ class GameDB:
             commit=commit,
         )
 
+    def _current_open_night_id(self) -> int:
+        """当前开着（open/closing）的召对夜 id；无夜或旧档无表返回 0（#498）。"""
+        try:
+            row = self.conn.execute(
+                "SELECT id FROM audience_nights "
+                "WHERE status IN ('open', 'closing') ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row["id"]) if row is not None else 0
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
@@ -8729,19 +8873,92 @@ class GameDB:
             origin_mid = self._latest_held_user_chat_message_id(minister_name, turn)
             if origin_mid is not None:
                 payload_data["origin_chat_message_id"] = int(origin_mid)
+        # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
+        night_id = self._current_open_night_id()
         cur = self.conn.execute(
             """INSERT INTO pending_actions
-               (turn, kind, action, target_id, minister_name, payload_json, status)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+               (turn, kind, action, target_id, minister_name, payload_json, status,
+                night_id, night_approved)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 0)""",
             (
                 int(turn), str(kind), str(action),
                 None if target_id is None else int(target_id),
                 str(minister_name or ""),
                 json.dumps(payload_data, ensure_ascii=False),
+                night_id,
             ),
         )
-        self.conn.commit()
+        # 与历史 stage 路径一致：非 suspended/atomic 嵌套时提交。
+        # 不可用 owns_transaction()——INSERT 已打开隐式事务时它恒 False。
+        if (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
         return int(cur.lastrowid)
+
+    def mark_pending_night_approved(
+        self, action_ids: Iterable[int], *, night_id: Optional[int] = None,
+    ) -> int:
+        """标本夜已应允（收夜提交白名单）。返回更新行数。"""
+        ids = [int(i) for i in action_ids]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        params: List[Any] = list(ids)
+        extra = ""
+        if night_id is not None:
+            extra = " AND night_id = ?"
+            params.append(int(night_id))
+        cur = self.conn.execute(
+            f"UPDATE pending_actions SET night_approved = 1 "
+            f"WHERE id IN ({placeholders}) AND status = 'pending'{extra}",
+            params,
+        )
+        if (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def list_night_approved_pending(
+        self, night_id: int, *, kind: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        """本夜已应允且仍 pending 的暂存（收夜提交真源）。"""
+        if kind is None:
+            rows = self.conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, "
+                "payload_json, status, night_id, night_approved "
+                "FROM pending_actions "
+                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
+                "ORDER BY id",
+                (int(night_id),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, turn, kind, action, target_id, minister_name, "
+                "payload_json, status, night_id, night_approved "
+                "FROM pending_actions "
+                "WHERE night_id = ? AND night_approved = 1 AND status = 'pending' "
+                "AND kind = ? ORDER BY id",
+                (int(night_id), str(kind)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "turn": int(r["turn"]),
+                "kind": r["kind"],
+                "action": r["action"],
+                "target_id": r["target_id"],
+                "minister_name": r["minister_name"],
+                "payload_json": r["payload_json"],
+                "status": r["status"],
+                "night_id": int(r["night_id"] or 0),
+                "night_approved": int(r["night_approved"] or 0),
+            }
+            for r in rows
+        ]
 
     def upsert_pending_directive(
         self, turn: int, minister_name: str, payload: Dict[str, object],
@@ -8755,9 +8972,13 @@ class GameDB:
             (int(turn), str(minister_name)),
         ).fetchone()
         if row is not None:
+            # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
+            # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
+            # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
             self.conn.execute(
-                "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                (json.dumps(payload or {}, ensure_ascii=False), int(row["id"])),
+                "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+                (json.dumps(payload or {}, ensure_ascii=False),
+                 self._current_open_night_id(), int(row["id"])),
             )
             self.conn.commit()
             return int(row["id"])

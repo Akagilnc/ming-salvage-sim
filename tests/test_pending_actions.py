@@ -705,7 +705,7 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    out = asyncio.run(web_app.api_advance_without_edict())
+    out = web_app.api_advance_without_edict()
 
     assert out["state"]["turn"]["turn"] == 2
     orders = db.list_secret_orders()
@@ -748,7 +748,7 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    out = asyncio.run(web_app.api_advance_without_edict())
+    out = web_app.api_advance_without_edict()
 
     failures = out.get("pending_action_failures")
     assert failures and failures[0]["id"] == pending_id
@@ -780,7 +780,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monke
     monkeypatch.setattr(web_app, "advance_without_edict", abort_after_failed_action)
 
     with pytest.raises(web_app.HTTPException) as exc:
-        asyncio.run(web_app.api_advance_without_edict())
+        web_app.api_advance_without_edict()
 
     assert exc.value.status_code == 409
     assert exc.value.detail == "结算中止，可重试。"
@@ -810,7 +810,7 @@ def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monk
     monkeypatch.setattr(web_app, "web_game", stub)
 
     with pytest.raises(web_app.HTTPException) as exc:
-        asyncio.run(web_app.api_advance_without_edict())
+        web_app.api_advance_without_edict()
 
     assert exc.value.status_code == 400
     assert "未处理拟旨" in str(exc.value.detail)
@@ -837,7 +837,7 @@ def test_web_advance_without_edict_refuses_existing_draft(game, monkeypatch):
     monkeypatch.setattr(web_app, "web_game", stub)
 
     with pytest.raises(web_app.HTTPException) as exc:
-        asyncio.run(web_app.api_advance_without_edict())
+        web_app.api_advance_without_edict()
 
     assert exc.value.status_code == 400
     assert "未处理拟旨" in str(exc.value.detail)
