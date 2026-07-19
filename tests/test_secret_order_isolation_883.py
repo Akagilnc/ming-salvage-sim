@@ -1938,6 +1938,52 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     assert not db._is_active_secret_order_assignee(a.name)
 
 
+def test_1026_undo_secret_order_update_restores_parent_and_existing_brief(game):
+    db, state, content = game
+    minister = _active_ministers(db, content)[0]
+    order_id = db.create_secret_order(
+        state, minister.name, "旧密令", "旧密文", [], origin_chat_message_ids=[],
+    )
+    old_brief = dict(db.conn.execute(
+        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (order_id,),
+    ).fetchone())
+
+    chat_turn_id = db.create_chat_turn(state, minister.name, "undo-update-1026", 0)
+    before = db.capture_chat_rollback_snapshot()
+    user_message_id = db.append_chat_message(
+        minister.name, state.turn, "user", "改令：转查新案",
+    )
+    minister_message_id = db.append_chat_message(
+        minister.name, state.turn, "minister", "臣领修改后的密旨。",
+    )
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        user_message_id=user_message_id,
+        minister_message_id=minister_message_id,
+    )
+    assert db.update_secret_order_by_id(
+        state, order_id, "新密令", "新密文", [],
+        origin_chat_message_id=user_message_id,
+        origin_minister_name=minister.name,
+    )
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    db.undo_chat_turn(chat_turn_id)
+
+    restored_order = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    restored_brief = db.conn.execute(
+        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (order_id,),
+    ).fetchone()
+    assert dict(restored_order) == {"title": "旧密令", "content": "旧密文"}
+    assert dict(restored_brief) == old_brief
+
+
 def test_976_rt05_save_restore_between_hold_and_release(game):
     """红队⑤ should：存档-恢复夹在 hold 与 release 之间 — P1 无损。"""
     import os
