@@ -23,6 +23,9 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
 
     payload = build_simulator_payload(state, db, "", "")
     rendered = build_simulator_context(payload)
+    rendered_character_line = next(
+        line for line in rendered.splitlines() if line.startswith(f"{character.name}\t")
+    )
     columns = payload["court_roster"]["cols"]
     row = next(
         dict(zip(columns, values))
@@ -37,10 +40,10 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert row["胆略"] == "敢任其事"
     assert row["党派认同"] == "党色极深"
     assert row["阴谋"] == "阴谋能力未详，暂以查案行事表现推知"
-    assert (
-        "\t离心已显\t才具有限\t操守平常\t敢任其事\t党色极深\t"
+    assert rendered_character_line.endswith(
+        "离心已显\t才具有限\t操守平常\t敢任其事\t党色极深\t"
         "阴谋能力未详，暂以查案行事表现推知"
-    ) in rendered
+    )
     character_rendered = character_context(character)
     assert "忠诚离心已显" in character_rendered
     assert "能力才具有限" in character_rendered
