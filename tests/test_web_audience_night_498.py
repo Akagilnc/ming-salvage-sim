@@ -171,16 +171,22 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 5.0)  # 正超时
     turn_before = int(game.state.turn)
 
-    # 透明观察者：只调真实 list_in_flight_chat_turns，其未改结果**非空**（=颁诏 worker 真正观测到
-    # 持久 generating 在飞轮）时置信号，随后原样返回。立即返回、不轮询在飞的 waiter 永不调它 →
-    # 测试按超时失败，从而咬住「回话落档先于收夜、再颁诏」的顺序（非仅最终态）。
+    # 透明观察者：只调真实 list_in_flight_chat_turns、原样返回，同时记录两处转变——
+    #   observed_inflight：首个非空真实结果（颁诏 worker 真观测到持久 generating 在飞轮）；
+    #   observed_clear：在飞被观测过之后，某次真实结果转空（=颁诏 worker 亲眼看到在飞清空）。
+    # 要求放行回话后 observed_clear 才接受颁诏完成 → 咬死 AC10 顺序：回话落档→在飞清空→收夜→颁诏。
+    # 「列一次即返回」的 waiter 收夜全程持 write_gate、回话 epilogue 抢不到 gate 落档，其 list 恒非空 →
+    # observed_clear 永不置 → 测试按超时红（非仅最终态）。
     observed_inflight = threading.Event()
+    observed_clear = threading.Event()
     real_list = an.list_in_flight_chat_turns
 
     def observe_inflight(*args, **kwargs):
         rows = real_list(*args, **kwargs)
         if rows:
             observed_inflight.set()
+        elif observed_inflight.is_set():
+            observed_clear.set()
         return rows
 
     monkeypatch.setattr("ming_sim.audience_night.list_in_flight_chat_turns", observe_inflight)
@@ -200,7 +206,8 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
             await _await_event(observed_inflight)  # 颁诏 worker 真观测到 generating 在飞轮后
-            allow.set()                             # 才在正超时内放行 → 回话落档 → 在飞清空
+            allow.set()                             # 才在正超时内放行 → 回话落档
+            await _await_event(observed_clear)      # 颁诏 worker 又亲眼看到在飞清空（收夜前）
 
             chat_resp = await chat_task
             issue_resp = await issue_task
