@@ -1,4 +1,21 @@
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ServerChatMessage } from "./types";
+
+/**
+ * 服务端 turn-identified 投影 → 前端 ChatMessage（#499）。读心递话（attendant）
+ * 已由服务端按轮归位并携 (chat_turn_id, record_id) 稳定身份；前端只做字段搬运，
+ * 不重排、不按 narration 文本判断。setChat 用它替换整串也不会抹掉读心递话。
+ */
+export const projectServerHistory = (history: ServerChatMessage[]): ChatMessage[] =>
+  (Array.isArray(history) ? history : []).map((m) =>
+    m.role === "attendant"
+      ? {
+          role: "attendant" as const,
+          content: m.content,
+          chatTurnId: m.chat_turn_id,
+          recordId: m.record_id,
+        }
+      : { role: m.role, content: m.content, chatTurnId: m.chat_turn_id },
+  );
 
 /** 后端读心记录：`id` 为持久主键（mindreading_records.id），narration 为自由文本正文。 */
 export type MindreadingRecord = { id?: number; narration?: string };

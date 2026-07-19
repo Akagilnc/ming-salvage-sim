@@ -2,7 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api, pollMindreadingUntilReady, streamChat } from "./api";
-import { mergeMindreadingRecords, type MindreadingRecord } from "./mindreading";
+import { mergeMindreadingRecords, projectServerHistory, type MindreadingRecord } from "./mindreading";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -17,7 +17,7 @@ import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDeci
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatMessage, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, ServerChatMessage, Suggestion } from "./types";
 import "./styles.css";
 
 function App() {
@@ -128,12 +128,11 @@ function App() {
     const pollToken = mindPollTokenRef.current;
     const data = await api<{
       minister: Minister;
-      history: ChatMessage[];
+      history: ServerChatMessage[];
       suggestions: Suggestion[];
       can_undo_last_chat: boolean;
       pending_action_failures?: PendingActionFailure[];
       chat_turn_id?: number;
-      mindreading?: MindreadingRecord[];
       mindreading_pending?: boolean;
     }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
@@ -148,10 +147,9 @@ function App() {
       ...(state?.consorts || []),
     ];
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
-    // #499 恢复路径：历史接口附带最近一轮读心，按 (chat_turn_id, id) 归位为递话
+    // #499 恢复路径：服务端已把读心递话按轮归位于 turn-identified 投影，直接映射渲染。
     const expectedTurnId = data.chat_turn_id || 0;
-    const mindRows = Array.isArray(data.mindreading) ? data.mindreading : [];
-    setChat(mergeMindreadingRecords(data.history, expectedTurnId, mindRows));
+    setChat(projectServerHistory(data.history));
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     if (options?.mergeFailures) {
@@ -163,7 +161,7 @@ function App() {
     // #499 取消/早重开修复：历史 GET 可能早于后台读心落库。本轮该有读心但尚未浮现时，
     // 锁定 expected 轮做有界轮询，就绪即按 (chat_turn_id, id) 归位——不阻塞回话展示，
     // 且固定该轮：新一轮成为 latest 也不截断/错归旧轮读心。
-    if (data.mindreading_pending && !mindRows.length && expectedTurnId > 0) {
+    if (data.mindreading_pending && expectedTurnId > 0) {
       void pollMindreadingUntilReady(ministerName, expectedTurnId, {
         shouldContinue: () =>
           selectedMinisterRef.current === ministerName && mindPollTokenRef.current === pollToken,
@@ -493,7 +491,8 @@ function App() {
             if (selectedMinisterRef.current !== targetMinisterName) return;
             setPendingUserMessage("");
             setStreamingMinisterMessage("");
-            setChat(doneData.history);
+            // #499：投影已含既往各轮读心递话，setChat 不再抹掉先前浮现的读心。
+            setChat(projectServerHistory(doneData.history));
             setSuggestions(doneData.suggestions);
             setCanUndoLastChat(!!doneData.can_undo_last_chat);
             setBusy("");
@@ -603,7 +602,8 @@ function App() {
       // Read the ref FRESH at the panel-write point (the minister could switch
       // during the awaits above), mirroring sendChat's post-await check.
       if (selectedMinisterRef.current === targetMinisterName) {
-        setChat(data.history);
+        // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
+        setChat(projectServerHistory(data.history));
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
         setChatFailures(data.pending_action_failures || []);

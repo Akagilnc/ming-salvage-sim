@@ -120,6 +120,14 @@ class _RecordingDB:
     def get_last_active_chat_turn(self, minister_name: str, turn: int):
         return None
 
+    def build_chat_projection(self, minister_name: str):
+        # #499 单一投影出口（无读心记录的最小实现，供 done payload 装配）
+        return [
+            {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+            for m in self.messages
+            if m["minister"] == minister_name
+        ]
+
 
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
