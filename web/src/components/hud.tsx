@@ -634,7 +634,7 @@ export function BottomCommandBar({
   secretOrdersCount,
   onOpenMemorials,
   onOpenEdict,
-  onOpenExtraction,
+  onOpenReport,
   onOpenHistory,
   onOpenSecretOrders,
 }: {
@@ -643,7 +643,7 @@ export function BottomCommandBar({
   secretOrdersCount: number;
   onOpenMemorials: () => void;
   onOpenEdict: () => void;
-  onOpenExtraction: () => void;
+  onOpenReport: () => void;
   onOpenHistory: () => void;
   onOpenSecretOrders: () => void;
 }) {
@@ -657,7 +657,7 @@ export function BottomCommandBar({
             <img src="/ui/exact/zoushu.png" alt="" className="command-art" />
             {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
           </button>
-          <button className="command-icon" onClick={onOpenExtraction} aria-label="邸报详明">
+          <button className="command-icon" onClick={onOpenReport} aria-label="本月邸报">
             <img src="/ui/exact/mingxi.png" alt="" className="command-art" />
           </button>
           <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
@@ -677,7 +677,7 @@ export function BottomCommandBar({
         {/* 文字行：贴在 bar 下方 */}
         <div className="bottom-caption-bar">
           <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
-          <span className="command-caption"><b>邸报详明</b><small>数项加减/账目明细</small></span>
+          <span className="command-caption"><b>邸报</b><small>本月奏报</small></span>
           <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
           <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
           <span className="command-caption"><b>拟诏/结束回合</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
