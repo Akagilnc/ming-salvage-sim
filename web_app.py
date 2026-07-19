@@ -1508,6 +1508,10 @@ class WebGame:
         text = message.strip()
         if not text:
             raise HTTPException(status_code=400, detail="问话不能为空。")
+        # #498：结算/亲裁相位不得召对——否则开的夜会随 submit_decisions 跨月推进而不收（夜不跨月）。
+        # 须在建任何 chat turn / 开夜之前响亮拒绝。
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
         gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
@@ -1830,6 +1834,10 @@ class WebGame:
         text = message.strip()
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
+            return
+        # #498：结算/亲裁相位不得召对（夜不跨月）——建 chat turn / 开夜之前先响亮拒绝。
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
             return
         if not self._mark_pending_write():
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
@@ -3062,8 +3070,8 @@ async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
 async def api_write_decree() -> Dict[str, Any]:
     game = get_game()
     try:
-        # write_decree 先 commit_pending_actions（真 DB 写）再润色——DB 写同样不能骑进结算
-        # pre_settle 原子窗口；走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面）。
+        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
+        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
         with _serialized_web_write(game):
             decree = game.session.write_decree()
     except ValueError as e:
@@ -3072,7 +3080,9 @@ async def api_write_decree() -> Dict[str, Any]:
 
 
 @app.post("/api/decree/advance_without_edict")
-async def api_advance_without_edict() -> Dict[str, Any]:
+def api_advance_without_edict() -> Dict[str, Any]:
+    # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
+    # 用同步 def 交给 FastAPI threadpool 跑，绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
@@ -3138,8 +3148,11 @@ class IssueDecreeRequest(BaseModel):
 
 
 @app.post("/api/decree/issue")
-async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
-    """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。"""
+def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[str, Any]:
+    """非流式颁诏（保留兼容）。前端默认走 /api/decree/issue/stream。
+
+    同步 def：内部 _await_audience_inflight_clear + resolve_turn 是阻塞同步调用（含至多 30s
+    在飞等待），交给 FastAPI threadpool，不冻结 async event loop。"""
     game = get_game()
     was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)

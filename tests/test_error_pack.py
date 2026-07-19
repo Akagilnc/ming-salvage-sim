@@ -330,7 +330,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
 
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_issue_decree())
+        web_app.api_issue_decree()
 
     assert ei.value.status_code != 500
     assert "可重试" in str(ei.value.detail)

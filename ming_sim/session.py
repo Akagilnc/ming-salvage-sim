@@ -2043,16 +2043,12 @@ class GameSession:
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
-        # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
-        # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
-        # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
-        self.db.commit_pending_actions(
-            self.state, kind_filter="directive",
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None))
+        # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
+        # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
+        # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
-            raise ValueError("无草案不能拟诏。")
+            raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
