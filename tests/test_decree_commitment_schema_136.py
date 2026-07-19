@@ -67,6 +67,37 @@ def test_effect_dict_has_work_recognizes_schema_effects(payload):
     assert effect_dict_has_work(payload) is True
 
 
+def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
+    db, state, _content = game
+    building = db.conn.execute(
+        "SELECT id, name FROM buildings ORDER BY id LIMIT 1"
+    ).fetchone()
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="奉旨拆除旧建筑",
+        effect_on_resolve={
+            "buildings": [{"action": "remove", "building_id": building["id"]}],
+        },
+    )
+
+    result = I.apply_issue_tracker_output(
+        db,
+        state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]},
+    )
+
+    assert db.conn.execute(
+        "SELECT 1 FROM buildings WHERE id=?", (building["id"],),
+    ).fetchone() is None
+    log = db.conn.execute(
+        "SELECT old_value, field FROM building_logs WHERE building_id=? ORDER BY id DESC LIMIT 1",
+        (building["id"],),
+    ).fetchone()
+    assert dict(log) == {"old_value": building["name"], "field": "remove"}
+    assert result["closes"][0]["building_ops"][0]["removed"] is True
+
+
 @pytest.mark.parametrize(
     "payload",
     [

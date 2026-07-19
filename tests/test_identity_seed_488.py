@@ -54,6 +54,7 @@ def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(
     path = tmp_path / "pre-family.db"
     first = GameDB(str(path), content)
     first.seed_static_data()
+    first.conn.execute("DELETE FROM character_offices WHERE character_name=?", ("王承恩",))
     first.conn.execute("DELETE FROM characters WHERE name=?", ("王承恩",))
     first.conn.execute("UPDATE characters SET identity=50, seed_guilt='' WHERE name=?", ("魏忠贤",))
     first.conn.execute("DELETE FROM metrics WHERE key='__identity_seed_v1'")
