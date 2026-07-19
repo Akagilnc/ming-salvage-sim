@@ -649,6 +649,21 @@ describe("#921 envelope field vocabulary — refused* only", () => {
 });
 
 describe("#921 full-wave station thin envelopes", () => {
+  it("decodes judge continue while ignoring findings cargo siblings", () => {
+    const parsed = decodeStationEnvelope({
+      station: "judge",
+      status: "continue",
+      findingDispositions: [],
+      fixPacketBody: "fixture continue packet",
+      findings: [],
+    });
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { status: "continue" },
+    });
+  });
+
   it.each([
     ["judge", { station: "judge", status: "converged" }],
     ["coder", { station: "coder", status: "completed" }],
