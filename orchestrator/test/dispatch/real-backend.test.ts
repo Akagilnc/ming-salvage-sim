@@ -955,6 +955,43 @@ describe("RealBackend reviewer output contract", () => {
     toolchain: ["node", "typescript"],
   };
 
+  it("decodes a live judge continue receipt when findings rides as cargo", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 1023,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-judge-cargo-"),
+    });
+    const findingDispositions = [
+      { identityKey: "correctness|src/a.ts:1|first", action: "live" as const },
+      { identityKey: "correctness|src/b.ts:2|second", action: "live" as const },
+      { identityKey: "correctness|src/c.ts:3|third", action: "live" as const },
+      { identityKey: "correctness|src/d.ts:4|fourth", action: "live" as const },
+    ];
+    const fixPacketBody = "repair all four live findings";
+
+    const decoded = backend.probeDecodeOutput(reviewerSpec, {
+      station: "judge",
+      status: "continue",
+      findingDispositions,
+      fixPacketBody,
+      findings: [],
+    });
+
+    expect(decoded).toEqual({
+      kind: "judge",
+      status: "continue",
+      findingDispositions,
+      fixPacketBody,
+      findings: [],
+    });
+  });
+
   it("rings a coder decision bell from T2 escalate envelope even when cargo is unusable", () => {
     // #924: traffic comes only from the station envelope — legacy {escalate}
     // without station/status is fail-closed, not a second accept shape.
