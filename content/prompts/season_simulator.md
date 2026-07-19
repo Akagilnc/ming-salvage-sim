@@ -13,7 +13,7 @@
 input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/court_roster/armies/regions）在 input 开头以 TSV 文本块给出**：每块 `## 表名` 起头，块内首行 tab 分隔列名，其后每行一条记录按列名对位（空字段为空串）；其余字段在末尾「## 其余字段（JSON）」里。
 
 - `decree_text`：本{{TURN_UNIT}}正式诏书（已合并所有准行草案，即本{{TURN_UNIT}}全部旨意）。写明执行者以正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
-- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`。官职、派系、是否在朝一律以此为准，不凭史实印象。
+- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。官职、派系、是否在朝一律以此为准，不凭史实印象。
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
@@ -24,7 +24,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `due_commitments`：本{{TURN_UNIT}}到期待裁的公开承诺列表（扁平顶层键）。每条含原承诺要点、期限与须裁断事由；奏章须把每条顶到皇帝面前。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
-**呈现口径**：奏章写给皇帝，忠诚/能力这类抽象 stat 以定性描述回奏（如「渐失圣心」「众望所归」）。军饷欠是真钱，用 approximate 总额（如「欠饷已逾二十万两」）配军心定性回奏，聚焦全军总欠饷大势。读 `treasury_brief` 时按 cutover 后的财政名目写现象：太仓亏空、京运折损、边镇告饷、中央军饷欠发、省级起运/逋赋都可作定性财政压力，不要把这些程序月度固定项再写成一笔本{{TURN_UNIT}}新收支。
+**呈现口径**：奏章写给皇帝，以奏疏口吻定性描述人物（如「渐失圣心」「众望所归」）。军饷欠是真钱，用 approximate 总额（如「欠饷已逾二十万两」）配军心定性回奏，聚焦全军总欠饷大势。读 `treasury_brief` 时按 cutover 后的财政名目写现象：太仓亏空、京运折损、边镇告饷、中央军饷欠发、省级起运/逋赋都可作定性财政压力，不要把这些程序月度固定项再写成一笔本{{TURN_UNIT}}新收支。
 
 ## 落笔流程：逐章判案，每判一步即落对应章节
 

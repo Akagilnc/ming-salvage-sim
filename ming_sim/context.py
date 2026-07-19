@@ -16,7 +16,12 @@ from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.exceptions import LLMContractError
 from ming_sim.models import Army, Character, Event, GameState, Region
-from ming_sim.qualitative import identity_band, identity_bucket, qualitative_band
+from ming_sim.qualitative import (
+    identity_band,
+    identity_bucket,
+    qualitative_band,
+    qualitative_character_axes,
+)
 from ming_sim.skills import available_skill_names
 
 _content: Optional[GameContent] = None
@@ -186,20 +191,6 @@ def format_metric_delta(delta: Dict[str, int]) -> str:
     return "数值变化：" + "；".join(parts)
 
 
-_CHARACTER_BANDS = {
-    "loyalty": ("离心已显", "心志浮动", "大体守中", "颇知向背", "可托腹心"),
-    "ability": ("才具浅薄", "才具有限", "堪当常务", "才具出众", "足任大事"),
-    "integrity": ("操守多亏", "操守未稳", "操守平常", "操守清正", "清介可称"),
-    "courage": ("临事易退", "多有顾忌", "进退审慎", "敢任其事", "临难不屈"),
-}
-
-_INTRIGUE_PLACEHOLDER = "阴谋能力未详，暂以查案行事表现推知"
-
-
-def _character_band(field: str, value: object) -> str:
-    return qualitative_band(value, _CHARACTER_BANDS[field])
-
-
 def _identity_bucket(value: object) -> str:
     return ("low", "middle", "high")[identity_bucket(value)]
 
@@ -238,15 +229,13 @@ def minister_dossier(character: Character) -> str:
 
 def character_context(character: Character) -> str:
     skills = "、".join(character.personal_skills) or "未留专长档案"
+    axes = qualitative_character_axes(character)
     return (
         f"【人物档料】{character.name}，{character.office}，职位类型：{character.office_type}；"
         f"{minister_dossier(character)}；专长：{skills}。"
-        f"人物行事可见为：忠诚{_character_band('loyalty', character.loyalty)}、"
-        f"能力{_character_band('ability', character.ability)}、"
-        f"清廉{_character_band('integrity', character.integrity)}、"
-        f"胆略{_character_band('courage', character.courage)}、"
-        f"党派认同{identity_band(character.identity)}、"
-        f"{_INTRIGUE_PLACEHOLDER}。"
+        f"人物行事可见为：忠诚{axes['忠诚']}、能力{axes['能力']}、"
+        f"清廉{axes['清廉']}、胆略{axes['胆略']}、党派认同{axes['党派认同']}、"
+        f"{axes['阴谋']}。"
     )
 
 
