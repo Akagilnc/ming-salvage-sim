@@ -209,7 +209,11 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
 
     restored = GameDB(str(path), content)
     try:
-        assert restored.list_mindreading_records(chat_turn_id) == [payload]
+        # 记录带持久身份 id（#499：前端按 (chat_turn_id, id) 去重/归位）；其余字段原样留存。
+        records = restored.list_mindreading_records(chat_turn_id)
+        assert len(records) == 1
+        assert records[0].pop("id") > 0
+        assert records == [payload]
         assert restored.load_all_chat_history() == {}
         restored_state = restored.load_state()
         knowledge = restored.get_character_knowledge(restored_state, reader.name)

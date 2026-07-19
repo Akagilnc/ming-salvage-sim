@@ -293,6 +293,9 @@ export type ChatMessage = {
   /** user=朕 / minister=大臣 / attendant=递话（王承恩读心，ADR 0046） */
   role: "user" | "minister" | "attendant";
   content: string;
+  /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
+  chatTurnId?: number;
+  recordId?: number;
 };
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };

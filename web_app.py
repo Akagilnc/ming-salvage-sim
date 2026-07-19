@@ -1563,20 +1563,27 @@ class WebGame:
                     self.chat_history.setdefault(name, []).extend(msgs)
             raise
 
-    def mindreading_for_minister(self, minister_name: str) -> Dict[str, Any]:
-        """轮询/恢复读取路径：最近一轮召对的读心记录（#499 就绪即浮现）。
+    def mindreading_for_minister(
+        self, minister_name: str, chat_turn_id: int = 0,
+    ) -> Dict[str, Any]:
+        """轮询/恢复读取路径：某一轮召对的读心记录（#499 就绪即浮现）。
+
+        `chat_turn_id>0` 时锁定该指定轮（取消/早重开的前端固定 expected 轮轮询，
+        不受新一轮成为 latest 影响、旧轮读心不丢失/不错归）；为 0 时取最近活跃轮
+        （历史入口首拉）。记录带持久 `id`，前端按 (chat_turn_id, id) 去重/归位。
 
         `pending`=本轮该有读心（御前近臣在位且目标非其本人）但尚未落库，供
-        取消/早重开的前端有界轮询判据：pending 才继续轮询、非 pending 立即停，
-        免得对无读心的轮次空转。
+        有界轮询判据：pending 才继续、非 pending 立即停，免得对无读心的轮次空转。
         """
-        chat_turn_id = 0
         records: List[Dict[str, Any]] = []
         pending = False
         if self._persistent_chat_minister(minister_name):
-            row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-            if row is not None:
-                chat_turn_id = int(row["id"])
+            target_turn = int(chat_turn_id)
+            if target_turn <= 0:
+                row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
+                target_turn = int(row["id"]) if row is not None else 0
+            chat_turn_id = target_turn
+            if chat_turn_id > 0:
                 records = list(self.db.list_mindreading_records(chat_turn_id))
                 if not records:
                     pending = mindreading_eligible(
@@ -3033,10 +3040,14 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 
 
 @app.get("/api/ministers/{minister_name}/chat/mindreading")
-async def api_chat_mindreading(minister_name: str) -> Dict[str, Any]:
-    """#499 读心轮询入口：回话 done 后后台生成，就绪即可拉取。"""
+async def api_chat_mindreading(minister_name: str, chat_turn_id: int = 0) -> Dict[str, Any]:
+    """#499 读心轮询入口：回话 done 后后台生成，就绪即可拉取。
+
+    `chat_turn_id` 固定 expected 轮：取消/早重开的前端锁定首拉那一轮轮询，
+    新一轮成为 latest 也不截断旧轮读心。
+    """
     _require_active_minister(minister_name)
-    return get_game().mindreading_for_minister(minister_name)
+    return get_game().mindreading_for_minister(minister_name, chat_turn_id)
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")

@@ -1,5 +1,6 @@
 import React from "react";
 import { forwardSteamEvents } from "./steamEvents";
+import type { MindreadingRecord } from "./mindreading";
 import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
@@ -65,9 +66,10 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
 
 export type StreamChatOptions = {
   signal?: AbortSignal;
-  /** #499 读心就绪即浮现：回话 done 后后台旁白到达时回调（不阻塞回话展示） */
+  /** #499 读心就绪即浮现：回话 done 后后台旁白到达时回调（不阻塞回话展示）；
+   *  mindreading 携持久记录身份 id，前端按 (chat_turn_id, id) 归位/去重 */
   onMindreading?: (payload: {
-    mindreading: Record<string, unknown> | null;
+    mindreading: MindreadingRecord | null;
     chat_turn_id: number;
   }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
@@ -121,7 +123,7 @@ export const streamChat = async (
         options.onDone?.(donePayload);
       } else if (parsed.event === "mindreading") {
         options.onMindreading?.({
-          mindreading: (payload?.mindreading ?? null) as Record<string, unknown> | null,
+          mindreading: (payload?.mindreading ?? null) as MindreadingRecord | null,
           chat_turn_id: Number(payload?.chat_turn_id || 0),
         });
       } else if (parsed.event === "end") {
@@ -144,25 +146,28 @@ export const streamChat = async (
 
 export type MindreadingSnapshot = {
   chat_turn_id: number;
-  mindreading: Array<{ narration?: string }>;
+  mindreading: MindreadingRecord[];
   mindreading_pending?: boolean;
 };
 
-export const fetchMindreading = (ministerName: string) =>
+/** 固定 expected 轮拉取：不受新一轮成为 latest 影响，旧轮读心不丢失/不错归（#499）。 */
+export const fetchMindreading = (ministerName: string, chatTurnId: number) =>
   api<MindreadingSnapshot>(
-    `/api/ministers/${encodeURIComponent(ministerName)}/chat/mindreading`,
+    `/api/ministers/${encodeURIComponent(ministerName)}/chat/mindreading` +
+      `?chat_turn_id=${encodeURIComponent(String(chatTurnId))}`,
   );
 
 /**
  * 取消实时流或读心落库前重开时，历史 GET 可能早于后台读心落库，之后再不浮现
- * （#499 p5-mindreading-player-delivery）。此处对该轮做有界轮询，就绪即经
- * onNarration 递话浮现；`mindreading_pending===false` 或已浮现即停，避免空转。
- * 去重由调用方按记录身份（narration 正文）负责——本函数只搬运，不改写。
+ * （#499 p5-mindreading-player-delivery）。此处锁定 expected 轮 `chatTurnId` 做有界
+ * 轮询，就绪即把该轮记录（带持久 id）交 onRecords 浮现；`mindreading_pending===false`
+ * 或已浮现即停，避免空转。去重/归位由调用方按 (chat_turn_id, id) 负责——本函数只搬运。
  */
 export const pollMindreadingUntilReady = async (
   ministerName: string,
+  chatTurnId: number,
   opts: {
-    onNarration: (narration: string, chatTurnId: number) => void;
+    onRecords: (records: MindreadingRecord[], chatTurnId: number) => void;
     shouldContinue: () => boolean;
     maxAttempts?: number;
     intervalMs?: number;
@@ -178,18 +183,17 @@ export const pollMindreadingUntilReady = async (
     if (!opts.shouldContinue()) return;
     let data: MindreadingSnapshot;
     try {
-      data = await fetchMindreading(ministerName);
+      data = await fetchMindreading(ministerName, chatTurnId);
     } catch {
       continue;  // 瞬断重试，不中断轮询
     }
     const rows = Array.isArray(data.mindreading) ? data.mindreading : [];
-    const narrations = rows
-      .map((row) => String(row?.narration || "").trim())
-      .filter(Boolean);
-    if (narrations.length) {
-      const turnId = Number(data.chat_turn_id || 0);
-      for (const narration of narrations) opts.onNarration(narration, turnId);
-      return;  // 已浮现
+    const ready = rows.filter(
+      (row) => Number(row?.id || 0) > 0 && String(row?.narration || "").trim(),
+    );
+    if (ready.length) {
+      opts.onRecords(ready, chatTurnId);  // 固定 expected 轮归位，不读 data.chat_turn_id 的 latest
+      return;
     }
     if (data.mindreading_pending === false) return;  // 本轮不会再有读心
   }

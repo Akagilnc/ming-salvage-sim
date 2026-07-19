@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api, pollMindreadingUntilReady, streamChat } from "./api";
+import { mergeMindreadingRecords, type MindreadingRecord } from "./mindreading";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -100,17 +101,16 @@ function App() {
   // #499：取消/早重开路径的读心有界轮询 token；每次重开自增以作废旧轮询。
   const mindPollTokenRef = React.useRef(0);
 
-  // 读心递话按记录身份（narration 正文）去重浮现——SSE 实时、历史 GET、轮询三路共用，
-  // 避免同一条读心在重开/轮询交叠时重复递话（#499 按 chat_turn_id/记录身份去重）。
-  const appendAttendantNarration = React.useCallback((narration: string) => {
-    const content = narration.trim();
-    if (!content) return;
-    setChat((current) =>
-      current.some((m) => m.role === "attendant" && m.content === content)
-        ? current
-        : [...current, { role: "attendant", content }],
-    );
-  }, []);
+  // 读心递话按持久记录身份 (chat_turn_id, record_id) 去重/归位——SSE 实时、历史 GET、
+  // 轮询三路共用同一 production 合并函数（#499）。绝不按 narration 正文去重：不同轮合法
+  // 生成相同递话须都显示；同一记录跨路交叠不重复。
+  const surfaceMindreading = React.useCallback(
+    (chatTurnId: number, records: MindreadingRecord[]) => {
+      if (!(chatTurnId > 0) || !records.length) return;
+      setChat((current) => mergeMindreadingRecords(current, chatTurnId, records));
+    },
+    [],
+  );
 
   const loadState = React.useCallback(async () => {
     const data = await api<GameState>("/api/game/state");
@@ -133,7 +133,7 @@ function App() {
       can_undo_last_chat: boolean;
       pending_action_failures?: PendingActionFailure[];
       chat_turn_id?: number;
-      mindreading?: Array<{ narration?: string }>;
+      mindreading?: MindreadingRecord[];
       mindreading_pending?: boolean;
     }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
@@ -148,13 +148,10 @@ function App() {
       ...(state?.consorts || []),
     ];
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
-    // #499 恢复路径：历史接口附带最近一轮读心，就绪后浮现为递话
+    // #499 恢复路径：历史接口附带最近一轮读心，按 (chat_turn_id, id) 归位为递话
+    const expectedTurnId = data.chat_turn_id || 0;
     const mindRows = Array.isArray(data.mindreading) ? data.mindreading : [];
-    const mindMessages = mindRows
-      .map((row) => String(row?.narration || "").trim())
-      .filter(Boolean)
-      .map((content) => ({ role: "attendant" as const, content }));
-    setChat([...data.history, ...mindMessages]);
+    setChat(mergeMindreadingRecords(data.history, expectedTurnId, mindRows));
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     if (options?.mergeFailures) {
@@ -164,18 +161,19 @@ function App() {
       setChatFailures(data.pending_action_failures || []);
     }
     // #499 取消/早重开修复：历史 GET 可能早于后台读心落库。本轮该有读心但尚未浮现时，
-    // 启动有界轮询，就绪即去重递话——不阻塞回话展示（回话已在上面落好）。
-    if (data.mindreading_pending && !mindMessages.length && (data.chat_turn_id || 0) > 0) {
-      void pollMindreadingUntilReady(ministerName, {
+    // 锁定 expected 轮做有界轮询，就绪即按 (chat_turn_id, id) 归位——不阻塞回话展示，
+    // 且固定该轮：新一轮成为 latest 也不截断/错归旧轮读心。
+    if (data.mindreading_pending && !mindRows.length && expectedTurnId > 0) {
+      void pollMindreadingUntilReady(ministerName, expectedTurnId, {
         shouldContinue: () =>
           selectedMinisterRef.current === ministerName && mindPollTokenRef.current === pollToken,
-        onNarration: (narration) => {
+        onRecords: (records, chatTurnId) => {
           if (selectedMinisterRef.current !== ministerName || mindPollTokenRef.current !== pollToken) return;
-          appendAttendantNarration(narration);
+          surfaceMindreading(chatTurnId, records);
         },
       });
     }
-  }, [state, appendAttendantNarration]);
+  }, [state, surfaceMindreading]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -500,14 +498,11 @@ function App() {
             setCanUndoLastChat(!!doneData.can_undo_last_chat);
             setBusy("");
           },
-          // 读心就绪即浮现（ADR 0046 递话 role）；与历史/轮询路共用去重
+          // 读心就绪即浮现（ADR 0046 递话 role）；与历史/轮询路共用 (chat_turn_id, id) 归位/去重
           onMindreading: (mind) => {
             if (selectedMinisterRef.current !== targetMinisterName) return;
-            const narration = String(
-              (mind.mindreading && (mind.mindreading as { narration?: string }).narration) || "",
-            ).trim();
-            if (!narration) return;
-            appendAttendantNarration(narration);
+            if (!mind.mindreading) return;
+            surfaceMindreading(Number(mind.chat_turn_id || 0), [mind.mindreading]);
           },
         },
       );
