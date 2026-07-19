@@ -88,7 +88,6 @@ import {
   judgeStationReceiptSchema,
   mergerStationReceiptSchema,
   onlineReviewStationReceiptSchema,
-  pickJudgeTraffic,
   shipStationReceiptSchema,
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
@@ -3751,9 +3750,7 @@ function classifyCmrOutcomePayload(
   }
 
   // #930 live path: T2 judge verdict (same decode as single-slice S3/S6).
-  // Strip cargo siblings before strict decode (findings ride as opaque cargo —
-  // same class as coder pickCoderTraffic).
-  const envelope = decodeJudgeVerdict(pickJudgeTraffic(normalizedParsed));
+  const envelope = decodeJudgeVerdict(normalizedParsed);
   if (envelope.ok) {
     const cargo = extractCmrCargoFields(normalizedParsed);
     const v = envelope.value;

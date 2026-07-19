@@ -79,7 +79,6 @@ import {
   decodeCoderEnvelope,
   decodeJudgeVerdict,
   judgeStationReceiptSchema,
-  pickJudgeTraffic,
 } from "./stationReceiptContracts.js";
 import {
   isJudgeSeat,
@@ -3141,7 +3140,7 @@ export class RealBackend implements Backend {
     raw: unknown,
     cargo?: unknown,
   ): StepOutput {
-    const envelope = decodeJudgeVerdict(pickJudgeTraffic(raw));
+    const envelope = decodeJudgeVerdict(raw);
     if (envelope.ok) {
       const body = cargo !== undefined ? cargo : raw;
       let findings: Finding[] | undefined;
