@@ -63,17 +63,32 @@ export const parseSseMessage = (raw: string): { event: string; data: string } | 
   return { event, data: dataLines.join("\n") };
 };
 
+export type StreamChatOptions = {
+  signal?: AbortSignal;
+  /** #499 读心就绪即浮现：回话 done 后后台旁白到达时回调（不阻塞回话展示） */
+  onMindreading?: (payload: {
+    mindreading: Record<string, unknown> | null;
+    chat_turn_id: number;
+  }) => void;
+  /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
+  onDone?: (payload: ChatResponse) => void;
+};
+
 export const streamChat = async (
   ministerName: string,
   message: string,
   onDelta: (delta: string) => void,
-  signal?: AbortSignal,
+  signalOrOptions?: AbortSignal | StreamChatOptions,
 ): Promise<ChatResponse> => {
+  const options: StreamChatOptions =
+    signalOrOptions instanceof AbortSignal || signalOrOptions === undefined
+      ? { signal: signalOrOptions }
+      : signalOrOptions;
   const response = await fetch(`/api/ministers/${encodeURIComponent(ministerName)}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
-    signal,
+    signal: options.signal,
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
@@ -86,6 +101,7 @@ export const streamChat = async (
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let donePayload: ChatResponse | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -100,7 +116,19 @@ export const streamChat = async (
       if (parsed.event === "delta") {
         onDelta(String(payload.content || ""));
       } else if (parsed.event === "done") {
-        return payload as ChatResponse;
+        // 回话先可见：不结束流，等 end；兼容旧服务端（仅 done 无 end）则缓存后继续
+        donePayload = payload as ChatResponse;
+        options.onDone?.(donePayload);
+      } else if (parsed.event === "mindreading") {
+        options.onMindreading?.({
+          mindreading: (payload?.mindreading ?? null) as Record<string, unknown> | null,
+          chat_turn_id: Number(payload?.chat_turn_id || 0),
+        });
+      } else if (parsed.event === "end") {
+        if (!donePayload) {
+          throw new Error("流式回复中断，未收到完成事件。");
+        }
+        return donePayload;
       } else if (parsed.event === "error") {
         throw new ApiRequestError(normalizeApiError(payload, "流式回复失败。"), "流式回复失败。");
       }
@@ -109,5 +137,7 @@ export const streamChat = async (
     if (done) break;
   }
 
+  // 兼容：服务端只发 done 就关流时仍返回回话
+  if (donePayload) return donePayload;
   throw new Error("流式回复中断，未收到完成事件。");
 };

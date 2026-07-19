@@ -109,7 +109,15 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
-    const data = await api<{ minister: Minister; history: ChatMessage[]; suggestions: Suggestion[]; can_undo_last_chat: boolean; pending_action_failures?: PendingActionFailure[] }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
+    const data = await api<{
+      minister: Minister;
+      history: ChatMessage[];
+      suggestions: Suggestion[];
+      can_undo_last_chat: boolean;
+      pending_action_failures?: PendingActionFailure[];
+      chat_turn_id?: number;
+      mindreading?: Array<{ narration?: string }>;
+    }>(`/api/ministers/${encodeURIComponent(ministerName)}/chat`);
     // Staleness guard (#325, broad-scope): the player may have switched ministers
     // while this history fetch was in flight. Dropping the UI write prevents the
     // late history from bleeding into the now-selected minister's panel — this path
@@ -122,7 +130,13 @@ function App() {
       ...(state?.consorts || []),
     ];
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
-    setChat(data.history);
+    // #499 恢复路径：历史接口附带最近一轮读心，就绪后浮现为递话
+    const mindRows = Array.isArray(data.mindreading) ? data.mindreading : [];
+    const mindMessages = mindRows
+      .map((row) => String(row?.narration || "").trim())
+      .filter(Boolean)
+      .map((content) => ({ role: "attendant" as const, content }));
+    setChat([...data.history, ...mindMessages]);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
     if (options?.mergeFailures) {
@@ -436,17 +450,46 @@ function App() {
     const abort = new AbortController();
     chatAbortRef.current = abort;
     try {
-      const data = await streamChat(targetMinisterName, message, (delta) => {
-        if (selectedMinisterRef.current === targetMinisterName) {
-          setStreamingMinisterMessage((current) => current + delta);
-        }
-      }, abort.signal);
+      const data = await streamChat(
+        targetMinisterName,
+        message,
+        (delta) => {
+          if (selectedMinisterRef.current === targetMinisterName) {
+            setStreamingMinisterMessage((current) => current + delta);
+          }
+        },
+        {
+          signal: abort.signal,
+          // 回话 done 立刻清 busy / 落历史——不等读心（#499 无「为读心黑屏」）
+          onDone: (doneData) => {
+            if (selectedMinisterRef.current !== targetMinisterName) return;
+            setPendingUserMessage("");
+            setStreamingMinisterMessage("");
+            setChat(doneData.history);
+            setSuggestions(doneData.suggestions);
+            setCanUndoLastChat(!!doneData.can_undo_last_chat);
+            setBusy("");
+          },
+          // 读心就绪即浮现（ADR 0046 递话 role）
+          onMindreading: (mind) => {
+            if (selectedMinisterRef.current !== targetMinisterName) return;
+            const narration = String(
+              (mind.mindreading && (mind.mindreading as { narration?: string }).narration) || "",
+            ).trim();
+            if (!narration) return;
+            setChat((current) => [
+              ...current,
+              { role: "attendant", content: narration },
+            ]);
+          },
+        },
+      );
       // Staleness guard: player switched ministers while the request was in-flight;
       // discard all minister-specific UI updates to avoid cross-minister notice bleed.
       if (selectedMinisterRef.current !== targetMinisterName) return;
+      // onDone 已落回话历史；此处只补全局态，不 setChat(data.history) 以免抹掉已浮现的读心递话
       setPendingUserMessage("");
       setStreamingMinisterMessage("");
-      setChat(data.history);
       setSuggestions(data.suggestions);
       setCanUndoLastChat(!!data.can_undo_last_chat);
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));

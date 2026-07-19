@@ -656,7 +656,13 @@ export function ChatModal({
         <div className="chat-log" ref={chatLogRef}>
           {displayMessages.map((message, index) => (
             <div className={`chat-message ${message.role} ${message.pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
-              <span>{message.role === "user" ? "朕" : minister.name}</span>
+              <span>
+                {message.role === "user"
+                  ? "朕"
+                  : message.role === "attendant"
+                    ? "近臣"
+                    : minister.name}
+              </span>
               <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
             </div>
           ))}

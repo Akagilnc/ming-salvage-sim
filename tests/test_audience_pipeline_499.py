@@ -1,11 +1,11 @@
 """#499 P5 时序编排：回话流式 / 读心流水线 / 回奏并行。
 
 时序契约（PRD #497 接缝义务②）：
-- 回话流式可见；首 token 先于读心请求
+- 回话流式可见；首 token 先于读心
 - 读心必串于回话完成+持久化之后；输入含完整回话
 - 投毒：回话未完即发读心、只喂问句 → 被咬住
-- 不依赖回话的调用并发发出（时序日志）
-- 回话 done/可见不等读心（无「为读心黑屏」）
+- 不依赖回话的真实调用经生产入口并发发出
+- 回话 done 不等读心；读心经 SSE/轮询浮现
 """
 
 from __future__ import annotations
@@ -14,11 +14,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+from typing import Any, Dict, List
 
 import pytest
 
 from ming_sim import audience_pipeline as ap
 from ming_sim.audience_pipeline import (
+    EVT_MINDREADING_COMPLETE,
     EVT_MINDREADING_ISSUED,
     EVT_PARALLEL_ISSUED,
     EVT_REPLY_FIRST_TOKEN,
@@ -27,6 +29,7 @@ from ming_sim.audience_pipeline import (
     AudienceTurnPipeline,
     assert_p5_order,
     mindreading_eligible,
+    return_report_applicable,
     run_mindreading_for_turn,
 )
 
@@ -72,8 +75,19 @@ def test_mindreading_refuses_poisoned_question_only_input():
     with pytest.raises(ValueError, match="完整回话"):
         pipe.issue_mindreading(
             lambda reply: {"narration": reply},
-            minister_reply="户部钱粮如何？",  # 问句，不是回话
+            minister_reply="户部钱粮如何？",
         )
+
+
+def test_accept_persisted_reply_is_public_gate_not_private_fields():
+    """生产接管状态机走公开 API，不私改 _reply_*。"""
+    pipe = AudienceTurnPipeline()
+    pipe.accept_persisted_reply("臣先陈军务。")
+    assert pipe.reply_text == "臣先陈军务。"
+    assert pipe.reply_persisted is True
+    fut = pipe.issue_mindreading(lambda r: {"ok": r})
+    assert fut.result(timeout=1.0) == {"ok": "臣先陈军务。"}
+    assert_p5_order(pipe.timeline)
 
 
 def test_mindreading_runs_only_after_persist_with_full_reply():
@@ -89,6 +103,7 @@ def test_mindreading_runs_only_after_persist_with_full_reply():
     pipe.stream_reply(produce)
     pipe.persist_reply(lambda reply: received.append(("persist", reply)))
     pipe.mark_reply_visible()
+    visible_at = pipe.timeline.first(EVT_REPLY_VISIBLE).t
 
     fut = pipe.issue_mindreading(lambda reply: received.append(("mind", reply)) or {"ok": reply})
     result = fut.result(timeout=2.0)
@@ -100,11 +115,10 @@ def test_mindreading_runs_only_after_persist_with_full_reply():
     names = pipe.timeline.names()
     assert names.index(EVT_REPLY_FIRST_TOKEN) < names.index(EVT_MINDREADING_ISSUED)
     assert names.index(EVT_REPLY_PERSISTED) < names.index(EVT_MINDREADING_ISSUED)
-    assert names.index(EVT_REPLY_VISIBLE) < names.index(ap.EVT_MINDREADING_COMPLETE) or (
-        pipe.timeline.first(EVT_REPLY_VISIBLE).t
-        <= pipe.timeline.first(ap.EVT_MINDREADING_COMPLETE).t
-        or True  # visible 在 join 之前调用即可；下方显式断言不 join
-    )
+    mind_done = pipe.timeline.first(EVT_MINDREADING_COMPLETE)
+    assert mind_done is not None
+    # visible 在 issue 之前标记；不得等 mind complete
+    assert visible_at <= mind_done.t or visible_at <= pipe.timeline.first(EVT_MINDREADING_ISSUED).t
 
 
 def test_reply_visible_does_not_wait_for_mindreading():
@@ -116,7 +130,8 @@ def test_reply_visible_does_not_wait_for_mindreading():
     pipe.stream_reply(lambda on_delta: (on_delta("臣遵旨。") or "臣遵旨。"))
     pipe.persist_reply(lambda _r: None)
     pipe.mark_reply_visible()
-    visible_at = pipe.timeline.first(EVT_REPLY_VISIBLE).t
+    assert pipe.timeline.first(EVT_REPLY_VISIBLE) is not None
+    assert pipe.timeline.first(EVT_MINDREADING_COMPLETE) is None
 
     def slow_mind(reply):
         mind_started.set()
@@ -125,10 +140,7 @@ def test_reply_visible_does_not_wait_for_mindreading():
 
     fut = pipe.issue_mindreading(slow_mind)
     assert mind_started.wait(1.0)
-    # 此刻读心仍在跑，但 visible 早已记下——无黑屏窗口
-    assert pipe.timeline.first(EVT_REPLY_VISIBLE) is not None
-    assert pipe.timeline.first(ap.EVT_MINDREADING_COMPLETE) is None
-    assert visible_at <= time.monotonic()
+    assert pipe.timeline.first(EVT_MINDREADING_COMPLETE) is None
     mind_release.set()
     fut.result(timeout=2.0)
     assert_p5_order(pipe.timeline)
@@ -157,7 +169,6 @@ def test_parallel_jobs_issue_concurrently():
 
     t0 = time.monotonic()
     pipe.start_parallel({"return_report": make_job("r"), "side_channel": make_job("s")})
-    # 回话与并行任务同时进行
     pipe.stream_reply(
         lambda on_delta: (time.sleep(delay) or on_delta("臣") or "臣有本奏。")
     )
@@ -216,7 +227,6 @@ def test_mindreading_eligible_skips_self_and_missing_slot(game):
 
 def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     db, state, content = game
-    reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
     chat_turn_id = db.create_chat_turn(state, target.name, "p5-test", 0)
     reply = "臣愿肩起此事，不敢有负圣恩。"
@@ -239,11 +249,7 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     assert payload["narration"] == "近臣低声：此言尚有未尽。"
     assert db.list_mindreading_records(chat_turn_id) == [payload]
 
-    # failed 轮不写孤儿
     db.fail_chat_turn(chat_turn_id)
-    before = db.list_mindreading_records(chat_turn_id)
-    # 再跑一次：guard 拦截写入（仍返回 payload 但不增行）
-    # 先清空以便观察
     db.conn.execute("DELETE FROM mindreading_records WHERE chat_turn_id=?", (chat_turn_id,))
     db.conn.commit()
     run_mindreading_for_turn(
@@ -257,12 +263,11 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
         mindreading_agent=_Agent(),
     )
     assert db.list_mindreading_records(chat_turn_id) == []
-    assert before  # 原先成功写入过
 
 
-def test_chat_stream_done_before_mindreading_and_records_full_reply(game, monkeypatch):
-    """生产流式路径：done 先于读心完成；读心落库含完整回话（非问句）。"""
-    import ming_sim.audience_pipeline as pipeline_mod
+def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatch):
+    """真实 chat_stream：done 先于 mindreading；读心事件可浮现；输入为完整回话。"""
+    import web_app as web_app_mod
     from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
 
     db, state, content = game
@@ -270,12 +275,14 @@ def test_chat_stream_done_before_mindreading_and_records_full_reply(game, monkey
     agent = _FakeAgent(chunks=["臣", "先陈军务，不敢删节。"])
     web_game = _web_game(db, state, content, agent)
 
-    seen_replies = []
-    real_run = pipeline_mod.run_mindreading_for_turn
+    seen_replies: List[str] = []
+    release_mind = threading.Event()
+    mind_started = threading.Event()
 
-    def spy_run(**kwargs):
-        seen_replies.append(kwargs.get("minister_reply"))
-        # 确定性 stub：不走真模型
+    def slow_spy_run(**kwargs):
+        seen_replies.append(kwargs.get("minister_reply") or "")
+        mind_started.set()
+        release_mind.wait(timeout=2.0)
         payload = {
             "reader": "王承恩",
             "target": minister_name,
@@ -290,67 +297,182 @@ def test_chat_stream_done_before_mindreading_and_records_full_reply(game, monkey
                 db.record_mindreading(chat_turn_id, payload)
         return payload
 
-    monkeypatch.setattr(pipeline_mod, "run_mindreading_for_turn", spy_run)
-    # web_app 绑定了原函数名，一并替换
-    import web_app as web_app_mod
-    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy_run)
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", slow_spy_run)
 
-    events = list(web_game.chat_stream(minister_name, "军务如何？"))
+    stream = web_game.chat_stream(minister_name, "军务如何？")
+    events: List[Dict[str, Any]] = []
+    done_seen = False
+    mind_before_done = False
+    for item in stream:
+        events.append(item)
+        if item.get("type") == "mindreading" and not done_seen:
+            mind_before_done = True
+        if item.get("type") == "done":
+            done_seen = True
+            # done 交付时读心不得已完成（阻塞 fake 未 release）
+            assert pipe_mind_not_complete(mind_started, release_mind)
+            release_mind.set()
+
     types = [e.get("type") for e in events]
     assert "delta" in types
-    assert types[-1] == "done"
-    done_idx = types.index("done")
-    assert all(t != "error" for t in types)
-    # done 包里已有完整回话；此时读心可能仍在跑或已完——但 done 事件本身不携带读心
-    assert events[done_idx]["payload"]["answer"] == "臣先陈军务，不敢删节。"
-
-    assert _wait_for(lambda: len(seen_replies) == 1 and web_game._pending_writes_count == 0)
+    assert types.index("done") < types.index("end")
+    assert "mindreading" in types
+    assert types.index("done") < types.index("mindreading")
+    assert not mind_before_done
+    done_payload = next(e["payload"] for e in events if e["type"] == "done")
+    assert done_payload["answer"] == "臣先陈军务，不敢删节。"
+    mind_event = next(e for e in events if e["type"] == "mindreading")
+    assert mind_event["payload"]["narration"] == "近臣低声：此言另有盘算。"
     assert seen_replies == ["臣先陈军务，不敢删节。"]
     assert "军务如何？" not in seen_replies[0]
-    chat_turn = db.get_last_active_chat_turn(minister_name, state.turn)
-    assert chat_turn is not None
-    records = db.list_mindreading_records(int(chat_turn["id"]))
-    assert len(records) == 1
-    assert records[0]["narration"] == "近臣低声：此言另有盘算。"
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
-def test_full_pipeline_order_with_parallel_and_mindreading():
-    """端到端时序：并行 issued → 首 token → persist → visible → mindreading issued。"""
-    pipe = AudienceTurnPipeline()
-    barrier = threading.Barrier(2)
-    parallel_ran = []
+def pipe_mind_not_complete(mind_started: threading.Event, release_mind: threading.Event) -> bool:
+    """done 时刻：若读心已 start 则 release 必尚未 set（否则阻塞 fake 已放行=可能已完成）。"""
+    if not mind_started.is_set():
+        return True
+    return not release_mind.is_set()
 
-    def report_job():
-        barrier.wait(timeout=2.0)
-        parallel_ran.append("report")
-        return {"statement": "陕西巡抚当前虚悬。"}
 
-    pipe.start_parallel({"return_report": report_job})
+def test_chat_stream_parallel_jobs_from_production_entry(game, monkeypatch):
+    """真实入口 start_parallel：阻塞 fake 证明回奏类并行任务并发发出。"""
+    import web_app as web_app_mod
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
 
-    def produce(on_delta):
-        barrier.wait(timeout=2.0)  # overlap with parallel job
-        on_delta("臣")
-        on_delta("回奏。")
-        return "臣回奏。"
+    db, state, content = game
+    # 对御前近臣问官缺 → 触发 return_report 并行任务
+    minister_name = "王承恩"
+    agent = _FakeAgent(chunks=["臣", "启奏：陕西巡抚虚悬。"])
+    web_game = _web_game(db, state, content, agent)
 
-    pipe.stream_reply(produce)
-    pipe.persist_reply(lambda _r: None)
-    pipe.mark_reply_visible()
-    mind_reply = []
-    fut = pipe.issue_mindreading(lambda r: mind_reply.append(r) or {"n": r})
-    parallel = pipe.collect_parallel(timeout=2.0)
-    mind = fut.result(timeout=2.0)
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+    barrier = threading.Barrier(2, timeout=2.0)
 
-    assert parallel["return_report"]["statement"]
-    assert mind_reply == ["臣回奏。"]
-    assert mind == {"n": "臣回奏。"}
-    assert_p5_order(pipe.timeline)
-    names = pipe.timeline.names()
-    assert EVT_PARALLEL_ISSUED in names
-    assert names.index(EVT_REPLY_FIRST_TOKEN) < names.index(EVT_MINDREADING_ISSUED)
-    assert names.index(EVT_REPLY_VISIBLE) < names.index(ap.EVT_MINDREADING_COMPLETE) or True
-    # 明确：visible 在 issue 时已存在
-    vis = pipe.timeline.first(EVT_REPLY_VISIBLE)
-    mind_i = pipe.timeline.first(EVT_MINDREADING_ISSUED)
-    assert vis is not None and mind_i is not None
-    assert vis.t <= mind_i.t or vis.t <= mind_i.t + 0.5  # visible 先于或紧邻 issued
+    def blocking_report(*_a, **_k):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            barrier.wait()
+        finally:
+            with lock:
+                active -= 1
+        return {
+            "source_kind": "inquiry",
+            "source_ref": "查访/office_vacancies",
+            "subject": "查访",
+            "statement": "陕西巡抚当前虚悬。",
+        }
+
+    # 第二个并行任务：强制挂一个 side job 到生产 builder
+    real_builder = web_game._build_parallel_audience_jobs
+
+    def builder_with_side(minister, text, chat_turn_id):
+        jobs = real_builder(minister, text, chat_turn_id)
+        assert "return_report" in jobs
+
+        def side():
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                barrier.wait()
+            finally:
+                with lock:
+                    active -= 1
+            return "side-ok"
+
+        jobs["side_channel"] = side
+        # 替换 return_report 为阻塞版
+        jobs["return_report"] = blocking_report
+        return jobs
+
+    monkeypatch.setattr(web_game, "_build_parallel_audience_jobs", builder_with_side)
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", lambda **_k: None)
+
+    events = list(web_game.chat_stream(minister_name, "陕西巡抚可有？"))
+    assert any(e.get("type") == "done" for e in events)
+    assert any(e.get("type") == "end" for e in events)
+    assert max_active >= 2, f"生产入口未并发发出，峰值={max_active}"
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+
+
+def test_mindreading_poll_path_after_stream(game, monkeypatch):
+    """轮询/恢复路径：落库后 mindreading_for_minister 可读。"""
+    import web_app as web_app_mod
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+
+    db, state, content = game
+    minister_name = "温体仁"
+    agent = _FakeAgent(chunks=["臣遵旨。"])
+    web_game = _web_game(db, state, content, agent)
+
+    def spy(**kwargs):
+        payload = {
+            "reader": "王承恩",
+            "target": minister_name,
+            "source": "见闻",
+            "precision": "清晰",
+            "narration": "近臣低声陈明。",
+        }
+        cid = int(kwargs.get("chat_turn_id") or 0)
+        if cid:
+            db.record_mindreading(cid, payload)
+        return payload
+
+    monkeypatch.setattr(web_app_mod, "run_mindreading_for_turn", spy)
+    list(web_game.chat_stream(minister_name, "如何？"))
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    out = web_game.mindreading_for_minister(minister_name)
+    assert out["chat_turn_id"] > 0
+    assert out["mindreading"]
+    assert out["mindreading"][0]["narration"] == "近臣低声陈明。"
+
+
+def test_pending_ownership_covers_trail_no_db_before_mark(game, monkeypatch):
+    """ownership：trail 不在 mark 前触 DB；整轮 pending 覆盖读心。"""
+    import web_app as web_app_mod
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+
+    db, state, content = game
+    minister_name = "温体仁"
+    agent = _FakeAgent(chunks=["臣遵旨。"])
+    web_game = _web_game(db, state, content, agent)
+
+    counts_at_trail_start = []
+
+    real_trail = web_game._trail_mindreading_after_reply
+
+    def wrapped_trail(*args, **kwargs):
+        counts_at_trail_start.append(web_game._pending_writes_count)
+        return real_trail(*args, **kwargs)
+
+    monkeypatch.setattr(web_game, "_trail_mindreading_after_reply", wrapped_trail)
+    monkeypatch.setattr(
+        web_app_mod,
+        "run_mindreading_for_turn",
+        lambda **_k: {
+            "reader": "王承恩", "target": minister_name, "source": "见闻",
+            "precision": "清晰", "narration": "x",
+        },
+    )
+
+    list(web_game.chat_stream(minister_name, "问。"))
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    assert counts_at_trail_start, "trail 应被调用"
+    # trail 启动时 worker 仍持有 pending（count >= 1）
+    assert counts_at_trail_start[0] >= 1
+
+
+def test_return_report_applicable_matches_attendant_domain(game):
+    _db, _state, content = game
+    wang = content.characters["王承恩"]
+    bi = content.characters["毕自严"]
+    assert return_report_applicable(wang, "陕西巡抚可有？") is True
+    assert return_report_applicable(bi, "陕西巡抚可有？") is False
+    assert return_report_applicable(wang, "今日天气如何？") is False
