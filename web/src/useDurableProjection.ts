@@ -15,17 +15,30 @@ export function useDurableProjection(
 ) {
   const genRef = React.useRef(0);
 
+  /**
+   * 推进代次 → 取 state（可选并取密令列表）→ 仅当仍是最新代次才落 UI。
+   * - 陈旧代次（更新的刷新已发生）：**返回 null**——消费者据此拒收陈旧 cargo，绝不用陈旧 state。
+   * - `onSecretOrders`：密令列表就绪且仍是最新代次时回调（供换回合自动弹窗等，同代次门控）。
+   */
   const refresh = React.useCallback(
-    async (opts?: { secretOrders?: boolean }): Promise<GameState> => {
+    async (opts?: {
+      secretOrders?: boolean;
+      onSecretOrders?: (orders: SecretOrder[]) => void;
+    }): Promise<GameState | null> => {
       const gen = ++genRef.current;
       const isLatest = () => genRef.current === gen;
       if (opts?.secretOrders) {
         api<{ orders: SecretOrder[] }>("/api/secret_orders")
-          .then(({ orders }) => { if (isLatest()) applySecretOrders(orders); })
+          .then(({ orders }) => {
+            if (!isLatest()) return;
+            applySecretOrders(orders);
+            opts.onSecretOrders?.(orders);
+          })
           .catch(() => {});
       }
       const data = await api<GameState>("/api/game/state");
-      if (isLatest()) applyState(data);
+      if (!isLatest()) return null;  // 陈旧代次 → 拒收
+      applyState(data);
       return data;
     },
     [applyState, applySecretOrders],
