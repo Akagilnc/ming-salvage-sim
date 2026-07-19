@@ -92,6 +92,12 @@ _AUDIENCE_ABSTRACT_BANDS = {
     "凝聚力": ("低", "偏低", "平常", "偏高", "强盛"),
 }
 
+
+def qualitative_character_attribute(field: str, value: object) -> str:
+    """Render one canonical 0122 character attribute band for a player."""
+    label = {"loyalty": "忠诚", "ability": "能力", "integrity": "清廉", "courage": "胆略"}[field]
+    return qualitative_band(value, _AUDIENCE_ABSTRACT_BANDS[label])
+
 # This registry is the single source of truth for Chinese abstract P4 axes.
 # The raw-score rejector and the renderer must agree on the same vocabulary;
 # concrete quantities are exempt only when their unit makes them observable

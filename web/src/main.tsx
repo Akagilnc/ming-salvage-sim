@@ -4,7 +4,6 @@ import { Crown, Loader2, X } from "lucide-react";
 import { api, streamChat } from "./api";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
-import { ExtractionModal } from "./components/extraction";
 import { GameMenuModal } from "./components/gameMenu";
 import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, LongGoalsModal, QuadFrame } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
@@ -1042,7 +1041,7 @@ function App() {
         <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
           caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => setActiveModal("state")} />
         <CommandSlot slotKey="邸报" img="邸报"
-          caption="邸报详明" sub="数项加减/账目明细" onClick={() => setActiveModal("extraction")} />
+          caption="邸报" sub="本月奏报" onClick={() => setActiveModal("report")} />
         <CommandSlot slotKey="密令" img="密令"
           badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
           caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
@@ -1205,17 +1204,12 @@ function App() {
       {activeModal === "report" && (gazetteReport || report) ? (
         <ReportModal
           report={gazetteReport || report}
-          accountReport={state.previous_account_summary || ""}
           onClose={guardClose(() => setActiveModal("none"))}
         />
       ) : null}
 
       {activeModal === "ending" && state.ending ? (
         <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
-      ) : null}
-
-      {activeModal === "extraction" ? (
-        <ExtractionModal onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "history" ? (
