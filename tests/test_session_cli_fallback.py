@@ -2021,7 +2021,9 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
     extract_draft_intent 合并，不得静默丢掉草案补充。无草案的普通消息仍零额外 LLM。"""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "拟旨补充承办官"
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1"
+    ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
         actor=minister, notes="原草案", status="draft")
@@ -2060,7 +2062,9 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
     收敛到 extract_draft_intent 合并。"""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
-    minister = "拟旨补充承办官2"
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1 OFFSET 1"
+    ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
         actor=minister, notes="原草案", status="draft")

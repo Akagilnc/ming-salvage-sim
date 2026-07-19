@@ -1329,7 +1329,7 @@ def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeyp
             """
             INSERT INTO turn_directives
             (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-            VALUES (?, ?, ?, '', ?, '', ?, '测试半写', 'draft', '')
+            VALUES (?, ?, ?, NULL, ?, '', ?, '测试半写', 'draft', '')
             """,
             (state.turn, state.year, state.period, name, "半写拟旨"),
         )

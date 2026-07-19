@@ -663,6 +663,11 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     db, state, content = game
     eid = "__terminal_account_preserve_test__"
     db.conn.execute(
+        "INSERT INTO events (id,title,kind,summary,urgency,severity,credibility,interests,audiences) "
+        "VALUES (?, ?, '测试', '', 0, 0, 0, '[]', '[]')",
+        (eid, eid),
+    )
+    db.conn.execute(
         "INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) "
         "VALUES (?, ?, ?, ?, 'simulation', 'avoided', '前提已不成立')",
         (eid, state.turn, state.year, state.period),
@@ -684,6 +689,11 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
     import json
     db, state, _content = game
     eid = "__terminal_account_fresh_test__"
+    db.conn.execute(
+        "INSERT INTO events (id,title,kind,summary,urgency,severity,credibility,interests,audiences) "
+        "VALUES (?, ?, '测试', '', 0, 0, 0, '[]', '[]')",
+        (eid, eid),
+    )
     db.record_event_decision_choice(state, eid, {"label": "斩"})
     row = db.conn.execute(
         "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
@@ -698,6 +708,11 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
     import json
     db, state, _content = game
     eid = "__terminal_account_pending_choice_upgrade__"
+    db.conn.execute(
+        "INSERT INTO events (id,title,kind,summary,urgency,severity,credibility,interests,audiences) "
+        "VALUES (?, ?, '测试', '', 0, 0, 0, '[]', '[]')",
+        (eid, eid),
+    )
     db.record_event_decision_choice(state, eid, {"label": "留"})
     trigger_turn = state.turn + 1
     trigger_year = state.year + 1
@@ -734,6 +749,11 @@ def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_stat
     import json
     db, state, _content = game
     eid = f"__terminal_account_pending_choice_{marker}__"
+    db.conn.execute(
+        "INSERT INTO events (id,title,kind,summary,urgency,severity,credibility,interests,audiences) "
+        "VALUES (?, ?, '测试', '', 0, 0, 0, '[]', '[]')",
+        (eid, eid),
+    )
     db.record_event_decision_choice(state, eid, {"label": "留"})
     terminal_turn = state.turn + 1
     terminal_year = state.year + 1
