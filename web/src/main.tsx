@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Crown, Loader2, X } from "lucide-react";
 import { api } from "./api";
 import { useAudienceChat } from "./useAudienceChat";
+import { useDurableProjection } from "./useDurableProjection";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -93,8 +94,6 @@ function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
-  // #499：done 触发的持久刷新（loadState / 密令列表）按代次门控，旧响应迟到不覆盖新的。
-  const durableRefreshGenRef = React.useRef(0);
 
   // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
@@ -105,24 +104,28 @@ function App() {
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
+    cancelReopenPolls,
     applyHistory,
     loadHistory: loadHistoryProjection,
     sendChat: runAudienceTurn,
     cancelChat,
   } = useAudienceChat(setBusy, selectedMinisterRef);
 
-  // shouldApply：并发刷新（如相邻两轮 done 各触发一次）时按最新代次门控——旧响应迟到不覆盖
-  // 新的持久 UI 投影（#499 p5-durable-refresh-response-clobber）。默认恒真，其它调用方不受影响。
-  const loadState = React.useCallback(async (shouldApply: () => boolean = () => true) => {
-    const data = await api<GameState>("/api/game/state");
-    if (!shouldApply()) return data;
+  // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。
+  const applyDurableState = React.useCallback((data: GameState) => {
     refreshLabelMaps(data);
     setState(data);
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
     setDecree(data.last_decree || "");
     setReport(data.last_report || "");
-    return data;
-  }, [selectedMinister]);
+  }, []);
+  const { refresh: refreshDurableProjection } = useDurableProjection(applyDurableState, setSecretOrders);
+  // loadState = 不带密令的持久刷新；所有既有调用方经此参与同一 latest-wins 协调（撤回/重试/
+  // 结算调 loadState 即推进代次、作废在飞的旧 done 刷新）。
+  const loadState = React.useCallback(
+    () => refreshDurableProjection(),
+    [refreshDurableProjection],
+  );
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
@@ -446,13 +449,8 @@ function App() {
       onDone: (data) => {
         // 单调即时字段直接落 done 载荷（各 done 递新，无竞争）：指令 / pending_count。
         setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
-        // 重取型刷新（loadState / 密令列表）按代次门控：相邻两轮 done 的旧响应迟到不覆盖新的。
-        const refreshGen = ++durableRefreshGenRef.current;
-        const latestRefresh = () => durableRefreshGenRef.current === refreshGen;
-        void loadState(latestRefresh);
-        api<{ orders: SecretOrder[] }>("/api/secret_orders")
-          .then(({ orders }) => { if (latestRefresh()) setSecretOrders(orders); })
-          .catch(() => {});
+        // 重取型刷新（state + 密令列表）经唯一协调器：撤回/相邻轮等任一新刷新都会作废本次旧响应。
+        void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== targetMinisterName) return;
         setSuggestions(data.suggestions);
@@ -1114,7 +1112,7 @@ function App() {
       ) : null}
 
       {activeModal === "chat" && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => { cancelChat(); setActiveModal("none"); })}>
+        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => { cancelChat(); cancelReopenPolls(); setActiveModal("none"); })}>
           <ChatModal
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
@@ -1137,7 +1135,7 @@ function App() {
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
             onOpenEdict={() => setActiveModal("edict")}
-            onClose={guardClose(() => { cancelChat(); setActiveModal("none"); })}
+            onClose={guardClose(() => { cancelChat(); cancelReopenPolls(); setActiveModal("none"); })}
             onCancel={cancelChat}
           />
         </FullscreenModal>

@@ -48,11 +48,16 @@ export function useAudienceChat(
   // 短暂请求归属：每次 sendChat 自增。
   const requestTokenRef = React.useRef(0);
   const abortRef = React.useRef<AbortController | null>(null);
-  // 历史快照 generation：load / send / reset 都推进；陈旧历史响应据此丢弃（含在飞轮询）。
+  // 历史快照 generation：load / send / reset 都推进；陈旧历史响应据此丢弃。
   const chatGenRef = React.useRef(0);
+  // 读心 poll-batch 归属：一次「面板观察会话」的全部待读心轮轮询共此代次。close / reset /
+  // 新接受的历史快照替换旧批（推进代次作废旧批）；**send 不推进**（同面板同待读心轮仍有效，
+  // 旧轮读心不该因新一轮发出而停）。给 hook 唯一 poll-batch 归属，避免同大臣重开叠加重复轮询环。
+  const pollBatchRef = React.useRef(0);
 
   const resetPanel = React.useCallback(() => {
-    chatGenRef.current += 1;  // 作废在飞的历史加载（读心轮询另按面板归属，切人变面板即停）
+    chatGenRef.current += 1;   // 作废在飞的历史加载
+    pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
@@ -61,6 +66,11 @@ export function useAudienceChat(
   const clearPendingText = React.useCallback(() => {
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
+  }, []);
+
+  // 关闭召对面板：无观察者 → 作废 poll-batch（selectedMinister 不变也停轮询，免得重开叠加）。
+  const cancelReopenPolls = React.useCallback(() => {
+    pollBatchRef.current += 1;
   }, []);
 
   // 非流式历史投影（撤回后重投）：新一代快照，走同一 reducer history 动作（含读心保住/归位）。
@@ -80,15 +90,18 @@ export function useAudienceChat(
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
-      // 每一待读心轮各自有界轮询：只按「当前大臣面板」存活——发送不作废（读心是持久 turn
-      // 事件，新一轮不该停旧轮轮询）；切人（面板变）才停。覆盖所有待读心轮，不止最新轮。
+      // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
+      const batch = ++pollBatchRef.current;
+      const batchAlive = () =>
+        selectedMinisterRef.current === minister && pollBatchRef.current === batch;
+      // 每一待读心轮各自轮询：寿命系于服务端终态（api 层），存活系于本 poll-batch 归属——
+      // close/reset/新快照停之，send 不停之。覆盖所有待读心轮，不止最新轮。
       const pendingTurns = Array.isArray(data.pending_turn_ids) ? data.pending_turn_ids : [];
-      const onPanel = () => selectedMinisterRef.current === minister;
       for (const turnId of pendingTurns) {
         void pollMindreadingUntilReady(minister, turnId, {
-          shouldContinue: onPanel,
+          shouldContinue: batchAlive,
           onRecords: (records, tid) => {
-            if (onPanel()) dispatchChat({ type: "mindreading", chatTurnId: tid, records });
+            if (batchAlive()) dispatchChat({ type: "mindreading", chatTurnId: tid, records });
           },
         });
       }
@@ -166,6 +179,7 @@ export function useAudienceChat(
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
+    cancelReopenPolls,
     applyHistory,
     loadHistory,
     sendChat,
