@@ -94,8 +94,17 @@ USER root
 # CLAUDE_CODE_OAUTH_TOKEN env (already wired).
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends gh ca-certificates; \
+    apt-get install -y --no-install-recommends gh ca-certificates python3-pip sqlite3; \
     rm -rf /var/lib/apt/lists/*
+
+# Game-side Python test environment (#1054). Install into the agent user's site
+# rather than the externally-managed system Python, before the skill/code layers.
+COPY requirements.txt /tmp/ming-requirements.txt
+USER agent
+RUN set -eux; \
+    python3 -m pip install --user --break-system-packages --no-cache-dir \
+      -r /tmp/ming-requirements.txt pytest python-multipart
+USER root
 
 # bun (system-wide) — used by a handful of gstack-ship helper scripts.
 RUN set -eux; \
@@ -142,7 +151,7 @@ RUN set -eux; \
     /usr/local/bin/grok --version | grep -F "0.2.102"
 # The base image exposes its npm-global bin first. Keep the copied executable
 # first at runtime so an auth bind mount can never replace the resolved grok.
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # ── Bake the full dev-skill closure into the shared agents skills pool (#911) ─
 # build.sh staged staging/skills/ with the closure graph above (incl. the
 # gstack/ closure subtree). Primary path: ~/.agents/skills (claude + codex share
