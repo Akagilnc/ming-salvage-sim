@@ -1355,7 +1355,8 @@ class WebGame:
     def _audience_turn_in_flight(self, minister_name: str) -> bool:
         """#383 背景召对契约：同一大臣已有「已受理、尚未完成回奏」的 turn 时，不得再开新轮。
 
-        in-flight = `status='active'` 且 `minister_message_id` 仍空；已完成的可撤回 turn 其
+        in-flight = `status='generating'`，或 `status='active'` 且 `minister_message_id` 仍空
+        （#498 挂夜轮以 generating 起笔，回话入档后升 active）。已完成的可撤回 turn 其
         `minister_message_id` 已写、不算 in-flight，不挡新问。#383 把召对回合改成后台 worker
         续跑后，「离开实时流（前端 busy 已清）→ 重开同大臣 → 再问」会并发开两轮，两个后台
         worker 竞写同一 SQLite 连接（ADR0008 单写者不变式）并让历史错序——#383 Out of Scope
@@ -1363,18 +1364,32 @@ class WebGame:
         chat）创建新 turn 前拒掉这种并发（integrated cmr Gate2，三模型一致 P1）。"""
         if not self._persistent_chat_minister(minister_name):
             return False
-        existing = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
-        return existing is not None and not existing.get("minister_message_id")
+        row = self.db.conn.execute(
+            """
+            SELECT * FROM chat_turns
+            WHERE minister_name = ? AND turn = ?
+              AND (
+                status = 'generating'
+                OR (status = 'active' AND (minister_message_id IS NULL OR minister_message_id = 0))
+              )
+            ORDER BY id DESC LIMIT 1
+            """,
+            (minister_name, int(self.state.turn)),
+        ).fetchone()
+        return row is not None
 
     def _start_chat_turn(self, minister_name: str) -> tuple[int, Dict[str, Any]]:
         agno_session_id = self._minister_agno_session_id(minister_name)
         runs_before = self.db.agno_runs_length(agno_session_id)
         snapshot = self.db.capture_chat_rollback_snapshot()
-        chat_turn_id = self.db.create_chat_turn(
+        # #498：进入召对即开夜；对话轮挂 night_id，status=generating 至回话入档。
+        from ming_sim.audience_night import attach_chat_turn_to_night
+        _night_id, chat_turn_id = attach_chat_turn_to_night(
+            self.db,
             self.state,
             minister_name,
-            agno_session_id,
-            runs_before,
+            agno_session_id=agno_session_id,
+            agno_runs_before=runs_before,
         )
         return chat_turn_id, snapshot
 

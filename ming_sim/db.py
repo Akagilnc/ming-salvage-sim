@@ -1153,6 +1153,8 @@ class GameDB:
                 agno_session_id TEXT NOT NULL DEFAULT '',
                 agno_runs_before INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
+                -- #498：对话轮锚定夜容器；0=未挂夜（旧档/无夜路径）
+                night_id INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1160,6 +1162,40 @@ class GameDB:
                 ON chat_turns(minister_name, turn, status, id);
             CREATE INDEX IF NOT EXISTS idx_chat_turns_status_id
                 ON chat_turns(status, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_turns_night
+                ON chat_turns(night_id, id);
+
+            -- #498 召对夜一等容器 + 故事账本（ADR 0035）
+            CREATE TABLE IF NOT EXISTS audience_nights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                time_of_day TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
+                close_commit_cursor INTEGER NOT NULL DEFAULT 0,
+                opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_audience_nights_turn_status
+                ON audience_nights(turn, status, id);
+
+            CREATE TABLE IF NOT EXISTS story_ledger_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                night_id INTEGER NOT NULL,
+                seq INTEGER NOT NULL,
+                person_names TEXT NOT NULL DEFAULT '[]',
+                audibility TEXT NOT NULL DEFAULT '殿上公开',
+                body TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(night_id, seq),
+                FOREIGN KEY(night_id) REFERENCES audience_nights(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_story_ledger_night_seq
+                ON story_ledger_entries(night_id, seq);
 
             CREATE TABLE IF NOT EXISTS mindreading_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1609,6 +1645,8 @@ class GameDB:
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
         self.ensure_column(
             "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
+        # #498：旧档 chat_turns 无 night_id 列；CREATE TABLE 新档已含，ensure 覆盖迁移。
+        self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
         # fiscal_config 科目元数据列（数据驱动预算目录）：budget_role=fixed 的 base 项靠
         # account/direction/display 由 flows.compute_budget_lines 动态生成预算行；
         # dynamic 项（田赋/辽饷/盐税/商税/皇庄）走省级公式/皇庄专路，这三列留空。
@@ -7139,12 +7177,23 @@ class GameDB:
         minister_name: str,
         agno_session_id: str,
         agno_runs_before: int,
+        *,
+        night_id: int = 0,
+        status: Optional[str] = None,
     ) -> int:
+        # #498：挂夜的对话轮以 generating 起笔，回话落库后 update_chat_turn_messages 升 active。
+        # 未挂夜路径保持历史默认 active，避免旧调用方/测试面语义漂移。
+        initial_status = status
+        if initial_status is None:
+            initial_status = "generating" if int(night_id or 0) else "active"
+        if initial_status not in {"active", "generating", "failed", "undone"}:
+            raise ValueError(f"unsupported chat_turn status: {initial_status!r}")
         cur = self.conn.execute(
             """
             INSERT INTO chat_turns
-                (minister_name, turn, year, period, agno_session_id, agno_runs_before)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (minister_name, turn, year, period, agno_session_id, agno_runs_before,
+                 night_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 minister_name,
@@ -7153,6 +7202,8 @@ class GameDB:
                 int(state.period),
                 agno_session_id,
                 max(0, int(agno_runs_before)),
+                int(night_id or 0),
+                initial_status,
             ),
         )
         self.conn.commit()
@@ -7172,6 +7223,8 @@ class GameDB:
         if minister_message_id is not None:
             assignments.append("minister_message_id = ?")
             params.append(int(minister_message_id))
+            # 回话入档 = 轮完成：generating → active（#498 完成态）
+            assignments.append("status = CASE WHEN status = 'generating' THEN 'active' ELSE status END")
         if not assignments:
             return
         params.append(int(chat_turn_id))
@@ -7183,7 +7236,8 @@ class GameDB:
 
     def mark_chat_turn_failed(self, chat_turn_id: int) -> None:
         self.conn.execute(
-            "UPDATE chat_turns SET status = 'failed' WHERE id = ? AND status = 'active'",
+            "UPDATE chat_turns SET status = 'failed' "
+            "WHERE id = ? AND status IN ('active', 'generating')",
             (int(chat_turn_id),),
         )
         self.conn.commit()
@@ -7197,7 +7251,7 @@ class GameDB:
         if row is None:
             return
         turn_row = self._row_dict(row)
-        if turn_row["status"] != "active":
+        if turn_row["status"] not in {"active", "generating"}:
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
                 (int(chat_turn_id),),
