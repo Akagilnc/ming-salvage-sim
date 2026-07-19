@@ -712,14 +712,35 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const result = await runOrchestrator({ issueNumber: 1023, backend });
     expect(result.status).toBe("completed");
     expect(observedLandings).toHaveLength(2);
-    expect(observedLandings[1]).toMatchObject({
-      blockingFindingIdentityKeys: [findingKey],
-      fixPacketBody,
-      priorJudgeVerdicts: [
-        expect.objectContaining({ step: "S3", status: "continue" }),
-        expect.objectContaining({ step: "S6", status: "continue" }),
-      ],
-    });
+    expect(observedLandings[0]?.blockingFindingIdentityKeys).toEqual([
+      findingKey,
+    ]);
+    expect(observedLandings[0]?.fixPacketBody).toBe(fixPacketBody);
+    expect(observedLandings[0]?.priorJudgeVerdicts).toEqual([
+      {
+        step: "S3",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+        sessionId: "judge-1023",
+      },
+    ]);
+    expect(observedLandings[1]?.blockingFindingIdentityKeys).toEqual([
+      findingKey,
+    ]);
+    expect(observedLandings[1]?.fixPacketBody).toBe(fixPacketBody);
+    expect(observedLandings[1]?.priorJudgeVerdicts).toEqual([
+      {
+        step: "S3",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+        sessionId: "judge-1023",
+      },
+      {
+        step: "S6",
+        status: "continue",
+        findingDispositions: [{ identityKey: findingKey, action: "live" }],
+      },
+    ]);
   });
 
   it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
