@@ -9,7 +9,7 @@ from typing import Dict, List
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
-from ming_sim.qualitative import qualitative_band, safe_historical_text
+from ming_sim.qualitative import qualitative_band
 from ming_sim.token_stats import tlog
 
 _STATUS_CN = {
@@ -370,15 +370,6 @@ def build_minister_tools(character: Character, context: CourtContext,
             target_year = int(year)
             target_month = int(month) if month else 1
             target_month = max(1, min(12, target_month))
-        # Unsafe legacy aggregate prose is never a fallback for the public
-        # projection.  Return the explicit P4 placeholder before compatible
-        # opening facts can make that rejection look like a successful read.
-        for report in context.db.list_turn_reports():
-            if int(report.get("year") or 0) != target_year or int(report.get("period") or 0) != target_month:
-                continue
-            safe = safe_historical_text(report.get("report") or "", "历史邸报")
-            if "已略去" in safe:
-                return f"【{target_year}年{target_month}月见闻】\n{safe}"
         knowledge = projection()
         rows = [
             item for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
@@ -390,7 +381,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return f"{target_year}年{target_month}月未见正式邸报记录。"
         lines = [f"【{target_year}年{target_month}月见闻】"]
         for item in rows:
-            lines.append(f"{item.get('title') or '旧闻'}：{safe_historical_text(item['body'], '历史邸报')}")
+            lines.append(f"{item.get('title') or '旧闻'}：{item['body']}")
         return "\n".join(lines)
 
     def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
@@ -420,7 +411,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         label = " ".join(kw_list) or f"{year}年{period}月"
         lines = [f"【起居注检索：{label}】"]
         for c in sorted(hits, key=lambda item: int(item.get("turn") or 0))[-8:]:
-            body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
+            body = str(c.get("body") or c.get("title") or "")
             if body:
                 lines.append(f"- {c['year']}年{c['period']}月：{body}")
         if len(lines) == 1:

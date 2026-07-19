@@ -28,7 +28,7 @@ from ming_sim.registry import (
 from ming_sim.models import LLMConfig
 from ming_sim.tools import build_minister_tools
 from ming_sim.tools import _qualitative_condition
-from ming_sim.qualitative import identity_band, qualitative_audience_text
+from ming_sim.qualitative import identity_band
 
 
 def _ctx(game):
@@ -763,134 +763,6 @@ def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
 
     assert not re.search(r"(?:满意|势力|威望|实力|经济)\s*[:：]?\s*\d+", rendered)
     assert any(word in rendered for word in ("怨愤", "强盛", "极弱", "充足"))
-
-
-def test_historical_context_rejects_injected_abstract_values_across_all_history_seams(game):
-    """邸报、章节记忆和历史报告工具都必须守住最终上下文的 P4 边界。"""
-    db, state, content = game
-    injected = "忠诚值：88；能力评分：98；民心数值：73；进度指标：41/100；欠饷约三月。"
-    state.turn = max(2, int(state.turn))
-    db.get_turn_report = lambda _turn: injected
-    db.list_chapter_memories = lambda **_kwargs: [
-        {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
-    ]
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    db.record_public_knowledge_event(
-        state, "旧事", injected, source_id=f"test:p4-history:{state.turn}:public",
-    )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (state.turn - 2, state.year, state.period, injected),
-    )
-    db.conn.commit()
-
-    gazette = build_last_gazette_brief(_ctx(game))
-    memory = build_memory_brief(minister, _ctx(game))
-    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
-    history = tools["read_past_report"](year=state.year, month=state.period)
-    memories = tools["search_memories"](keywords="旧事")
-
-    for rendered in (gazette, memory, history, memories):
-        assert "忠诚值：88" not in rendered
-        assert "能力评分：98" not in rendered
-        assert "民心数值：73" not in rendered
-        assert "进度指标：41/100" not in rendered
-        assert "已略去" in rendered or "欠饷约三月" in rendered
-
-
-def test_historical_context_rejects_adjacent_abstract_values_at_every_history_seam(game):
-    """邸报、章节记忆、read_past_report、search_memories 都拒绝邻接裸值。"""
-    db, state, content = game
-    injected = "忠诚值88；能力评分98；民心值73；进度评分73/100；欠饷约三月。"
-    state.turn = max(2, int(state.turn))
-    db.get_turn_report = lambda _turn: injected
-    db.list_chapter_memories = lambda **_kwargs: [
-        {"turn": 1, "year": 1628, "period": 1, "title": "旧事", "body": injected}
-    ]
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    db.record_public_knowledge_event(
-        state, "旧事", injected, source_id=f"test:p4-adjacent:{state.turn}:public",
-    )
-    db.conn.execute(
-        "INSERT OR REPLACE INTO turn_reports(turn, year, period, report) VALUES (?, ?, ?, ?)",
-        (state.turn - 2, state.year, state.period, injected),
-    )
-    db.conn.commit()
-    ctx = _ctx(game)
-    tools = {f.__name__: f for f in build_minister_tools(minister, ctx)}
-
-    rendered = (
-        build_last_gazette_brief(ctx),
-        build_memory_brief(minister, ctx),
-        tools["read_past_report"](year=state.year, month=state.period),
-        tools["search_memories"](keywords="旧事"),
-    )
-    for text in rendered:
-        assert "已略去" in text or "欠饷约三月" in text
-        assert not re.search(r"(?:忠诚值88|能力评分98|民心值73|进度评分73/100)", text)
-
-
-def test_p4_guard_redacts_comparator_score_without_erasing_countable_facts():
-    rendered = qualitative_audience_text(
-        "此人忠诚不足30分；京营欠饷二十五月，须补银十二万两。", "奏报"
-    )
-    assert "30" not in rendered
-    assert "欠饷二十五月" in rendered
-    assert "十二万两" in rendered
-
-
-def test_p4_guard_drops_only_unsafe_fragment_when_score_cannot_be_bucketed():
-    rendered = qualitative_audience_text(
-        "此人忠诚因久不见天颜而跌至30分；京营欠饷二十五月，须补银十二万两。", "奏报"
-    )
-    assert "30" not in rendered
-    assert "已略去" in rendered
-    assert "欠饷二十五月" in rendered
-    assert "十二万两" in rendered
-
-
-def test_public_knowledge_render_preserves_scaled_countable_facts(game):
-    """Public-event facts survive the production knowledge build/render seam."""
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    body = "京营军力约3万人；太仓财力约70万两；此人忠诚约70。"
-    db.record_public_knowledge_event(
-        state, "京营与太仓实数", body, source_id=f"test:scaled-countables:{state.turn}",
-    )
-
-    rendered = build_character_knowledge_brief(minister, _ctx(game))
-
-    assert "军力约3万人" in rendered
-    assert "财力约70万两" in rendered
-    assert "忠诚约70" not in rendered
-    assert "忠诚可靠" in rendered
-
-
-def test_public_knowledge_render_keeps_countables_while_rejecting_whole_abstract_scores(game):
-    """Mixed public prose keeps physical facts and never emits score-unit debris."""
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
-    body = (
-        "温体仁忠诚七十，能力八十八，民心百分之八十。"
-        "此人忠诚从30升到70、麾下3万人、太仓实存70万两。"
-        "军力约3万；财力约70万。"
-    )
-    db.record_public_knowledge_event(
-        state, "人物与钱粮实况", body, source_id=f"test:p4-structural-boundary:{state.turn}",
-    )
-
-    rendered = build_character_knowledge_brief(minister, _ctx(game))
-
-    assert "忠诚七十" not in rendered
-    assert "能力八十八" not in rendered
-    assert "民心百分之八十" not in rendered
-    assert "忠诚从30升到70" not in rendered
-    assert "麾下3万人" in rendered
-    assert "太仓实存70万两" in rendered
-    assert "军力低万" not in rendered
-    assert "财力偏高万" not in rendered
-    assert "军力约3万" not in rendered
-    assert "财力约70万" not in rendered
 
 
 def test_secret_order_tool_preserves_long_title_without_formal_cap(game):

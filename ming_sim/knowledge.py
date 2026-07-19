@@ -13,7 +13,6 @@ import re
 from typing import Any, Dict
 
 from ming_sim.participant_roster import participant_roster_names
-from ming_sim.qualitative import qualitative_audience_text
 
 
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
@@ -111,9 +110,9 @@ def knowledge_row_visible_to(
     return True
 
 
-def _qualitative(text: object) -> str:
-    """Project report prose through the shared player-facing P4 renderer."""
-    return qualitative_audience_text(text, "见闻记录")
+def _prose(text: object) -> str:
+    """Carry durable report prose without mechanically interpreting it."""
+    return str(text or "")
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
@@ -140,8 +139,8 @@ def render_character_knowledge(knowledge: Dict[str, object], character_name: str
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
     )[-20:]
     for item in recent_items:
-        title = qualitative_audience_text(item.get("title") or "旧闻", "见闻标题")
-        body = qualitative_audience_text(item.get("body") or "", "见闻正文")
+        title = str(item.get("title") or "旧闻")
+        body = str(item.get("body") or "")
         if body:
             lines.append(f"- {title}：{body}")
     return "\n".join(lines) if len(lines) > 1 else ""
@@ -276,7 +275,7 @@ def _world(
         )),
     }
     facts = {
-        domain: _qualitative(report_builders[domain]())
+        domain: _prose(report_builders[domain]())
         for domain in visible_domains
         if domain in report_builders
     }
@@ -321,7 +320,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "turn": int(directive["turn"]), "year": int(directive["year"]),
             "period": int(directive["period"]), "kind": "public",
             "title": directive.get("event_title") or "明发旨意",
-            "body": _qualitative(directive.get("text") or ""),
+            "body": _prose(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
     def source_projection(turn: int, fallback: object, *, public_counterpart: str = "") -> str:
@@ -392,7 +391,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # #883 deliberately has no old-save compatibility fallback.
         if rows:
             return "\n".join(
-                _qualitative(row.get("body") or row.get("title") or "")
+                _prose(row.get("body") or row.get("title") or "")
                 for row in visible
                 if row.get("body") or row.get("title")
             )
@@ -440,7 +439,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
 
     visible_events = [
         {
-            key: (_qualitative(value) if key == "body" else value)
+            key: (_prose(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
         for row in events
@@ -467,7 +466,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             projected_turns.add(int(turn))
     visible_public = [
         {
-            key: (_qualitative(value) if key == "body" else value)
+            key: (_prose(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
         for row in public_events
@@ -546,7 +545,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         deduped_public.append(row)
     visible_public = deduped_public
     public_bodies = [
-        _qualitative(item.get("body") or item.get("title") or "")
+        _prose(item.get("body") or item.get("title") or "")
         for item in visible_public
         if (item.get("body") or item.get("title"))
         and not str(item.get("source_id") or "").startswith("opening:")
@@ -633,5 +632,5 @@ def build_character_treasury_ledger(
             f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
             f"余额{row['balance_after']}）"
         )
-        lines.append(_qualitative(line))
+        lines.append(_prose(line))
     return "\n".join(lines)
