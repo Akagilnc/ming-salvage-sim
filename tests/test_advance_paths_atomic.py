@@ -663,6 +663,11 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
     db, state, content = game
     eid = "__terminal_account_preserve_test__"
     db.conn.execute(
+        "INSERT INTO events (id,title,kind,summary,urgency,severity,credibility,interests,audiences) "
+        "VALUES (?, ?, '测试', '', 0, 0, 0, '[]', '[]')",
+        (eid, eid),
+    )
+    db.conn.execute(
         "INSERT INTO event_triggers (event_id, turn, year, period, source, terminal_state, terminal_reason) "
         "VALUES (?, ?, ?, ?, 'simulation', 'avoided', '前提已不成立')",
         (eid, state.turn, state.year, state.period),
@@ -682,8 +687,8 @@ def test_record_event_decision_choice_preserves_non_triggered_terminal_state(gam
 def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game):
     """HITL 选择只暂存 choice，不抢先把新事件写成 triggered 终态。"""
     import json
-    db, state, _content = game
-    eid = "__terminal_account_fresh_test__"
+    db, state, content = game
+    eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "斩"})
     row = db.conn.execute(
         "SELECT terminal_state, source, choice_json FROM event_triggers WHERE event_id=?", (eid,)
@@ -696,8 +701,8 @@ def test_record_event_decision_choice_inserts_fresh_without_terminal_state(game)
 def test_mark_event_triggered_upgrades_pending_choice_row(game):
     """phase2 正常触发事件时，空终态 choice 行升级为 triggered 且保留亲裁选择。"""
     import json
-    db, state, _content = game
-    eid = "__terminal_account_pending_choice_upgrade__"
+    db, state, content = game
+    eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
     trigger_turn = state.turn + 1
     trigger_year = state.year + 1
@@ -732,8 +737,8 @@ def test_mark_event_triggered_upgrades_pending_choice_row(game):
 def test_terminal_markers_upgrade_pending_choice_row(game, marker, terminal_state, source, reason):
     """确定性终态须覆盖空终态 HITL choice 行，保留亲裁选择，并刷新终态时刻。"""
     import json
-    db, state, _content = game
-    eid = f"__terminal_account_pending_choice_{marker}__"
+    db, state, content = game
+    eid = content.events[0].id
     db.record_event_decision_choice(state, eid, {"label": "留"})
     terminal_turn = state.turn + 1
     terminal_year = state.year + 1

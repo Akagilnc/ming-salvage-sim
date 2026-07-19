@@ -104,7 +104,7 @@ def test_add_character_persists_transit_to(game):
     character = Character(
         name="测试在途人物",
         office="听用",
-        office_type="候补",
+        office_type="待铨",
         faction="中立",
         aliases=[],
         personal_skills=[],

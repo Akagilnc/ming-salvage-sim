@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ming_sim import issues
 from ming_sim.decree import settle_with_delta
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
@@ -1868,7 +1870,7 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
 def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
 
-    foreign_keys=0 下 CASCADE 不生效；brief 须纳入 rollback 表集，不成孤儿。
+    真实 undo 删除密令父行后由 FK CASCADE 删除 brief；其它密令不受影响。
     """
     db, state, content = game
     a, b = _active_ministers(db, content)[:2]
@@ -1881,6 +1883,9 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
     db.record_chat_turn_rollback_diffs(
         ctid_early, snap0, db.capture_chat_rollback_snapshot(),
+    )
+    unrelated_oid = db.create_secret_order(
+        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
     )
 
     ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
@@ -1898,8 +1903,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
     ).fetchone()[0] == 1
-    # 文档化：FK 关闭时 CASCADE 不可靠 — brief 进 rollback 表集才是结构真源
-    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
     undone = db.undo_chat_turn(ctid)
     assert undone is not None
@@ -1926,11 +1930,65 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
 
     assert order_left == 0, f"secret_orders survived undo count={order_left}"
     assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (unrelated_oid,),
+    ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
     assert all(marker not in body for body in _shared_bodies(db))
     assert all(marker not in body for body in _event_bodies(db))
     assert not db._is_active_secret_order_assignee(a.name)
+
+
+@pytest.mark.parametrize("rollback_entry", ["undo_chat_turn", "fail_chat_turn"])
+def test_1026_secret_order_update_rollback_restores_existing_brief(game, rollback_entry):
+    db, state, content = game
+    minister = _active_ministers(db, content)[0]
+    old_message_id = db.append_chat_message(
+        minister.name, state.turn, "user", "旧令：密查旧案",
+    )
+    order_id = db.create_secret_order(
+        state, minister.name, "旧密令", "旧密文", [],
+        origin_chat_message_ids=[old_message_id],
+    )
+    old_brief = dict(db.conn.execute(
+        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (order_id,),
+    ).fetchone())
+
+    chat_turn_id = db.create_chat_turn(state, minister.name, f"{rollback_entry}-1026", 0)
+    before = db.capture_chat_rollback_snapshot()
+    user_message_id = db.append_chat_message(
+        minister.name, state.turn, "user", "改令：转查新案",
+    )
+    minister_message_id = db.append_chat_message(
+        minister.name, state.turn, "minister", "臣领修改后的密旨。",
+    )
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        user_message_id=user_message_id,
+        minister_message_id=minister_message_id,
+    )
+    assert db.update_secret_order_by_id(
+        state, order_id, "新密令", "新密文", [],
+        origin_chat_message_id=user_message_id,
+        origin_minister_name=minister.name,
+    )
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    getattr(db, rollback_entry)(chat_turn_id)
+
+    restored_order = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    restored_brief = db.conn.execute(
+        "SELECT title, body, origin_chat_message_ids FROM secret_order_briefs WHERE order_id=?",
+        (order_id,),
+    ).fetchone()
+    assert dict(restored_order) == {"title": "旧密令", "content": "旧密文"}
+    assert dict(restored_brief) == old_brief
 
 
 def test_976_rt05_save_restore_between_hold_and_release(game):

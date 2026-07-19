@@ -183,6 +183,7 @@ def _apply_issue_buildings(
                 print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
         except Exception as exc:
             print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
+            raise
     return applied
 
 
