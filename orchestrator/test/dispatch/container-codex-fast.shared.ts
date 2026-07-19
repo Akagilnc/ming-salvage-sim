@@ -119,6 +119,7 @@ async function runAssemblyWithEnv(fast: boolean): Promise<{
   config: string;
 }> {
   const sourceRepo = makeSourceRepo();
+  const previousCodexFast = process.env.ORCHESTRATOR_CODEX_FAST;
   if (fast) process.env.ORCHESTRATOR_CODEX_FAST = "1";
   else delete process.env.ORCHESTRATOR_CODEX_FAST;
 
@@ -127,28 +128,33 @@ async function runAssemblyWithEnv(fast: boolean): Promise<{
   const configPath = join(mkdtempSync(join(tmpdir(), "codex-fast-760-config-")), "config.toml");
   tempDirs.push(configPath.slice(0, configPath.lastIndexOf("/")));
 
-  await runFamilyDriver({
-    epicIssue: 760,
-    sourceRepo,
-    repo: "Akagilnc/ming-salvage-sim",
-    familyBase: "family/760-test",
-    base: "main",
-    promptsDir: "/tmp/prompts",
-    familyPromptsDir: "/tmp/prompts",
-    soulsDir: "/tmp/souls",
-    ledgerDir: mkdtempSync(join(tmpdir(), "codex-fast-760-ledger-")),
-    imageName: "test-image",
-    sh: makeEpicSh(),
-    realBackendFactory: (options) => {
-      backendOptions = options;
-      writeContainerCodexConfig(configPath, options.codexFast);
-      return fakeBackend(sourceRepo) as never;
-    },
-    realFamilyBackendFactory: (options) => {
-      familyOptions = options;
-      return fakeFamilyBackend() as never;
-    },
-  });
+  try {
+    await runFamilyDriver({
+      epicIssue: 760,
+      sourceRepo,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/760-test",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: mkdtempSync(join(tmpdir(), "codex-fast-760-ledger-")),
+      imageName: "test-image",
+      sh: makeEpicSh(),
+      realBackendFactory: (options) => {
+        backendOptions = options;
+        writeContainerCodexConfig(configPath, options.codexFast);
+        return fakeBackend(sourceRepo) as never;
+      },
+      realFamilyBackendFactory: (options) => {
+        familyOptions = options;
+        return fakeFamilyBackend() as never;
+      },
+    });
+  } finally {
+    if (previousCodexFast === undefined) delete process.env.ORCHESTRATOR_CODEX_FAST;
+    else process.env.ORCHESTRATOR_CODEX_FAST = previousCodexFast;
+  }
 
   return {
     backend: backendOptions!,

@@ -8,7 +8,7 @@ describe("canonical fast entry tax guard (#990)", () => {
     "test/fixtures/fast-tax-import-original-probe.ts",
   ])("fails when real-process fixture %s is forced into fast", (fixture) => {
     expect(() =>
-      execFileSync("npm", ["run", "test:fast"], {
+      execFileSync("npm", ["run", "test:fast:guard"], {
         cwd: process.cwd(),
         env: {
           ...process.env,

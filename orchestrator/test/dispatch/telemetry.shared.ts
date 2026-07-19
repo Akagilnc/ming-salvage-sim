@@ -21,6 +21,7 @@ import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
 import { workerResultFromMonitorSidecar } from "../../src/cliMonitorHooks.js";
 
 import { resolveRouteModels, routeSmokeEntries } from "../../src/modelRoutes.js";
+import { smokedRoute } from "../model-route-fixtures.shared.js";
 
 import {
   appendTelemetryRecord,
@@ -113,21 +114,6 @@ function baseSpec(overrides: Partial<WorkerSpec> = {}): WorkerSpec {
     toolchain: [],
     ...overrides,
   };
-}
-
-function smokedRoute() {
-  const base = resolveRouteModels("normal", {});
-  const smoke = Object.fromEntries(
-    routeSmokeEntries(base).map((entry) => [
-      entry.key,
-      {
-        state: "passed" as const,
-        at: new Date().toISOString(),
-        cliVersion: `cli-${entry.slug}`,
-      },
-    ]),
-  );
-  return resolveRouteModels("normal", {}, {}, smoke);
 }
 
 function finding(
