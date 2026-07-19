@@ -1177,12 +1177,48 @@ class GameSession:
                     if directive_confirm_targets:
                         self.db.conn.commit()
                 else:
-                    self.db.commit_pending_actions(
-                        self.state, minister_name=minister_name,
-                        directive_status="pending" if directive_confirm_targets else "draft",
-                        action_ids=confirm_action_ids,
-                        content=getattr(self, "content", None),
-                        registry=getattr(self, "registry", None))
+                    # #498 / ADR 0038：开夜期间 office/consort/directive 应允 = 标 night_approved，
+                    # 收夜才提交；密令仍应允即落地（白名单直写）。无开夜则保持历史即时 commit。
+                    from ming_sim.audience_night import get_open_night, mark_actions_night_approved
+                    open_n = get_open_night(self.db)
+                    if open_n is not None:
+                        defer_ids = {
+                            int(p["id"]) for p in confirm_targets
+                            if p["kind"] in {"office", "consort", "directive"}
+                        }
+                        immediate_ids = confirm_action_ids - defer_ids
+                        if defer_ids:
+                            for pending_directive in directive_confirm_targets:
+                                if int(pending_directive["id"]) not in defer_ids:
+                                    continue
+                                try:
+                                    payload = json.loads(pending_directive.get("payload_json") or "{}")
+                                except (ValueError, TypeError):
+                                    payload = {}
+                                if not isinstance(payload, dict):
+                                    payload = {}
+                                payload["_directive_status"] = "pending"
+                                self.db.conn.execute(
+                                    "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                                    (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
+                                )
+                            if directive_confirm_targets:
+                                self.db.conn.commit()
+                            mark_actions_night_approved(
+                                self.db, sorted(defer_ids), night_id=int(open_n["id"]))
+                        if immediate_ids:
+                            self.db.commit_pending_actions(
+                                self.state, minister_name=minister_name,
+                                action_ids=immediate_ids,
+                                content=getattr(self, "content", None),
+                                registry=getattr(self, "registry", None))
+                    else:
+                        self.db.commit_pending_actions(
+                            self.state, minister_name=minister_name,
+                            directive_status="pending" if directive_confirm_targets else "draft",
+                            action_ids=confirm_action_ids,
+                            content=getattr(self, "content", None),
+                            registry=getattr(self, "registry", None))
                     failures = [
                         _pending_action_failure_payload(p)
                         for p in self.db.list_pending_actions(
@@ -2001,6 +2037,13 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
+        # #498 AC8：公开拟诏入口最前顺势收夜（在飞 fail-closed；收夜提交后再读候选/拟诏）
+        from ming_sim.audience_night import auto_close_open_night
+        auto_close_open_night(
+            self.db, self.state,
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None),
+        )
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         if self.pending_count() > 0:
@@ -2008,6 +2051,7 @@ class GameSession:
         # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
         # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
+        # 收夜已交本夜已应允 directive；此处只交仍 pending 的非 night_approved（跨夜/未应允默认同意）。
         self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
@@ -2097,6 +2141,13 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # #498 AC8：公开颁诏入口最前顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
+        from ming_sim.audience_night import auto_close_open_night
+        auto_close_open_night(
+            self.db, self.state,
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None),
+        )
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
@@ -2104,6 +2155,7 @@ class GameSession:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
+        # 收夜已交本夜已应允；此处交剩余未应允 default-agree。
         committed_directives = self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),

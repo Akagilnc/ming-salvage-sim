@@ -12,8 +12,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
@@ -26,7 +25,6 @@ TAG_CLOSE_NIGHT = "收夜"
 TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
 
-# 召法：发起账开放标签，非硬骨架字段
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
 METHOD_YUECI = "越次"
@@ -39,23 +37,26 @@ NIGHT_STATUS_OPEN = "open"
 NIGHT_STATUS_CLOSING = "closing"
 NIGHT_STATUS_CLOSED = "closed"
 
-# 收夜提交步（游标幂等；crash 后从 cursor 续跑）
-CLOSE_STEP_COMMIT_OFFICE = 1       # 任免类 pending → 真实盘面
-CLOSE_STEP_TRANSFER_CANDIDATES = 2  # 拟旨候选转档
-CLOSE_STEP_FINALIZE = 3            # 收夜账 + 标 closed
+CLOSE_STEP_COMMIT_OFFICE = 1
+CLOSE_STEP_TRANSFER_CANDIDATES = 2
+CLOSE_STEP_FINALIZE = 3
 CLOSE_STEPS = (
     CLOSE_STEP_COMMIT_OFFICE,
     CLOSE_STEP_TRANSFER_CANDIDATES,
     CLOSE_STEP_FINALIZE,
 )
 
-# 在飞回话等待（AC10）：默认短熔断；测试可覆写
-DEFAULT_IN_FLIGHT_WAIT_S = 0.05
-DEFAULT_IN_FLIGHT_POLL_S = 0.01
+# 在飞回话：公开入口可达的有界等待（秒）。挂起/超时 fail-closed。
+DEFAULT_IN_FLIGHT_WAIT_S = 30.0
+DEFAULT_IN_FLIGHT_POLL_S = 0.05
+
+# 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
+_CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office", "consort"})
+_CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 
 
 class AudienceNightError(Exception):
-    """召对夜域响亮失败（死账 / 在飞 / 坏输入）。携带 code 与可选错误包路径。"""
+    """召对夜域响亮失败（死账 / 在飞 / 坏输入 / 提交失败）。"""
 
     def __init__(
         self,
@@ -98,18 +99,26 @@ def _row_dict(row: Any) -> Dict[str, Any]:
     return {k: row[k] for k in row.keys()}
 
 
+def _owns_tx(db: Any) -> bool:
+    return bool(getattr(db, "owns_transaction", lambda: True)())
+
+
+def _commit_if_owns(db: Any) -> None:
+    if _owns_tx(db):
+        db.conn.commit()
+
+
 def write_audience_error_pack(
     *,
     kind: str,
     message: str,
     detail: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """落一份夜域错误包到 user-data error_packs（响亮、可发包，与结算包同根）。"""
+    """落一份夜域错误包到 user-data error_packs（响亮、可发包）。"""
     root = error_packs_root()
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     pack_dir = root / f"audience_{kind}_{stamp}"
-    # 并发撞名时加后缀，不覆盖
     suffix = 0
     while pack_dir.exists():
         suffix += 1
@@ -130,25 +139,17 @@ def write_audience_error_pack(
 
 
 def resolve_standing_roster(db: Any) -> List[str]:
-    """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。
-
-    死/免者不入名单（不硬编码人名）——防死人自动入殿撞死账锁死开夜（ADR 0035 R5）。
-    """
+    """开夜时动态解析常在员额：在职且 active 的御前近臣槽位持有者。"""
     if not hasattr(db, "conn"):
         return []
     rows = db.conn.execute(
         "SELECT name, office, office_type, status FROM characters "
         "WHERE status = 'active' ORDER BY name"
     ).fetchall()
-    names: List[str] = []
-    for row in rows:
-        if is_inner_court_attendant(row):
-            names.append(str(row["name"]))
-    return names
+    return [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
 
 
 def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
-    """当前唯一开着的夜（含 closing 未收齐）；无则 None。"""
     row = db.conn.execute(
         "SELECT * FROM audience_nights "
         "WHERE status IN (?, ?) ORDER BY id DESC LIMIT 1",
@@ -177,13 +178,13 @@ def _hydrate_night(raw: Dict[str, Any]) -> Dict[str, Any]:
         "location": str(raw.get("location") or ""),
         "status": str(raw.get("status") or ""),
         "close_commit_cursor": int(raw.get("close_commit_cursor") or 0),
+        "next_event_seq": int(raw.get("next_event_seq") or 0),
         "opened_at": raw.get("opened_at"),
         "closed_at": raw.get("closed_at"),
     }
 
 
 def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """按夜取有序账目（硬骨架三字段 + 正文/标签）。"""
     rows = db.conn.execute(
         "SELECT * FROM story_ledger_entries WHERE night_id = ? ORDER BY seq ASC, id ASC",
         (int(night_id),),
@@ -200,25 +201,53 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "body": str(raw.get("body") or ""),
             "tags": [str(t) for t in _json_list(raw.get("tags"))],
             "created_at": raw.get("created_at"),
+            "kind": "ledger",
         })
     return out
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """按夜取有序对话轮（含完成态）。"""
     rows = db.conn.execute(
-        "SELECT * FROM chat_turns WHERE night_id = ? ORDER BY id ASC",
+        "SELECT * FROM chat_turns WHERE night_id = ? ORDER BY night_seq ASC, id ASC",
         (int(night_id),),
     ).fetchall()
     return [_row_dict(r) for r in rows]
 
 
-def _next_seq(db: Any, night_id: int) -> int:
+def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    """账本 + 对话轮按 night_seq/seq 合流（AC4 时序对齐真源）。"""
+    events: List[Dict[str, Any]] = []
+    for e in list_ledger(db, night_id):
+        events.append({
+            "kind": "ledger",
+            "seq": int(e["seq"]),
+            "payload": e,
+        })
+    for t in list_chat_turns_for_night(db, night_id):
+        events.append({
+            "kind": "chat_turn",
+            "seq": int(t.get("night_seq") or 0),
+            "payload": t,
+        })
+    events.sort(key=lambda x: (int(x["seq"]), 0 if x["kind"] == "ledger" else 1, int(x["payload"].get("id") or 0)))
+    return events
+
+
+def _allocate_seq(db: Any, night_id: int) -> int:
+    if hasattr(db, "allocate_night_seq"):
+        return int(db.allocate_night_seq(int(night_id)))
     row = db.conn.execute(
-        "SELECT COALESCE(MAX(seq), 0) AS m FROM story_ledger_entries WHERE night_id = ?",
+        "SELECT next_event_seq FROM audience_nights WHERE id = ?",
         (int(night_id),),
     ).fetchone()
-    return int(row["m"] if row is not None else 0) + 1
+    if row is None:
+        raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
+    nxt = int(row["next_event_seq"] or 0) + 1
+    db.conn.execute(
+        "UPDATE audience_nights SET next_event_seq = ? WHERE id = ?",
+        (nxt, int(night_id)),
+    )
+    return nxt
 
 
 def _character_status(db: Any, name: str) -> str:
@@ -237,14 +266,12 @@ def assert_persons_not_dead(
     *,
     context: str = "在场",
 ) -> None:
-    """廉价死账校验：已死者不能在场。响亮 AudienceNightError + 错误包。"""
     dead: List[str] = []
     for name in names:
         n = str(name or "").strip()
         if not n:
             continue
-        status = _character_status(db, n)
-        if status == "dead":
+        if _character_status(db, n) == "dead":
             dead.append(n)
     if not dead:
         return
@@ -269,13 +296,12 @@ def append_ledger_entry(
     body: str = "",
     tags: Optional[Sequence[str]] = None,
     check_dead: bool = True,
+    commit: bool = True,
 ) -> int:
-    """追加一条故事账。涉及人非空且 check_dead 时跑死账校验。"""
+    """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。"""
     night = get_night(db, night_id)
     if night is None:
-        raise AudienceNightError(
-            f"夜不存在：{night_id}", code="night_not_found",
-        )
+        raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     if night["status"] == NIGHT_STATUS_CLOSED:
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
@@ -288,7 +314,7 @@ def append_ledger_entry(
             f"可闻性非法：{audibility!r}", code="bad_audibility",
         )
     tag_list = [str(t) for t in (tags or []) if str(t)]
-    seq = _next_seq(db, night_id)
+    seq = _allocate_seq(db, night_id)
     cur = db.conn.execute(
         """
         INSERT INTO story_ledger_entries
@@ -304,7 +330,7 @@ def append_ledger_entry(
             json.dumps(tag_list, ensure_ascii=False),
         ),
     )
-    if getattr(db, "owns_transaction", lambda: True)():
+    if commit and _owns_tx(db):
         db.conn.commit()
     return int(cur.lastrowid)
 
@@ -317,58 +343,76 @@ def open_night(
     location: str = "",
     body: str = "",
 ) -> Dict[str, Any]:
-    """开夜：落夜实体 + 开夜账 + 常在员额入殿账。已有开夜则返回之（不叠开）。"""
+    """开夜：夜实体 + 开夜账 + 常在员额入殿账，单事务全有或全无。"""
     existing = get_open_night(db)
     if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
         return existing
     if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
-        # 收夜中：续跑收齐，不新开
         close_night(db, state, night_id=int(existing["id"]))
         existing = get_open_night(db)
         if existing is not None:
             return existing
 
-    cur = db.conn.execute(
-        """
-        INSERT INTO audience_nights
-            (turn, year, period, time_of_day, location, status, close_commit_cursor)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
-        """,
-        (
-            int(state.turn),
-            int(state.year),
-            int(state.period),
-            time_of_day or "",
-            location or "",
-            NIGHT_STATUS_OPEN,
-        ),
-    )
-    if getattr(db, "owns_transaction", lambda: True)():
-        db.conn.commit()
-    night_id = int(cur.lastrowid)
-
+    roster = resolve_standing_roster(db)
     open_body = body or (
         f"{location or '便殿'}·{time_of_day or '此时'}，召对夜启。"
     )
-    append_ledger_entry(
-        db, night_id,
-        person_names=[],
-        audibility=AUDIBILITY_PUBLIC,
-        body=open_body,
-        tags=[TAG_OPEN_NIGHT],
-        check_dead=False,
-    )
 
-    for name in resolve_standing_roster(db):
-        # 员额已按 active 过滤；再过死账校验是双重保险（status 非 dead）
+    # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
+    # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
+    sp = f"open_night_{int(state.turn)}_{id(state)}"
+    db.conn.execute(f"SAVEPOINT {sp}")
+    try:
+        cur = db.conn.execute(
+            """
+            INSERT INTO audience_nights
+                (turn, year, period, time_of_day, location, status,
+                 close_commit_cursor, next_event_seq)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+            """,
+            (
+                int(state.turn),
+                int(state.year),
+                int(state.period),
+                time_of_day or "",
+                location or "",
+                NIGHT_STATUS_OPEN,
+            ),
+        )
+        night_id = int(cur.lastrowid)
         append_ledger_entry(
             db, night_id,
-            person_names=[name],
+            person_names=[],
             audibility=AUDIBILITY_PUBLIC,
-            body=f"{name}随侍在侧。",
-            tags=[TAG_ENTER, TAG_STANDING_ROSTER],
-            check_dead=True,
+            body=open_body,
+            tags=[TAG_OPEN_NIGHT],
+            check_dead=False,
+            commit=False,
         )
+        for name in roster:
+            append_ledger_entry(
+                db, night_id,
+                person_names=[name],
+                audibility=AUDIBILITY_PUBLIC,
+                body=f"{name}随侍在侧。",
+                tags=[TAG_ENTER, TAG_STANDING_ROSTER],
+                check_dead=True,
+                commit=False,
+            )
+        db.conn.execute(f"RELEASE SAVEPOINT {sp}")
+        # 非外层 atomic 时提交本夜写入（不用 owns_transaction：in_transaction 时它恒 False）
+        if (
+            not bool(getattr(db.conn, "_commit_suspended", False))
+            and int(getattr(db.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            db.conn.commit()
+    except Exception:
+        try:
+            db.conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            db.conn.execute(f"RELEASE SAVEPOINT {sp}")
+        except Exception:
+            pass
+        raise
 
     night = get_night(db, night_id)
     assert night is not None
@@ -384,7 +428,6 @@ def summon_enter(
     body: str = "",
     audibility: str = AUDIBILITY_PUBLIC,
 ) -> int:
-    """宣人入殿：一条账写清谁被召、怎么召的（召法在开放标签）。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
@@ -406,7 +449,8 @@ def summon_enter(
 
 
 def list_in_flight_chat_turns(db: Any, night_id: int) -> List[Dict[str, Any]]:
-    """本夜未完成回话：status=generating，或 active 但尚无大臣回话。"""
+    if hasattr(db, "list_in_flight_chat_turns"):
+        return db.list_in_flight_chat_turns(night_id=int(night_id))
     rows = db.conn.execute(
         """
         SELECT * FROM chat_turns
@@ -426,10 +470,14 @@ def wait_in_flight_clear(
     db: Any,
     night_id: int,
     *,
-    timeout_s: float = DEFAULT_IN_FLIGHT_WAIT_S,
-    poll_s: float = DEFAULT_IN_FLIGHT_POLL_S,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
 ) -> None:
-    """等在飞回话完成；超时则 fail-closed 中止收夜（夜保持开）。"""
+    """等在飞回话完成；超时 fail-closed（夜保持开）。不持 write_gate。"""
+    if timeout_s is None:
+        timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
+    if poll_s is None:
+        poll_s = DEFAULT_IN_FLIGHT_POLL_S
     deadline = time.monotonic() + max(0.0, float(timeout_s))
     while True:
         inflight = list_in_flight_chat_turns(db, night_id)
@@ -464,8 +512,75 @@ def _set_night_fields(db: Any, night_id: int, **fields: Any) -> None:
         f"UPDATE audience_nights SET {assignments} WHERE id = ?",
         params,
     )
-    if getattr(db, "owns_transaction", lambda: True)():
-        db.conn.commit()
+    _commit_if_owns(db)
+
+
+def _commit_night_approved(
+    db: Any,
+    state: GameState,
+    night_id: int,
+    *,
+    kinds: frozenset,
+    content: Any,
+    registry: Any,
+    directive_status: str = "draft",
+) -> List[Dict[str, object]]:
+    """只交本夜已应允 action ids；失败响亮中止，不推进游标。"""
+    if not hasattr(db, "list_night_approved_pending"):
+        return []
+    rows: List[Dict[str, object]] = []
+    for kind in sorted(kinds):
+        rows.extend(db.list_night_approved_pending(int(night_id), kind=kind))
+    if not rows:
+        return []
+    action_ids = [int(r["id"]) for r in rows]
+    applied = db.commit_pending_actions(
+        state,
+        content=content,
+        registry=registry,
+        action_ids=action_ids,
+        directive_status=directive_status,
+    )
+    # 任一目标 id 仍 pending 或变 failed → 提交失败
+    failed_ids: List[int] = []
+    still_pending: List[int] = []
+    for aid in action_ids:
+        row = db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id = ?", (aid,)
+        ).fetchone()
+        if row is None:
+            continue
+        st = str(row["status"])
+        if st == "failed":
+            failed_ids.append(aid)
+        elif st == "pending":
+            still_pending.append(aid)
+    if failed_ids or still_pending:
+        message = (
+            f"收夜提交失败：failed={failed_ids} still_pending={still_pending}。"
+            "夜保持 closing，可续跑重试。"
+        )
+        pack = write_audience_error_pack(
+            kind="close_submit_failed",
+            message=message,
+            detail={
+                "night_id": int(night_id),
+                "failed": failed_ids,
+                "still_pending": still_pending,
+                "action_ids": action_ids,
+            },
+        )
+        raise AudienceNightError(
+            message,
+            code="close_submit_failed",
+            error_pack_path=pack,
+            detail={
+                "night_id": int(night_id),
+                "failed": failed_ids,
+                "still_pending": still_pending,
+            },
+        )
+    return list(applied or [])
 
 
 def close_night(
@@ -477,15 +592,13 @@ def close_night(
     registry: Any = None,
     auto: bool = False,
     body: str = "",
-    wait_timeout_s: float = DEFAULT_IN_FLIGHT_WAIT_S,
+    wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
-    """收夜：在飞守卫 → 提交游标幂等续跑 → 收夜账 → closed。
-
-    crash_after_step：测试注入点——完成该步并推进游标后抛 AudienceNightError(code=close_crash)。
-    重开时从 close_commit_cursor 续跑，不重复已提交步。
-    """
+    """收夜：在飞守卫 → 仅本夜已应允提交（游标幂等）→ 收夜账 → closed。"""
+    if wait_timeout_s is None:
+        wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
     if night_id is None:
         open_n = get_open_night(db)
         if open_n is None:
@@ -498,7 +611,6 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
-    # 在飞回话：先等短窗；仍在飞 → fail-closed（不进入 closing 提交）
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
         _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
@@ -520,24 +632,23 @@ def close_night(
                 detail={"night_id": int(night_id), "step": int(step)},
             )
 
-    # Step 1: 任免
     if cursor < CLOSE_STEP_COMMIT_OFFICE:
-        if hasattr(db, "commit_pending_actions"):
-            db.commit_pending_actions(
-                state, content=content, registry=registry, kind_filter="office",
-            )
+        _commit_night_approved(
+            db, state, int(night_id),
+            kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+            content=content, registry=registry,
+        )
         _advance(CLOSE_STEP_COMMIT_OFFICE)
 
-    # Step 2: 拟旨候选转档（0049：收夜提交即准旨；落 draft 候选档）
     if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-        if hasattr(db, "commit_pending_actions"):
-            db.commit_pending_actions(
-                state, content=content, registry=registry,
-                kind_filter="directive", directive_status="draft",
-            )
+        _commit_night_approved(
+            db, state, int(night_id),
+            kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+            content=content, registry=registry,
+            directive_status="draft",
+        )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
-    # Step 3: 收夜账 + closed
     if cursor < CLOSE_STEP_FINALIZE:
         tags = [TAG_CLOSE_NIGHT]
         if auto:
@@ -545,7 +656,6 @@ def close_night(
         close_body = body or (
             "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
         )
-        # 避免重复写收夜账（幂等：已有收夜标签则跳过）
         existing_tags = {
             t for e in list_ledger(db, night_id) for t in e.get("tags") or []
         }
@@ -581,7 +691,7 @@ def auto_close_open_night(
     *,
     content: Any = None,
     registry: Any = None,
-    wait_timeout_s: float = DEFAULT_IN_FLIGHT_WAIT_S,
+    wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。"""
@@ -606,12 +716,10 @@ def ensure_open_night_for_audience(
     time_of_day: str = "",
     location: str = "",
 ) -> Dict[str, Any]:
-    """进入召对时确保有开夜（幂等）。"""
     return open_night(db, state, time_of_day=time_of_day, location=location)
 
 
 def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
-    """由入殿账推出的本夜已入殿人名（含常在员额）。"""
     names: set[str] = set()
     for entry in list_ledger(db, night_id):
         if TAG_ENTER in (entry.get("tags") or []):
@@ -626,7 +734,6 @@ def ensure_summon_enter(
     *,
     method: str = METHOD_XUANRU,
 ) -> Optional[int]:
-    """若此人尚未入殿账则落发起/入殿账；已在则 no-op 返回 None。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
@@ -646,10 +753,7 @@ def attach_chat_turn_to_night(
     location: str = "",
     summon_method: str = METHOD_XUANRU,
 ) -> tuple[int, int]:
-    """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id。
-
-    返回 (night_id, chat_turn_id)。
-    """
+    """开夜（若需）+ 首次对话落宣入账 + 建 generating 对话轮挂 night_id/night_seq。"""
     night = ensure_open_night_for_audience(
         db, state, time_of_day=time_of_day, location=location,
     )
@@ -663,3 +767,16 @@ def attach_chat_turn_to_night(
         night_id=night_id,
     )
     return night_id, int(chat_turn_id)
+
+
+def mark_actions_night_approved(
+    db: Any, action_ids: Sequence[int], *, night_id: Optional[int] = None,
+) -> int:
+    """对话应允时：把暂存标为本夜已应允，收夜再提交（密令除外，调用方分流）。"""
+    if not hasattr(db, "mark_pending_night_approved"):
+        return 0
+    nid = night_id
+    if nid is None:
+        open_n = get_open_night(db)
+        nid = int(open_n["id"]) if open_n else None
+    return int(db.mark_pending_night_approved(action_ids, night_id=nid) or 0)
