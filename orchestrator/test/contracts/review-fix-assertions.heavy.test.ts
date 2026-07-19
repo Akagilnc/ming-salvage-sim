@@ -52,31 +52,6 @@ describe("#677 real S5 fix-commit path wiring", () => {
       suggested_fix: "fix app",
       action: "fix_now",
     };
-    const findingKey =
-      "correctness|src/app.ts:1|something real to fix without touching the pin";
-
-    const backend = new FixLoopBackend({
-      worktree,
-      reviewerResults: [
-        {
-          kind: "completed",
-          output: { kind: "reviewer", findings: [finding], findingsCount: 1, fixPacketBody: "fixture residual authored body" },
-        },
-        {
-          kind: "completed",
-          output: { kind: "judge", status: "converged" },
-        },
-      ],
-      coderOutputs: [
-        { kind: "coder", committed: true, commitsAdded: 1 },
-      ],
-      onCoderDispatch: (attempt, wt) => {
-        if (attempt !== 0) return; // S5 is first coder-fix attempt after S2
-        // S2 already ran as coder attempt 0 in this backend's counting — see below.
-        // We flip the pin during the S5 dispatch (coderAttempts after S2).
-      },
-    });
-
     // Backend counts every coder dispatch including S2. Flip pin on S5 (attempt 1).
     const countingBackend = new FixLoopBackend({
       worktree,
@@ -185,9 +160,6 @@ describe("#677 real S5 fix-commit path wiring", () => {
       suggested_fix: "fix app",
       action: "fix_now",
     };
-    const findingKey =
-      "correctness|src/app.ts:1|something real to fix without touching the pin";
-
     class NoWorktreeHeadTelemetryBackend extends FixLoopBackend {
       resolveTelemetryDir(): string {
         return join(worktree.path, ".ledger-677");

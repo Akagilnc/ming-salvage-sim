@@ -58,6 +58,7 @@ import {
 import { PUBLIC_FAILED_CAUSES } from "../../src/publicResult.js";
 
 import { barePingArgv } from "../../src/realBackend.js";
+import { smokedRoute } from "../model-route-fixtures.shared.js";
 
 import { isRunnerSynthesizedFailureEscalation } from "../../src/runnerEscalation.js";
 
@@ -429,21 +430,6 @@ class MergeChildAgentErrorBackend extends AgentErrorSandboxBackend {
       conflicted: true,
     };
   }
-}
-
-function smokedRoute(): ResolvedModelRoute {
-  const base = resolveRouteModels("normal", {});
-  const smoke = Object.fromEntries(
-    routeSmokeEntries(base).map((entry) => [
-      entry.key,
-      {
-        state: "passed" as const,
-        at: new Date().toISOString(),
-        cliVersion: `cli-${entry.slug}`,
-      },
-    ]),
-  );
-  return resolveRouteModels("normal", {}, {}, smoke);
 }
 
 function midRunAgentError(): Error {
