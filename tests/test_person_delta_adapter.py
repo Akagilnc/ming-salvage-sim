@@ -1878,6 +1878,36 @@ def test_add_character_non_canonical_office_type_still_raises(game):
         )
 
 
+def test_seed_backfill_skips_person_title_character_offices(game):
+    """#1057 AC「seed 路同守卫」回归钉：旧档回填入口 seed_static_data（character_offices 空时
+    从 characters 补档）须对 person-title 走同守卫。静态 content 无名分人物，故必须让含名分
+    的人物真实经过 seed 回填口——否则守卫退回无条件 INSERT 会撞 offices FK（名分无父行）。"""
+    db, state, _content = game
+    name = "旧档降金甲"
+    db.add_character(state, _new_ming_character(name, "降臣", "身名分"), source="阵前倒戈")
+
+    # 模拟旧档迁移态：characters 已有名分人物、character_offices 待回填（清空触发回填口）。
+    db.conn.execute("DELETE FROM character_offices")
+    db.conn.commit()
+
+    db.seed_static_data()  # 旧档回填入口（L2588 backfill）
+
+    # 回填真跑了：canonical 朝臣拿到 character_offices 行（否则等于没验回填）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM character_offices"
+    ).fetchone()["c"] > 0
+    # person-title 不入官职体系：无 offices 父行、无 character_offices 脏行，人物本身保留。
+    assert db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (name,)
+    ).fetchone()["office_type"] == "身名分"
+
+
 @pytest.mark.parametrize(
     ("item", "expected"),
     [
