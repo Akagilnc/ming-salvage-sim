@@ -19,7 +19,6 @@ from ming_sim.models import Character
 from ming_sim.qualitative import (
     identity_band,
     qualitative_character_axis,
-    safe_historical_text,
 )
 
 
@@ -104,8 +103,8 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     heard = []
     for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
         heard.append({
-            "title": safe_historical_text(item.get("title"), "见闻标题"),
-            "body": safe_historical_text(item.get("body"), "见闻正文"),
+            "title": str(item.get("title") or ""),
+            "body": str(item.get("body") or ""),
         })
     return {"heard": heard[-20:]}
 
