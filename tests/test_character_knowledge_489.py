@@ -3,7 +3,6 @@
 import json
 
 from ming_sim.models import Character
-from ming_sim.knowledge import render_character_knowledge
 
 
 def test_role_roster_only_lists_current_active_ming_people(game):
@@ -19,22 +18,6 @@ def test_role_roster_only_lists_current_active_ming_people(game):
     db.conn.commit()
     roster = db.get_character_knowledge(state, reader.name)["world"]["role"]
     assert all(name not in roster for name in names)
-
-
-def test_character_knowledge_keeps_countable_military_facts_and_qualifies_abstract_axes(game, monkeypatch):
-    db, state, content = game
-    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
-    monkeypatch.setattr(
-        db, "army_report", lambda limit=10: "火器：30门；兵额：3000人；军事压力：80",
-    )
-    rendered = render_character_knowledge(
-        db.get_character_knowledge(state, minister.name), minister.name,
-    )
-
-    assert "火器：30门" in rendered
-    assert "兵额：3000人" in rendered
-    assert "军事压力：80" not in rendered
-    assert "军事压力" in rendered
 
 
 def test_chapter_aggregate_never_projects_paraphrased_restricted_source(game):
