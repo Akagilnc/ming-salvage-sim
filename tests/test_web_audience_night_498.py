@@ -26,6 +26,7 @@ import pytest
 
 import web_app
 import ming_sim.decree as decree_mod
+import ming_sim.memories as memories_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -77,6 +78,10 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: (delta or {}, "out", "in"))
     monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
+    # 章节记忆的唯一 LLM 输出边界（memories.run_agent_text 仅被 record_chapter_memory 调用）；
+    # record_chapter_memory 与其确定性装配仍真跑。
+    monkeypatch.setattr(memories_mod, "run_agent_text",
+                        lambda *a, **k: '{"body": "本月边饷已清，暗流暗涌。", "tags": ["边饷"]}')
 
 
 @pytest.fixture
@@ -166,31 +171,36 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 5.0)  # 正超时
     turn_before = int(game.state.turn)
 
-    # 入口栅栏：只在颁诏 worker 进入真实在飞等待时置信号，随后原样委派（不改行为、不断结构）。
-    entered_wait = threading.Event()
-    real_wait = an.wait_in_flight_clear
+    # 透明观察者：只调真实 list_in_flight_chat_turns，其未改结果**非空**（=颁诏 worker 真正观测到
+    # 持久 generating 在飞轮）时置信号，随后原样返回。立即返回、不轮询在飞的 waiter 永不调它 →
+    # 测试按超时失败，从而咬住「回话落档先于收夜、再颁诏」的顺序（非仅最终态）。
+    observed_inflight = threading.Event()
+    real_list = an.list_in_flight_chat_turns
 
-    def signal_then_wait(*args, **kwargs):
-        entered_wait.set()
-        return real_wait(*args, **kwargs)
+    def observe_inflight(*args, **kwargs):
+        rows = real_list(*args, **kwargs)
+        if rows:
+            observed_inflight.set()
+        return rows
 
-    monkeypatch.setattr("ming_sim.audience_night.wait_in_flight_clear", signal_then_wait)
+    monkeypatch.setattr("ming_sim.audience_night.list_in_flight_chat_turns", observe_inflight)
 
     async def scenario():
         async with _client() as chat_client, _client() as issue_client:
             chat_task, allow = await _start_hanging_chat(game, chat_client, minister)
             night = an.get_open_night(game.db)
             # 持久化行确认在飞
-            row0 = game.db.conn.execute(
-                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()
-            assert row0["status"] == "generating"
-            # 待颁诏有候选
+            assert game.db.conn.execute(
+                "SELECT status FROM chat_turns WHERE night_id=?", (night["id"],)).fetchone()["status"] == "generating"
+            # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
+            # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
                 game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+            game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
-            await _await_event(entered_wait)  # 颁诏已进入真实在飞等待（观测到 generating）
-            allow.set()                        # 正超时内放行 → 回话落档 → 在飞清空
+            await _await_event(observed_inflight)  # 颁诏 worker 真观测到 generating 在飞轮后
+            allow.set()                             # 才在正超时内放行 → 回话落档 → 在飞清空
 
             chat_resp = await chat_task
             issue_resp = await issue_task
