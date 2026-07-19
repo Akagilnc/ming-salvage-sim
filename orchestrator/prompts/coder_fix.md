@@ -31,8 +31,9 @@ escalation unless a concrete blocker remains.
 Before reporting completion, run the mandatory self-check 二连:
 1. **Same-pattern** — does the same defect class appear elsewhere? Sweep and
    fix those sites too (修类不修点).
-2. **Fix-introduced** — did this fix break a neighbor? Run the repository
-   canonical test entry (`npm test`) before commit; a red run is not submittable.
+2. **Fix-introduced** — did this fix break a neighbor? Run `npm run test:fast`
+   (typecheck + fast pool; ADR 0140) before commit; a red run is not submittable.
+   Wave/final verify, CI, and ship still run full `npm test`.
 
 Legal refuse (coder-fix): never flip/delete base assertions or contradict written
 AC to close a finding. Fix the rest, commit, and emit a `status:"refused"`
