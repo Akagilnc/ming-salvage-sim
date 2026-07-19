@@ -72,6 +72,7 @@ from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import (
     AudienceTurnPipeline,
     mindreading_eligible,
+    return_report_applicable,
     run_mindreading_for_turn,
 )
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -1541,14 +1542,17 @@ class WebGame:
             )
             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
+            # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
-                threading.Thread(
-                    target=self._trail_mindreading_after_reply,
-                    args=(minister_name, answer_text, chat_turn_id),
-                    daemon=True,
-                    name="audience-p5-mindreading",
-                ).start()
+                if self._mark_pending_write():
+                    threading.Thread(
+                        target=self._trail_mindreading_after_reply,
+                        args=(minister_name, answer_text, chat_turn_id),
+                        kwargs={"owns_pending": True},
+                        daemon=True,
+                        name="audience-p5-mindreading",
+                    ).start()
             return payload
         except Exception:
             if chat_turn_id:
@@ -1558,6 +1562,64 @@ class WebGame:
                 for name, msgs in self.db.load_all_chat_history().items():
                     self.chat_history.setdefault(name, []).extend(msgs)
             raise
+
+    def mindreading_for_minister(self, minister_name: str) -> Dict[str, Any]:
+        """轮询/恢复读取路径：最近一轮召对的读心记录（#499 就绪即浮现）。"""
+        chat_turn_id = 0
+        records: List[Dict[str, Any]] = []
+        if self._persistent_chat_minister(minister_name):
+            row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
+            if row is not None:
+                chat_turn_id = int(row["id"])
+                records = list(self.db.list_mindreading_records(chat_turn_id))
+        return {
+            "minister": minister_name,
+            "chat_turn_id": chat_turn_id,
+            "mindreading": records,
+        }
+
+    def _build_parallel_audience_jobs(
+        self,
+        minister_name: str,
+        text: str,
+        chat_turn_id: int,
+    ) -> Dict[str, Any]:
+        """不依赖回话输出的真实调用，供 AudienceTurnPipeline.start_parallel。"""
+        jobs: Dict[str, Any] = {}
+        character = self.session._character(minister_name)
+        if return_report_applicable(character, text):
+            state = self.state
+            db = self.db
+            name = character.name
+
+            def _return_report():
+                return db.persist_return_report(
+                    state, name, text, chat_turn_id=chat_turn_id,
+                )
+
+            jobs["return_report"] = _return_report
+
+        # CLI 动作意图分类只读皇帝消息，与回话可并行（与 session._start_cli_action_intent 同口径）
+        start_intent = getattr(self.session, "_start_cli_action_intent", None)
+        if start_intent is not None:
+            def _action_intent():
+                fut = start_intent(character, text)
+                if fut is None:
+                    return None
+                try:
+                    return fut.result(timeout=120)
+                except Exception:
+                    return {"kind": "none"}
+
+            # 仅当后端允许并发时才挂进并行池；否则 _start 会立刻返 None，空跑无意义
+            from ming_sim.cli_backend import cli_backend_from_env, cli_backend_parallel_safe
+            channel = (getattr(getattr(self.session, "llm_config", None), "channel", "") or "").strip().lower()
+            if channel == "cli" or (
+                channel != "api" and cli_backend_from_env() is not None
+            ):
+                if cli_backend_parallel_safe(getattr(self.session, "llm_config", None)):
+                    jobs["action_intent"] = _action_intent
+        return jobs
 
     def _chat_stream_payload(
         self,
@@ -1802,25 +1864,30 @@ class WebGame:
         minister_name: str,
         minister_reply: str,
         chat_turn_id: int,
-    ) -> None:
-        """P5（#499）：回话已可见后后台尾随读心；失败不回滚回话。
+        *,
+        owns_pending: bool = False,
+        pipeline: Optional[AudienceTurnPipeline] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """P5（#499）：回话已可见后尾随读心；失败不回滚回话。
 
-        读心请求只在回话完成并持久化后发出；输入为该轮完整回话。
-        DB 写走 runtime write_gate（与后台召对 / 月末并发同纪律）。
+        调用方必须已持有 pending-write ownership（stream worker 整轮持有，或
+        非流式路径在启动线程前 mark）。任何 DB 访问不得发生在 ownership 登记前。
+        owns_pending=True 时本函数在 finally 里 complete_pending。
         """
-        if not chat_turn_id or not str(minister_reply or "").strip():
-            return
-        if mindreading_eligible(self.db, self.content.characters, minister_name) is None:
-            return
-        if not self._mark_pending_write():
-            return
-        pipe = AudienceTurnPipeline(write_gate=self._runtime_write_gate())
+        result: Optional[Dict[str, Any]] = None
+        pipe = pipeline
+        owns_pipe = pipe is None
         try:
-            # 回放已完成的回话边界，使 issue 闸门与时序日志一致。
-            pipe._reply_text = str(minister_reply)
-            pipe._reply_persisted = True
-            pipe.timeline.log("reply_persisted", length=len(minister_reply), source="trail")
-            pipe.timeline.log("reply_visible", source="trail")
+            if not chat_turn_id or not str(minister_reply or "").strip():
+                return None
+            # eligibility 读 DB——仅在 ownership 已确立后执行
+            if mindreading_eligible(self.db, self.content.characters, minister_name) is None:
+                return None
+            if pipe is None:
+                pipe = AudienceTurnPipeline(write_gate=self._runtime_write_gate())
+            if not pipe.reply_persisted:
+                pipe.accept_persisted_reply(str(minister_reply))
+            pipe.mark_reply_visible()
 
             def _job(reply: str):
                 return run_mindreading_for_turn(
@@ -1835,15 +1902,18 @@ class WebGame:
                     timeline=pipe.timeline,
                 )
 
-            fut = pipe.issue_mindreading(_job, minister_reply=minister_reply)
+            fut = pipe.issue_mindreading(_job, minister_reply=str(minister_reply))
             try:
-                fut.result(timeout=120)
+                result = fut.result(timeout=120)
             except Exception:
-                # 读心失败显式可见于时序日志；回话已 done，不回滚。
-                pass
+                # 读心失败显式记入时序；回话已 done，不回滚。
+                result = None
+            return result if isinstance(result, dict) else None
         finally:
-            pipe.close()
-            self._complete_pending_write()
+            if owns_pipe and pipe is not None:
+                pipe.close(wait=True)
+            if owns_pending:
+                self._complete_pending_write()
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -1853,6 +1923,7 @@ class WebGame:
         if not text:
             yield {"type": "error", "message": "问话不能为空。"}
             return
+        # 整轮（含读心尾随）共用一次 pending ownership——关闭/fixture 必须等其完成。
         if not self._mark_pending_write():
             yield {"type": "error", "message": "当前会话正在关闭，请回菜单重新进入。"}
             return
@@ -1898,36 +1969,80 @@ class WebGame:
 
         def worker() -> None:
             nonlocal gate_released
+            pipe = AudienceTurnPipeline(write_gate=write_gate)
+            payload: Optional[Dict[str, Any]] = None
             try:
-                payload = self._chat_stream_payload(
-                    minister_name, text, chat_turn_id, before_snapshot, accepted_turn, emit_delta)
-            except Exception as error:  # noqa: BLE001
-                # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
-                # 否则 error 事件不会被投进 queue、消费者永久挂死。
                 try:
-                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    # P5：不依赖回话输出的真实调用并发发出（回奏 / CLI 动作意图）
+                    jobs = self._build_parallel_audience_jobs(minister_name, text, chat_turn_id)
+                    if jobs:
+                        pipe.start_parallel(jobs)
+                        # 回奏若需写入见闻再喂 prompt，须在流式回话前取回；其它并行任务继续跑
+                        if "return_report" in jobs:
+                            try:
+                                pipe.wait_job("return_report", timeout=120)
+                            except Exception:
+                                pass
+
+                    def produce(on_delta: Any) -> str:
+                        nonlocal payload
+                        # 用 pipeline 的 on_delta 记首 token；生产流仍走既有 payload 装配
+                        def _emit(delta: str) -> None:
+                            on_delta(delta)
+
+                        payload = self._chat_stream_payload(
+                            minister_name, text, chat_turn_id, before_snapshot,
+                            accepted_turn, _emit,
+                        )
+                        return str((payload or {}).get("answer") or "")
+
+                    reply = pipe.stream_reply(produce, on_delta=emit_delta)
+                    # _chat_stream_payload 已落库回话；公开 API 接管状态机
+                    if reply:
+                        pipe.accept_persisted_reply(reply)
+                    if pipe.reply_persisted:
+                        pipe.mark_reply_visible()
+                except Exception as error:  # noqa: BLE001
+                    # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
+                    # 否则 error 事件不会被投进 queue、消费者永久挂死。
+                    try:
+                        self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                    except Exception:
+                        pass
+                    if isinstance(error, LLMUnavailable):
+                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
+                    else:
+                        ev_queue.put({"type": "error", "message": str(error)})
+                    return
+                finally:
+                    # 释放写锁让其它端点可写，但 pending ownership 保持到本 worker 结束
+                    if not gate_released:
+                        write_gate.release()
+                        gate_released = True
+
+                # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
+                ev_queue.put({"type": "done", "payload": payload or {}})
+                mind_payload: Optional[Dict[str, Any]] = None
+                try:
+                    mind_payload = self._trail_mindreading_after_reply(
+                        minister_name,
+                        str((payload or {}).get("answer") or ""),
+                        chat_turn_id,
+                        owns_pending=False,
+                        pipeline=pipe,
+                    )
                 except Exception:
-                    pass
-                if isinstance(error, LLMUnavailable):
-                    ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
-                else:
-                    ev_queue.put({"type": "error", "message": str(error)})
-                return
+                    mind_payload = None
+                if mind_payload:
+                    ev_queue.put({
+                        "type": "mindreading",
+                        "payload": mind_payload,
+                        "chat_turn_id": chat_turn_id,
+                    })
+                ev_queue.put({"type": "end"})
             finally:
-                if not gate_released:
-                    write_gate.release()
-                    gate_released = True
+                pipe.close(wait=True)
                 self._complete_pending_write()
-            # P5：先让回话 done 可见，再后台尾随读心——玩家无「为读心黑屏」。
-            ev_queue.put({"type": "done", "payload": payload})
-            try:
-                self._trail_mindreading_after_reply(
-                    minister_name,
-                    str((payload or {}).get("answer") or ""),
-                    chat_turn_id,
-                )
-            except Exception:
-                pass
 
         thread = threading.Thread(target=worker, daemon=True)
         try:
@@ -1948,7 +2063,7 @@ class WebGame:
         while True:
             item = ev_queue.get()
             yield item
-            if item.get("type") in {"done", "error"}:
+            if item.get("type") in {"end", "error"}:
                 break
 
     def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
@@ -2931,14 +3046,26 @@ def _require_active_minister(minister_name: str) -> None:
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
-    character = get_game().session._character(minister_name)
+    game = get_game()
+    character = game.session._character(minister_name)
+    mind = game.mindreading_for_minister(minister_name)
     return {
-        "minister": get_game().public_character(character),
-        "history": get_game().chat_history.get(minister_name, []),
-        "suggestions": get_game().suggestions_for(character),
-        "can_undo_last_chat": get_game().can_undo_last_chat(minister_name),
-        "pending_action_failures": get_game().pending_action_failures_for(minister_name),
+        "minister": game.public_character(character),
+        "history": game.chat_history.get(minister_name, []),
+        "suggestions": game.suggestions_for(character),
+        "can_undo_last_chat": game.can_undo_last_chat(minister_name),
+        "pending_action_failures": game.pending_action_failures_for(minister_name),
+        # #499 轮询/恢复：读心落库后可从历史入口浮现（递话 role，ADR 0046）
+        "chat_turn_id": mind["chat_turn_id"],
+        "mindreading": mind["mindreading"],
     }
+
+
+@app.get("/api/ministers/{minister_name}/chat/mindreading")
+async def api_chat_mindreading(minister_name: str) -> Dict[str, Any]:
+    """#499 读心轮询入口：回话 done 后后台生成，就绪即可拉取。"""
+    _require_active_minister(minister_name)
+    return get_game().mindreading_for_minister(minister_name)
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")
@@ -2999,7 +3126,15 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             if item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
+                # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
                 yield sse_event("done", item.get("payload", {}))
+            elif item_type == "mindreading":
+                yield sse_event("mindreading", {
+                    "mindreading": item.get("payload"),
+                    "chat_turn_id": item.get("chat_turn_id") or 0,
+                })
+            elif item_type == "end":
+                yield sse_event("end", {})
                 break
             elif item_type == "error":
                 yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})

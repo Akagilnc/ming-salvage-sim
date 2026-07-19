@@ -2,14 +2,15 @@
 
 场面编排 own 全部夜内 LLM 调用时序：
 - 大臣回话流式呈现
-- 读心依赖回话必串但流水线化（回话先展示、读心在玩家阅读期后台生成）
+- 读心依赖回话必串但流水线化（回话先展示、读心在玩家阅读期后台生成、就绪即浮现）
 - 不依赖回话输出的调用（回奏等）并行发出
 
 严禁为省 DB 写次数把可并行调用串行化。后台完成后的 DB 写走同一把
 write_gate（与月末并发 extractor / 后台召对 worker 同纪律）。
 
 本模块是时序 seam，不负责旁白措辞或呈现壳（#491/#492 产内容，
-#478/#458 管呈现）。
+#478/#458 管呈现）。生产入口（WebGame.chat_stream）必须完整走本状态机，
+禁止绕过公开方法私改内部标志。
 """
 
 from __future__ import annotations
@@ -31,6 +32,11 @@ EVT_MINDREADING_COMPLETE = "mindreading_complete"
 EVT_MINDREADING_FAILED = "mindreading_failed"
 EVT_PARALLEL_COMPLETE = "parallel_complete"
 EVT_DB_WRITE = "db_write"
+
+# 近臣回奏触发词（与 session._audience_prompt_for_message 同口径）
+RETURN_REPORT_KEYWORDS = (
+    "官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访",
+)
 
 
 @dataclass
@@ -69,26 +75,13 @@ class PipelineTimeline:
         return [e for e in self.events if e.name == name]
 
 
-@dataclass
-class AudienceTurnResult:
-    """一轮召对的时序结果。`reply` 在读心完成前即可对玩家可见。"""
-
-    reply: str
-    parallel_results: Dict[str, Any] = field(default_factory=dict)
-    mindreading: Any = None
-    mindreading_error: Optional[str] = None
-    timeline: PipelineTimeline = field(default_factory=PipelineTimeline)
-    mindreading_future: Optional[Future] = None
-
-
 class AudienceTurnPipeline:
-    """P5 时序调度器。
+    """P5 时序调度器——生产与测试共用的状态机。
 
-    使用方式（与 chat_stream 同构）：
-
-    1. `start_parallel(jobs)` —— 不依赖回话的调用立刻并发发出
+    1. `start_parallel(jobs)` —— 不依赖回话输出的调用立刻并发发出
     2. `stream_reply(produce)` —— 流式回话；首 token 先于读心
     3. `persist_reply(fn)` —— 回话落库；此后才允许发读心
+       或 `accept_persisted_reply(text)` —— 生产路径已落库后接管状态
     4. `mark_reply_visible()` —— 回话对玩家可见（done；不等读心）
     5. `issue_mindreading(fn)` —— 仅在 3 之后；fn 必须接收完整回话
     6. `write_under_gate(fn)` —— 后台结果落库走写锁
@@ -129,6 +122,11 @@ class AudienceTurnPipeline:
             return job()
         finally:
             self.timeline.log(EVT_PARALLEL_COMPLETE, job=name)
+
+    def wait_job(self, name: str, timeout: Optional[float] = None) -> Any:
+        if name not in self._parallel_futures:
+            raise KeyError(f"无并行任务：{name}")
+        return self._parallel_futures[name].result(timeout=timeout)
 
     def collect_parallel(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
@@ -172,11 +170,29 @@ class AudienceTurnPipeline:
         self.timeline.log(EVT_REPLY_PERSISTED, length=len(self._reply_text or ""))
         return result
 
+    def accept_persisted_reply(self, reply: str) -> None:
+        """生产路径已完成流式+落库后，把完整回话交给本状态机（公开 API，非私改字段）。"""
+        text = str(reply or "")
+        if not text.strip():
+            raise ValueError("读心输入必须含该轮完整回话；回话正文为空")
+        self._reply_text = text
+        self._reply_persisted = True
+        self.timeline.log(EVT_REPLY_COMPLETE, length=len(text), source="accept_persisted")
+        self.timeline.log(EVT_REPLY_PERSISTED, length=len(text), source="accept_persisted")
+
     def mark_reply_visible(self) -> None:
         """回话对玩家可见——不等读心。消除「为读心黑屏」。"""
         if not self._reply_persisted:
             raise RuntimeError("回话尚未持久化，不能标记可见")
         self.timeline.log(EVT_REPLY_VISIBLE)
+
+    @property
+    def reply_text(self) -> Optional[str]:
+        return self._reply_text
+
+    @property
+    def reply_persisted(self) -> bool:
+        return self._reply_persisted
 
     # ── mindreading pipeline (serial after reply, non-blocking display) ─
 
@@ -229,16 +245,27 @@ class AudienceTurnPipeline:
 
     # ── lifecycle ───────────────────────────────────────────────────────
 
-    def close(self) -> None:
+    def close(self, wait: bool = False) -> None:
         self._closed = True
         if self._owns_executor:
-            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor.shutdown(wait=wait, cancel_futures=not wait)
 
     def __enter__(self) -> "AudienceTurnPipeline":
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+def return_report_applicable(character: object, message: str) -> bool:
+    """回奏是否适用本轮问话（不依赖回话输出 → 可并行发出）。"""
+    from ming_sim.mindreading import is_inner_court_attendant
+
+    text = str(message or "")
+    return bool(
+        is_inner_court_attendant(character)
+        and any(word in text for word in RETURN_REPORT_KEYWORDS)
+    )
 
 
 def mindreading_eligible(
@@ -335,17 +362,6 @@ def assert_p5_order(timeline: PipelineTimeline) -> None:
         assert first is not None and mind is not None
         if mind.t < first.t:
             raise AssertionError("读心不得先于回话首 token")
-    if EVT_REPLY_VISIBLE in names and EVT_MINDREADING_COMPLETE in names:
-        visible = timeline.first(EVT_REPLY_VISIBLE)
-        mind_done = timeline.first(EVT_MINDREADING_COMPLETE)
-        assert visible is not None and mind_done is not None
-        # 允许读心比 visible 早完成（极快 stub），但 visible 绝不能等 mind_done
-        # 由调用方契约保证：mark_reply_visible 在 join mindreading 之前
-        if EVT_MINDREADING_ISSUED in names:
-            # visible 必须在 mindreading_issued 之后或同时（回话先可见再/且不阻塞）
-            # 更强：若有 mindreading，visible 不得依赖其完成——即 visible 时间 ≤ mind_done
-            # （若 mind 极快可能 mind_done < visible；那也 ok，只要 visible 不 join）
-            pass
     if EVT_REPLY_VISIBLE in names and EVT_REPLY_PERSISTED in names:
         vis = timeline.first(EVT_REPLY_VISIBLE)
         per = timeline.first(EVT_REPLY_PERSISTED)

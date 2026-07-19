@@ -289,7 +289,11 @@ export type EndingPayload = {
   status: string; label: string; summary: string; timeline: EndingTimelineItem[];
 };
 
-export type ChatMessage = { role: "user" | "minister"; content: string };
+export type ChatMessage = {
+  /** user=朕 / minister=大臣 / attendant=递话（王承恩读心，ADR 0046） */
+  role: "user" | "minister" | "attendant";
+  content: string;
+};
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 
