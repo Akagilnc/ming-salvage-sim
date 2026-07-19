@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
-import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -77,7 +76,6 @@ describe("#683/#937 monitored dispatch + quota composition", () => {
     );
     expect(outcome.result.kind).toBe("completed");
     expect(killed).toEqual([]);
-        expect(outcome).not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
   it("NEGATIVE: free-log relay tags never become SelfReported/Hang fate", async () => {

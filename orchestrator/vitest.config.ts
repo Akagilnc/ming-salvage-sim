@@ -27,6 +27,7 @@ const shared = {
  * New tests of these classes should follow the same naming so they auto-join heavy.
  */
 const heavyPathPatterns: string[] = [
+  "test/**/*.heavy.test.ts",
   "test/**/*e2e*.test.ts",
   "test/**/sandcastle-*.test.ts",
   "test/**/real-backend.test.ts",
@@ -71,7 +72,7 @@ function heavyByHarnessNature(root = "test"): string[] {
 }
 
 /** Union of path conventions + harness-nature hits (deduped). */
-const heavyInclude = [
+export const heavyInclude = [
   ...new Set<string>([...heavyPathPatterns, ...heavyByHarnessNature()]),
 ];
 

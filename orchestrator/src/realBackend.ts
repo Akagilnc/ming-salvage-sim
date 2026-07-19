@@ -206,20 +206,20 @@ export function barePingArgv(
       };
     }
     case "grok":
-      // Align with grokAgent headless: prompt on stdin (not -p argv).
-      // Plain text (no streaming-json) so barePingNonceSatisfied still sees the nonce line.
+      // Route smoke prompts are tiny. Pass the nonce through Grok's native
+      // single-turn flag: unlike grokAgent's large worker prompts, this avoids
+      // both argv pressure and Grok reopening Node's stdin pipe as /dev/stdin.
       return {
         file: "grok",
         args: [
-          "--prompt-file",
-          "/dev/stdin",
+          "-p",
+          prompt,
           "-m",
           model,
           "--always-approve",
           "--permission-mode",
           "bypassPermissions",
         ],
-        input: prompt,
       };
     case "cursor":
       // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
