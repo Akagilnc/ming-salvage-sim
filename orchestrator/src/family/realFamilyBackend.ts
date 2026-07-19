@@ -3787,22 +3787,29 @@ function classifyCmrOutcomePayload(
 }
 
 /** Traffic keys for T2 judge envelopes — cargo siblings stay off the strict decode. */
-const JUDGE_TRAFFIC_KEYS = new Set([
+const JUDGE_BASE_TRAFFIC_KEYS = [
   "station",
   "status",
   "cargoPointer",
+] as const;
+const JUDGE_CONTINUE_TRAFFIC_KEYS = [
   "findingDispositions",
   "fixPacketBody",
   "advanceCoder",
-  "reason",
-  "diagnosis",
-]);
+] as const;
+const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
 
 function pickJudgeTraffic(
   record: Record<string, unknown>,
 ): Record<string, unknown> {
   const traffic: Record<string, unknown> = {};
-  for (const key of JUDGE_TRAFFIC_KEYS) {
+  const statusKeys =
+    record.status === "continue"
+      ? JUDGE_CONTINUE_TRAFFIC_KEYS
+      : record.status === "escalate"
+        ? JUDGE_ESCALATE_TRAFFIC_KEYS
+        : [];
+  for (const key of [...JUDGE_BASE_TRAFFIC_KEYS, ...statusKeys]) {
     if (Object.prototype.hasOwnProperty.call(record, key)) {
       traffic[key] = record[key];
     }

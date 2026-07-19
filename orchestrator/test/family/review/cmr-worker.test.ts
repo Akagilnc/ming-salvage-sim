@@ -705,6 +705,27 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     expect(o.kind).toBe("verdict");
   });
 
+  it("keeps continue traffic typed when the family judge adds soft reason cargo (#1034)", () => {
+    const o = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "continue",
+        findingDispositions: [{ identityKey: "live-1034", action: "live" }],
+        fixPacketBody: "repair the live finding",
+        reason: "one live completeness finding remains",
+        findingsCount: 1,
+      },
+      stdout: "noise without completion signal",
+    });
+
+    expect(o).toMatchObject({
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [{ identityKey: "live-1034", action: "live" }],
+      fixPacketBody: "repair the live finding",
+    });
+  });
+
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const result = {
