@@ -7426,24 +7426,35 @@ class GameDB:
         ).fetchall()
         return [int(row["id"]) for row in rows]
 
-    def commit_minister_reply(self, chat_turn_id: int, minister_message_id: int) -> None:
-        """**原子**链接大臣回话 + 接受读心任务：单条 UPDATE、单次 commit，令
-        「回话已链接」与「任务已接受（''→'running'）」同生同灭（#499）。
+    def persist_minister_reply(
+        self, minister_name: str, turn: int, content: str, chat_turn_id: int,
+    ) -> int:
+        """**一个事务**内：插入大臣回话消息 → 取其 id → 链接到 turn → 接受读心任务
+        （''→'running'）→ 单次提交。返回 message_id（#499）。
 
-        分两次提交曾留下竞态：链接已提交、接受未提交时崩溃 → 完成的回话空状态，
-        启动对账（只管 'running'）漏掉、恢复永不轮询/投递。合并为一事务后此孤儿态不可达。
+        杜绝「回话消息已 commit 但未链接」孤儿：分两次提交时，插入回话已落库、链接+接受
+        未落库时崩溃 → 可见的持久回话却 chat_turn_id 0、active 未链接轮、空任务态、无启动
+        对账、无 pending、in-flight 守卫永挡后续召见。合并进单一事务后此孤儿态整体回滚、不可达。
+        知识轨纪律同 append_chat_message：insert 即 'held'，投轨唯一出口是 release（#976）。
         """
-        self.conn.execute(
-            """
-            UPDATE chat_turns
-            SET minister_message_id = ?,
-                mindreading_status = CASE WHEN mindreading_status = ''
-                                         THEN 'running' ELSE mindreading_status END
-            WHERE id = ?
-            """,
-            (int(minister_message_id), int(chat_turn_id)),
-        )
-        self.conn.commit()
+        with self.conn:  # 事务：成功提交、异常回滚（插入的回话一并撤销）
+            cur = self.conn.execute(
+                "INSERT INTO chat_messages (minister_name, turn, role, content, knowledge_status) "
+                "VALUES (?, ?, 'minister', ?, 'held')",
+                (minister_name, int(turn), content),
+            )
+            message_id = int(cur.lastrowid)
+            self.conn.execute(
+                """
+                UPDATE chat_turns
+                SET minister_message_id = ?,
+                    mindreading_status = CASE WHEN mindreading_status = ''
+                                             THEN 'running' ELSE mindreading_status END
+                WHERE id = ?
+                """,
+                (message_id, int(chat_turn_id)),
+            )
+        return message_id
 
     def set_mindreading_status(self, chat_turn_id: int, status: str) -> None:
         """把在办任务落终态（'failed'/'skip'）：模型失败或不适用时落库，让重开轮询能判终止。

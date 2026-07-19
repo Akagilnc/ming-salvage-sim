@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import pytest
+
 from ming_sim.audience_pipeline import (
     mindreading_eligible,
     run_mindreading_for_turn,
@@ -345,6 +347,60 @@ def test_real_chat_persistence_atomically_accepts_mindreading_task(game, monkeyp
     assert _wait_for(lambda: db.get_mindreading_status(cid) in {"skip", "failed"})
 
 
+def test_persist_minister_reply_atomic_transaction_rolls_back(content, tmp_path):
+    """单一事务：成功路径公共 API 同时暴露「链接」+「running」；事务内提交前故障 → 整体回滚，
+    重开后既无可见孤儿回话、也无接受任务（rollback 不留半成品；分开插入实现无此保证）。"""
+    from ming_sim.db import GameDB
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    path = str(tmp_path / "atomic.db")
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = "温体仁"
+
+    # 成功路径：一次调用 → 链接 + running 同时经公共恢复 API 可见
+    ok_cid = db.create_chat_turn(state, minister, "ok", 0)
+    mid = db.persist_minister_reply(minister, int(state.turn), "答", ok_cid)
+    assert int(db.get_last_active_chat_turn(minister, state.turn)["minister_message_id"]) == mid
+    wg = _web_game(db, state, content, _FakeAgent())
+    assert wg.mindreading_for_minister(minister, ok_cid)["mindreading_pending"] is True
+
+    # 故障注入：事务内 link+accept 的 UPDATE 前抛错 → with self.conn 回滚，插入的回话一并撤销
+    bad_cid = db.create_chat_turn(state, minister, "bad", 0)
+    real_execute = db.conn.execute
+
+    def boom(sql, *a, **k):
+        if "UPDATE chat_turns" in sql and "minister_message_id" in sql:
+            raise RuntimeError("crash before commit")
+        return real_execute(sql, *a, **k)
+
+    db.conn.execute = boom
+    try:
+        with pytest.raises(RuntimeError):
+            db.persist_minister_reply(minister, int(state.turn), "半成品回话", bad_cid)
+    finally:
+        db.conn.execute = real_execute
+    db.close()
+
+    reopened = GameDB(path, content)
+    try:
+        # 回滚：无可见孤儿回话（"半成品回话" 未落库）
+        cnt = reopened.conn.execute(
+            "SELECT COUNT(*) c FROM chat_messages WHERE content = '半成品回话'",
+        ).fetchone()
+        assert cnt["c"] == 0
+        # 无链接、无接受任务（重开对账也不会误把它当遗弃）
+        bad = reopened.conn.execute(
+            "SELECT minister_message_id, mindreading_status FROM chat_turns WHERE id = ?",
+            (bad_cid,),
+        ).fetchone()
+        assert bad["minister_message_id"] is None
+        assert bad["mindreading_status"] == ""
+    finally:
+        reopened.close()
+
+
 def test_startup_reconcile_via_real_close_reopen(content, tmp_path):
     """启动对账走**真实 GameDB 关闭+重开**：遗弃 running（无记录，worker 随上次进程消亡）经
     构造器 init_schema 的对账终态化 → 重开经 API 的公共 pending 结果变 false（不永挂）。"""
@@ -358,10 +414,9 @@ def test_startup_reconcile_via_real_close_reopen(content, tmp_path):
     minister = "温体仁"
 
     uid = db.append_chat_message(minister, int(state.turn), "user", "问")
-    mid = db.append_chat_message(minister, int(state.turn), "minister", "答")
     cid = db.create_chat_turn(state, minister, "abandoned", 0)
     db.update_chat_turn_messages(cid, user_message_id=uid)
-    db.commit_minister_reply(cid, mid)  # 生产接受路径 → 'running'
+    db.persist_minister_reply(minister, int(state.turn), "答", cid)  # 生产接受路径 → 'running'
     before = _web_game(db, state, content, _FakeAgent())
     assert before.mindreading_for_minister(minister, cid)["mindreading_pending"] is True
     db.close()  # worker 未落库即进程消亡
@@ -414,10 +469,9 @@ def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):
 
     def _completed_turn(tag):
         uid = db.append_chat_message(minister, int(state.turn), "user", "问" + tag)
-        mid = db.append_chat_message(minister, int(state.turn), "minister", "答" + tag)
         cid = db.create_chat_turn(state, minister, tag, 0)
         db.update_chat_turn_messages(cid, user_message_id=uid)
-        db.commit_minister_reply(cid, mid)  # 原子链接回话 + 接受读心任务
+        db.persist_minister_reply(minister, int(state.turn), "答" + tag, cid)  # 插入回话+链接+接受
         return cid
 
     c1 = _completed_turn("a")
@@ -442,20 +496,18 @@ def test_mindreading_pending_flag_guides_bounded_poll(game):
     db, state, content = game
     web_game = _web_game(db, state, content, _FakeAgent())
 
-    # 显式任务态：未接受（''）不算 pending；回话提交（原子 commit_minister_reply）接受为
+    # 显式任务态：未接受（''）不算 pending；回话提交（原子 persist_minister_reply）接受为
     # 'running' 后、未落库、未终态 → pending。
     minister = "温体仁"
 
     def _accept(tag):
         cid = db.create_chat_turn(state, minister, tag, 0)
-        mid = db.append_chat_message(minister, int(state.turn), "minister", "答" + tag)
-        db.commit_minister_reply(cid, mid)  # 原子链接回话 + 接受任务
+        db.persist_minister_reply(minister, int(state.turn), "答" + tag, cid)  # 插入回话+链接+接受
         return cid
 
     cid = db.create_chat_turn(state, minister, "p5-pending", 0)
     assert web_game.mindreading_for_minister(minister)["mindreading_pending"] is False  # 未接受（''）
-    mid = db.append_chat_message(minister, int(state.turn), "minister", "答")
-    db.commit_minister_reply(cid, mid)  # 回话提交 → 原子接受
+    db.persist_minister_reply(minister, int(state.turn), "答", cid)  # 回话提交 → 原子接受
     out = web_game.mindreading_for_minister(minister)
     assert out["chat_turn_id"] == cid
     assert out["mindreading"] == []
