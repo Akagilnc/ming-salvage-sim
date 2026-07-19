@@ -41,6 +41,10 @@ export type SendChatCallbacks = {
 export function useAudienceChat(
   setBusy: (value: string) => void,
   selectedMinisterRef: React.MutableRefObject<string>,
+  // 召对面板是否打开（App 传 activeModal==="chat"）。本 hook 内置**唯一 chat-exit 归属**：
+  // 面板一关（任何 departure：关闭/Escape/转诏书/切模态/退菜单都令其为 false）即取消实时流
+  // 观察者 + 作废重开 poll-batch。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
+  chatOpen: boolean,
 ) {
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
@@ -55,6 +59,14 @@ export function useAudienceChat(
   // 旧轮读心不该因新一轮发出而停）。给 hook 唯一 poll-batch 归属，避免同大臣重开叠加重复轮询环。
   const pollBatchRef = React.useRef(0);
 
+  // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch（selectedMinister 不变也停）。
+  React.useEffect(() => {
+    if (!chatOpen) {
+      abortRef.current?.abort();
+      pollBatchRef.current += 1;
+    }
+  }, [chatOpen]);
+
   const resetPanel = React.useCallback(() => {
     chatGenRef.current += 1;   // 作废在飞的历史加载
     pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
@@ -66,11 +78,6 @@ export function useAudienceChat(
   const clearPendingText = React.useCallback(() => {
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
-  }, []);
-
-  // 关闭召对面板：无观察者 → 作废 poll-batch（selectedMinister 不变也停轮询，免得重开叠加）。
-  const cancelReopenPolls = React.useCallback(() => {
-    pollBatchRef.current += 1;
   }, []);
 
   // 非流式历史投影（撤回后重投）：新一代快照，走同一 reducer history 动作（含读心保住/归位）。
@@ -179,7 +186,6 @@ export function useAudienceChat(
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
-    cancelReopenPolls,
     applyHistory,
     loadHistory,
     sendChat,

@@ -104,12 +104,12 @@ function App() {
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
-    cancelReopenPolls,
     applyHistory,
     loadHistory: loadHistoryProjection,
     sendChat: runAudienceTurn,
     cancelChat,
-  } = useAudienceChat(setBusy, selectedMinisterRef);
+    // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废 poll-batch。
+  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat");
 
   // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。
   const applyDurableState = React.useCallback((data: GameState) => {
@@ -119,7 +119,7 @@ function App() {
     setDecree(data.last_decree || "");
     setReport(data.last_report || "");
   }, []);
-  const { refresh: refreshDurableProjection } = useDurableProjection(applyDurableState, setSecretOrders);
+  const { refresh: refreshDurableProjection, beginMutation: beginDurableMutation } = useDurableProjection(applyDurableState, setSecretOrders);
   // loadState = 不带密令的持久刷新；所有既有调用方经此参与同一 latest-wins 协调（撤回/重试/
   // 结算调 loadState 即推进代次、作废在飞的旧 done 刷新）。
   const loadState = React.useCallback(
@@ -203,20 +203,21 @@ function App() {
 
   // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
-  // 响应迟到不覆盖新结果；自动弹窗只在该刷新仍是最新代次时触发（onSecretOrders 同代次门控）。
+  // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
+  // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
   React.useEffect(() => {
     if (!state) return;
     const currentTurn = state.turn.turn;
     if (currentTurn === secretOrderShown) return;
-    setSecretOrderShown(currentTurn);
     void refreshDurableProjection({
       secretOrders: true,
-      onSecretOrders: (orders) => {
+      onSecretOrders: (orders, isLatest) => {
+        setSecretOrderShown(currentTurn);  // 仅接受成功（最新代次）才标记已呈现
         if (
           shouldAutoOpenSecretOrdersAfterSettlement()
           && orders.some((o) => o.status === "active" || o.status === "pending_review")
         ) {
-          setTimeout(() => setActiveModal("secret_orders"), 400);
+          setTimeout(() => { if (isLatest()) setActiveModal("secret_orders"); }, 400);
         }
       },
     });
@@ -265,15 +266,6 @@ function App() {
     selectedMinisterRef.current = selectedMinister;
   }, [selectedMinister]);
 
-  // #499 唯一 chat-exit 归属：任何离开召对面板的路径（关闭按钮 / 嵌套关闭 / Escape / 转诏书 /
-  // 切模态 / 退菜单）都会把 activeModal 切出 "chat"，此 effect 据此统一取消所有实时流观察者
-  // 并作废重开 poll-batch——各 departure 无需各自记得取消，杜绝 Escape/模态替换绕过。
-  React.useEffect(() => {
-    if (activeModal !== "chat") {
-      cancelChat();
-      cancelReopenPolls();
-    }
-  }, [activeModal, cancelChat, cancelReopenPolls]);
 
   React.useEffect(() => {
     if (!selectedMinister) {
@@ -624,6 +616,7 @@ function App() {
         }),
       });
       setDirectiveText("");
+      beginDurableMutation();  // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
       setState((current) => (current ? { ...current, directives: data.directives } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -666,6 +659,7 @@ function App() {
         method: "PATCH",
         body: JSON.stringify({ text: editingDirectiveText.trim() }),
       });
+      beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives } : current));
       cancelEditDirective();
     } catch (err) {
@@ -680,6 +674,7 @@ function App() {
     setError("");
     try {
       const data = await api<{ directives: Directive[] }>(`/api/directives/${directiveId}`, { method: "DELETE" });
+      beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives } : current));
       if (editingDirectiveId === directiveId) {
         cancelEditDirective();
@@ -696,6 +691,7 @@ function App() {
     setError("");
     try {
       const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/confirm`, { method: "POST" });
+      beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -709,6 +705,7 @@ function App() {
     setError("");
     try {
       const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
+      beginDurableMutation();
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

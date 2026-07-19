@@ -80,4 +80,46 @@ describe("持久刷新协调器（#499 App 消费的 useDurableProjection）", (
     expect(states).toEqual(["undo"]);            // 旧 turn fetch 未覆盖更新的 done/undo 结果
     expect(orders).toEqual(["undo"]);
   });
+
+  it("beginMutation 推进代次：作废在飞的旧刷新（返 null、不落陈旧 state），直接变更结果不被覆盖", async () => {
+    const states: string[] = [];
+    const orders: string[] = [];
+    const hookRef = mount(states, orders);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/game/state")) { await gate; return jsonResp({ marker: "old", map_nodes: [] }); }
+      return jsonResp({});
+    }));
+
+    let pOld!: Promise<GameState | null>;
+    act(() => { pOld = hookRef.current!.refresh(); });   // 旧刷新在飞
+    await tick();
+    act(() => { hookRef.current!.beginMutation(); });     // 直接变更（草案增/删等）应用响应前推进代次
+    release();
+    let ret: GameState | null = null;
+    await act(async () => { ret = await pOld; });
+    expect(ret).toBeNull();        // 旧刷新被作废、返 null
+    expect(states).toEqual([]);    // 未落陈旧 state（本变更结果不被覆盖）
+  });
+
+  it("延迟呈现纳入代次归属：onSecretOrders 的 isLatest 在 beginMutation（撤回）后转 false", async () => {
+    const states: string[] = [];
+    const orders: string[] = [];
+    const hookRef = mount(states, orders);
+    let captured: (() => boolean) | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/secret_orders")) return jsonResp({ orders: [{ tag: "x" }] });
+      return jsonResp({ marker: "s", map_nodes: [] });
+    }));
+
+    await act(async () => {
+      await hookRef.current!.refresh({ secretOrders: true, onSecretOrders: (_o, isLatest) => { captured = isLatest; } });
+    });
+    expect(captured!()).toBe(true);   // 呈现时仍最新 → 400ms 定时器会弹窗
+    act(() => { hookRef.current!.beginMutation(); });  // 撤回移除全部 active 单：推进代次
+    expect(captured!()).toBe(false);  // 陈旧定时器 fire 时 isLatest=false → no-op，不弹已作废窗
+  });
 });

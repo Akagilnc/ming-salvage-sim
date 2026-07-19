@@ -54,13 +54,10 @@ function mount() {
     const [activeModal, setActiveModal] = React.useState("chat");
     busyRef.current = busy;
     setModalRef.current = setActiveModal;
-    const hook = useAudienceChat(setBusy, selectedRef);
+    // App 同款消费：chatOpen=activeModal==="chat"。chat-exit 归属逻辑在 hook 内部（生产真实
+    // 消费的 controller）；测试只驱动 activeModal，退出取消经 hook 内置 effect，不复制退出胶水。
+    const hook = useAudienceChat(setBusy, selectedRef, activeModal === "chat");
     hookRef.current = hook;
-    // 生产同款「唯一 chat-exit 归属」effect：任何离开 "chat"（关闭/Escape/转诏书/切模态）都
-    // 取消实时流观察者 + 作废重开 poll-batch。测试经此真实退出路径驱动，不直呼 hook 取消法。
-    React.useEffect(() => {
-      if (activeModal !== "chat") { hook.cancelChat(); hook.cancelReopenPolls(); }
-    }, [activeModal, hook.cancelChat, hook.cancelReopenPolls]);
     return (
       <ChatModal
         minister={MINISTER} portraitPrefix="minister_"
