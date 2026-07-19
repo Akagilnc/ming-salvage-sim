@@ -521,36 +521,6 @@ const JUDGE_CONTINUE_TRAFFIC_KEYS = [
 ] as const;
 const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
 
-/** Pick only judge traffic while preserving conflicting traffic for strict rejection. */
-export function pickJudgeTraffic(raw: unknown): unknown {
-  const parsed = asRecord(raw);
-  if (!parsed.ok) return raw;
-  const record = parsed.value;
-  const traffic: Record<string, unknown> = {};
-  const statusKeys =
-    record.status === "continue"
-      ? JUDGE_CONTINUE_TRAFFIC_KEYS
-      : record.status === "escalate"
-        ? JUDGE_ESCALATE_TRAFFIC_KEYS
-        : [];
-  const conflictingKeys =
-    record.status === "converged"
-      ? [...JUDGE_CONTINUE_TRAFFIC_KEYS, ...JUDGE_ESCALATE_TRAFFIC_KEYS]
-      : record.status === "escalate"
-        ? JUDGE_CONTINUE_TRAFFIC_KEYS
-        : [];
-  for (const key of [
-    ...JUDGE_BASE_TRAFFIC_KEYS,
-    ...statusKeys,
-    ...conflictingKeys,
-  ]) {
-    if (Object.prototype.hasOwnProperty.call(record, key)) {
-      traffic[key] = record[key];
-    }
-  }
-  return traffic;
-}
-
 /** Encode a validated judge verdict into its canonical JSON shape. */
 export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
   // Already typed; return a plain JSON-safe clone of the canonical shape.
@@ -563,7 +533,29 @@ export function decodeJudgeVerdict(raw: unknown): ContractResult<JudgeVerdict> {
   if (!record.ok) return record;
   const banned = rejectBannedEnvelopeVocabulary(record.value);
   if (!banned.ok) return banned;
-  const parsed = judgeVerdictSchema.safeParse(record.value);
+  const traffic: Record<string, unknown> = {};
+  const statusKeys =
+    record.value.status === "continue"
+      ? JUDGE_CONTINUE_TRAFFIC_KEYS
+      : record.value.status === "escalate"
+        ? JUDGE_ESCALATE_TRAFFIC_KEYS
+        : [];
+  const keys =
+    record.value.status === "continue"
+      ? [...JUDGE_BASE_TRAFFIC_KEYS, ...statusKeys]
+      // Continue packet fields are declared traffic, so terminal verdicts
+      // carrying repair cargo remain fail-loud instead of silently dropping it.
+      : [
+          ...JUDGE_BASE_TRAFFIC_KEYS,
+          ...statusKeys,
+          ...JUDGE_CONTINUE_TRAFFIC_KEYS,
+        ];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
+  const parsed = judgeVerdictSchema.safeParse(traffic);
   if (!parsed.success) {
     return zodFail("judge verdict", parsed.error);
   }
@@ -1166,7 +1158,7 @@ export function decodeStationEnvelope(
 
   const station = record.value.station;
   if (station === "judge") {
-    return decodeJudgeVerdict(pickJudgeTraffic(record.value));
+    return decodeJudgeVerdict(record.value);
   }
   if (
     station === "coder" ||
