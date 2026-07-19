@@ -787,10 +787,11 @@ def test_fixed_flows_legacy_engine_keeps_global_army_pay_route(fresh_game):
     db.conn.execute(
         """
         UPDATE armies
-        SET owner_power = 'other', self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+        SET owner_power = ?, self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
             central_pay_share = 0, pay_source_region = '',
             province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
-        """
+        """,
+        (db.conn.execute("SELECT id FROM powers WHERE id <> 'ming' LIMIT 1").fetchone()[0],),
     )
     db.conn.execute(
         """
@@ -3320,7 +3321,12 @@ def test_new_ming_army_requires_valid_pay_source_under_cutover(fresh_db):
 
 def test_new_ming_army_rejects_non_ming_pay_source_region(fresh_db):
     state = fresh_db.load_state()
-    fresh_db.conn.execute("UPDATE regions SET controlled_by = 'rebel' WHERE id = 'shaanxi'")
+    non_ming_power = fresh_db.conn.execute(
+        "SELECT id FROM powers WHERE id <> 'ming' LIMIT 1"
+    ).fetchone()[0]
+    fresh_db.conn.execute(
+        "UPDATE regions SET controlled_by = ? WHERE id = 'shaanxi'", (non_ming_power,)
+    )
     fresh_db.conn.commit()
 
     rejected = fresh_db.create_armies_from_extraction(state, [{
@@ -4388,9 +4394,12 @@ def test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine(fresh_game):
     henan_settle = json.loads(json.dumps(shaanxi_settle, ensure_ascii=False))
     henan_settle["st"]["省库库银"] = 40
     henan_fiscal = {"settle": henan_settle}
+    non_ming_power = db.conn.execute(
+        "SELECT id FROM powers WHERE id <> 'ming' LIMIT 1"
+    ).fetchone()[0]
     db.conn.execute(
-        "UPDATE regions SET controlled_by = 'rebel', fiscal = ? WHERE id = 'henan'",
-        (json.dumps(henan_fiscal, ensure_ascii=False),),
+        "UPDATE regions SET controlled_by = ?, fiscal = ? WHERE id = 'henan'",
+        (non_ming_power, json.dumps(henan_fiscal, ensure_ascii=False)),
     )
     db.conn.execute("UPDATE regions SET controlled_by = 'ming' WHERE id = 'taiwan'")
     db.conn.commit()

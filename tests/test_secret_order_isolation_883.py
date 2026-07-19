@@ -1868,7 +1868,7 @@ def test_976_rt03_late_chat_after_create_same_turn(game):
 def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     """红队④ should：undo 含密令口谕 — secret_orders 与 secret_order_briefs 回滚一致。
 
-    foreign_keys=0 下 CASCADE 不生效；brief 须纳入 rollback 表集，不成孤儿。
+    真实 undo 删除密令父行后由 FK CASCADE 删除 brief；其它密令不受影响。
     """
     db, state, content = game
     a, b = _active_ministers(db, content)[:2]
@@ -1881,6 +1881,9 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     db.update_chat_turn_messages(ctid_early, minister_message_id=mid_b_pub)
     db.record_chat_turn_rollback_diffs(
         ctid_early, snap0, db.capture_chat_rollback_snapshot(),
+    )
+    unrelated_oid = db.create_secret_order(
+        state, b.name, "巡查漕运", "未撤销密令正文-KEEP1026", [],
     )
 
     ctid = db.create_chat_turn(state, a.name, "sess-secret-undo-976", 0)
@@ -1898,8 +1901,7 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (oid,),
     ).fetchone()[0] == 1
-    # 文档化：FK 关闭时 CASCADE 不可靠 — brief 进 rollback 表集才是结构真源
-    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+    assert db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
     undone = db.undo_chat_turn(ctid)
     assert undone is not None
@@ -1926,6 +1928,9 @@ def test_976_rt04_undo_chat_turn_secret_order_brief_consistent(game):
 
     assert order_left == 0, f"secret_orders survived undo count={order_left}"
     assert brief_left == 0, f"secret_order_briefs orphan after undo count={brief_left}"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id=?", (unrelated_oid,),
+    ).fetchone()[0] == 1, "未撤销密令的 brief 不应受级联影响"
     assert msg_u == 0 and msg_m == 0
     assert msg_b == 1, "early B public message wrongly deleted"
     assert all(marker not in body for body in _shared_bodies(db))

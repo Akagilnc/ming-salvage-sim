@@ -60,6 +60,12 @@ def test_new_game_has_fiscal_substrate(fresh_game_dir):
     assert settle["st"]["军饷欠"] == pytest.approx(_shaanxi_source_arrears(sess.db))
 
 
+def test_new_game_enforces_foreign_keys_without_seed_violations(fresh_game_dir):
+    sess, _dbp, _content = fresh_game_dir
+    assert sess.db.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert sess.db.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_new_game_three_turn_chain_advances_substrate_and_restores(fresh_game_dir):
     sess, dbp, content = fresh_game_dir
     db, state = sess.db, sess.state

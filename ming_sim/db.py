@@ -681,6 +681,9 @@ class GameDB:
         from ming_sim.applier import _SuspendableConnection
         self.conn = sqlite3.connect(path, check_same_thread=False, factory=_SuspendableConnection)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        if int(self.conn.execute("PRAGMA foreign_keys").fetchone()[0]) != 1:
+            raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
         # 遗产修正符缓存：legacy_modifiers 在落账热路径被频繁调用，缓存聚合结果，
         # 仅在 active 遗产集变化（insert_legacy / expire_legacies）时失效。
         self._legacy_mod_cache: Optional[Dict[str, object]] = None
@@ -1496,6 +1499,8 @@ class GameDB:
             ON relation_edge_events(source, target, event_kind, id);
             """
         )
+        self._ensure_office_type_parents()
+        self._ensure_event_parents()
         for column, definition in {
             "military_strength": "INTEGER NOT NULL DEFAULT 50",
             "cohesion": "INTEGER NOT NULL DEFAULT 50",
@@ -2337,25 +2342,97 @@ class GameDB:
         row = self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
         return row is not None
 
+    def _ensure_office_type_parents(self) -> None:
+        """Materialize every declared/referenced office type before FK-checked writes."""
+        definitions = dict(self.content.office_definitions)
+        referenced = {
+            str(character.office_type).strip()
+            for character in self.content.characters.values()
+            if str(character.office_type).strip()
+        }
+        if self._table_exists("character_offices"):
+            referenced.update(
+                str(row["office_type"]).strip()
+                for row in self.conn.execute(
+                    "SELECT DISTINCT office_type FROM character_offices"
+                ).fetchall()
+                if str(row["office_type"]).strip()
+            )
+        for office_type in sorted(set(definitions) | referenced):
+            self._ensure_office_type_parent(office_type)
+
+    def _ensure_office_type_parent(self, office_type: str) -> None:
+        office_type = str(office_type or "").strip()
+        if not office_type:
+            return
+        definition = self.content.office_definitions.get(office_type, {})
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO offices
+            (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                office_type,
+                json.dumps(definition.get("skills", []), ensure_ascii=False),
+                json.dumps(definition.get("tools", []), ensure_ascii=False),
+                str(definition.get("authority_scope", office_type)),
+                int(definition.get("power", 0)),
+                int(definition.get("responsibility", 0)),
+                int(definition.get("corruption_risk", 0)),
+            ),
+        )
+
+    def _ensure_event_parents(self) -> None:
+        event_ids = {
+            str(event.id).strip()
+            for event in (*self.content.events, *self.content.seed_events)
+            if str(event.id).strip()
+        }
+        if self._table_exists("event_triggers"):
+            event_ids.update(
+                str(row["event_id"]).strip()
+                for row in self.conn.execute(
+                    "SELECT DISTINCT event_id FROM event_triggers"
+                ).fetchall()
+                if str(row["event_id"]).strip()
+            )
+        for event_id in sorted(event_ids):
+            self._ensure_event_parent(event_id)
+
+    def _ensure_event_parent(self, event_id: str) -> None:
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return
+        event = next(
+            (
+                candidate
+                for candidate in (*self.content.events, *self.content.seed_events)
+                if str(candidate.id) == event_id
+            ),
+            None,
+        )
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO events
+            (id, title, kind, summary, urgency, severity, credibility, interests, audiences)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                str(event.title if event is not None else event_id),
+                str(event.kind if event is not None else "待判"),
+                str(event.summary if event is not None else ""),
+                int(event.urgency if event is not None else 0),
+                int(event.severity if event is not None else 0),
+                int(event.credibility if event is not None else 0),
+                json.dumps(event.interests if event is not None else [], ensure_ascii=False),
+                json.dumps(event.audiences if event is not None else [], ensure_ascii=False),
+            ),
+        )
+
     def seed_static_data(self) -> None:
-        if not self.table_has_rows("offices"):
-            for office_type, definition in self.content.office_definitions.items():
-                self.conn.execute(
-                    """
-                    INSERT INTO offices
-                    (office_type, skills, tools, authority_scope, power, responsibility, corruption_risk)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        office_type,
-                        json.dumps(definition["skills"], ensure_ascii=False),
-                        json.dumps(definition["tools"], ensure_ascii=False),
-                        str(definition["authority_scope"]),
-                        int(definition["power"]),
-                        int(definition["responsibility"]),
-                        int(definition["corruption_risk"]),
-                    ),
-                )
+        self._ensure_office_type_parents()
 
         if not self.table_has_rows("office_slots"):
             self.conn.executemany(
@@ -4373,6 +4450,7 @@ class GameDB:
         if not current_type:
             raise ValueError(f"{name}不属大明朝廷，不能授予大明官职")
         eff_type = infer_office_type_from_office(office, office_type or current_type, llm_config or self.llm_config)
+        self._ensure_office_type_parent(eff_type)
         if office_type or eff_type != current_type:
             self.conn.execute(
                 "UPDATE characters SET office=?, office_type=? WHERE name=?",
@@ -4614,6 +4692,7 @@ class GameDB:
             character.office_type,
             llm_config or self.llm_config,
         )
+        self._ensure_office_type_parent(character.office_type)
         # 若没有专属 portrait_id，按 office_type 分配预设池头像
         portrait_id = character.portrait_id
         if not portrait_id:
@@ -6940,9 +7019,6 @@ class GameDB:
     _ROLLBACK_TABLE_PK = {
         "turn_directives": "id",
         "secret_orders": "id",
-        # #976: briefs are not covered by FK CASCADE (PRAGMA foreign_keys=0);
-        # include in chat-turn rollback so undo cannot orphan secret_order_briefs.
-        "secret_order_briefs": "order_id",
         "characters": "name",
         "character_offices": "character_name",
         "consort_traits": "name",
@@ -8973,7 +9049,7 @@ class GameDB:
                 """
                 INSERT INTO turn_directives
                 (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-                VALUES (?, ?, ?, '', ?, '', ?, '大臣拟旨', ?, ?)
+                VALUES (?, ?, ?, NULL, ?, '', ?, '大臣拟旨', ?, ?)
                 """,
                 (state.turn, state.year, state.period, actor, text, status, f"由{actor}拟旨入档"),
             )
@@ -9345,8 +9421,8 @@ class GameDB:
             (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (state.turn, state.year, state.period, event.id if event else "",
-             actor, skill_id, text, source, status, notes),
+            (state.turn, state.year, state.period, event.id if event else None,
+             actor or None, skill_id, text, source, status, notes),
         )
         self.conn.commit()
         return int(cursor.lastrowid)
@@ -9578,6 +9654,7 @@ class GameDB:
         terminal_reason: str = "",
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9600,6 +9677,7 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9622,6 +9700,7 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9636,6 +9715,7 @@ class GameDB:
             self.conn.commit()
 
     def mark_event_expired(self, state: GameState, event_id: str, *, commit: bool = True) -> None:
+        self._ensure_event_parent(event_id)
         self.conn.execute(
             f"""
             INSERT INTO event_triggers
@@ -9662,6 +9742,7 @@ class GameDB:
         eid = str(event_id or "").strip()
         if not eid:
             return
+        self._ensure_event_parent(eid)
         payload = json.dumps(choice if isinstance(choice, dict) else {}, ensure_ascii=False)
         label = str((choice or {}).get("label") or "")[:200] if isinstance(choice, dict) else ""
         self.conn.execute(
