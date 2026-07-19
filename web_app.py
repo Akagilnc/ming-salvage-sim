@@ -1958,6 +1958,22 @@ def _next_or_none(iterator):
         return None
 
 
+def _await_audience_inflight_clear(game) -> None:
+    """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
+    让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
+    inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op；超时抛
+    AudienceNightError（夜保持开、可原地重试，端点映射 409）。
+
+    走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。"""
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "conn"):
+        return
+    from ming_sim.audience_night import get_open_night, wait_in_flight_clear
+    open_n = get_open_night(db)
+    if open_n is not None:
+        wait_in_flight_clear(db, int(open_n["id"]))
+
+
 def _game_write_gate(game) -> threading.Lock:
     if hasattr(game, "_runtime_write_gate"):
         return game._runtime_write_gate()
@@ -3060,7 +3076,11 @@ async def api_advance_without_edict() -> Dict[str, Any]:
     game = get_game()
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    from ming_sim.audience_night import AudienceNightError
     try:
+        # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
+        # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
+        _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
             pending_directive_actions = [
                 action for action in game.db.list_pending_actions(turn_before)
@@ -3073,6 +3093,7 @@ async def api_advance_without_edict() -> Dict[str, Any]:
                 game.db,
                 content=game.content,
                 registry=getattr(game.session, "registry", None),
+                inflight_wait_s=0.0,
             )
             game.refresh_turn()
     except ValueError as e:
@@ -3083,6 +3104,9 @@ async def api_advance_without_edict() -> Dict[str, Any]:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
+    except AudienceNightError as e:
+        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
+        raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "state": game.state_payload(),
         "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
@@ -3120,9 +3144,13 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
     was_ended = bool(game.state.ended)
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+    from ming_sim.audience_night import AudienceNightError
     try:
+        # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
+        # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
+        _await_audience_inflight_clear(game)
         with _game_write_gate(game):
-            result = game.session.resolve_turn(cheat_directive=body.cheat)
+            result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
             failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
@@ -3159,6 +3187,9 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
+    except AudienceNightError as e:
+        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
+        raise HTTPException(status_code=409, detail=str(e)) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -3180,8 +3211,12 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
+            # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
+            _await_audience_inflight_clear(game)
             with _game_write_gate(game):
-                result = game.session.resolve_turn(on_event=on_event, cheat_directive=body.cheat)
+                result = game.session.resolve_turn(
+                    on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
                 decree = game.session.last_decree
                 failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:

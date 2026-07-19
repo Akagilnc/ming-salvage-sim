@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -32,7 +34,7 @@ from ming_sim.audience_night import (
 from ming_sim.content import GameContent
 from ming_sim.db import GameDB
 from ming_sim.decree import advance_without_edict, pre_settle
-from ming_sim.session import GameSession, TurnPhase
+from ming_sim.session import TurnPhase
 
 
 def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
@@ -52,6 +54,23 @@ def _active_minister(db, content, *, exclude: set[str] | None = None) -> str:
 def _find_entries(entries, *required_tags):
     need = set(required_tags)
     return [e for e in entries if need.issubset(set(e["tags"]))]
+
+
+def _partial_session(db, state, content):
+    """真实 GameSession 公开颁诏入口（resolve_turn / await_audience_inflight_clear），
+    绕开 LLM 构造：无草案时 auto_close 先收夜、再以 ValueError 停在拟诏前，够断言收夜副作用。"""
+    from ming_sim.session import GameSession
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.last_decree = ""
+    sess._decree_draft_fingerprint = ()
+    sess.pending_count = lambda: 0  # type: ignore
+    return sess
 
 
 def _land_reply(db, state, minister: str, chat_id: int, text: str = "臣遵旨。") -> None:
@@ -216,28 +235,17 @@ def test_resolve_turn_auto_closes_before_settlement(game, monkeypatch):
         order.append("auto_close")
         return real_auto(db_, state_, **kw)
 
-    monkeypatch.setattr(an, "auto_close_open_night", tracing_auto)
     # resolve_turn imports auto_close from audience_night at call time
-    import ming_sim.session as sess_mod
     monkeypatch.setattr(
         "ming_sim.audience_night.auto_close_open_night", tracing_auto,
     )
 
     # 阻止真 LLM：pending 大门拒 + 无 draft 会 ValueError；我们只断言收夜先发生
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = None
-    sess.agno_db = None
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.pending_count = lambda: 0  # type: ignore
+    sess = _partial_session(db, state, content)
 
     # list_directives empty → ValueError after auto_close
     with pytest.raises(ValueError, match="草案|颁诏"):
-        GameSession.resolve_turn(sess, decree="")
+        sess.resolve_turn(decree="")
     assert "auto_close" in order
     assert an.get_night(db, night["id"])["status"] == "closed"
     close_e = _find_entries(an.list_ledger(db, night["id"]), TAG_CLOSE_NIGHT)
@@ -254,116 +262,155 @@ def test_advance_without_edict_auto_closes(game):
     assert state.turn == before + 1
 
 
+def test_write_decree_does_not_close_night(game, monkeypatch):
+    """AC8：拟诏（write_decree）不是收夜触发器——夜内可拟旨并继续斟酌，夜保持开。
+    只有 resolve_turn / advance 才收夜。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, location="乾清宫")
+    # 一条对话式拟旨暂存 → write_decree 会提交为 draft 并生成诏书
+    db.upsert_pending_directive(state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+    monkeypatch.setattr("ming_sim.session.write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
+
+    sess = _partial_session(db, state, content)
+    decree = sess.write_decree()
+    assert "诏" in decree
+    # 拟诏后夜仍开着（可继续拟旨/斟酌）
+    assert an.get_night(db, night["id"])["status"] == "open"
+    assert not _find_entries(an.list_ledger(db, night["id"]), TAG_CLOSE_NIGHT)
+
+
+def test_cross_night_directive_reassigned_to_second_night(game):
+    """同臣跨两夜拟旨：第一夜未应允 directive 留 pending；第二夜复用更新时归属原子迁到第二夜，
+    第二夜应允 → 只在第二夜收夜提交，不被旧夜漏挂。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+
+    n1 = an.open_night(db, state, location="乾清宫")
+    d_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "初稿：缓征辽饷", "actor": minister})
+    # 第一夜不应允 → 留 pending；收夜不提交
+    an.close_night(db, state, night_id=n1["id"], content=content)
+    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
+
+    n2 = an.open_night(db, state, location="文华殿")
+    # 同臣同回合复用更新（last-write-wins）→ 归属须迁到第二夜、清 approval
+    same_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "定稿：改折色", "actor": minister})
+    assert same_id == d_id
+    row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
+    assert int(row["night_id"]) == n2["id"]
+    assert int(row["night_approved"]) == 0
+    # 第二夜应允 + 收夜 → 提交
+    assert db.mark_pending_night_approved([d_id], night_id=n2["id"]) == 1
+    an.close_night(db, state, night_id=n2["id"], content=content)
+    assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "committed"
+    drafts = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'", (state.turn,)).fetchall()
+    assert any("改折色" in (r["text"] or "") for r in drafts)
+
+
 # ── AC9：真实任免 + 候选转档 + 崩溃续跑 ──────────────────────────────
 
 
-def test_close_night_crash_resume_real_appointment_and_directive(game):
+def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
+    """AC9：合法任免已 commit、候选转档前 crash → 关 GameDB、重开续跑收齐；
+    真实任免落盘、候选真实转档、单条收夜账、幂等无重复、无半提交终态。"""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        db = GameDB(path, content)
+        db.seed_static_data()
+        state = db.load_state()
+        minister = _active_minister(db, content)
+        night = an.open_night(db, state)
+
+        new_office = "兵部郎中"
+        pa_id = db.stage_pending_action(
+            state.turn, kind="office", action="任命",
+            minister_name=minister,
+            payload={
+                "name": minister, "office": new_office, "office_type": "六部",
+                "faction": "中立", "reason": "测试任免",
+            },
+        )
+        db.mark_pending_night_approved([pa_id], night_id=night["id"])
+        dir_id = db.upsert_pending_directive(
+            state.turn, minister, payload={"text": "着户部清查边饷", "actor": minister},
+        )
+        db.mark_pending_night_approved([dir_id], night_id=night["id"])
+
+        # crash：任免已 commit（step1）、候选转档（step2）前崩
+        with pytest.raises(AudienceNightError) as ei:
+            an.close_night(
+                db, state, night_id=night["id"], content=content,
+                crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
+            )
+        assert ei.value.code == "close_crash"
+        assert db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == new_office
+        db.close()  # 进程崩溃：关库
+
+        # 重开 GameDB / state，从游标续跑（跨进程恢复）
+        db2 = GameDB(path, content)
+        state2 = db2.load_state()
+        mid = an.get_night(db2, night["id"])
+        assert mid["status"] == "closing"
+        assert int(mid["close_commit_cursor"]) == CLOSE_STEP_COMMIT_OFFICE
+
+        result = an.close_night(db2, state2, night_id=night["id"], content=content)
+        assert result["closed"] is True
+        final = an.get_night(db2, night["id"])
+        assert final["status"] == "closed"
+        assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
+        # 任免仍在（不因重开丢失）+ 候选真实转档
+        assert db2.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == new_office
+        assert db2.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
+        ).fetchone()["status"] == "committed"
+        drafts = db2.conn.execute(
+            "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
+            (state2.turn,),
+        ).fetchall()
+        assert any("清查边饷" in (r["text"] or "") for r in drafts)
+        # 单条收夜账，再收幂等无重复
+        assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+        again = an.close_night(db2, state2, night_id=night["id"], content=content)
+        assert again.get("already") is True
+        assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+        db2.close()
+    finally:
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+def test_close_night_only_commits_this_night_approved(game):
+    """收夜只交本夜已应允白名单；他夜/未应允项不被串走。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night = an.open_night(db, state)
-
-    # 在册大臣改任新职（真实可 commit 的 office 形状）
-    new_office = "兵部郎中"
-    pa_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=minister,
-        payload={
-            "name": minister,
-            "office": new_office,
-            "office_type": "六部",
-            "faction": "中立",
-            "reason": "测试任免",
-        },
+    approved = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={"name": minister, "office": "兵部郎中", "office_type": "六部",
+                 "faction": "中立", "reason": "测试"},
     )
-    db.mark_pending_night_approved([pa_id], night_id=night["id"])
-
-    dir_id = db.upsert_pending_directive(
-        state.turn, minister,
-        payload={"text": "着户部清查边饷", "actor": minister},
-    )
-    db.mark_pending_night_approved([dir_id], night_id=night["id"])
-
-    # 同回合另一夜未应允项不得被本夜收走
-    other_pending = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name=minister,
+    db.mark_pending_night_approved([approved], night_id=night["id"])
+    # 未应允项（同回合、另一夜语义）
+    unapproved = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
         payload={"name": minister, "office": "不该落的官", "office_type": "六部"},
     )
-    # 强制挂到「别的夜」语义：清 night_approved 并改 night_id=0
     db.conn.execute(
-        "UPDATE pending_actions SET night_id=0, night_approved=0 WHERE id=?",
-        (other_pending,),
-    )
+        "UPDATE pending_actions SET night_id=0, night_approved=0 WHERE id=?", (unapproved,))
     db.conn.commit()
 
-    with pytest.raises(AudienceNightError) as ei:
-        an.close_night(
-            db, state, night_id=night["id"],
-            content=content,
-            crash_after_step=CLOSE_STEP_COMMIT_OFFICE,
-        )
-    assert ei.value.code == "close_crash"
-    mid = an.get_night(db, night["id"])
-    assert mid["status"] == "closing"
-    assert int(mid["close_commit_cursor"]) == CLOSE_STEP_COMMIT_OFFICE
-
-    # 任免真实落盘
-    office_row = db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (minister,),
-    ).fetchone()
-    assert office_row["office"] == new_office
-    pa = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pa_id,),
-    ).fetchone()
-    assert pa["status"] == "committed"
-
-    # 未应允项仍 pending
-    other = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (other_pending,),
-    ).fetchone()
-    assert other["status"] == "pending"
-
-    # 续跑：候选转档 + 收夜
-    result = an.close_night(db, state, night_id=night["id"], content=content)
-    assert result["closed"] is True
-    final = an.get_night(db, night["id"])
-    assert final["status"] == "closed"
-    assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
-
-    dir_row = db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
-    ).fetchone()
-    assert dir_row["status"] == "committed"
-    drafts = db.conn.execute(
-        "SELECT text, status FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchall()
-    assert any("清查边饷" in (r["text"] or "") for r in drafts)
-
-    close_e = _find_entries(an.list_ledger(db, night["id"]), TAG_CLOSE_NIGHT)
-    assert len(close_e) == 1
-    again = an.close_night(db, state, night_id=night["id"], content=content)
-    assert again.get("already") is True
-    assert len(_find_entries(an.list_ledger(db, night["id"]), TAG_CLOSE_NIGHT)) == 1
-
-
-def test_close_submit_failure_does_not_seal_night(game):
-    """提交失败不得推进 cursor 封夜。"""
-    db, state, content = game
-    night = an.open_night(db, state)
-    # 坏 payload 任免 → apply 返 False → failed
-    pa_id = db.stage_pending_action(
-        state.turn, kind="office", action="任命",
-        minister_name="不存在的人",
-        payload={"name": "", "office": "空"},
-    )
-    db.mark_pending_night_approved([pa_id], night_id=night["id"])
-    with pytest.raises(AudienceNightError) as ei:
-        an.close_night(db, state, night_id=night["id"], content=content)
-    assert ei.value.code == "close_submit_failed"
-    loaded = an.get_night(db, night["id"])
-    assert loaded["status"] == "closing"
-    assert int(loaded["close_commit_cursor"]) == 0
+    an.close_night(db, state, night_id=night["id"], content=content)
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (approved,)).fetchone()["status"] == "committed"
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (unapproved,)).fetchone()["status"] == "pending"
 
 
 # ── AC10 在飞：完成可收 / 超时 fail-closed ───────────────────────────
@@ -387,33 +434,76 @@ def test_close_inflight_timeout_then_retry_after_land(game):
     assert an.get_night(db, night_id)["status"] == "closed"
 
 
-def test_resolve_turn_blocked_by_inflight(game, monkeypatch):
+def test_resolve_turn_blocked_by_inflight_stays_open(game, monkeypatch):
+    """挂起/超时 → resolve_turn fail-closed，夜保持 open、相位不进。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night_id, _chat_id = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="fly2", agno_runs_before=0,
     )
-    monkeypatch.setattr(an, "DEFAULT_IN_FLIGHT_WAIT_S", 0.0)
-    monkeypatch.setattr(
-        "ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 0.0,
-    )
+    monkeypatch.setattr("ming_sim.audience_night.DEFAULT_IN_FLIGHT_WAIT_S", 0.0)
 
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = None
-    sess.llm_config = None
-    sess.agno_db = None
-    sess.last_decree = ""
-    sess._decree_draft_fingerprint = ()
-    sess.pending_count = lambda: 0  # type: ignore
-
+    sess = _partial_session(db, state, content)
     with pytest.raises(AudienceNightError) as ei:
-        GameSession.resolve_turn(sess, decree="")
+        sess.resolve_turn(decree="")
     assert ei.value.code == "in_flight_chat"
     assert an.get_night(db, night_id)["status"] == "open"
     assert state.turn_phase == TurnPhase.SUMMONING.value
+
+
+def test_resolve_turn_gate_held_close_is_instant_failclosed(game):
+    """AC10 反自锁：web 入口持 gate 传 inflight_wait_s=0.0，在飞时即时 fail-closed，
+    绝不持 gate 空转 30 秒（否则回话 epilogue 抢不到 gate 落档）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, _chat_id = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="fly3", agno_runs_before=0,
+    )
+    sess = _partial_session(db, state, content)
+    t0 = time.monotonic()
+    with pytest.raises(AudienceNightError) as ei:
+        sess.resolve_turn(decree="", inflight_wait_s=0.0)
+    assert ei.value.code == "in_flight_chat"
+    assert time.monotonic() - t0 < 5.0  # 即时返回，非默认 30s 自锁
+    assert an.get_night(db, night_id)["status"] == "open"
+
+
+def test_inflight_reply_lands_before_decree_closes(game):
+    """AC10 顺序：web 颁诏入口在抢 write_gate 前先 gate-free 等在飞回话落档
+    （_await_audience_inflight_clear 不持 gate），回话 epilogue 抢得 gate 入档后，
+    再持 gate 收夜——回话先入档→收夜。"""
+    import web_app
+    from types import SimpleNamespace
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, chat_id = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="fly4", agno_runs_before=0,
+    )
+    web_gate = threading.Lock()  # 代 web write_gate：回话 epilogue 落档须持它
+    go = threading.Event()
+
+    def reply_epilogue():
+        go.wait(2.0)
+        with web_gate:  # 回话生成完，抢 gate 落档
+            _land_reply(db, state, minister, chat_id)
+
+    worker = threading.Thread(target=reply_epilogue)
+    worker.start()
+
+    sess = _partial_session(db, state, content)
+    go.set()
+    # web 入口真实前置步：gate 外等在飞落档（不持 web_gate，故 reply_epilogue 能抢锁入档、返回）
+    web_app._await_audience_inflight_clear(SimpleNamespace(db=db))
+    assert db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (chat_id,)).fetchone()["status"] == "active"
+    # 落档后持 gate 收夜即时复查
+    with web_gate:
+        with pytest.raises(ValueError, match="草案|颁诏"):
+            sess.resolve_turn(decree="", inflight_wait_s=0.0)
+    worker.join(2.0)
+    assert not worker.is_alive()
+    assert an.get_night(db, night_id)["status"] == "closed"
 
 
 # ── 开夜原子 + 旧档迁移 ──────────────────────────────────────────────
@@ -522,16 +612,36 @@ def test_bad_audibility_and_append_after_close(game):
     assert ei2.value.code == "night_closed"
 
 
-def test_cli_attach_path_sets_night_id(game):
-    """CLI 起聊走 attach_chat_turn_to_night（非 night_id=0 旁路）。"""
+def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
+    """CLI 真实输入入口 terminal.minister_chat 起聊 → 对话轮挂夜（非 night_id=0 旁路）。"""
+    import ming_sim.cli.terminal as term
+    from types import SimpleNamespace
+
     db, state, content = game
-    minister = _active_minister(db, content)
-    from ming_sim.audience_night import attach_chat_turn_to_night
-    night_id, cid = attach_chat_turn_to_night(
-        db, state, minister, agno_session_id=f"cli:{minister}", agno_runs_before=0,
+    character = next(c for c in content.characters.values()
+                     if db.get_character_status(c.name)[0] == "active"
+                     and getattr(c, "power_id", "ming") == "ming"
+                     and getattr(c, "office_type", "") != "后宫")
+
+    def chat(_name, _question, chat_turn_id=0):
+        assert chat_turn_id > 0  # 挂夜轮以 generating 起笔，回话须带 chat_turn_id
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", secret_order_id=0, pending_action_id=0,
+            pending_action_failures=[],
+        )
+
+    session = SimpleNamespace(
+        db=db, state=state, content=content, temporary_characters=set(), chat=chat,
     )
-    row = db.conn.execute(
-        "SELECT night_id, status FROM chat_turns WHERE id=?", (cid,),
-    ).fetchone()
-    assert int(row["night_id"]) == night_id > 0
-    assert row["status"] == "generating"
+    answers = iter(["朕问卿边事如何？", "done"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "dismiss"
+
+    open_n = an.get_open_night(db)
+    assert open_n is not None
+    turns = an.list_chat_turns_for_night(db, int(open_n["id"]))
+    assert turns and turns[-1]["minister_name"] == character.name
+    assert int(turns[-1]["night_id"]) == int(open_n["id"]) > 0
