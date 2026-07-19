@@ -67,7 +67,6 @@ from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
-from ming_sim.memories import effect_brief
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -162,54 +161,6 @@ _CONDITION_DISPLAY_REPLACEMENTS = [
     ("|", "、"),
     (".", "·"),
 ]
-
-
-def _turn_account_report(db, turn: int) -> str:
-    extraction = db.get_turn_extraction(turn)
-    if not extraction:
-        return ""
-    applied = extraction.get("extractor_output")
-    if isinstance(applied, dict) and applied.get("mode") == "modular" and isinstance(applied.get("merged"), dict):
-        applied = applied["merged"]
-    lines: List[str] = ["本月实账："]
-    if isinstance(applied, dict):
-        brief = effect_brief(applied)
-        lines.append(brief or "无显著落账。")
-    elif applied:
-        lines.append(str(applied))
-    else:
-        lines.append("无显著落账。")
-
-    try:
-        # 旧存档的 rejection_reports 可能没有 resimulation_invalidated 列：COALESCE 不能挡
-        # 「列不存在」（SQLite 会直接 OperationalError），broad except 会把整段「窒碍未行」吞掉。
-        # 先查列是否存在（同 decree._has_durable_player_visible_rejection 的 PRAGMA 守法），
-        # 有才加该过滤，无则退化为不过滤（codex correctness）。
-        cols = {r[1] for r in db.conn.execute("PRAGMA table_info(rejection_reports)").fetchall()}
-        invalidated_clause = (
-            "AND COALESCE(resimulation_invalidated, 0) = 0"
-            if "resimulation_invalidated" in cols else ""
-        )
-        rows = db.conn.execute(
-            f"""
-            SELECT section, reason FROM rejection_reports
-            WHERE turn = ?
-              AND source IN ('player_decree', 'hitl_decision')
-              {invalidated_clause}
-            ORDER BY id
-            """,
-            (int(turn),),
-        ).fetchall()
-    except Exception:
-        rows = []
-    if rows:
-        lines.append("")
-        lines.append("窒碍未行：")
-        for row in rows[:8]:
-            section = str(row["section"] or "所拟事项")
-            reason = str(row["reason"] or "有司未能照办")
-            lines.append(f"- {section}：{reason}")
-    return "\n".join(lines)
 
 
 _CHARACTER_CONDITION_FIELD_LABELS = {
@@ -1312,7 +1263,6 @@ class WebGame:
 
     def state_payload(self) -> Dict[str, Any]:
         directives = [self.directive_payload(row) for row in self.directive_rows()]
-        previous_turn = max(0, int(self.state.turn) - 1)
         pending_actions = self.db.list_pending_actions(int(self.state.turn))
         visible_non_directive_pending = [
             a for a in pending_actions
@@ -1323,7 +1273,6 @@ class WebGame:
                      "turn": self.state.turn, "phase": self.state.turn_phase},
             "metrics": self.state.metrics,
             "previous_summary": self.previous_summary,
-            "previous_account_summary": _turn_account_report(self.db, previous_turn),
             "treasury": self.db.treasury_report(self.state),
             "issues": self.issue_payloads(),
             "legacies": self.legacies_payload(),
@@ -1950,6 +1899,28 @@ class WebGame:
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _settlement_player_payload(
+    *,
+    decree: str = "",
+    report: str = "",
+    decisions: Optional[List[Dict[str, Any]]] = None,
+    pending_action_failures: Optional[List[Dict[str, Any]]] = None,
+    steam_events: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """One player-facing seam for every settlement SSE terminal event."""
+    payload: Dict[str, Any] = {
+        "decree": decree,
+        "report": report,
+    }
+    if decisions is not None:
+        payload["decisions"] = decisions
+    if pending_action_failures is not None:
+        payload["pending_action_failures"] = pending_action_failures
+    if steam_events is not None:
+        payload["steam_events"] = steam_events
+    return payload
 
 
 def _next_or_none(iterator):
@@ -2800,27 +2771,16 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/turn_extraction")
-async def api_turn_extraction(turn: int = -1) -> Dict[str, Any]:
-    """读 turn_extractions：默认上一回合（state.turn-1，因 resolve 已 next_period）。"""
-    if turn < 0:
-        turn = max(1, int(get_game().state.turn) - 1)
-    data = get_game().db.get_turn_extraction(turn)
-    if data is None:
-        return {"turn": turn, "exists": False}
-    data["exists"] = True
-    return data
-
-
 @app.get("/api/history/turns")
 async def api_history_turns() -> Dict[str, Any]:
     """已存档回合列表（turn_reports / turn_extractions / 已颁诏 turn_directives 并集）。"""
-    return {"turns": get_game().db.list_archived_turns()}
+    turns = get_game().db.list_archived_turns()
+    return {"turns": [{k: v for k, v in item.items() if k != "has_extraction"} for item in turns]}
 
 
 @app.get("/api/history/turn/{turn}")
 async def api_history_turn(turn: int) -> Dict[str, Any]:
-    """某回合历史聚合：邸报奏报 + 诏书 + 已颁草案 + extractor 输入/输出。"""
+    """某回合玩家历史：只交付邸报、诏书与已颁草案。"""
     db = get_game().db
     report = db.get_turn_report(turn)
     extraction = db.get_turn_extraction(turn)
@@ -2830,7 +2790,6 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
     decree_text = ""
     if extraction is not None:
         decree_text = str(extraction.get("decree_text") or "")
-        extraction["exists"] = True
     return {
         "turn": turn,
         "exists": True,
@@ -2839,7 +2798,6 @@ async def api_history_turn(turn: int) -> Dict[str, Any]:
         "report": report,
         "decree_text": decree_text,
         "directives": directives,
-        "extraction": extraction,
     }
 
 
@@ -3141,9 +3099,14 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
             failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
                 # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
-                return {"decree": decree, "awaiting_decision": True,
-                        "decisions": result.decisions, "state": game.state_payload(),
-                        "pending_action_failures": failures}
+                return {
+                    **_settlement_player_payload(
+                        decree=decree,
+                        decisions=result.decisions,
+                        pending_action_failures=failures,
+                    ),
+                    "awaiting_decision": True,
+                }
             report = result.report
             game.refresh_turn()
             events = [
@@ -3153,10 +3116,11 @@ async def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> D
             ]
             if not was_ended and game.state.ended:
                 events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            return steam_events.with_events({
-                "decree": decree, "report": report, "state": game.state_payload(),
-                "pending_action_failures": failures,
-            }, events)
+            return steam_events.with_events(_settlement_player_payload(
+                decree=decree,
+                report=report,
+                pending_action_failures=failures,
+            ), events)
     except ValueError as e:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
@@ -3194,12 +3158,11 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:
                     # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                    ev_queue.put(("__decisions__", {
-                        "decree": decree,
-                        "decisions": result.decisions,
-                        "state": game.state_payload(),
-                        "pending_action_failures": failures,
-                    }))
+                    ev_queue.put(("__decisions__", _settlement_player_payload(
+                        decree=decree,
+                        decisions=result.decisions,
+                        pending_action_failures=failures,
+                    )))
                     return
                 report = result.report
                 game.refresh_turn()
@@ -3210,13 +3173,12 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", {
-                    "decree": decree,
-                    "report": report,
-                    "state": game.state_payload(),
-                    "steam_events": events,
-                    "pending_action_failures": failures,
-                }))
+                ev_queue.put(("__done__", _settlement_player_payload(
+                    decree=decree,
+                    report=report,
+                    steam_events=events,
+                    pending_action_failures=failures,
+                )))
         except ValueError as e:
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
@@ -3289,13 +3251,12 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", {
-                    "decree": decree,
-                    "report": report,
-                    "state": game.state_payload(),
-                    "steam_events": events,
-                    "pending_action_failures": failures,
-                }))
+                ev_queue.put(("__done__", _settlement_player_payload(
+                    decree=decree,
+                    report=report,
+                    steam_events=events,
+                    pending_action_failures=failures,
+                )))
         except ValueError as e:
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)

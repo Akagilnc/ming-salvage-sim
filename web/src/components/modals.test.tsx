@@ -83,7 +83,7 @@ function renderModal(props: {
   mountedRoots.push({ root, host });
 }
 
-function renderReportModal(props: { report: string; accountReport?: string }) {
+function renderReportModal(props: { report: string }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -91,7 +91,6 @@ function renderReportModal(props: { report: string; accountReport?: string }) {
     root.render(
       <ReportModal
         report={props.report}
-        accountReport={props.accountReport ?? ""}
         onClose={() => {}}
       />
     )
@@ -427,11 +426,10 @@ describe("ChatModal — elapsed timer during thinking (issue #353)", () => {
   });
 });
 
-describe("ReportModal — two-page settlement bulletin", () => {
-  it("renders narrative and account reports without literal organic markdown", () => {
+describe("ReportModal — narrative settlement bulletin", () => {
+  it("renders narrative without an account page or literal organic markdown", () => {
     renderReportModal({
       report: "**辽东军情**\n- 军前缺饷",
-      accountReport: "**实账**\n1. 户部已支银",
     });
 
     expect(document.body.textContent).toContain("辽东军情");
@@ -439,31 +437,7 @@ describe("ReportModal — two-page settlement bulletin", () => {
     expect(document.body.textContent).not.toContain("**");
     expect(document.body.textContent).not.toContain("- 军前缺饷");
 
-    const page2 = Array.from(document.querySelectorAll("button"))
-      .find((btn) => btn.textContent?.includes("实账"));
-    act(() => (page2 as HTMLButtonElement).click());
-
-    expect(document.body.textContent).toContain("户部已支银");
-    expect(document.body.textContent).not.toContain("**");
-    expect(document.body.textContent).not.toContain("1. 户部已支银");
-  });
-
-  it("shows narrative as page 1 and account text as manually selected page 2", () => {
-    renderReportModal({
-      report: "辽东有警，诸臣奏闻。",
-      accountReport: "人事：卢象升调任。\n有司奏：某军窒碍未行。",
-    });
-
-    expect(document.body.textContent).toContain("辽东有警");
-    expect(document.body.textContent).not.toContain("卢象升调任");
-
-    const page2 = Array.from(document.querySelectorAll("button"))
-      .find((btn) => btn.textContent?.includes("实账"));
-    expect(page2).toBeTruthy();
-    act(() => (page2 as HTMLButtonElement).click());
-
-    expect(document.body.textContent).toContain("卢象升调任");
-    expect(document.body.textContent).toContain("窒碍未行");
-    expect(document.body.textContent).not.toContain("辽东有警");
+    expect(document.body.textContent).not.toContain("实账");
+    expect(document.body.textContent).not.toContain("账目明细");
   });
 });

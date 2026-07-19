@@ -2292,11 +2292,13 @@ def test_person_log_normalized_not_truncated(game):
     旧码 normalized_text[:500] 会从 JSON 中间切断成不可解析。"""
     import json as _json
     db, state, content = game
+    person_name = active_ming_character(db, content)
     big = {"name": "甲" * 300, "动作": "处置", "status": "dismissed",
            "reason": "乙" * 300, "extra": list(range(40))}
-    db.record_person_log(state, "审计长度测试", "处置", payload_summary="s", normalized=big)
+    db.record_person_log(state, person_name, "处置", payload_summary="s", normalized=big)
     row = db.conn.execute(
-        "SELECT normalized FROM person_logs WHERE person_name='审计长度测试' ORDER BY id DESC LIMIT 1"
+        "SELECT normalized FROM person_logs WHERE person_name=? ORDER BY id DESC LIMIT 1",
+        (person_name,),
     ).fetchone()
     parsed = _json.loads(row["normalized"])
     assert parsed["name"] == "甲" * 300 and parsed["动作"] == "处置"
@@ -3456,6 +3458,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
         for name, values in old_content.items():
             ch = content.characters[name]
             ch.power_id, ch.status, ch.office, ch.office_type = values
+        db.conn.execute("DELETE FROM power_logs WHERE power_id IN (?, ?)", (zhang_power, li_power))
         db.conn.execute("DELETE FROM powers WHERE id IN (?, ?)", (zhang_power, li_power))
         db.conn.commit()
 
@@ -3550,6 +3553,7 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
         )
         ch = content.characters[zhang]
         ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM power_logs WHERE power_id=?", (zhang_power,))
         db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
         db.conn.commit()
 
@@ -3636,6 +3640,7 @@ def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
         )
         ch = content.characters[zhang]
         ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM power_logs WHERE power_id=?", (zhang_power,))
         db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
         db.conn.commit()
 
@@ -3723,6 +3728,7 @@ def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejec
         )
         ch = content.characters[zhang]
         ch.power_id, ch.status, ch.office, ch.office_type = old_content
+        db.conn.execute("DELETE FROM power_logs WHERE power_id=?", (zhang_power,))
         db.conn.execute("DELETE FROM powers WHERE id=?", (zhang_power,))
         db.conn.commit()
 

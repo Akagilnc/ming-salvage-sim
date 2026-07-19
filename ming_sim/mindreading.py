@@ -16,13 +16,13 @@ from ming_sim.db import normalize_office
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import Character
-from ming_sim.qualitative import identity_band, qualitative_band, safe_historical_text
+from ming_sim.qualitative import (
+    identity_band,
+    qualitative_character_axis,
+)
 
 
 _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
-_LOYALTY_BANDS = ("未见深交", "略有隔膜", "尚可托付", "颇得倚重", "深受信任")
-
-
 def _character_field(character: object, field: str) -> object:
     if isinstance(character, Mapping) or hasattr(character, "keys"):
         try:
@@ -103,8 +103,8 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     heard = []
     for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
         heard.append({
-            "title": safe_historical_text(item.get("title"), "见闻标题"),
-            "body": safe_historical_text(item.get("body"), "见闻正文"),
+            "title": str(item.get("title") or ""),
+            "body": str(item.get("body") or ""),
         })
     return {"heard": heard[-20:]}
 
@@ -153,7 +153,7 @@ def build_mindreading_materials(
     faction = str(_character_field(current_target, "faction") or "未明党籍")
     reader_context = _reader_context(db, state, reader)
     party_truth = f"名义党派：{faction}；对本党的认同：{identity_band(identity)}。"
-    loyalty_truth = f"对君的真心：{qualitative_band(loyalty, _LOYALTY_BANDS)}。"
+    loyalty_truth = f"对君的真心：{qualitative_character_axis('loyalty', loyalty)}。"
     guilt_truth = _seed_guilt_text(current_target)
     return {
         "reader": reader.name,

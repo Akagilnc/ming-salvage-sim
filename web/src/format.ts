@@ -2,7 +2,6 @@ import React from "react";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import type StateInline from "markdown-it/lib/rules_inline/state_inline.mjs";
-import { ExtractionView } from "./components/extraction";
 import type { Army, GameState, LegacyEffect, MapNode } from "./types";
 
 export const scoreTone = (value: number, inverse = false) => {
@@ -163,8 +162,7 @@ export const splitReportItems = (text: string, prefix: string) => {
 };
 
 
-// 邸报详明里 extractor 常输出英文 id（region_id/army_id/power_id）或编号。
-// 这里建一份 id→中文名 的全局映射，每次拉 state 时刷新，供 ExtractionView 各 block 翻译。
+// 玩家面板会收到英文 id（region_id/army_id/power_id）或编号；统一映射为中文名。
 export const labelMaps = {
   region: new Map<string, string>(),
   army: new Map<string, string>(),

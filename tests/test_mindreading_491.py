@@ -184,7 +184,7 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     material = model.inputs[0]
     assert "名义党派：皇党" in material["党账"]
     assert "党色极深" in material["党账"]
-    assert "未见深交" in material["君臣账"]
+    assert "离心已显" in material["君臣账"]
     assert "合谋" in material["底案"]
     assert "92" not in json.dumps(material, ensure_ascii=False)
     assert "15" not in json.dumps(material, ensure_ascii=False)
