@@ -9,9 +9,6 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from ming_sim.qualitative import qualitative_audience_text
-
-
 OFFICE_SLOTS = (
     ("陕西巡抚", "督抚", "shaanxi", "陕西"),
     ("三边总督", "督抚", "shaanxi", "陕西、甘肃、宁夏"),
@@ -57,13 +54,9 @@ def source_kind_for_query(query: str) -> str:
     return "inquiry" if any(word in text for word in ("查访", "密查", "查问", "访查")) else "firsthand"
 
 
-def _safe_report_text(text: object) -> str:
-    """Keep reusable report prose at the audience boundary.
-
-    DB report readers already hide abstract axes.  Do not erase countable
-    military, fiscal, date, or arrears facts from a near-minister's return.
-    """
-    return qualitative_audience_text(text, "近臣回奏")
+def _report_text(text: object) -> str:
+    """Carry report prose; structured readers own qualitative projection."""
+    return str(text or "")
 
 
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
@@ -74,17 +67,17 @@ def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
     if domain == "office":
         return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
     if domain == "arrears":
-        return _safe_report_text(db.army_report(limit=10)), "armies"
+        return _report_text(db.army_report(limit=10)), "armies"
     if domain == "bandits":
         # power_report is the existing qualitative military-intelligence seam;
         # use its domain filter so a bandit question cannot receive every
         # foreign power's report.
-        return _safe_report_text(db.power_report(
+        return _report_text(db.power_report(
             # Content identifies the three rebel powers by id while their
             # display kind is \"内乱\".  power_report accepts either form.
             exclude_self=True, kinds={"bandit", "bandits", "内乱"}, audience=True,
         )), "powers"
-    return _safe_report_text(db.power_report(exclude_self=True, audience=True)), "powers"
+    return _report_text(db.power_report(exclude_self=True, audience=True)), "powers"
 
 
 def _character_domain_statement(db: Any, state: Any, character_name: str, query: str) -> tuple[str, str]:
@@ -101,7 +94,7 @@ def _character_domain_statement(db: Any, state: Any, character_name: str, query:
     # The durable source id remains in the knowledge ledger.  The audience
     # payload gets only a qualitative label, so its provenance can be
     # explained without exposing an internal key (which may contain digits).
-    return _safe_report_text(record.get("body")), "持久见闻"
+    return _report_text(record.get("body")), "持久见闻"
 
 
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
