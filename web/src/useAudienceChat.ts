@@ -25,6 +25,8 @@ export type AudienceHistoryData = {
   pending_action_failures?: PendingActionFailure[];
   chat_turn_id?: number;
   mindreading_pending?: boolean;
+  /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
+  pending_turn_ids?: number[];
 };
 
 export type SendChatCallbacks = {
@@ -50,7 +52,7 @@ export function useAudienceChat(
   const chatGenRef = React.useRef(0);
 
   const resetPanel = React.useCallback(() => {
-    chatGenRef.current += 1;  // 作废在飞的历史加载/轮询
+    chatGenRef.current += 1;  // 作废在飞的历史加载（读心轮询另按面板归属，切人变面板即停）
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
@@ -68,21 +70,25 @@ export function useAudienceChat(
   }, []);
 
   const loadHistory = React.useCallback(
-    async (minister: string): Promise<AudienceHistoryData> => {
+    // 返回投影快照（已应用）或 null（被 generation 守卫拒收）——拒收时**不做任何面板写入**，
+    // App 据 null 早退，杜绝陈旧快照的建议/可撤回/失败/临时大臣元数据回覆（#499）。
+    async (minister: string): Promise<AudienceHistoryData | null> => {
       const gen = ++chatGenRef.current;
       const data = await api<AudienceHistoryData>(
         `/api/ministers/${encodeURIComponent(minister)}/chat`,
       );
-      // generation 守卫：更新的 load/send/reset 已发生 → 本次为陈旧快照，丢弃不覆盖新完成的轮。
-      const fresh = () => chatGenRef.current === gen && selectedMinisterRef.current === minister;
-      if (!fresh()) return data;
+      // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
+      if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
-      const expectedTurnId = data.chat_turn_id || 0;
-      if (data.mindreading_pending && expectedTurnId > 0) {
-        void pollMindreadingUntilReady(minister, expectedTurnId, {
-          shouldContinue: fresh,
-          onRecords: (records, turnId) => {
-            if (fresh()) dispatchChat({ type: "mindreading", chatTurnId: turnId, records });
+      // 每一待读心轮各自有界轮询：只按「当前大臣面板」存活——发送不作废（读心是持久 turn
+      // 事件，新一轮不该停旧轮轮询）；切人（面板变）才停。覆盖所有待读心轮，不止最新轮。
+      const pendingTurns = Array.isArray(data.pending_turn_ids) ? data.pending_turn_ids : [];
+      const onPanel = () => selectedMinisterRef.current === minister;
+      for (const turnId of pendingTurns) {
+        void pollMindreadingUntilReady(minister, turnId, {
+          shouldContinue: onPanel,
+          onRecords: (records, tid) => {
+            if (onPanel()) dispatchChat({ type: "mindreading", chatTurnId: tid, records });
           },
         });
       }

@@ -54,6 +54,7 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
         minister_reply=reply,
         llm_config=object(),
         chat_turn_id=chat_turn_id,
+        write_gate=threading.Lock(),
         mindreading_agent=_Agent(),
     )
     assert payload is not None
@@ -74,6 +75,7 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
         minister_reply=reply,
         llm_config=object(),
         chat_turn_id=chat_turn_id,
+        write_gate=threading.Lock(),
         mindreading_agent=_Agent(),
     )
     assert undone is None
@@ -284,6 +286,39 @@ def test_build_chat_projection_weaves_mindreading_by_turn(game):
     assert (a2["chat_turn_id"], a2["record_id"]) == (cid2, rid2)
 
 
+def test_pending_turn_ids_covers_all_pending_turns_not_only_latest(game):
+    """所有已完成回话但读心未落库的轮都进 pending_turn_ids（不只最新）；落库后移出。
+
+    支撑重开路径对**每一**待读心轮各自轮询——新一轮发出也不丢旧轮读心（#499）。
+    """
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    web_game = _web_game(db, state, content, _FakeAgent())
+    minister = "温体仁"
+
+    def _completed_turn(tag):
+        uid = db.append_chat_message(minister, int(state.turn), "user", "问" + tag)
+        mid = db.append_chat_message(minister, int(state.turn), "minister", "答" + tag)
+        cid = db.create_chat_turn(state, minister, tag, 0)
+        db.update_chat_turn_messages(cid, user_message_id=uid, minister_message_id=mid)
+        return cid
+
+    c1 = _completed_turn("a")
+    c2 = _completed_turn("b")
+    assert web_game.mindreading_for_minister(minister)["pending_turn_ids"] == [c1, c2]
+
+    db.record_mindreading(c1, {
+        "reader": "王承恩", "target": minister, "source": "见闻", "precision": "清晰", "narration": "x",
+    })
+    assert web_game.mindreading_for_minister(minister)["pending_turn_ids"] == [c2]  # 已落库移出
+
+    # 读心者不在御前近臣位 → 无 eligible → 不返回待读心轮
+    db.conn.execute("UPDATE characters SET office='礼部尚书', office_type='礼部' WHERE name='王承恩'")
+    db.conn.commit()
+    assert web_game.mindreading_for_minister(minister)["pending_turn_ids"] == []
+
+
 def test_mindreading_pending_flag_guides_bounded_poll(game):
     """pending=本轮该有读心但尚未落库——取消/早重开前端据此有界轮询、就绪即停。"""
     from tests.test_audience_background import _FakeAgent, _web_game
@@ -312,38 +347,3 @@ def test_mindreading_pending_flag_guides_bounded_poll(game):
     self_out = web_game.mindreading_for_minister(reader)
     assert self_out["mindreading"] == []
     assert self_out["mindreading_pending"] is False
-
-
-def test_pending_ownership_covers_trail_no_db_before_mark(game, monkeypatch):
-    """ownership：trail 不在 mark 前触 DB；整轮 pending 覆盖读心。"""
-    import web_app as web_app_mod
-    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
-
-    db, state, content = game
-    minister_name = "温体仁"
-    agent = _FakeAgent(chunks=["臣遵旨。"])
-    web_game = _web_game(db, state, content, agent)
-
-    counts_at_trail_start = []
-
-    real_trail = web_game._trail_mindreading_after_reply
-
-    def wrapped_trail(*args, **kwargs):
-        counts_at_trail_start.append(web_game._pending_writes_count)
-        return real_trail(*args, **kwargs)
-
-    monkeypatch.setattr(web_game, "_trail_mindreading_after_reply", wrapped_trail)
-    monkeypatch.setattr(
-        web_app_mod,
-        "run_mindreading_for_turn",
-        lambda **_k: {
-            "reader": "王承恩", "target": minister_name, "source": "见闻",
-            "precision": "清晰", "narration": "x",
-        },
-    )
-
-    list(web_game.chat_stream(minister_name, "问。"))
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
-    assert counts_at_trail_start, "trail 应被调用"
-    # trail 启动时 worker 仍持有 pending（count >= 1）
-    assert counts_at_trail_start[0] >= 1

@@ -93,6 +93,8 @@ function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
+  // #499：done 触发的持久刷新（loadState / 密令列表）按代次门控，旧响应迟到不覆盖新的。
+  const durableRefreshGenRef = React.useRef(0);
 
   // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
@@ -109,8 +111,11 @@ function App() {
     cancelChat,
   } = useAudienceChat(setBusy, selectedMinisterRef);
 
-  const loadState = React.useCallback(async () => {
+  // shouldApply：并发刷新（如相邻两轮 done 各触发一次）时按最新代次门控——旧响应迟到不覆盖
+  // 新的持久 UI 投影（#499 p5-durable-refresh-response-clobber）。默认恒真，其它调用方不受影响。
+  const loadState = React.useCallback(async (shouldApply: () => boolean = () => true) => {
     const data = await api<GameState>("/api/game/state");
+    if (!shouldApply()) return data;
     refreshLabelMaps(data);
     setState(data);
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
@@ -120,10 +125,10 @@ function App() {
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
-    // #499：历史投影 + 读心轮询由 hook 独占派发（含 turn-identified 归位、固定轮轮询、
-    // 切人/重开 token 作废）；App 只补面板外围态。切人守卫同 selectedMinisterRef。
+    // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
+    // 的陈旧快照 → App 一并跳过全部面板外围写入（建议/可撤回/失败/临时大臣），不回覆新完成的轮。
     const data = await loadHistoryProjection(ministerName);
-    if (selectedMinisterRef.current !== ministerName) return;
+    if (!data || selectedMinisterRef.current !== ministerName) return;
     const allKnown = [
       ...(state?.ministers || []),
       ...(state?.consorts || []),
@@ -439,11 +444,14 @@ function App() {
       // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end（读心可延后 end 达
       // 120s），不按请求 token 门控（后果持久）。全局态无条件落；面板态按当前大臣归属落。
       onDone: (data) => {
-        // 全局持久后果（幂等）：指令 / pending_count / 全量 state / 密令列表。
+        // 单调即时字段直接落 done 载荷（各 done 递新，无竞争）：指令 / pending_count。
         setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count ?? current.pending_count } : current));
-        void loadState();
+        // 重取型刷新（loadState / 密令列表）按代次门控：相邻两轮 done 的旧响应迟到不覆盖新的。
+        const refreshGen = ++durableRefreshGenRef.current;
+        const latestRefresh = () => durableRefreshGenRef.current === refreshGen;
+        void loadState(latestRefresh);
         api<{ orders: SecretOrder[] }>("/api/secret_orders")
-          .then(({ orders }) => setSecretOrders(orders))
+          .then(({ orders }) => { if (latestRefresh()) setSecretOrders(orders); })
           .catch(() => {});
         // 面板态：仅当前大臣面板未切走才落。
         if (selectedMinisterRef.current !== targetMinisterName) return;

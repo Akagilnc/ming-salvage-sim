@@ -214,3 +214,110 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
   });
 });
+
+describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
+  // 历史 GET 携 pending_turn_ids；每一待读心轮各自轮询 /chat/mindreading?chat_turn_id=T。
+  const routeReopen = (
+    pendingTurnIds: number[],
+    mindByTurn: (turnId: number, call: number) => { mindreading: Array<{ id: number; narration: string }>; mindreading_pending: boolean },
+    counters: Record<string, number> = {},
+  ) =>
+    vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/chat/mindreading")) {
+        const tid = Number(u.searchParams.get("chat_turn_id") || 0);
+        counters[tid] = (counters[tid] || 0) + 1;
+        return jsonResp({ chat_turn_id: tid, ...mindByTurn(tid, counters[tid]) });
+      }
+      return jsonResp({
+        minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [],
+        can_undo_last_chat: false, pending_turn_ids: pendingTurnIds,
+      });
+    });
+
+  const advance = () => act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+
+  it("待读心历史 + 固定轮轮询（先空后达）就绪即浮现，达成后终止", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef, rows } = mount();
+      const counters: Record<string, number> = {};
+      vi.stubGlobal("fetch", routeReopen([10], (_tid, call) =>
+        call < 2
+          ? { mindreading: [], mindreading_pending: true }                                  // 先空（仍 pending）
+          : { mindreading: [{ id: 1, narration: "近臣低声。" }], mindreading_pending: true },  // 后达
+        counters,
+      ));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      expect(rows()).toEqual(["user:问", "minister:答"]);  // 读心未到
+      await advance();  // 第 1 次轮询：空
+      expect(rows()).toEqual(["user:问", "minister:答"]);
+      await advance();  // 第 2 次：达 → 浮现
+      expect(rows()).toEqual(["user:问", "minister:答", "attendant:近臣低声。"]);
+      const afterDeliver = counters["10"];
+      await advance();
+      expect(counters["10"]).toBe(afterDeliver);  // 达成后不再轮询（终止）
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("多个待读心轮各自轮询，均浮现（不只最新轮）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef, rows } = mount();
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/mindreading")) {
+          const tid = Number(u.searchParams.get("chat_turn_id") || 0);
+          return jsonResp({ chat_turn_id: tid, mindreading: [{ id: tid, narration: tid === 10 ? "近臣一。" : "近臣二。" }], mindreading_pending: true });
+        }
+        // 两轮都已完成回话（都在投影里），都待读心
+        return jsonResp({
+          minister: MINISTER,
+          history: [U("问a", 10), M("答a", 10), U("问b", 11), M("答b", 11)],
+          suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10, 11],
+        });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+      await advance();
+      const attendants = rows().filter((r) => r.startsWith("attendant:"));
+      expect(attendants.sort()).toEqual(["attendant:近臣一。", "attendant:近臣二。"]);
+      // 各归其轮：近臣一随轮 10 回话之后，近臣二随轮 11 回话之后
+      expect(rows()).toEqual([
+        "user:问a", "minister:答a", "attendant:近臣一。",
+        "user:问b", "minister:答b", "attendant:近臣二。",
+      ]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("轮询随后续 send 存活：新一轮发出后旧轮读心仍就绪浮现（面板归属、不按发送作废）", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hookRef, rows } = mount();
+      const counters: Record<string, number> = {};
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        const u = new URL(String(url), "http://t.local");
+        if (u.pathname.endsWith("/chat/stream") || init?.method === "POST") {
+          const enc = new TextEncoder();
+          return new Response(new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(enc.encode(fmt({ event: "done", data: { history: [U("问", 10), M("答", 10), U("问2", 11), M("答2", 11)], suggestions: [], directives: [] } })));
+              c.enqueue(enc.encode(fmt({ event: "end", data: {} })));
+              c.close();
+            },
+          }), { status: 200 });
+        }
+        if (u.pathname.endsWith("/chat/mindreading")) {
+          const tid = Number(u.searchParams.get("chat_turn_id") || 0);
+          counters[tid] = (counters[tid] || 0) + 1;
+          return jsonResp({ chat_turn_id: tid, mindreading: counters[tid] >= 2 ? [{ id: 1, narration: "旧轮读心。" }] : [], mindreading_pending: true });
+        }
+        return jsonResp({ minister: MINISTER, history: [U("问", 10), M("答", 10)], suggestions: [], can_undo_last_chat: false, pending_turn_ids: [10] });
+      }));
+      await act(async () => { await hookRef.current!.loadHistory("温体仁"); });  // 轮 10 待读心，起轮询
+      await advance();  // 第 1 次：空
+      await act(async () => { await hookRef.current!.sendChat("温体仁", "问2", noCbs); });  // 期间发新一轮
+      await advance();  // 轮 10 的轮询仍存活 → 达
+      expect(rows().some((r) => r === "attendant:旧轮读心。")).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+});

@@ -1586,28 +1586,37 @@ class WebGame:
         不受新一轮成为 latest 影响、旧轮读心不丢失/不错归）；为 0 时取最近活跃轮
         （历史入口首拉）。记录带持久 `id`，前端按 (chat_turn_id, id) 去重/归位。
 
-        `pending`=本轮该有读心（御前近臣在位且目标非其本人）但尚未落库，供
-        有界轮询判据：pending 才继续、非 pending 立即停，免得对无读心的轮次空转。
+        `pending`=该轮该有读心（御前近臣在位且目标非其本人）但尚未落库，供单轮轮询
+        判据：pending 才继续、非 pending 立即停，免得对无读心的轮次空转。
+        `pending_turn_ids`=本大臣本回合**所有**待读心轮（不只最新），供重开路径对每一
+        待读心轮各自轮询、且随新一轮发出仍存活（前端按面板归属维持，不按发送作废）。
         """
         records: List[Dict[str, Any]] = []
         pending = False
+        pending_turn_ids: List[int] = []
         if self._persistent_chat_minister(minister_name):
             target_turn = int(chat_turn_id)
             if target_turn <= 0:
                 row = self.db.get_last_active_chat_turn(minister_name, self.state.turn)
                 target_turn = int(row["id"]) if row is not None else 0
             chat_turn_id = target_turn
+            eligible = mindreading_eligible(
+                self.db, self.content.characters, minister_name,
+            ) is not None
             if chat_turn_id > 0:
                 records = list(self.db.list_mindreading_records(chat_turn_id))
                 if not records:
-                    pending = mindreading_eligible(
-                        self.db, self.content.characters, minister_name,
-                    ) is not None
+                    pending = eligible
+            if eligible:
+                pending_turn_ids = self.db.list_pending_mindreading_turns(
+                    minister_name, self.state.turn,
+                )
         return {
             "minister": minister_name,
             "chat_turn_id": chat_turn_id,
             "mindreading": records,
             "mindreading_pending": pending,
+            "pending_turn_ids": pending_turn_ids,
         }
 
     def _chat_stream_payload(
@@ -1869,9 +1878,7 @@ class WebGame:
             reply = str(minister_reply or "")
             if not chat_turn_id or not reply.strip():
                 return None
-            # eligibility 读 DB——仅在 ownership 已确立后执行
-            if mindreading_eligible(self.db, self.content.characters, minister_name) is None:
-                return None
+            # 资格判定唯一入口在 run_mindreading_for_turn 内（不在此重复查询）
             try:
                 result = run_mindreading_for_turn(
                     db=self.db,
@@ -3013,9 +3020,10 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "suggestions": game.suggestions_for(character),
         "can_undo_last_chat": game.can_undo_last_chat(minister_name),
         "pending_action_failures": game.pending_action_failures_for(minister_name),
-        # 最新活跃轮 + 是否仍有待生成读心 → 前端据此对取消/早重开做固定轮有界轮询
+        # 最新活跃轮 + 所有待读心轮 → 前端对每一待读心轮各自固定轮有界轮询（随新一轮发出仍存活）
         "chat_turn_id": mind["chat_turn_id"],
         "mindreading_pending": mind["mindreading_pending"],
+        "pending_turn_ids": mind["pending_turn_ids"],
     }
 
 
