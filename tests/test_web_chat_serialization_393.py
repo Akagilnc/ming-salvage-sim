@@ -114,8 +114,8 @@ class _RecordingDB:
     def update_chat_turn_messages(self, *args, **kwargs):
         return None
 
-    def mark_mindreading_running(self, chat_turn_id: int):
-        # #499 回话提交即接受读心任务（本 stub 不落库，仅满足生产调用）
+    def commit_minister_reply(self, chat_turn_id: int, minister_message_id: int):
+        # #499 原子链接回话+接受读心任务（本 stub 不落库，仅满足生产调用）
         return None
 
     def record_chat_turn_rollback_diffs(self, *args, **kwargs):

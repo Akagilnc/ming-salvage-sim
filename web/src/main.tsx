@@ -21,7 +21,7 @@ import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
-function App() {
+export function App() {
   const [appView, setAppView] = React.useState<AppView>("menu");
   const [menuStatus, setMenuStatus] = React.useState<MenuStatus | null>(null);
   // 新 HUD stage 实际像素尺寸（matrix3d 透视需要 px 基准）
@@ -184,11 +184,14 @@ function App() {
   }, [loadState]);
 
   const exitToMenu = React.useCallback(async () => {
+    // #499：清空 state 前推进持久投影代次，作废在飞的旧 done 刷新——否则迟到刷新会在退菜单后
+    // 把陈旧 state 回填、再入局时短暂渲染。清态本身也是一次持久投影变更，纳入代次归属。
+    beginDurableMutation();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
     setAppView("menu");
     await refreshMenuStatus();
-  }, [refreshMenuStatus]);
+  }, [refreshMenuStatus, beginDurableMutation]);
 
   React.useEffect(() => {
     if (!state) return;
@@ -211,14 +214,14 @@ function App() {
     if (currentTurn === secretOrderShown) return;
     void refreshDurableProjection({
       secretOrders: true,
-      onSecretOrders: (orders, isLatest) => {
-        setSecretOrderShown(currentTurn);  // 仅接受成功（最新代次）才标记已呈现
-        if (
+      onSecretOrders: () => setSecretOrderShown(currentTurn),  // 仅接受成功（最新代次）才标记已呈现
+      // 延迟呈现归协调器：400ms 后仍最新代次才弹窗；撤回等推进代次后陈旧定时器 no-op。
+      autoOpen: {
+        afterMs: 400,
+        when: (orders) =>
           shouldAutoOpenSecretOrdersAfterSettlement()
-          && orders.some((o) => o.status === "active" || o.status === "pending_review")
-        ) {
-          setTimeout(() => { if (isLatest()) setActiveModal("secret_orders"); }, 400);
-        }
+          && orders.some((o) => o.status === "active" || o.status === "pending_review"),
+        open: () => setActiveModal("secret_orders"),
       },
     });
   }, [state?.turn.turn]);
@@ -1456,4 +1459,6 @@ function SettlementLock({
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+// 仅在真实浏览器（存在 #root）自动挂载；测试可 import { App } 挂载真实组件走生产 wiring。
+const rootEl = typeof document !== "undefined" ? document.getElementById("root") : null;
+if (rootEl) createRoot(rootEl).render(<App />);

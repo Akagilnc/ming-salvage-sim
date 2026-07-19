@@ -7426,12 +7426,22 @@ class GameDB:
         ).fetchall()
         return [int(row["id"]) for row in rows]
 
-    def mark_mindreading_running(self, chat_turn_id: int) -> None:
-        """回话提交时**原子接受**读心任务：''→'running'（显式归属，不靠 schema 默认空推断）。"""
+    def commit_minister_reply(self, chat_turn_id: int, minister_message_id: int) -> None:
+        """**原子**链接大臣回话 + 接受读心任务：单条 UPDATE、单次 commit，令
+        「回话已链接」与「任务已接受（''→'running'）」同生同灭（#499）。
+
+        分两次提交曾留下竞态：链接已提交、接受未提交时崩溃 → 完成的回话空状态，
+        启动对账（只管 'running'）漏掉、恢复永不轮询/投递。合并为一事务后此孤儿态不可达。
+        """
         self.conn.execute(
-            "UPDATE chat_turns SET mindreading_status = 'running' "
-            "WHERE id = ? AND mindreading_status = ''",
-            (int(chat_turn_id),),
+            """
+            UPDATE chat_turns
+            SET minister_message_id = ?,
+                mindreading_status = CASE WHEN mindreading_status = ''
+                                         THEN 'running' ELSE mindreading_status END
+            WHERE id = ?
+            """,
+            (int(minister_message_id), int(chat_turn_id)),
         )
         self.conn.commit()
 
