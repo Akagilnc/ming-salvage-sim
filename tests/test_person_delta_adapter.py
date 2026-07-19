@@ -1,11 +1,16 @@
 """ADR 0009 person delta normalization behavior."""
 
+import copy
 import json
+import os
+import tempfile
 
 import pytest
 
 import ming_sim.issues as issues
+from ming_sim.db import GameDB
 from ming_sim.models import Character
+from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.person_delta_adapter import normalize_person_changes
 from ming_sim.simulation import (
     MODULE_FIELDS,
@@ -1824,6 +1829,118 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
         assert row["office"] == "陕西总督"
         assert applied["applied_person_changes"][0]["动作"] == "任命"
         assert "normalized" not in applied["applied_person_changes"][0]
+    finally:
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type
+
+
+def _new_ming_character(name: str, office: str, office_type: str) -> Character:
+    return Character(
+        name=name,
+        office=office,
+        office_type=office_type,
+        faction="",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50,
+        ability=50,
+        integrity=50,
+        courage=50,
+        style="",
+        power_id="ming",
+    )
+
+
+def test_add_character_person_title_skips_office_type_scaffold(game):
+    """#1057: 运行时新建带名分（person-title）人物撞 #1056 严格官类校验。add_character 须镜像
+    set_character_office 守卫——person-title 不建 offices 父行、不写 character_offices 脏行，
+    否则 _ensure_office_type_parent 直接 ValueError 中止结算。
+
+    #1059 codex：office 文本用「诸生」——它同时是 offices.json 生员词干，故显式声明的
+    「身名分」若被 infer_office_type_from_office 反推覆盖成「生员」，名分守卫即失效、误建
+    offices 父行。此钉锁「显式名分不被 office 文本反推覆盖」的不变式（office='降臣' 不撞词干
+    时守卫看着也绿，是假绿）。"""
+    db, state, _content = game
+    name = "阵前新附甲"
+
+    db.add_character(state, _new_ming_character(name, "诸生", "身名分"), source="阵前倒戈")
+
+    row = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (name,)
+    ).fetchone()
+    assert row is not None
+    assert row["office_type"] == "身名分"
+    assert db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone() is None
+
+
+def test_add_character_non_canonical_office_type_still_raises(game):
+    """守卫只放行 person-title 名分：真正未定义的官类仍必须响亮 ValueError（闸不被放宽吞掉）。"""
+    db, state, _content = game
+
+    with pytest.raises(ValueError, match="未定义官类"):
+        db.add_character(
+            state, _new_ming_character("杜撰甲", "绝无此名的杜撰怪衔", "杜撰官类")
+        )
+
+
+def test_seed_backfill_skips_person_title_character_offices(game):
+    """#1057 AC「seed 路同守卫」回归钉：旧档回填入口 seed_static_data（character_offices 空时
+    从 characters 补档）须对 person-title 走同守卫。静态 content 无名分人物，故必须让含名分
+    的人物真实经过 seed 回填口——否则守卫退回无条件 INSERT 会撞 offices FK（名分无父行）。"""
+    db, state, _content = game
+    name = "旧档降金甲"
+    db.add_character(state, _new_ming_character(name, "降臣", "身名分"), source="阵前倒戈")
+
+    # 模拟旧档迁移态：characters 已有名分人物、character_offices 待回填（清空触发回填口）。
+    db.conn.execute("DELETE FROM character_offices")
+    db.conn.commit()
+
+    db.seed_static_data()  # 旧档回填入口（L2588 backfill）
+
+    # 回填真跑了：canonical 朝臣拿到 character_offices 行（否则等于没验回填）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM character_offices"
+    ).fetchone()["c"] > 0
+    # person-title 不入官职体系：无 offices 父行、无 character_offices 脏行，人物本身保留。
+    assert db.conn.execute(
+        "SELECT 1 FROM offices WHERE office_type='身名分'"
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (name,)
+    ).fetchone()["office_type"] == "身名分"
+
+
+def test_set_character_office_person_title_survives_stem_collision(game):
+    """#1059 codex 同源接缝：set_character_office 显式声明「身名分」+ office='诸生'（撞 offices.json
+    生员词干）时，eff_type 不得被 infer 反推成「生员」——否则名分守卫失效、误建 offices 父行、
+    写 character_offices 脏行。锁「显式名分权威」不变式（office_type 留空回落 current_type 授实职
+    仍照常重推，见 test_apply_score_extraction_treats_active_identity_title_as_unappointed）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+
+    try:
+        db.set_character_office(name, "诸生", "身名分")
+
+        row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["office_type"] == "身名分"
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone() is None
     finally:
         content.characters[name].office = old_office
         content.characters[name].office_type = old_office_type
@@ -3857,3 +3974,77 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
         assert release_idx < appoint_idx, f"派生 处置(起复) 须按序落在 任命 之前：{pcs}"
     finally:
         _ch.status, _ch.office, _ch.office_type, _ch.status_reason, _ch.reason_code = _saved
+
+
+def test_apply_office_appointment_new_person_person_title_no_dirty_office_row(game):
+    """#1058 接缝回归钉①：apply_office_appointment 新建档路（不在册）须透传 new_office_type。
+    带 person-title 名分的新人物经【唯一落地核】建档时，office_type 落 名分、不写脏
+    character_offices 行、更不因 infer 兜「待铨」当普通官职而 raise 中止结算。"""
+    db, state, content = game
+    name = "测试名分新降将_1058"
+    assert name not in content.characters
+    try:
+        result = issues.apply_office_appointment(
+            db, state, content, None,
+            name, "听用候铨",
+            reason="降金后授名分",
+            new_office_type="身名分",
+        )
+        assert not result.get("rejected"), result
+        assert result.get("kind") == "appoint"
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row is not None, "名分新人物未落 characters"
+        assert row["office_type"] == "身名分"
+        # 名分守卫：offices 父行不建、character_offices 无脏行
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone() is None
+    finally:
+        content.characters.pop(name, None)
+
+
+def test_fresh_static_seed_person_title_character_no_offices_parent(content):
+    """#1058 接缝回归钉②：全新静态 seed 含名分 office_type 的人物时，_ensure_office_type_parents
+    不得把名分 rematerialize 成 offices 父行（删父行后又从 canonical 集捞回来的接缝回归）。"""
+    seed_content = copy.deepcopy(content)
+    person_title_name = "测试静态名分人物_1058"
+    seed_content.characters[person_title_name] = Character(
+        name=person_title_name,
+        office="听用候铨",
+        office_type="身名分",
+        faction="中立",
+        aliases=[],
+        personal_skills=[],
+        loyalty=50, ability=50, integrity=50, courage=50,
+        style="名分待铨",
+        power_id="ming",
+        status="active",
+    )
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = None
+    try:
+        db = GameDB(path, seed_content)
+        db.seed_static_data()
+        for kind in PERSON_TITLE_KINDS:
+            assert db.conn.execute(
+                "SELECT 1 FROM offices WHERE office_type=?", (kind,)
+            ).fetchone() is None, f"名分 {kind} 被 rematerialize 成 offices 父行"
+        # 名分人物本身落 characters、character_offices 无脏行
+        assert db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (person_title_name,)
+        ).fetchone() is not None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (person_title_name,)
+        ).fetchone() is None
+    finally:
+        if db is not None:
+            db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)

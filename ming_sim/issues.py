@@ -5663,7 +5663,11 @@ def apply_office_appointment(
     if content is None:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
     from ming_sim.session import apply_appointment  # 延迟导入避循环
-    appt = {"name": name, "office": new_office, "faction": faction, "reason": reason, "approved": True}
+    # office_type 必须透传：apply_appointment→add_character 靠它走 person-title 守卫（名分不建
+    # offices 父行、不写 character_offices）。漏传则 infer 兜成「待铨」→ 名分人物被当普通官职、
+    # 建脏 character_offices 行（#1058 接缝回归；transfer 分支已带 new_office_type，此处对称补齐）。
+    appt = {"name": name, "office": new_office, "office_type": new_office_type,
+            "faction": faction, "reason": reason, "approved": True}
     # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
