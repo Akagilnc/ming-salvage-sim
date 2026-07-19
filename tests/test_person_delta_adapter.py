@@ -1854,11 +1854,16 @@ def _new_ming_character(name: str, office: str, office_type: str) -> Character:
 def test_add_character_person_title_skips_office_type_scaffold(game):
     """#1057: 运行时新建带名分（person-title）人物撞 #1056 严格官类校验。add_character 须镜像
     set_character_office 守卫——person-title 不建 offices 父行、不写 character_offices 脏行，
-    否则 _ensure_office_type_parent 直接 ValueError 中止结算。"""
+    否则 _ensure_office_type_parent 直接 ValueError 中止结算。
+
+    #1059 codex：office 文本用「诸生」——它同时是 offices.json 生员词干，故显式声明的
+    「身名分」若被 infer_office_type_from_office 反推覆盖成「生员」，名分守卫即失效、误建
+    offices 父行。此钉锁「显式名分不被 office 文本反推覆盖」的不变式（office='降臣' 不撞词干
+    时守卫看着也绿，是假绿）。"""
     db, state, _content = game
     name = "阵前新附甲"
 
-    db.add_character(state, _new_ming_character(name, "降臣", "身名分"), source="阵前倒戈")
+    db.add_character(state, _new_ming_character(name, "诸生", "身名分"), source="阵前倒戈")
 
     row = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (name,)
@@ -1911,6 +1916,34 @@ def test_seed_backfill_skips_person_title_character_offices(game):
     assert db.conn.execute(
         "SELECT office_type FROM characters WHERE name=?", (name,)
     ).fetchone()["office_type"] == "身名分"
+
+
+def test_set_character_office_person_title_survives_stem_collision(game):
+    """#1059 codex 同源接缝：set_character_office 显式声明「身名分」+ office='诸生'（撞 offices.json
+    生员词干）时，eff_type 不得被 infer 反推成「生员」——否则名分守卫失效、误建 offices 父行、
+    写 character_offices 脏行。锁「显式名分权威」不变式（office_type 留空回落 current_type 授实职
+    仍照常重推，见 test_apply_score_extraction_treats_active_identity_title_as_unappointed）。"""
+    db, state, content = game
+    name = active_ming_character(db, content)
+    old_office = content.characters[name].office
+    old_office_type = content.characters[name].office_type
+
+    try:
+        db.set_character_office(name, "诸生", "身名分")
+
+        row = db.conn.execute(
+            "SELECT office_type FROM characters WHERE name=?", (name,)
+        ).fetchone()
+        assert row["office_type"] == "身名分"
+        assert db.conn.execute(
+            "SELECT 1 FROM offices WHERE office_type='身名分'"
+        ).fetchone() is None
+        assert db.conn.execute(
+            "SELECT 1 FROM character_offices WHERE character_name=?", (name,)
+        ).fetchone() is None
+    finally:
+        content.characters[name].office = old_office
+        content.characters[name].office_type = old_office_type
 
 
 @pytest.mark.parametrize(
