@@ -21,7 +21,11 @@
  * hang fix; the live probe guards regression if a hangy CLI reappears on PATH / image.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import {
+  execFileSync,
+  spawnSync,
+  type SpawnSyncReturns,
+} from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -227,21 +231,26 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   elapsedMs: number;
 } {
   const emptyHome = mkDir("964-empty-auth-home-");
-  const promptFile = join(emptyHome, "stdin");
-  writeFileSync(promptFile, "ping\n");
   const env = emptyAuthEnv(emptyHome);
+  const promptFile = join(emptyHome, "auth-probe-prompt.txt");
+  writeFileSync(promptFile, "Reply with exactly: auth-probe-964");
   const t0 = Date.now();
   if (target.kind === "host") {
+    let r: SpawnSyncReturns<string>;
+    // Production grok consumes --prompt-file; the probe supplies the same bytes via file-backed stdin.
     const promptFd = openSync(promptFile, "r");
-    const r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
-      encoding: "utf8",
-      stdio: [promptFd, "pipe", "pipe"],
-      env,
-      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-      killSignal: "SIGKILL",
-    });
-    closeSync(promptFd);
+    try {
+      r = spawnSync(target.bin, [...HEADLESS_PRINT_ARGS], {
+        encoding: "utf8",
+        stdio: [promptFd, "pipe", "pipe"],
+        env,
+        timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+        killSignal: "SIGKILL",
+      });
+    } finally {
+      closeSync(promptFd);
+    }
     const timedOut =
       r.error?.message?.includes("TIMEDOUT") === true ||
       r.signal === "SIGTERM" ||
@@ -260,35 +269,37 @@ function runHeadlessEmptyAuthProbe(target: GrokProbeTarget): {
   // Do NOT pass empty XAI_API_KEY= into the container (empty string counts as
   // present credentials → 401, not native "Not signed in"). Host env keys are
   // not auto-forwarded by docker run unless -e is used.
-  // A pipe-backed fd 0 cannot be reopened through /dev/stdin in every
-  // container environment. Redirect a mounted regular file inside the
-  // container so grok sees the production /dev/stdin argv with a stable fd.
-  const r = spawnSync(
-    "docker",
-    [
-      "run",
-      "--rm",
-      "--entrypoint",
-      "/bin/bash",
-      "-e",
-      "HOME=/tmp/964-empty-home",
-      "-v",
-      `${emptyHome}:/tmp/964-empty-home`,
-      "-v",
-      `${promptFile}:/tmp/964-probe-stdin:ro`,
-      target.image,
-      "-lc",
-      `exec /usr/local/bin/grok ${HEADLESS_PRINT_ARGS.join(" ")} < /tmp/964-probe-stdin`,
-    ],
-    {
-      encoding: "utf8",
-      // Real process.env so docker CLI finds its socket/context; isolation is
-      // container-side via HOME mount only.
-      timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-      killSignal: "SIGKILL",
-    },
-  );
+  let r: SpawnSyncReturns<string>;
+  const promptFd = openSync(promptFile, "r");
+  try {
+    r = spawnSync(
+      "docker",
+      [
+        "run",
+        "-i",
+        "--rm",
+        "--entrypoint",
+        "/usr/local/bin/grok",
+        "-e",
+        "HOME=/tmp/964-empty-home",
+        "-v",
+        `${emptyHome}:/tmp/964-empty-home`,
+        target.image,
+        ...HEADLESS_PRINT_ARGS,
+      ],
+      {
+        encoding: "utf8",
+        stdio: [promptFd, "pipe", "pipe"],
+        // Real process.env so docker CLI finds its socket/context; isolation is
+        // container-side via HOME mount only.
+        timeout: HEADLESS_AUTH_PROBE_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+        killSignal: "SIGKILL",
+      },
+    );
+  } finally {
+    closeSync(promptFd);
+  }
   const timedOut =
     r.error?.message?.includes("TIMEDOUT") === true ||
     r.signal === "SIGTERM" ||
