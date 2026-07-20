@@ -418,6 +418,20 @@ class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
     _spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
+    // #1027 S2: a red wave verify is triaged by the judge. The #939 driver cases
+    // feed a real OPERATIONAL red (malformed package.json / invalid scripts), so
+    // the triage judge classifies it as a toolchain terminal (→ the runner's
+    // unchanged verify_failed abort — no coder-fix spin). Without this, an
+    // always-converged stub would make the wave court re-verify the same
+    // operational red forever. Mirrors spine-gate.shared.ts / abort-wiring.
+    if (ctx.waveVerifyFailure !== undefined) {
+      return {
+        kind: "judge",
+        status: "toolchain",
+        reason: ctx.waveVerifyFailure,
+        diagnosis: "wave-verify env/operational red (e2e default)",
+      };
+    }
     return {
       kind: "judge",
       status: "converged",
