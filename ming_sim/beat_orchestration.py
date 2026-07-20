@@ -159,8 +159,13 @@ def assemble_beat_inputs(
     person_name: str = "",
     summon_method: str = "",
     knowledge_provider: Optional[KnowledgeProvider] = None,
+    extra_public_layer: Tuple[str, ...] = (),
 ) -> BeatInputs:
-    """把一个 beat 的 in-world 输入路由成 BeatInputs。只经见闻供给接口取世界，不调全知 builder。"""
+    """把一个 beat 的 in-world 输入路由成 BeatInputs。只经见闻供给接口取世界，不调全知 builder。
+
+    extra_public_layer：临时公开层供给（新夜首入殿时夜尚未落库、无 night_id 可取，
+    以刚生成的开夜气氛作临时公开层——避免持写锁跨 LLM 调用，见 attach_chat_turn_to_night）。
+    """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
     if beat_kind == BEAT_ENTER:
@@ -192,15 +197,18 @@ def assemble_beat_inputs(
         perspectival_world=perspectival_world,
         court_tension=court_tension,
         prior_appearances=prior_appearances,
-        public_layer=_public_layer_bodies(db, night_id),
+        public_layer=tuple(extra_public_layer) + _public_layer_bodies(db, night_id),
     )
 
 
 def _run_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
-    """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。"""
+    """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。
+
+    strip 后返回：纯空白产出视同空，交调用方 or-兜底（否则空白正文会顶掉 #498 确定性兜底）。
+    """
     if beat_generator is None:
         return ""
-    return str(beat_generator(inputs) or "")
+    return str(beat_generator(inputs) or "").strip()
 
 
 def generate_open_beat_body(
@@ -232,8 +240,12 @@ def generate_enter_beat_body(
     summon_method: str = METHOD_XUANRU,
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
+    extra_public_layer: Tuple[str, ...] = (),
 ) -> str:
-    """入殿账正文。时辰/地点取自夜容器持久属性（cmr R7）。"""
+    """入殿账正文。时辰/地点取自夜容器持久属性（cmr R7）。
+
+    extra_public_layer：新夜首入殿时夜尚未落库，以刚生成的开夜气氛作临时公开层供给。
+    """
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(
@@ -244,6 +256,7 @@ def generate_enter_beat_body(
         person_name=person_name,
         summon_method=summon_method,
         knowledge_provider=knowledge_provider,
+        extra_public_layer=extra_public_layer,
     )
     return _run_generator(beat_generator, inputs)
 

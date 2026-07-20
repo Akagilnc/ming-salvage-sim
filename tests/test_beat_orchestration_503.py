@@ -124,6 +124,75 @@ def test_enter_beat_time_location_from_night_container_not_call_arg(game):
     assert "午时" not in body and "偏殿" not in body
 
 
+# ── 修复回归（#503 fix r1）：空白兜底 / 不白跑收夜 LLM / 生成抛错零写入 ──
+
+
+def _blank_generator(inputs):
+    return "   \n\t "
+
+
+def test_whitespace_generator_falls_back_to_deterministic_bodies(game):
+    """L3：纯空白产出视同空，不顶掉 #498 确定性兜底正文（开夜/入殿/收夜三处）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫", beat_generator=_blank_generator,
+    )
+    assert _ledger_body(db, night_id, an.TAG_OPEN_NIGHT) == "乾清宫·戌时，召对夜启。"
+    assert _enter_body(db, night_id, minister) == f"{an.METHOD_XUANRU}{minister}入殿。"
+    _land_reply(db, state, minister, cid)
+    an.close_night(db, state, night_id=night_id, content=content,
+                   beat_generator=_blank_generator)
+    assert _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT) == "退朝，今夜召对到此。"
+
+
+def test_close_night_skips_generator_when_body_given_or_already_closed(game):
+    """L2：收夜账已给显式 body 或已落账（幂等续跑）时不白跑贵 LLM。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    calls = {"n": 0}
+
+    def counting(inputs):
+        calls["n"] += 1
+        return f"gen:{inputs.beat_kind}"
+
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    # 显式 body → 生成器不应被调
+    an.close_night(db, state, night_id=night["id"], content=content,
+                   body="朕亲宣退朝。", beat_generator=counting)
+    assert calls["n"] == 0
+    assert _ledger_body(db, night["id"], an.TAG_CLOSE_NIGHT) == "朕亲宣退朝。"
+    # 幂等再收：已落收夜账 → 仍不调生成器、不重复落账
+    an.close_night(db, state, night_id=night["id"], content=content,
+                   beat_generator=counting)
+    assert calls["n"] == 0
+    closes = [e for e in an.list_ledger(db, night["id"]) if an.TAG_CLOSE_NIGHT in e["tags"]]
+    assert len(closes) == 1
+
+
+def test_enter_generator_raise_on_new_night_leaves_zero_writes(game):
+    """L4：新夜路径入殿账生成抛错 → 本次零写入（不留半开夜/悬空对话轮）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+
+    def raise_on_enter(inputs):
+        if inputs.beat_kind == bo.BEAT_ENTER:
+            raise RuntimeError("enter gen boom")
+        return "开夜气氛"
+
+    with pytest.raises(RuntimeError, match="enter gen boom"):
+        an.attach_chat_turn_to_night(
+            db, state, minister, agno_session_id="s", agno_runs_before=0,
+            time_of_day="戌时", location="乾清宫", beat_generator=raise_on_enter,
+        )
+    # 零写入：无夜、无账、无对话轮
+    assert an.get_open_night(db) is None
+    assert db.conn.execute("SELECT COUNT(*) AS c FROM audience_nights").fetchone()["c"] == 0
+    assert db.conn.execute("SELECT COUNT(*) AS c FROM story_ledger_entries").fetchone()["c"] == 0
+    assert db.conn.execute("SELECT COUNT(*) AS c FROM chat_turns").fetchone()["c"] == 0
+
+
 # ── AC3：开夜账与收夜账正文落地 ──────────────────────────────────────
 
 
@@ -220,10 +289,13 @@ def test_beat_inputs_carry_no_form_constraint_or_naked_number(game):
         assert isinstance(value, (str, tuple)), name
         if isinstance(value, tuple):
             assert all(isinstance(x, str) for x in value), name
-    # P4：特征化走 minister_dossier，不含带量表轴的 character_context 输出（忠诚/党派认同…）
-    assert inputs.characterization
-    assert "忠诚" not in inputs.characterization
-    assert "党派认同" not in inputs.characterization
+    # P4：特征化的**来源**锁定为 minister_dossier（客观特征化，无量表轴），
+    # 而非带量表轴的 character_context——结构性 source-lock，不盯自由散文关键词。
+    from ming_sim.context import minister_dossier
+    ch = content.characters[minister]
+    assert inputs.characterization == minister_dossier(ch)
+    # 未走 character_context：其引擎侧模板前缀「【人物档料】」（含忠诚/党派认同轴）不出现
+    assert "【人物档料】" not in inputs.characterization
 
 
 def test_generator_called_with_only_beat_inputs_no_constraints(game):
