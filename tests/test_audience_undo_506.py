@@ -446,3 +446,107 @@ def test_undo_landed_secret_decree_removes_all_structured_records(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM secret_order_briefs WHERE order_id = ?", (order_id,)
     ).fetchone()[0] == 0
+
+
+# ── L1（judge R1 S-exit-origin-unbound）：令退轮撤回 → 告退账消失 + 在场复原 ──────
+# 病根：dismiss_from_audience 落告退账时不绑本轮，undo 删不掉 → 按夜取数 ≠ 未发生，
+# 且被令退者永久差出（双轮场景在场不复原）。
+
+
+def test_undo_dismiss_round_removes_exit_ledger_and_restores_presence(game):
+    """round1 入殿 → round2 令退（绑本轮）→ undo round2 → 告退账消失且该人复在场。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    # round1：入殿（无结构化写）
+    n1, _c1 = _run_round(db, state, m)
+    assert m in an.present_names_at(db, n1)
+    # round2：令退，告退账绑本轮 chat_id
+    n2, c2 = _run_round(
+        db, state, m,
+        writes=lambda night_id, chat_id: an.dismiss_from_audience(
+            db, m, origin_chat_turn_id=chat_id
+        ),
+    )
+    assert n2 == n1
+    # 令退落地：不在场（present_names_at 消费口令 TAG_EXIT）+ 告退账在册
+    assert m not in an.present_names_at(db, n1)
+    assert any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
+               for e in an.list_ledger(db, n1))
+
+    db.undo_chat_turn(c2)
+
+    # 告退账消失（origin 绑本轮，随撤回删）
+    assert not any(an.TAG_EXIT in (e["tags"] or []) and m in e["person_names"]
+                   for e in an.list_ledger(db, n1))
+    # 在场复原（round1 入殿仍在）——被令退者不再永久差出
+    assert m in an.present_names_at(db, n1)
+
+
+def test_undo_single_round_enter_and_dismiss_equals_not_happened(game):
+    """单轮内入殿+令退，undo 后账与在场均 ≡ 该轮未发生（入殿账 origin 也绑本轮）。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    n1, c1 = _run_round(
+        db, state, m,
+        writes=lambda night_id, chat_id: an.dismiss_from_audience(
+            db, m, origin_chat_turn_id=chat_id
+        ),
+    )
+    # 本轮产了入殿账（attach）+ 告退账（dismiss），二者皆绑本轮
+    round_entries = [e for e in an.list_ledger(db, n1)
+                     if e["origin_chat_turn_id"] == c1 and m in e["person_names"]]
+    assert any(an.TAG_ENTER in (e["tags"] or []) for e in round_entries)
+    assert any(an.TAG_EXIT in (e["tags"] or []) for e in round_entries)
+
+    db.undo_chat_turn(c1)
+
+    # 该轮所产入殿/告退账全消失；在场无该人——像本轮从未发生
+    assert not any(m in e["person_names"] for e in an.list_ledger(db, n1))
+    assert m not in an.present_names_at(db, n1)
+
+
+# ── L2（judge R1 S-origin-bind-non-atomic）：入殿账 origin 绑定须原子 ──────────────
+# 病根：入殿账 commit → 建轮 commit → 单独 UPDATE origin，中途崩溃留 origin=0 孤儿入殿账，
+# 后续撤回删不掉（与 L1 同形脏账）。修法：enter+建轮+回绑 origin 整段原子。
+
+
+def test_attach_origin_bind_atomic_no_orphan_enter_on_midway_crash(game):
+    """注入建轮崩溃（enter 已落、origin 未绑）→ atomic 回滚 → 无 origin=0 孤儿入殿账。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    an.open_night(db, state)
+    night_id = int(an.get_open_night(db)["id"])
+    assert m not in an.persons_present_tonight(db, night_id)  # m 非常在员额
+    ledger_ids_before = {e["id"] for e in an.list_ledger(db, night_id)}
+
+    orig_create = db.create_chat_turn
+
+    def _boom(*a, **k):
+        raise RuntimeError("inject crash: enter 已落、origin 未绑")
+
+    db.create_chat_turn = _boom
+    try:
+        with pytest.raises(RuntimeError):
+            an.attach_chat_turn_to_night(db, state, m)
+    finally:
+        db.create_chat_turn = orig_create
+
+    # atomic 回滚：账本零净增，无孤儿入殿账，在场未变
+    assert {e["id"] for e in an.list_ledger(db, night_id)} == ledger_ids_before
+    assert m not in an.persons_present_tonight(db, night_id)
+
+
+def test_attach_origin_bind_atomic_normal_path_binds_and_undo_deletes(game):
+    """正常路径：入殿账 origin 绑本轮（非 0），undo 仍删该入殿账。"""
+    db, state, content = game
+    m = _active_minister(db, content)
+    # _run_round 内经 attach 入殿 + 落回话（轮转 active，可撤回）
+    night_id, chat_id = _run_round(db, state, m)
+    enter = [e for e in an.list_ledger(db, night_id)
+             if an.TAG_ENTER in (e["tags"] or []) and m in e["person_names"]]
+    assert enter and all(e["origin_chat_turn_id"] == chat_id for e in enter)
+
+    db.undo_chat_turn(chat_id)
+
+    assert not any(an.TAG_ENTER in (e["tags"] or []) and m in e["person_names"]
+                   for e in an.list_ledger(db, night_id))
