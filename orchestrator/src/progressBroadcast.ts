@@ -213,6 +213,7 @@ export interface ProgressTerminalEvent extends ProgressEventBase {
   readonly kind: "terminal";
   readonly status: "completed" | "parked" | "failed";
   readonly stopReason?: string | null;
+  readonly gateSummary?: string | null;
 }
 
 export type ProgressEvent =
@@ -377,7 +378,13 @@ export function formatProgressLogLine(event: ProgressEvent): string {
         event.stopReason !== undefined && event.stopReason !== null
           ? ` stop=${event.stopReason}`
           : "";
-      return `${base} terminal${issueTag(event.issue)}${epicTag(event.epic)} status=${event.status}${reason}`;
+      const gate =
+        event.gateSummary !== undefined &&
+        event.gateSummary !== null &&
+        event.gateSummary.length > 0
+          ? ` gate=${event.gateSummary}`
+          : "";
+      return `${base} terminal${issueTag(event.issue)}${epicTag(event.epic)} status=${event.status}${reason}${gate}`;
     }
     default: {
       const _exhaustive: never = event;
@@ -663,6 +670,7 @@ export function emitTerminalProgress(input: {
   readonly issue?: number | null;
   readonly status: "completed" | "parked" | "failed";
   readonly stopReason?: string | null;
+  readonly gateSummary?: string | null;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
   /** When false, write feed/log only (park dual-write already notified). Default true. */
@@ -677,6 +685,7 @@ export function emitTerminalProgress(input: {
     issue: input.issue ?? null,
     status: input.status,
     stopReason: input.stopReason ?? null,
+    gateSummary: input.gateSummary ?? null,
   };
   emitProgressEvent({
     event,
@@ -731,6 +740,7 @@ export function emitExitProgress(input: {
       issue: input.issue ?? null,
       status: "parked",
       stopReason: input.stopReason ?? null,
+      gateSummary: input.gateSummary ?? null,
       log: input.log,
       notify: false,
       now: input.now,
@@ -743,6 +753,7 @@ export function emitExitProgress(input: {
     issue: input.issue ?? null,
     status: input.status,
     stopReason: input.stopReason ?? null,
+    gateSummary: input.gateSummary ?? null,
     log: input.log,
     notifySpawn: input.notifySpawn,
     now: input.now,
