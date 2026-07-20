@@ -8,8 +8,9 @@
  * closed with path + reason; never silent fallback to a prior parse.
  *
  * S2 (#1074) switched coderRoster consumers onto this loader (constants
- * deleted). Registry dual-track remains until S3; pool table stays in code
- * (ADR 0146).
+ * deleted). S3 (#1075) switched modelRegistry consumers onto this loader
+ * (registry data rows deleted from code; provider factories stay in
+ * modelRegistry). Pool table stays in code (ADR 0146).
  */
 
 import { existsSync, readFileSync } from "node:fs";

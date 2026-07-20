@@ -1,8 +1,9 @@
 /**
  * #1073 / ADR 0146 S1 — model-data config base: env-path injection,
  * read-at-use loader, fail-closed shape validation.
- * #1074 S2 switched the coder roster onto this loader (constants deleted);
- * registry remains dual-track until S3.
+ * #1074 S2 switched the coder roster onto this loader (constants deleted).
+ * #1075 S3 switched the model registry onto this loader (data rows deleted
+ * from code; provider factories stay in modelRegistry).
  */
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +16,6 @@ import {
   loadModelData,
   resolveModelDataPath,
 } from "../../src/modelDataConfig.js";
-import { resolveModelSlug } from "../../src/modelRegistry.js";
 
 const tempDirs: string[] = [];
 const afterEachFiles: string[] = [];
@@ -256,16 +256,9 @@ describe("#1073 loadModelData fail-closed (path + reason)", () => {
   });
 });
 
-describe("#1073 dual-track residual: registry still in-code (S3 pending)", () => {
-  it("in-code model registry still resolves live slugs", () => {
-    expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
-    expect(resolveModelSlug("gpt-5.6-sol-low")).toMatchObject({
-      provider: "codex",
-      model: "gpt-5.6-sol",
-      options: { effort: "low" },
-    });
-  });
-
+// Dual-track residual closed: S2 (#1074) put roster on the loader; S3 (#1075)
+// put registry on the loader. Registry resolution is covered by #1075 tests.
+describe("#1074 roster on loader matches factory model-data", () => {
   it("getCoderRoster matches shipped factory model-data roster", () => {
     delete process.env[MODEL_DATA_PATH_ENV];
     const data = loadModelData({});
