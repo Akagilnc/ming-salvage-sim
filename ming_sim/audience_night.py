@@ -634,21 +634,23 @@ def close_night(
         tags = [TAG_CLOSE_NIGHT]
         if auto:
             tags.append(TAG_AUTO_CLOSE)
-        generated_close = ""
-        if beat_generator is not None:
-            from ming_sim import beat_orchestration as beats
-
-            generated_close = beats.generate_close_beat_body(
-                db, state, night=night,
-                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-            )
-        close_body = body or generated_close or (
-            "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
-        )
         existing_tags = {
             t for e in list_ledger(db, night_id) for t in e.get("tags") or []
         }
         if TAG_CLOSE_NIGHT not in existing_tags:
+            # 收夜账正文只在真要落且无显式正文时才生成——避免为已落账/已给 body 的
+            # 幂等续跑白跑贵 LLM（P5）。
+            generated_close = ""
+            if not body and beat_generator is not None:
+                from ming_sim import beat_orchestration as beats
+
+                generated_close = beats.generate_close_beat_body(
+                    db, state, night=night,
+                    beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+                )
+            close_body = body or generated_close or (
+                "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
+            )
             append_ledger_entry(
                 db, night_id,
                 person_names=[],
@@ -757,25 +759,48 @@ def attach_chat_turn_to_night(
     """
     from ming_sim import beat_orchestration as beats
 
-    # 开夜账只在真开新夜时生成（已开夜不重复调贵 LLM，P5）。
-    open_body = ""
-    if beat_generator is not None and get_open_night(db) is None:
-        open_body = beats.generate_open_beat_body(
+    # beat 正文（慢 LLM）在**任何落库之前**全部生成好，再落库——生成中途抛错则本次零写入，
+    # 不留「开着的夜有开夜/员额账却无入殿账、无对话轮」的半场（#503 L4）。
+    # 也不把 LLM 调用裹进写事务（否则持写锁跨 ~15-30s LLM，撞 #498/#499 写锁纪律，P5）。
+    existing = get_open_night(db)
+    if existing is not None and existing["status"] == NIGHT_STATUS_CLOSING:
+        # 上一夜收夜未完（closing）：open_night 会响亮拒绝——早于任何 beat 生成触发，零写零浪费。
+        ensure_open_night_for_audience(
             db, state, time_of_day=time_of_day, location=location,
-            beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-        )
-    night = ensure_open_night_for_audience(
-        db, state, time_of_day=time_of_day, location=location, body=open_body,
-    )
-    night_id = int(night["id"])
-    # 入殿账正文只在真正首入殿时生成（重复起聊＝奏对非再入殿，不再生成）。
+        )  # 必抛 night_closing_incomplete
+
     enter_body = ""
-    if beat_generator is not None and minister_name not in persons_entered_tonight(db, night_id):
-        enter_body = beats.generate_enter_beat_body(
-            db, state, night=night, person_name=minister_name,
-            summon_method=summon_method,
-            beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+    if existing is not None and existing["status"] == NIGHT_STATUS_OPEN:
+        # 已开夜：不重复开夜账；入殿账只在真正首入殿时生成（重复起聊＝奏对非再入殿）。
+        night = existing
+        night_id = int(night["id"])
+        if beat_generator is not None and minister_name not in persons_entered_tonight(db, night_id):
+            enter_body = beats.generate_enter_beat_body(
+                db, state, night=night, person_name=minister_name,
+                summon_method=summon_method,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+            )
+    else:
+        # 新夜：开夜账 + 首入殿账都先生成，再一并落库（生成抛错 → 本次零写入）。
+        # 首入殿时夜尚无公开层/前情（无明旨、无前次），以刚生成的开夜气氛作临时公开层供给
+        # （不复刻 open_night 的员额账内部格式）。
+        open_body = ""
+        if beat_generator is not None:
+            open_body = beats.generate_open_beat_body(
+                db, state, time_of_day=time_of_day, location=location,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+            )
+            enter_body = beats.generate_enter_beat_body(
+                db, state,
+                night={"id": 0, "time_of_day": time_of_day, "location": location},
+                person_name=minister_name, summon_method=summon_method,
+                beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+                extra_public_layer=(open_body,) if open_body else (),
+            )
+        night = ensure_open_night_for_audience(
+            db, state, time_of_day=time_of_day, location=location, body=open_body,
         )
+    night_id = int(night["id"])
     ensure_summon_enter(db, night_id, minister_name, method=summon_method, body=enter_body)
     chat_turn_id = db.create_chat_turn(
         state,
