@@ -12,6 +12,10 @@ import {
   recordFamilyEscalated,
   runFamily,
   legacyCmrScriptToWorkerOutput,
+  completedJudge,
+  judgeContinue,
+  judgeToolchain,
+  sampleFinding,
   Backend,
   DispatchContext,
   Finding,
@@ -43,14 +47,27 @@ import {
 } from "./spine-gate.shared.js";
 
 describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", () => {
-  it("a RED wave verify aborts before the next wave, writes `aborted`, leaves the run verify_failed", async () => {
+  it("a RED wave verify → judge toolchain verdict → aborts before the next wave, writes `aborted`, verify_failed, fixer zero-spin (#1027 S4)", async () => {
     // Wave 1 = {294}; wave 2 = {296} (blocked_by 294). Verify fails on the WAVE
-    // phase → after wave 1 merges 294, the wave barrier is red → no wave 2.
+    // phase → after wave 1 merges 294, the wave barrier is red → the triage judge
+    // court runs. #1027 S4: the red is routed UNIFORMLY through the judge, which
+    // returns the shared TYPED `toolchain` verdict → the runner's unchanged
+    // verify_failed terminal → no wave 2, and the coder-fix seat never spins.
+    const coderFixDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
       verify: (req) =>
         req.phase === "wave"
           ? { ok: false, errorPackage: { reason: "tsc: TS2345 cross-slice type" } }
           : { ok: true },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+          return completedJudge(
+            judgeToolchain(ctx.waveVerifyFailure, "toolchain/env red, not a cross-slice regression"),
+          );
+        }
+        if (spec.kind === "coder") coderFixDispatches.push(spec);
+        return undefined;
+      },
     });
     const result = await runFamily({
       epic: TWO_WAVES,
@@ -59,6 +76,8 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
       familyBase: "family/291-base",
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
+    // AC2 (env红→toolchain 不空转): the toolchain terminal never routes to coder-fix.
+    expect(coderFixDispatches).toEqual([]);
     // Wave 1 merged 294; the red wave verify aborted before wave 2 (296 never ran).
     expect(backend.merges.map((m) => m.childIssue)).toEqual([294]);
     expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave"]); // no "final"
@@ -84,6 +103,69 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
     expect(byIssue.get(296)).toBe("skipped");
     // No PR opened on a red run.
     expect(backend.prCalls).toEqual([]);
+  });
+});
+
+describe("#1027 S4 spine tracer — a red wave the judge continues + fixer converges lets the NEXT wave proceed", () => {
+  it("red wave verify → judge continue → coder-fix → deterministic re-verify green → wave 2 merges → 止于 PR", async () => {
+    // Wave 1 = {294}; wave 2 = {296} (blocked_by 294). The wave-1 verify is RED
+    // the FIRST time → the triage judge court runs. Unlike the toolchain terminal
+    // (acceptance 1), here the judge returns a TYPED `continue` verdict carrying a
+    // repair packet → the family coder-fix seat commits → the deterministic
+    // re-verify turns GREEN (the SOLE convergence authority) → the wave clears and
+    // wave 2 proceeds. This is the multi-wave integration the unit-level tracer in
+    // verify-cmr.test.ts cannot show (wave scheduling ↔ wave court ↔ next wave).
+    let waveVerifyCalls = 0;
+    const coderFixDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: (req) => {
+        if (req.phase !== "wave") return { ok: true };
+        waveVerifyCalls += 1;
+        // #1 wave-1 verify red → court; #2 court re-verify green (fix landed);
+        // #3 wave-2 verify green.
+        return waveVerifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "cross-slice seam red: 3 failing" } };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+          return completedJudge(
+            judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
+          );
+        }
+        if (spec.kind === "coder") {
+          coderFixDispatches.push(spec);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        // Final cmr / ship fall through to the green defaults.
+        return undefined;
+      },
+    });
+
+    const result = await runFamily({
+      epic: TWO_WAVES,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      // NO verifyCmr injection → the spine uses the real runVerifyCmr wave court.
+    });
+
+    // The typed judge `continue` drove the coder-fix seat exactly once (NOT an abort).
+    expect(coderFixDispatches).toHaveLength(1);
+    expect(coderFixDispatches[0]?.kind).toBe("coder");
+    expect(backend.aborted).toEqual([]);
+    // The wave court recorded the triage + fix rounds on the durable ledger.
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).toContain("wave-verify-fix");
+    // Green re-verify cleared wave 1 → wave 2 (296, blocked_by 294) really merged.
+    expect(backend.merges.map((m) => m.childIssue)).toEqual([294, 296]);
+    const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
+    expect(byIssue.get(294)).toBe("merged");
+    expect(byIssue.get(296)).toBe("merged");
+    // 止于 PR: the recovered run reaches the final barrier and opens the family PR.
+    expect(result.status).toBe("completed");
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
   });
 });
 
