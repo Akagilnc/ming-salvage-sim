@@ -26,6 +26,9 @@ TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
+# 进出账（ADR 0035：TAG_ENTER/TAG_EXIT 是机器承重的在场效果标识「进/出」）
+TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令落此账
+TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
 
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
@@ -432,6 +435,17 @@ def open_night(
     return night
 
 
+def _validate_summon_method(method: str, *, default: str) -> str:
+    """校验召法白名单（summon_enter / record_summon_in_transit 共用单一真源）。"""
+    m = str(method or default).strip()
+    if m not in SUMMON_METHODS:
+        raise AudienceNightError(
+            f"召法非法：{m!r}（须为 {'/'.join(sorted(SUMMON_METHODS))}）",
+            code="bad_summon_method",
+        )
+    return m
+
+
 def summon_enter(
     db: Any,
     night_id: int,
@@ -444,12 +458,7 @@ def summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    method = str(method or METHOD_XUANRU).strip()
-    if method not in SUMMON_METHODS:
-        raise AudienceNightError(
-            f"召法非法：{method!r}（须为 {'/'.join(sorted(SUMMON_METHODS))}）",
-            code="bad_summon_method",
-        )
+    method = _validate_summon_method(method, default=METHOD_XUANRU)
     text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
@@ -740,12 +749,100 @@ def ensure_open_night_for_audience(
     return open_night(db, state, time_of_day=time_of_day, location=location, body=body)
 
 
-def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
-    names: set[str] = set()
+def record_summon_in_transit(
+    db: Any,
+    night_id: int,
+    person_name: str,
+    *,
+    method: str = METHOD_CHUANZHAO,
+    body: str = "",
+) -> int:
+    """落传召在途账：账在人不在场——传召已发、人在途，不落在场效果。"""
+    name = str(person_name or "").strip()
+    if not name:
+        raise AudienceNightError("传召人名不能为空", code="empty_person")
+    method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
+    return append_ledger_entry(
+        db, night_id,
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body=body or f"传召{name}，在途未至。",
+        tags=[TAG_IN_TRANSIT, method],
+    )
+
+
+def dismiss_from_audience(
+    db: Any,
+    person_name: str,
+    *,
+    night_id: Optional[int] = None,
+    body: str = "",
+) -> Optional[int]:
+    """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
+
+    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。"""
+    name = str(person_name or "").strip()
+    if not name:
+        raise AudienceNightError("令退人名不能为空", code="empty_person")
+    nid = night_id
+    if nid is None:
+        open_n = get_open_night(db)
+        if open_n is None:
+            return None
+        nid = int(open_n["id"])
+    if name not in present_names_at(db, int(nid)):
+        return None
+    return append_ledger_entry(
+        db, int(nid),
+        person_names=[name],
+        audibility=AUDIBILITY_PUBLIC,
+        body=body or f"帝令{name}退下，{name}告退。",
+        tags=[TAG_EXIT],
+        check_dead=False,
+    )
+
+
+def _apply_presence(present: set[str], entry: Dict[str, Any]) -> None:
+    """按一条进出账更新在场集：入殿=进、告退=出、传召在途=无在场效果。"""
+    tags = entry.get("tags") or []
+    persons = entry.get("person_names") or []
+    if TAG_EXIT in tags:
+        present.difference_update(persons)
+    elif TAG_ENTER in tags:
+        present.update(persons)
+
+
+def present_names_at(
+    db: Any, night_id: int, *, at_seq: Optional[int] = None,
+) -> set[str]:
+    """确定性推导任一时刻在场名单：进出账累积到 at_seq（含）为止的净在场者。
+
+    机器承重态只有在场/不在场；at_seq=None 取夜内末态。侍立/正对奏是叙事层次
+    非硬状态，不影响本推导。"""
+    present: set[str] = set()
     for entry in list_ledger(db, night_id):
-        if TAG_ENTER in (entry.get("tags") or []):
-            names.update(entry.get("person_names") or [])
-    return names
+        if at_seq is not None and int(entry["seq"]) > int(at_seq):
+            break
+        _apply_presence(present, entry)
+    return present
+
+
+def audible_entries_for(
+    db: Any, night_id: int, person_name: str,
+) -> List[Dict[str, Any]]:
+    """某人侍立区间内可闻的账目：以其进出账时刻为界，仅殿上公开条目。
+
+    御前低语（AUDIBILITY_PRIVATE）不流入；从未入殿者（如仅传召在途）取数为空。"""
+    name = str(person_name or "").strip()
+    if not name:
+        return []
+    present: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for entry in list_ledger(db, night_id):
+        _apply_presence(present, entry)
+        if name in present and entry.get("audibility") == AUDIBILITY_PUBLIC:
+            out.append(entry)
+    return out
 
 
 def ensure_summon_enter(
@@ -759,7 +856,9 @@ def ensure_summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    if name in persons_entered_tonight(db, night_id):
+    # 单一在场真源：已在场者不重复宣入；告退后再宣须重新落入殿账（present_names_at
+    # 会去人，persons_entered_tonight「凡入过即并集」会漏——双真源导致 chat 有名单无）。
+    if name in present_names_at(db, night_id):
         return None
     return summon_enter(db, night_id, name, method=method, body=body)
 
