@@ -1583,6 +1583,9 @@ class WebGame:
                     pending_action_failures=getattr(result, "pending_action_failures", []),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
+                    # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
+                    directive_confirmation_ambiguous=getattr(
+                        result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
