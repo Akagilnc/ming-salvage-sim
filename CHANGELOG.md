@@ -17,6 +17,8 @@
 
 ### Fixed
 - **#1071 cmr-worker.heavy 假红**：`testTimeout` 改为 load-tolerant，不再被负载拖垮判定为红。
+- **#1076 稀疏判官 cargo 崩溃 + 失败原因透传**：`findingIdentityKey` 优先取 finding 自带 identityKey（ADR 0131，拓扑不再从 cargo 散文倒推身份），字段缺失时抛可诊断错误而非裸 TypeError（此崩溃曾致 #1069 六次 S5 进程暴毙）；失败终态的 `gateSummary` 持久化并透传进 `failureCause`，dispatch→infra_failure 黑洞消失。
+- **#1058 名分守卫遗漏 caller 接缝**：显式名分（office_type ∈ PERSON_TITLE_KINDS）此前只在 DB 写侧受守卫，建 Character 与内存 re-infer 两处 caller 接缝仍会被 office 文本反推覆盖（如「诸生」撞词干误判为「生员」）；收敛到 `resolve_office_type_preserving_title` 单一入口，DB 与内存不再分岔。另修 3 处 seam 遗漏 `llm_config` 回落，避免在内存侧静默跳过 LLM 推断分支。
 
 ## [0.38.0.0] - 2026-07-19
 
