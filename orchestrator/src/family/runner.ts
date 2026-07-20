@@ -1077,7 +1077,13 @@ async function runChild(
   }
   // #293 thinnest: a non-success child does not merge (a failure escalate / error
   // stays failed). The spine records it honestly, not silently dropped.
-  return { issue: child.issue, status: "failed" };
+  // #1076 L1: preserve the real failure summary from the single-slice
+  // stopSummary so wave diagnostics + progress carry the true reason.
+  return {
+    issue: child.issue,
+    status: "failed",
+    failureCause: result.stopSummary?.summary,
+  };
 }
 
 /**

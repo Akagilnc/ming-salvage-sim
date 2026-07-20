@@ -259,6 +259,38 @@ describe("#1007 progress.jsonl append-only schema", () => {
       }),
     ).not.toThrow();
   });
+
+  it("#1076: failed terminal row + log line carry gateSummary/stopReason verbatim", () => {
+    const ledgerDir = tempLedger();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    emitTerminalProgress({
+      ledgerDir,
+      epic: 1000,
+      issue: 1007,
+      status: "failed",
+      stopReason: "infra_failure",
+      gateSummary: "real substr: runtime exploded at finalize",
+    });
+
+    const events = readProgressEvents(ledgerDir);
+    const terminal = events.find((e) => e.kind === "terminal");
+    expect(terminal).toBeDefined();
+    if (terminal && terminal.kind === "terminal") {
+      expect(terminal.status).toBe("failed");
+      expect(terminal.stopReason).toBe("infra_failure");
+      expect(terminal.gateSummary).toBe(
+        "real substr: runtime exploded at finalize",
+      );
+    }
+
+    const line = log.mock.calls
+      .map((c) => String(c[0]))
+      .find((s) => s.includes("[orchestrator:progress]"));
+    expect(line).toMatch(/status=failed/);
+    expect(line).toMatch(/stop=infra_failure/);
+    expect(line).toMatch(/real substr: runtime exploded at finalize/);
+  });
 });
 
 describe("#1007 stage lines carry issue number (#975 debt ④)", () => {
