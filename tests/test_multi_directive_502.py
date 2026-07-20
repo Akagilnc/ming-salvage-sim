@@ -39,19 +39,27 @@ def _fake_session(db, state):
     )
 
 
-def _canned(draft_result):
-    """按 prompt 标记分派 canned JSON：确认→无、拟旨→draft_result、任免/密令动作→无。"""
+def _canned_by_tag(mapping):
+    """按生产 `tag=` 分派 canned JSON（不盯 prompt 自由文，#502 L9）。缺省 tag 返回 {}。
+    mapping: {tag: dict}；未列 tag 回落安全默认（confirmation/draft/appointment/minister→无）。"""
+    _defaults = {
+        "confirmation": {"确认": "无"},
+        "directive_confirmation": {"决定": "无", "目标编号": []},
+        "draft_intent": {"拟旨意图": "无"},
+        "appointment": {"任免动作": "无"},
+        "minister_actions": {"动作类型": "无"},
+        "action_intent": {"动作类型": "无"},
+    }
+
     def _run(prompt, llm_config=None, tag=""):
-        if "待皇帝定夺" in prompt or ("确认" in prompt and "应允" in prompt):
-            return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        if "拟旨意图" in prompt:
-            return (json.dumps(draft_result, ensure_ascii=False), 1)
-        if "任免动作" in prompt:
-            return (json.dumps({"任免动作": "无"}, ensure_ascii=False), 1)
-        if "动作类型" in prompt:
-            return (json.dumps({"动作类型": "无"}, ensure_ascii=False), 1)
-        return ("{}", 1)
+        obj = mapping.get(tag, _defaults.get(tag, {}))
+        return (json.dumps(obj, ensure_ascii=False), 1)
     return _run
+
+
+def _canned(draft_result):
+    """拟旨草案路由（by tag）：draft_intent→draft_result，其余安全默认。"""
+    return _canned_by_tag({"draft_intent": draft_result})
 
 
 def _draft_turn(sess, ch, monkeypatch, *, player_message, reply, draft_result):
@@ -125,11 +133,8 @@ def test_verbal_approve_targets_one_of_many(game, monkeypatch):
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    def _run(prompt, llm_config=None, tag=""):
-        if "指向" in prompt or "哪几道" in prompt:  # 结构化准驳指认
-            return (json.dumps({"决定": "应允", "目标编号": [id_a]}, ensure_ascii=False), 1)
-        return ("{}", 1)
-    monkeypatch.setattr(cb, "_run_backend_for_config", _run)
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"directive_confirmation": {"决定": "应允", "目标编号": [id_a]}}))
 
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="户部清查那道旨，准了", answer="臣遵旨。",
@@ -152,11 +157,8 @@ def test_verbal_reject_targets_one_others_survive(game, monkeypatch):
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    def _run(prompt, llm_config=None, tag=""):
-        if "指向" in prompt or "哪几道" in prompt:
-            return (json.dumps({"决定": "拒绝", "目标编号": [id_a]}, ensure_ascii=False), 1)
-        return ("{}", 1)
-    monkeypatch.setattr(cb, "_run_backend_for_config", _run)
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"directive_confirmation": {"决定": "拒绝", "目标编号": [id_a]}}))
 
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="户部那道不必了，作罢", answer="臣领旨。",
@@ -179,11 +181,8 @@ def test_ambiguous_command_returns_structured_state_no_silent_default(game, monk
     id_a, id_b = _stage_two_night_candidates(db, state, name)
     sess = _fake_session(db, state)
 
-    def _run(prompt, llm_config=None, tag=""):
-        if "指向" in prompt or "哪几道" in prompt:
-            return (json.dumps({"决定": "含糊", "目标编号": []}, ensure_ascii=False), 1)
-        return ("{}", 1)
-    monkeypatch.setattr(cb, "_run_backend_for_config", _run)
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"directive_confirmation": {"决定": "含糊", "目标编号": []}}))
 
     out = GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="准了", answer="请陛下明示是哪一道。",
@@ -197,6 +196,82 @@ def test_ambiguous_command_returns_structured_state_no_silent_default(game, monk
     assert amb is not None, "含糊口令应返回结构化含糊态"
     amb_ids = {int(c["id"]) for c in amb["candidates"]}
     assert amb_ids == {id_a, id_b}
+    # 两道仍在 pending，一条也没被误建成第三道（L1 free-fall 回归）
+    assert len(_pending_directives(db, state.turn)) == 2
+
+
+def test_multi_confirm_none_result_does_not_stage_third_decree(game, monkeypatch):
+    """L1 回归：≥2 道 directive + 纯准驳口令，若 directive_confirmation 返回「无」，
+    也按含糊处置（不 free-fall 到拟旨抽取误建第三道）；仍 2 行、带含糊态。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    id_a, id_b = _stage_two_night_candidates(db, state, name)
+    sess = _fake_session(db, state)
+
+    # directive_confirmation=无（空指向）；draft_intent 故意判「拟旨」——若 free-fall 就会误建第三道。
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "directive_confirmation": {"决定": "无", "目标编号": []},
+        "draft_intent": {"拟旨意图": "拟旨", "目标草案": "新", "合并草案": "误建第三道"},
+    }))
+
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert len(_pending_directives(db, state.turn)) == 2, "纯准驳口令不得误建第三道"
+    assert out.get("directive_confirmation_ambiguous") is not None
+    assert {p["id"] for p in _pending_directives(db, state.turn)} == {id_a, id_b}
+
+
+def test_named_clarification_clears_flag_frees_sibling_default(game, monkeypatch):
+    """L4：含糊后点名准 A → 清全组待澄清标；A 可提交、B 复位普通 pending（默提路径可默认同意）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    id_a, id_b = _stage_two_night_candidates(db, state, name)
+    sess = _fake_session(db, state)
+
+    # 第一轮：含糊「准了」→ 两道打待澄清标
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"directive_confirmation": {"决定": "含糊", "目标编号": []}}))
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="准了", answer="请陛下明示。",
+        has_directive=False, secret_order_id=None)
+    assert _flag(db, id_a) and _flag(db, id_b)
+
+    # 第二轮：点名「准户部那道(A)」→ 清 A、B 的标，A night_approved
+    # （外层确认门 LLM 判应允；结构化指认落到 A）
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
+        "directive_confirmation": {"决定": "应允", "目标编号": [id_a]},
+    }))
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="准户部那道", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None)
+
+    assert not _flag(db, id_a) and not _flag(db, id_b), "点名指明后全组清标（L4 兑现 docstring）"
+    assert _approved_directive_ids(db, nid) == {id_a}
+    # B 复位普通 pending：默提路径（action_ids=None）可默认同意（不再被待澄清永久跳过）
+    applied = db.commit_pending_actions(state)
+    joined = "".join(str(r["text"] or "") for r in db.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=?", (state.turn,)).fetchall())
+    assert "兵部核饷" in joined, "被解标的兄弟 B 应可默认同意提交"
+
+
+def _flag(db, cid):
+    row = db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (int(cid),)).fetchone()
+    if row is None:
+        return False
+    try:
+        return bool(json.loads(row["payload_json"] or "{}").get("_needs_clarification"))
+    except (ValueError, TypeError):
+        return False
 
 
 def test_night_promulgated_directives_identifiable_by_night_and_range(game):
@@ -265,3 +340,88 @@ def test_needs_clarification_directive_skipped_by_default_commit(game):
     joined = "".join(str(r["text"] or "") for r in rows)
     assert "兵部核饷" in joined, "未标待澄清的那道应照常默认提交"
     assert "户部清查" not in joined, "待澄清那道不应进 turn_directives"
+
+
+def test_supplement_targets_named_candidate_others_unchanged(game, monkeypatch):
+    """L8/AC2 真实入口改草 tracer：两道并存，点名补 A（canned target=id_a 合并正文）→
+    仍 2 行、A 更新、B 不变。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    id_a, id_b = _stage_two_night_candidates(db, state, name)
+    b_text_before = json.loads(_by_pid(db, id_b)["payload_json"])["text"]
+    sess = _fake_session(db, state)
+
+    merged_a = "着户部清查三边粮饷，限三月完报，监察御史随行核查。"
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"draft_intent": {"拟旨意图": "拟旨", "目标草案": str(id_a), "合并草案": merged_a}}))
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="户部那道再加监察御史随行", answer="臣领旨，加上监察御史。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    pend = _pending_directives(db, state.turn)
+    assert len(pend) == 2, "改草不新增行"
+    assert json.loads(_by_pid(db, id_a)["payload_json"])["text"] == merged_a, "A 更新为合并正文"
+    assert json.loads(_by_pid(db, id_b)["payload_json"])["text"] == b_text_before, "B 不变"
+
+
+def test_unnamed_revise_multi_does_not_stage_third(game, monkeypatch):
+    """L7/AC2：多道并存 + 改/补目标不明（extract 归一为「含糊」）→ 不静默建第三道、出含糊态追问。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    id_a, id_b = _stage_two_night_candidates(db, state, name)
+    sess = _fake_session(db, state)
+
+    # 拟旨意图=拟旨，但目标草案不可解析（非「新」、非有效 id）→ 归一「含糊」
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag(
+        {"draft_intent": {"拟旨意图": "拟旨", "目标草案": "那一道吧", "合并草案": "改点东西"}}))
+
+    out = GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="那道旨改一下", answer="请陛下明示是哪一道。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    assert len(_pending_directives(db, state.turn)) == 2, "目标不明不得静默新建第三道"
+    assert out.get("directive_confirmation_ambiguous") is not None
+
+
+def test_update_directive_candidate_preserves_underscore_flags(game):
+    """L5：原地改草不抹下划线控制键（_needs_clarification）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    cid = db.stage_directive_candidate(state.turn, name, payload={"text": "旧稿", "actor": name})
+    db.flag_directive_needs_clarification(cid)
+
+    db.update_directive_candidate(cid, payload={"text": "新稿", "actor": name})
+
+    payload = json.loads(_by_pid(db, cid)["payload_json"])
+    assert payload["text"] == "新稿", "正文已更新"
+    assert payload.get("_needs_clarification") is True, "下划线控制键保留（不被静默抹掉）"
+
+
+def test_prefix_two_decrees_stage_independently(game):
+    """L2：显式前缀「拟旨如下：」连拟两道 → 两条独立候选（不 upsert 压扁前一道）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+
+    id1 = db.stage_explicit_directive(state.turn, name, "着户部清查三边粮饷。")
+    id2 = db.stage_explicit_directive(state.turn, name, "着兵部核饷九边军械。")
+
+    assert id1 != id2, "第二道另起独立候选"
+    pend = _pending_directives(db, state.turn)
+    assert len(pend) == 2, "连拟两道各自成条"
+    texts = [json.loads(p["payload_json"])["text"] for p in pend]
+    assert any("户部清查" in t for t in texts) and any("兵部核饷" in t for t in texts)
+    assert not any("户部清查" in t and "兵部核饷" in t for t in texts), "两道未被并进一条"
+
+
+def _by_pid(db, pid):
+    return db.conn.execute(
+        "SELECT id, payload_json FROM pending_actions WHERE id=?", (int(pid),)).fetchone()
