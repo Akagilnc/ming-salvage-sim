@@ -17,10 +17,10 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CODER_ROSTER,
-  CODER_ROSTER_VERSION,
   CoderRecError,
-  DEFAULT_CODER_REC_ORDER,
+  getCoderRoster,
+  getCoderRosterVersion,
+  getDefaultCoderRecOrder,
   lookupCoderRosterEntry,
   parseCoderRec,
   resolveCoderRecOrder,
@@ -170,7 +170,7 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
       const message = (err as Error).message;
       expect(message).toMatch(/unregistered|unknown|not.?registered|invalid/i);
       expect(message).toMatch(/totally-bogus/);
-      for (const id of CODER_ROSTER.map((e) => e.id)) {
+      for (const id of getCoderRoster().map((e) => e.id)) {
         expect(message).toContain(id);
       }
     }
@@ -191,8 +191,8 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
 
 describe("#767 Coder-Rec roster — table + resolve order", () => {
   it("ships a versioned roster covering the ratified coder pool", () => {
-    expect(CODER_ROSTER_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}/);
-    expect(CODER_ROSTER.map((e) => e.id)).toEqual(
+    expect(getCoderRosterVersion()).toMatch(/^\d{4}-\d{2}-\d{2}/);
+    expect(getCoderRoster().map((e) => e.id)).toEqual(
       expect.arrayContaining([
         "grok-4.5",
         "terra@med",
@@ -223,7 +223,7 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
 
   it("falls back to the roster default order when the marking is absent", () => {
     const order = resolveCoderRecOrder("## Scope\nnothing\n");
-    expect(order.map((e) => e.id)).toEqual([...DEFAULT_CODER_REC_ORDER]);
+    expect(order.map((e) => e.id)).toEqual([...getDefaultCoderRecOrder()]);
   });
 });
 
@@ -726,7 +726,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(result.status).toBe("failed");
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/totally-bogus/);
-    for (const id of CODER_ROSTER.map((e) => e.id)) {
+    for (const id of getCoderRoster().map((e) => e.id)) {
       expect(result.errorPackage?.reason).toContain(id);
     }
     expect(backend.coderModels).toEqual([]);

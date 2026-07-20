@@ -7,9 +7,9 @@
  * file (用时现读; no process-lifetime cache). Bad shape / missing file fail
  * closed with path + reason; never silent fallback to a prior parse.
  *
- * Expand phase: coexists with in-code constant tables in coderRoster /
- * modelRegistry. S2/S3 switch consumers onto this loader and delete those
- * tables; S1 does not wire call sites.
+ * S2 (#1074) switched coderRoster consumers onto this loader (constants
+ * deleted). Registry dual-track remains until S3; pool table stays in code
+ * (ADR 0146).
  */
 
 import { existsSync, readFileSync } from "node:fs";
