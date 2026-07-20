@@ -1112,7 +1112,7 @@ class GameSession:
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
-            _extract_secret_order,
+            extract_directive_confirmation, _extract_secret_order,
         )
         out: Dict[str, Any] = {
             "directive": None,
@@ -1158,6 +1158,36 @@ class GameSession:
             else:
                 confirm = extract_confirmation_intent(
                     player_message, reply, summaries, llm_config=llm_config)
+            # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳须指向具体某道。
+            # 结构化指认 → 只作用于点名的那几道；含糊 → 阻断（不准不驳、留待大臣追问、
+            # 标待澄清以免默认提交），其余家族照常。
+            if confirm in ("应允", "拒绝") and len(directive_confirm_targets) >= 2:
+                dir_cands = [
+                    {"id": int(p["id"]), "summary": _pending_action_brief(p)}
+                    for p in directive_confirm_targets
+                ]
+                res = extract_directive_confirmation(
+                    player_message, reply, dir_cands, llm_config=llm_config)
+                decision = res.get("decision")
+                tids = {int(i) for i in (res.get("target_ids") or [])}
+                if decision == "含糊" or (decision in ("应允", "拒绝") and not tids):
+                    out["directive_confirmation_ambiguous"] = {"candidates": dir_cands}
+                    for p in directive_confirm_targets:
+                        self.db.flag_directive_needs_clarification(int(p["id"]))
+                    drop = {int(p["id"]) for p in directive_confirm_targets}
+                    confirm_targets = [p for p in confirm_targets if int(p["id"]) not in drop]
+                    directive_confirm_targets = []
+                    confirm_action_ids = {int(p["id"]) for p in confirm_targets}
+                    if not confirm_targets:
+                        return out
+                else:
+                    confirm = decision
+                    directive_confirm_targets = [
+                        p for p in directive_confirm_targets if int(p["id"]) in tids]
+                    confirm_targets = [
+                        p for p in confirm_targets
+                        if p["kind"] != "directive" or int(p["id"]) in tids]
+                    confirm_action_ids = {int(p["id"]) for p in confirm_targets}
             if confirm == "应允":
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。

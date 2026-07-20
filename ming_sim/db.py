@@ -9182,6 +9182,31 @@ class GameDB:
         self.conn.commit()
         return int(candidate_id)
 
+    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
+        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
+        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
+        返回该行 id（不存在/非 pending 则 0）。"""
+        row = self.conn.execute(
+            "SELECT id, payload_json FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["_needs_clarification"] = True
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
+        )
+        self.conn.commit()
+        return int(candidate_id)
+
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:
@@ -9286,6 +9311,10 @@ class GameDB:
             except (ValueError, TypeError):
                 payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
+                # 含糊待澄清（#502 AC5）：批量默认提交（action_ids=None=「不回→默认同意」路）跳过
+                # 待澄清候选——含糊口令 ≠ 未表态，不得被静默默认提交；皇帝指明后经 action_ids 显式提交。
+                if action_ids is None and payload.get("_needs_clarification"):
+                    continue
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
                     directive_status=directive_status)
