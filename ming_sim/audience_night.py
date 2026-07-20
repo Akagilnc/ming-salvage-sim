@@ -717,8 +717,11 @@ def close_night(
         close_body = body or (
             "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
         )
+        # 收夜账幂等只看口令账的确定性收夜标——抽取账开放 tags 里的「收夜」不算数
+        # （否则 LLM 叙事标签旁路收夜账、夜 closed 却无退朝账）。
         existing_tags = {
-            t for e in list_ledger(db, night_id) for t in e.get("tags") or []
+            t for e in list_ledger(db, night_id) if _is_command_entry(e)
+            for t in e.get("tags") or []
         }
         if TAG_CLOSE_NIGHT not in existing_tags:
             append_ledger_entry(
@@ -787,10 +790,23 @@ def ensure_open_night_for_audience(
     return open_night(db, state, time_of_day=time_of_day, location=location)
 
 
+def _is_command_entry(entry: Dict[str, Any]) -> bool:
+    """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
+    抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_CLOSE_NIGHT…）
+    只在口令账上机器承重——抽取账开放 tags 不得驱动机器态（ADR 0035：在场等机器承重态输入
+    不解析自由文本；否则 LLM 写「入殿」旁路死账、写「收夜」旁路收夜账幂等）。"""
+    return int(entry.get("source_chat_turn_id") or 0) == 0
+
+
+def _command_entry_has_tag_enter(entry: Dict[str, Any]) -> bool:
+    """在场进=口令账（宣入/常在员额）的确定性 TAG_ENTER；抽取账进只认机器 `presence_effect`。"""
+    return _is_command_entry(entry) and TAG_ENTER in (entry.get("tags") or [])
+
+
 def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
     names: set[str] = set()
     for entry in list_ledger(db, night_id):
-        if TAG_ENTER in (entry.get("tags") or []):
+        if _command_entry_has_tag_enter(entry):
             names.update(entry.get("person_names") or [])
     return names
 
@@ -798,15 +814,17 @@ def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
 def persons_present_tonight(db: Any, night_id: int) -> set[str]:
     """当前在场名单：按时序键消费机器可读的进/出效果（#501 AC2/AC9）。
 
-    在场是机器承重态，其输入**不解析自由文本**——进=入殿账（TAG_ENTER）或抽取账
-    presence_effect='enter'；出=抽取账 presence_effect='exit'。派生只认已落账（list_ledger
+    在场是机器承重态，其输入**不解析自由文本**——进=口令账 TAG_ENTER（宣入/常在员额，
+    引擎确定性写）**或**抽取账 presence_effect='enter'（机器可读字段）；出=抽取账
+    presence_effect='exit'。抽取账开放 tags 不驱动在场（否则 LLM 写「入殿」旁路死账校验、
+    与 settle 的 `check_dead=(presence_effect==enter)` 不对称）。派生只认已落账（list_ledger
     只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
     """
     present: set[str] = set()
     for entry in list_ledger(db, night_id):  # 已按时序键排序
         persons = [str(n) for n in (entry.get("person_names") or [])]
         effect = str(entry.get("presence_effect") or "")
-        if TAG_ENTER in (entry.get("tags") or []) or effect == PRESENCE_ENTER:
+        if effect == PRESENCE_ENTER or _command_entry_has_tag_enter(entry):
             present.update(persons)
         if effect == PRESENCE_EXIT:
             present.difference_update(persons)
