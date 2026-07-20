@@ -897,14 +897,40 @@ def dismiss_from_audience(
     )
 
 
+def _presence_delta(entry: Dict[str, Any]) -> Optional[str]:
+    """一条账对在场集的净效果：'enter' / 'exit' / None——**单一在场步进真源**（ADR 0035 R2）。
+
+    进=口令账 TAG_ENTER（宣入/常在员额，引擎确定性写）**或**抽取账 presence_effect='enter'；
+    出=口令账 TAG_EXIT（令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动
+    在场（机器承重态不解析自由文本，与 settle `check_dead=(effect==enter)` 对称）；传召在途
+    无在场效果。`present_names_at` / `audible_entries_for` / `persons_present_tonight` /
+    `dismiss` 同走此核，杜绝双真源（#507：抽取 presence_effect=exit 后 recap 仍含退后公开对话，
+    因旧 `_apply_presence` 只认 tags；command dismiss 的 TAG_EXIT 又漏于旧 `persons_present_tonight`）。
+    `_is_command_entry` 定义在下方，运行时解析。"""
+    effect = str(entry.get("presence_effect") or "")
+    if effect == PRESENCE_ENTER:
+        return PRESENCE_ENTER
+    if effect == PRESENCE_EXIT:
+        return PRESENCE_EXIT
+    if _is_command_entry(entry):
+        tags = entry.get("tags") or []
+        if TAG_EXIT in tags:
+            return PRESENCE_EXIT
+        if TAG_ENTER in tags:
+            return PRESENCE_ENTER
+    return None
+
+
 def _apply_presence(present: set[str], entry: Dict[str, Any]) -> None:
-    """按一条进出账更新在场集：入殿=进、告退=出、传召在途=无在场效果。"""
-    tags = entry.get("tags") or []
+    """按一条账的净在场效果更新在场集（复用单一步进 _presence_delta）。"""
+    delta = _presence_delta(entry)
+    if delta is None:
+        return
     persons = entry.get("person_names") or []
-    if TAG_EXIT in tags:
-        present.difference_update(persons)
-    elif TAG_ENTER in tags:
+    if delta == PRESENCE_ENTER:
         present.update(persons)
+    else:
+        present.difference_update(persons)
 
 
 def present_names_at(
@@ -993,23 +1019,15 @@ def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
 
 
 def persons_present_tonight(db: Any, night_id: int) -> set[str]:
-    """当前在场名单：按时序键消费机器可读的进/出效果（#501 AC2/AC9）。
+    """当前在场名单 = 夜末在场态（#501 AC2/AC9）。
 
-    在场是机器承重态，其输入**不解析自由文本**——进=口令账 TAG_ENTER（宣入/常在员额，
-    引擎确定性写）**或**抽取账 presence_effect='enter'（机器可读字段）；出=抽取账
-    presence_effect='exit'。抽取账开放 tags 不驱动在场（否则 LLM 写「入殿」旁路死账校验、
-    与 settle 的 `check_dead=(presence_effect==enter)` 不对称）。派生只认已落账（list_ledger
+    与 `present_names_at` 共用单一在场步进 `_presence_delta`（ADR 0035 R2）——进=口令账
+    TAG_ENTER（宣入/常在员额）**或**抽取账 presence_effect='enter'；出=口令账 TAG_EXIT
+    （令退）**或**抽取账 presence_effect='exit'。抽取账开放 tags 不驱动在场（机器承重态不
+    解析自由文本，与 settle `check_dead=(effect==enter)` 对称）。派生只认已落账（list_ledger
     只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
     """
-    present: set[str] = set()
-    for entry in list_ledger(db, night_id):  # 已按时序键排序
-        persons = [str(n) for n in (entry.get("person_names") or [])]
-        effect = str(entry.get("presence_effect") or "")
-        if effect == PRESENCE_ENTER or _command_entry_has_tag_enter(entry):
-            present.update(persons)
-        if effect == PRESENCE_EXIT:
-            present.difference_update(persons)
-    return present
+    return present_names_at(db, int(night_id))
 
 
 def ensure_summon_enter(
