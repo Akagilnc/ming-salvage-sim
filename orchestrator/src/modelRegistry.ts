@@ -2,19 +2,20 @@ import "./sandcastleCancelSeam.js"; // #1010 choke-point: patch before sandcastl
 import * as sc from "@ai-hero/sandcastle";
 import { agyAgent, type AgyAgentOptions } from "./agyAgent.js";
 import { grokAgent, type GrokAgentOptions } from "./grokAgent.js";
+import {
+  loadModelData,
+  type ModelDataRegistryRow,
+} from "./modelDataConfig.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
 
 /**
- * The codex coder slug + its effort. The model id is the bare CLI model string
- * the sandcastle codex provider expects.
+ * Pinned identity constants for seats / tests that name a default codex slug.
+ * Registry *data rows* (provider/model/family/options) live in model-data
+ * config (#1075 / ADR 0146 S3) — not in code.
  */
 export const CODER_CODEX_SLUG = "gpt-5.6-terra";
-const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
 export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
 export const VERIFY_CODEX_SLUG = "gpt-5.6-sol";
-const CLAUDE_HEADLESS_OPTIONS = {
-  permissionMode: "bypassPermissions",
-} as const satisfies sc.ClaudeCodeOptions;
 
 // Reasoning effort authority = registry row (and route-preset slug selection)
 // only. Never force effort from role/soul/smokeKey at dispatch time — if a seat
@@ -92,6 +93,10 @@ type ModelSlugRegistryRow = ModelSlugRegistryEntry & {
 
 type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.AgentProvider;
 
+/**
+ * Provider wiring stays in code (#1075). Data rows (which slug → which
+ * provider/model/family/options) live in model-data config and are read at use.
+ */
 const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
   claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
   // #957: restore Sandcastle-native codex capture + resume. #883 forced
@@ -113,88 +118,9 @@ const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFa
   grok: (model, options) => grokAgent(model, options as GrokAgentOptions | undefined),
 };
 
-const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
-  [CODER_CODEX_SLUG]: {
-    provider: "codex",
-    model: CODER_CODEX_SLUG,
-    options: { effort: CODER_CODEX_EFFORT },
-    family: "codex",
-    strongLeg: true,
-  },
-  [REVIEWER_CODEX_SLUG]: {
-    provider: "codex",
-    model: REVIEWER_CODEX_SLUG,
-    options: { effort: "medium" },
-    family: "codex",
-    strongLeg: true,
-  },
-  "gpt-5.6-luna": {
-    provider: "codex",
-    model: "gpt-5.6-luna",
-    options: { effort: "medium" },
-    family: "codex",
-  },
-  // #861 owner order (2026-07-12): a high-effort sol row so the family CMR
-  // coder-fix routes can run sol@high without touching the medium default the
-  // reviewer/verify slots pin.
-  "gpt-5.6-sol-high": {
-    provider: "codex",
-    model: "gpt-5.6-sol",
-    options: { effort: "high" },
-    family: "codex",
-    strongLeg: true,
-  },
-  // #916: low-effort sol row for ship/merger/fixer/cleanup/landing seats on
-  // claude-tight (same model string as sol, options.effort:"low").
-  "gpt-5.6-sol-low": {
-    provider: "codex",
-    model: "gpt-5.6-sol",
-    options: { effort: "low" },
-    family: "codex",
-    strongLeg: true,
-  },
-  // #905: grok-4.5 always runs the real SuperGrok CLI (provider `grok`).
-  // Never cursor / opencode transit — pool rewrite cannot re-route it.
-  "grok-4.5": {
-    provider: "grok",
-    model: "grok-4.5",
-    family: "other",
-    strongLeg: true,
-  },
-  sonnet: {
-    provider: "claudeCode",
-    // #789: roster coder id `sonnet-5` → slug `sonnet` must resolve to Sonnet 5
-    // (claude-sonnet-5), matching model-data roster — not the prior 4.6 pin.
-    model: "claude-sonnet-5",
-    options: CLAUDE_HEADLESS_OPTIONS,
-    family: "claude",
-  },
-  // #789 Coder-Rec roster: Claude-pool small-fix backup (same claudeCode pipe).
-  haiku: {
-    provider: "claudeCode",
-    model: "claude-haiku-4-5",
-    options: CLAUDE_HEADLESS_OPTIONS,
-    family: "claude",
-  },
-  opus: {
-    provider: "claudeCode",
-    model: "claude-opus-4-8",
-    options: CLAUDE_HEADLESS_OPTIONS,
-    family: "claude",
-    strongLeg: true,
-  },
-  // #905: real agy CLI. Empty model → agy default (Gemini 3.5 Flash). When the
-  // Gemini consumer leg is dead, optional-leg degrade only — never substitute.
-  agy: {
-    provider: "agy",
-    model: "",
-    family: "agy",
-  },
-};
-
 /**
  * Pinned ledger/replay compatibility only. Retired model names MUST NOT enter
- * MODEL_SLUG_REGISTRY: that registry is the executable live-worker allowlist.
+ * model-data registry: that table is the executable live-worker allowlist.
  */
 const HISTORICAL_CMR_LEG_FAMILIES: Readonly<Record<string, ModelFamily>> = {
   "gpt-5.5": "codex",
@@ -204,13 +130,106 @@ const CMR_REVIEW_LEG_REGISTRY: Readonly<Record<string, ModelFamily>> = {
   agy: "agy",
 };
 
+function unknownSlugError(slug: string): Error {
+  return new Error(
+    `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
+      `register it in model-data config (ORCHESTRATOR_MODEL_DATA_PATH / ` +
+      `config/model-data.json) before using it.`,
+  );
+}
+
+/**
+ * Map an opaque config registry row onto the typed registry entry the
+ * provider factories consume. Provider membership is fail-closed solely by
+ * loadModelData/parseRegistryRow (MODEL_PROVIDERS whitelist) — do not re-check
+ * here; ModelDataProvider and MODEL_PROVIDER_FACTORIES share the same 7 keys.
+ */
+function rowFromConfigData(data: ModelDataRegistryRow): ModelSlugRegistryRow {
+  const provider = data.provider;
+  const family = data.family as ModelFamily;
+  const optionsRaw = data.options;
+  if (optionsRaw === undefined) {
+    return {
+      provider,
+      model: data.model,
+      family,
+      ...(data.strongLeg === true ? { strongLeg: true } : {}),
+    } as ModelSlugRegistryRow;
+  }
+  // Shallow-copy opaque options into the provider-typed options bag. Loader
+  // already ensured a plain object; provider CLI owns further validation.
+  const options = { ...optionsRaw };
+  switch (provider) {
+    case "claudeCode":
+      return {
+        provider,
+        model: data.model,
+        options: options as sc.ClaudeCodeOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "codex":
+      return {
+        provider,
+        model: data.model,
+        options: options as sc.CodexOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "agy":
+      return {
+        provider,
+        model: data.model,
+        options: options as AgyAgentOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "copilot":
+      return {
+        provider,
+        model: data.model,
+        options: options as sc.CopilotOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "cursor":
+      return {
+        provider,
+        model: data.model,
+        options: options as sc.CursorOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "pi":
+      return {
+        provider,
+        model: data.model,
+        options: options as sc.PiOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+    case "grok":
+      return {
+        provider,
+        model: data.model,
+        options: options as GrokAgentOptions,
+        family,
+        ...(data.strongLeg === true ? { strongLeg: true } : {}),
+      };
+  }
+}
+
+/** Peek live model-data registry (re-reads file every call — 用时现读). */
+function liveRegistryRow(slug: string): ModelSlugRegistryRow | undefined {
+  const data = loadModelData().registry[slug];
+  if (data === undefined) return undefined;
+  return rowFromConfigData(data);
+}
+
 function rowForSlug(slug: string): ModelSlugRegistryRow {
-  const entry = MODEL_SLUG_REGISTRY[slug];
+  const entry = liveRegistryRow(slug);
   if (!entry) {
-    throw new Error(
-      `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
-        `register it in MODEL_SLUG_REGISTRY before using it.`,
-    );
+    throw unknownSlugError(slug);
   }
   return entry;
 }
@@ -247,7 +266,7 @@ export function providerForModelSlug(
   slug: string,
 ): ModelProviderFactory | undefined {
   if (typeof slug !== "string" || slug.length === 0) return undefined;
-  return MODEL_SLUG_REGISTRY[slug]?.provider;
+  return liveRegistryRow(slug)?.provider;
 }
 
 /** #686 / ADR 0124 — billing pool → executable provider channel. */
@@ -299,18 +318,15 @@ export function resolveModelSlugForPool(
 }
 
 export function modelFamilyForSlug(slug: string): ModelFamily {
-  const entry = MODEL_SLUG_REGISTRY[slug];
+  const entry = liveRegistryRow(slug);
   if (entry !== undefined) {
     return entry.family;
   }
-  throw new Error(
-    `realBackend: unknown model slug "${slug}". Add the CLI to the image and ` +
-      `register it in MODEL_SLUG_REGISTRY before using it.`,
-  );
+  throw unknownSlugError(slug);
 }
 
 export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
-  const entry = MODEL_SLUG_REGISTRY[slug];
+  const entry = liveRegistryRow(slug);
   if (entry !== undefined) {
     return entry.family;
   }
@@ -320,13 +336,13 @@ export function modelFamilyForCmrReviewLeg(slug: string): ModelFamily {
   }
   throw new Error(
     `unknown cmr review leg slug "${slug}". Add a runnable worker model to ` +
-      `MODEL_SLUG_REGISTRY, or explicitly register a non-worker CMR leg before ` +
+      `model-data config, or explicitly register a non-worker CMR leg before ` +
       `selecting it in a route preset.`,
   );
 }
 
 export function modelIsStrongLeg(slug: string): boolean {
-  return MODEL_SLUG_REGISTRY[slug]?.strongLeg === true;
+  return liveRegistryRow(slug)?.strongLeg === true;
 }
 
 export function modelIdForSlug(slug: string): string {

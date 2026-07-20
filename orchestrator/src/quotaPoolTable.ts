@@ -176,7 +176,7 @@ export function billingPoolForModelRef(
   // string-typed registry/roster peek (Gemini R1 / family/914 online).
   if (typeof modelRef !== "string") return undefined;
   // Single normalized token for roster + registry + pool membership.
-  // MODEL_SLUG_REGISTRY keys are lowercase; trim+lower matches that surface
+  // model-data registry keys are lowercase; trim+lower matches that surface
   // (Gemini R2 G2 / family/914 online).
   const needle = modelRef.trim().toLowerCase();
   if (needle.length === 0) return undefined;
