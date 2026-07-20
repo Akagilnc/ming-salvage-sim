@@ -1701,6 +1701,9 @@ class GameDB:
         )
         # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        # #506 轮级撤销：undo_chat_turn 写 undone_at；旧档 chat_turns 建于该列进 CREATE 之前
+        # 时缺列，undo 的 UPDATE 会 OperationalError（no such column: undone_at）→ 整撤回回滚。
+        self.ensure_column("chat_turns", "undone_at", "TEXT")
         self.ensure_column(
             "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
         # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
