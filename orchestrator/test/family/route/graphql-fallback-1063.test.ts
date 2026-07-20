@@ -5,9 +5,21 @@ import { type MetadataChannel } from "../../../src/githubMetadataChannel.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 
-/** A 5xx error `classifyExternalCallFailure` treats as transient (fallback-eligible). */
-function http5xx(msg: string): Error {
-  return Object.assign(new Error(msg), { status: 503 });
+/**
+ * The REAL `gh api` failure shape (verified against the CLI): the execFileSync
+ * error carries the process EXIT code in `.status` (1) and the HTTP status only
+ * in the stderr/message TEXT (`gh: … (HTTP 5xx)`). Forging `{status: 503}` would
+ * never fire in production — the boundary enrichment must recover 503 from text.
+ */
+function ghApiError(httpStatus: number, phrase: string): Error {
+  const line = `gh: ${phrase} (HTTP ${httpStatus})`;
+  return Object.assign(new Error(`Command failed: gh api …\n${line}\n`), {
+    status: 1,
+    stderr: `${line}\n`,
+  });
+}
+function http5xx(): Error {
+  return ghApiError(503, "Service Unavailable");
 }
 
 function isGraphql(args: string[]): boolean {
@@ -42,7 +54,7 @@ describe("#1063 admission GraphQL fallback (readFamilyEpic)", () => {
       }
       // Every REST metadata endpoint is in a persistent 5xx outage.
       if (String(args[1]).includes("/sub_issues") || String(args[1]).includes("/blocked_by")) {
-        throw http5xx("REST 503: dependencies temporarily unavailable");
+        throw http5xx();
       }
       throw new Error(`unexpected REST call: ${args.join(" ")}`);
     };
@@ -105,8 +117,9 @@ describe("#1063 admission GraphQL fallback (readFamilyEpic)", () => {
       if (args[0] === "issue" && args[1] === "view") {
         return JSON.stringify({ number: Number(args[2]), body: "", author: { login: "Akagilnc" } });
       }
-      // 401 is durable: needs a human, switching transport is pointless.
-      throw Object.assign(new Error("HTTP 401: Bad credentials"), { status: 401 });
+      // 401 is durable: needs a human, switching transport is pointless. Real
+      // gh shape — exit code 1, HTTP status only in the text.
+      throw ghApiError(401, "Bad credentials");
     };
 
     expect(() => readFamilyEpic(291, REPO, sh, new Map(), () => {})).toThrow(
@@ -121,9 +134,9 @@ describe("#1063 admission GraphQL fallback (readFamilyEpic)", () => {
         return JSON.stringify({ number: Number(args[2]), body: "", author: { login: "Akagilnc" } });
       }
       if (isGraphql(args)) {
-        throw http5xx("GraphQL 502 also down");
+        throw ghApiError(502, "GraphQL gateway down");
       }
-      throw http5xx("REST 503 also down");
+      throw ghApiError(503, "REST dependencies down");
     };
 
     let thrown: unknown;
@@ -135,7 +148,7 @@ describe("#1063 admission GraphQL fallback (readFamilyEpic)", () => {
     const message = (thrown as Error).message;
     expect(message).toMatch(/issue metadata unavailable/);
     // Both transports' failures survive into the aggregated diagnosis.
-    expect(message).toMatch(/REST 503 also down/);
-    expect(message).toMatch(/GraphQL 502 also down/);
+    expect(message).toMatch(/REST dependencies down \(HTTP 503\)/);
+    expect(message).toMatch(/GraphQL gateway down \(HTTP 502\)/);
   });
 });
