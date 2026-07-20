@@ -1913,8 +1913,11 @@ class WebGame:
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
                     # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
+                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
                     from ming_sim.audience_night import dismiss_from_audience
-                    dismiss_from_audience(self.db, character.name)
+                    dismiss_from_audience(
+                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                    )
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")
