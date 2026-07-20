@@ -26,7 +26,12 @@ from ming_sim.context import (
     match_minister_from_text,
     victory_status,
 )
-from ming_sim.db import GameDB, infer_office_type_from_office, normalize_office
+from ming_sim.db import (
+    GameDB,
+    infer_office_type_from_office,
+    normalize_office,
+    resolve_office_type_preserving_title,
+)
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
@@ -289,9 +294,17 @@ def apply_appointment(
     # 朝臣多职统一逗号分隔（后宫记称号，不动）；与 db 层 normalize_office 同源。
     if not is_consort:
         office = normalize_office(office)
+    # 显式名分（office_type ∈ PERSON_TITLE_KINDS）在此建 Character 前就得保住：add_character 的
+    # 名分守卫看的是 character.office_type，若这里先被 infer 反推成官职（office='诸生'→'生员'），
+    # 守卫永远见不到名分、误建 offices/character_offices（#1059 codex l6h）。
     office_type = (
         "后宫" if is_consort
-        else infer_office_type_from_office(office, str(data.get("office_type") or "待铨").strip(), llm_config)
+        else resolve_office_type_preserving_title(
+            office,
+            str(data.get("office_type") or "").strip(),
+            "待铨",
+            llm_config or db.llm_config,
+        )
     )
 
     # ── 后宫 candidate 升格路径 ──────────────────────────────────────
