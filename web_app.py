@@ -1805,6 +1805,9 @@ class WebGame:
                                 next_minister = target.name
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
+                    # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
+                    from ming_sim.audience_night import dismiss_from_audience
+                    dismiss_from_audience(self.db, character.name)
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")

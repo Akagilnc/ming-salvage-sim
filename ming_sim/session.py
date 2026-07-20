@@ -996,6 +996,12 @@ class GameSession:
             tool_result = str(getattr(tool_exec, "result", "") or "")
             if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
                 result.court_action = "dismiss"
+                # AC1（#500）：令退在此单缝落确定性告退账，一切经 session.chat 的消费者
+                # （CLI 召对 / 非流式 web /api/ministers/{name}/chat）自动闭合，名单查询即时去人；
+                # 不在场/无开夜时既有 no-op。stream 路 tool 环另处同调 dismiss_from_audience。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import dismiss_from_audience
+                    dismiss_from_audience(self.db, character.name)
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:

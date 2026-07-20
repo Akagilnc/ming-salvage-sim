@@ -190,6 +190,16 @@ def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
     return unique
 
 
+def _record_audience_exit(session: GameSession, name: str) -> None:
+    """CLI「退下」控制口令的告退账落地（此路不经 session.chat，须自落）。
+    tool 触发的 court_action=dismiss 由 session.chat 单缝落账，不走此处。
+    无开夜/不在场时既有 no-op；缺 conn 的轻量 session double（与 attach 同款能力门）跳过。"""
+    if not hasattr(session.db, "conn"):
+        return
+    from ming_sim.audience_night import dismiss_from_audience
+    dismiss_from_audience(session.db, name)
+
+
 def _handle_court_command(
     session: GameSession, text: str, current: Character
 ) -> Optional[str]:
@@ -307,6 +317,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if cmd == "handled":
             continue
         if cmd == "dismiss":
+            _record_audience_exit(session, character.name)
             print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
@@ -389,6 +400,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if result.displaced_minister:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
+            # 告退账已由 session.chat（court_action=dismiss 单缝）落地，此处不重复写。
             print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
