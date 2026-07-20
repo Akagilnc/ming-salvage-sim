@@ -22,7 +22,13 @@ from ming_sim.constants import (
 )
 from ming_sim.content import GameContent
 from ming_sim.context import victory_status
-from ming_sim.db import GameDB, _approx_wanliang, infer_office_type_from_office, normalize_office
+from ming_sim.db import (
+    GameDB,
+    _approx_wanliang,
+    infer_office_type_from_office,
+    normalize_office,
+    resolve_office_type_preserving_title,
+)
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -2952,12 +2958,15 @@ def _pending_person_changes_block_event_gate(
                 overlay(name, "status_reason", str(item.get("reason") or "")[:200] or "诏书任命")
             overlay(name, "reason_code", "")
             overlay(name, "office", normalized_office)
+            # 显式名分透传（#1059 codex 同族）：事件闸预览的 overlay 须与真实 apply 一致，
+            # 显式名分（office='诸生'）不得被 infer 反推成 '生员'，否则 shadow 盘面与落库分岔。
             overlay(
                 name,
                 "office_type",
-                infer_office_type_from_office(
+                resolve_office_type_preserving_title(
                     normalized_office,
-                    item.get("office_type") or item.get("new_office_type") or row_value(row, "office_type"),
+                    str(item.get("office_type") or item.get("new_office_type") or ""),
+                    row_value(row, "office_type"),
                     db.llm_config,
                 ),
             )
@@ -4230,10 +4239,14 @@ def _strategic_event_result_preflight_error(
                     if row is not None:
                         current_office = normalize_office(str(row["office"] or ""))
                         current_type = str(row["office_type"] or "")
-                        target_type = infer_office_type_from_office(
+                        # 显式名分透传（#1059 codex 同族）：noop 判定须用与真实 apply 一致的
+                        # 有效 office_type，否则显式名分（office='诸生'）被 infer 反推成 '生员'≠
+                        # current '身名分'，把幂等再声明误判成非 noop。
+                        target_type = resolve_office_type_preserving_title(
                             target_office,
-                            str(item.get("office_type") or item.get("new_office_type") or current_type),
-                            llm_config,
+                            str(item.get("office_type") or item.get("new_office_type") or ""),
+                            current_type,
+                            llm_config or db.llm_config,
                         )
                         if target_office == current_office and target_type == current_type:
                             return _noop_error(
@@ -5645,7 +5658,15 @@ def apply_office_appointment(
                 ch.status_reason = str(_reason_row["status_reason"] or "")
                 ch.reason_code = str(_reason_row["reason_code"] or "")
             ch.office = normalize_office(new_office)
-            ch.office_type = infer_office_type_from_office(ch.office, new_office_type or ch.office_type, llm_config)
+            # 显式名分透传（#1059 codex l6k）：set_character_office 的 DB 写已由守卫保住
+            # 显式 new_office_type 名分，但内存 Character 若在此被 infer 反推成官职
+            # （office='诸生'→'生员'），DB 与内存分岔、registry.refresh 按错角色建当回合上下文。
+            ch.office_type = resolve_office_type_preserving_title(
+                ch.office,
+                new_office_type,
+                ch.office_type,
+                llm_config or db.llm_config,
+            )
             if registry is not None:
                 registry.refresh(name)
                 # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
@@ -5663,7 +5684,11 @@ def apply_office_appointment(
     if content is None:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "无 content，跳过建档"}
     from ming_sim.session import apply_appointment  # 延迟导入避循环
-    appt = {"name": name, "office": new_office, "faction": faction, "reason": reason, "approved": True}
+    # office_type 必须透传：apply_appointment→add_character 靠它走 person-title 守卫（名分不建
+    # offices 父行、不写 character_offices）。漏传则 infer 兜成「待铨」→ 名分人物被当普通官职、
+    # 建脏 character_offices 行（#1058 接缝回归；transfer 分支已带 new_office_type，此处对称补齐）。
+    appt = {"name": name, "office": new_office, "office_type": new_office_type,
+            "faction": faction, "reason": reason, "approved": True}
     # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)

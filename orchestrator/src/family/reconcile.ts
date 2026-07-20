@@ -51,7 +51,11 @@
  * before scheduling can trust it.
  */
 
-import { isMergedAccountingEntry, mergedSet } from "./ledger.js";
+import {
+  cmrBarrierPhaseOf,
+  isMergedAccountingEntry,
+  mergedSet,
+} from "./ledger.js";
 import type {
   ChildSlice,
   FamilyLedgerEntry,
@@ -103,12 +107,19 @@ function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
   if (!hasNonBlankFamilyHeadAfter(entry)) return false;
   if (entry.status === "merged") return isMergedAccountingEntry(entry);
   if (entry.status === "aborted") {
-    return entry.event === "aborted" && (entry.phase === "wave" || entry.phase === "final");
+    // #1064: accept wave / final / correctness_checkpoint — the IC checkpoint
+    // machine (#982) legitimately writes phase="correctness_checkpoint" aborted
+    // rows that still carry a valid familyHeadAfter baseline. cmrBarrierPhaseOf
+    // is the sole phase normalizer (do not fork a twin literal set here).
+    return (
+      entry.event === "aborted" &&
+      (entry.phase === "wave" || cmrBarrierPhaseOf(entry.phase) === entry.phase)
+    );
   }
   if (entry.status === "cmr_passed") {
     return (
       entry.event === "cmr_passed" &&
-      entry.phase === "final" &&
+      cmrBarrierPhaseOf(entry.phase) === entry.phase &&
       (entry.cmrPass === "completeness" || entry.cmrPass === "correctness") &&
       typeof entry.routeFingerprint === "string" &&
       entry.routeFingerprint.trim().length > 0
@@ -117,14 +128,14 @@ function isValidRecordedHeadEntry(entry: FamilyLedgerEntry): boolean {
   if (entry.status === "cmr_reviewed" || entry.status === "cmr_fix_committed") {
     return (
       entry.event === entry.status &&
-      entry.phase === "final" &&
+      cmrBarrierPhaseOf(entry.phase) === entry.phase &&
       (entry.cmrPass === "completeness" || entry.cmrPass === "correctness")
     );
   }
   if (entry.status === "escalated") {
     return (
       entry.event === "escalated" &&
-      entry.phase === "final" &&
+      cmrBarrierPhaseOf(entry.phase) === entry.phase &&
       (entry.escalationKind === "decision" || entry.escalationKind === "failure")
     );
   }
