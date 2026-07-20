@@ -9182,6 +9182,63 @@ class GameDB:
         self.conn.commit()
         return int(candidate_id)
 
+    def list_night_promulgated_directives(self, night_id: int) -> List[Dict[str, object]]:
+        """按夜取数（#502 AC6）：本夜定案（收夜提交）的明发旨——经 pending_actions（本夜、
+        kind=directive、已 committed、回填了 committed_directive_id）关联 turn_directives。
+        密令（kind=secret_order，私密）天然不入此清单。机器辨识、零自由文本解析。"""
+        rows = self.conn.execute(
+            """
+            SELECT td.id AS directive_id, td.turn, td.year, td.period,
+                   td.actor, td.text, td.status
+            FROM pending_actions pa
+            JOIN turn_directives td ON td.id = pa.committed_directive_id
+            WHERE pa.night_id = ? AND pa.kind = 'directive'
+              AND pa.status = 'committed' AND pa.committed_directive_id > 0
+            ORDER BY td.id
+            """,
+            (int(night_id),),
+        ).fetchall()
+        return [
+            {
+                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
+                "year": int(r["year"]), "period": int(r["period"]),
+                "actor": r["actor"] or "", "text": r["text"] or "", "status": r["status"] or "",
+            }
+            for r in rows
+        ]
+
+    def list_promulgated_directives(
+        self, turn_from: Optional[int] = None, turn_to: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """按区间取数（#502 AC6）：回合区间内各夜定案的明发旨（含所属夜 id）。turn_from/to
+        为闭区间；留空则不设该端界。用于跨夜/跨回合辨识哪些旨已明发。"""
+        clauses = [
+            "pa.kind = 'directive'", "pa.status = 'committed'",
+            "pa.committed_directive_id > 0", "pa.night_id IS NOT NULL",
+        ]
+        params: List[object] = []
+        if turn_from is not None:
+            clauses.append("td.turn >= ?")
+            params.append(int(turn_from))
+        if turn_to is not None:
+            clauses.append("td.turn <= ?")
+            params.append(int(turn_to))
+        rows = self.conn.execute(
+            "SELECT td.id AS directive_id, td.turn, td.actor, td.text, td.status, "
+            "pa.night_id AS night_id FROM pending_actions pa "
+            "JOIN turn_directives td ON td.id = pa.committed_directive_id "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY td.turn, td.id",
+            params,
+        ).fetchall()
+        return [
+            {
+                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
+                "night_id": int(r["night_id"] or 0), "actor": r["actor"] or "",
+                "text": r["text"] or "", "status": r["status"] or "",
+            }
+            for r in rows
+        ]
+
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
         「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。

@@ -199,6 +199,52 @@ def test_ambiguous_command_returns_structured_state_no_silent_default(game, monk
     assert amb_ids == {id_a, id_b}
 
 
+def test_night_promulgated_directives_identifiable_by_night_and_range(game):
+    """夜内定案（收夜提交）的旨在账上可辨识为已明发（AC6，公开层）：
+    按夜取数各夜明发的旨；密令（私密）不入明发清单（负路）。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+
+    # 第一夜：两道拟旨 + 一道密令（私密），全应允，收夜
+    n1 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid1 = int(n1["id"])
+    d1 = db.stage_directive_candidate(state.turn, name, payload={"text": "着户部清查粮饷。", "actor": name})
+    d2 = db.stage_directive_candidate(state.turn, name, payload={"text": "着兵部核饷军械。", "actor": name})
+    so = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
+        payload={"title": "密查盐引", "content": "着人密查两淮盐引亏空。", "assignee": name,
+                 "tags": [], "deadline_months": 3, "excluded_names": [], "excluded_offices": []})
+    db.mark_pending_night_approved([d1, d2, so], night_id=nid1)
+    an.close_night(db, state, night_id=nid1, content=content)
+
+    promulgated = db.list_night_promulgated_directives(nid1)
+    texts = [str(p["text"] or "") for p in promulgated]
+    assert any("户部清查" in t for t in texts)
+    assert any("兵部核饷" in t for t in texts)
+    # 密令私密：不出现在明发清单里
+    assert not any("盐引" in t for t in texts), "密令（私密）不应被辨识为明发"
+    # 账上（公开层卷轴）有明发标记
+    tags = {t for e in an.list_ledger(db, nid1) for t in e.get("tags") or []}
+    assert an.TAG_MINGFA in tags
+
+    # 第二夜（推进一回合）：一道旨，收夜。按区间取数能分辨各夜/各回合明发。
+    turn1 = state.turn
+    state.turn += 1
+    n2 = an.open_night(db, state, location="文华殿", time_of_day="日")
+    nid2 = int(n2["id"])
+    d3 = db.stage_directive_candidate(state.turn, name, payload={"text": "着工部修葺城防。", "actor": name})
+    db.mark_pending_night_approved([d3], night_id=nid2)
+    an.close_night(db, state, night_id=nid2, content=content)
+
+    assert {str(p["text"] or "") for p in db.list_night_promulgated_directives(nid2)} \
+        and any("工部修葺" in str(p["text"] or "") for p in db.list_night_promulgated_directives(nid2))
+    # 第一夜的不混进第二夜
+    assert not any("户部清查" in str(p["text"] or "") for p in db.list_night_promulgated_directives(nid2))
+    # 按区间（回合区间）取数覆盖两回合共三道
+    rng = db.list_promulgated_directives(turn_from=turn1, turn_to=state.turn)
+    assert len({p["directive_id"] for p in rng}) == 3
+
+
 def test_needs_clarification_directive_skipped_by_default_commit(game):
     """含糊待澄清候选不被「不回→默认同意」批量提交（AC5：颁诏时不误提交）；
     对照：未标待澄清的那道照常默认提交入 turn_directives。"""
