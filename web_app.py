@@ -772,6 +772,11 @@ class WebGame:
         self.favorites = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+        # #505 finding2：换档/reset 后与 __init__ 同序重开对账——存档可备份于在飞中，
+        # 带 generating/无回话孤儿轮的档 load 后同样会永挡续问/收夜（违 AC1/ADR 续夜）。
+        # 先于补跑、一条调用、勿复制谓词（与在飞守卫单一真源 = list_in_flight_chat_turns）。
+        if hasattr(self.db, "conn"):
+            self.db.reconcile_interrupted_chat_turns()
         # #501：换档/重建后同样补跑丢失的叙事抽取账（后台、从不锁档）。
         self._spawn_startup_extraction_catch_up()
 
@@ -1540,6 +1545,13 @@ class WebGame:
             "can_undo_last_chat": self.can_undo_last_chat(minister_name),
         }
 
+    def _reject_if_settlement_phase(self) -> None:
+        """#498/#505：结算/亲裁相位不得召对（含续问与重试召对）——否则开/续的夜会随
+        submit_decisions 跨月推进而不收（夜不跨月）。raise 版召对入口共用此单缝，
+        新入口（如 #505 重试）不再另抄一份 if（stream 入口走 yield-error 控制流，自持一份）。"""
+        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
+
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
@@ -1551,15 +1563,13 @@ class WebGame:
         # #498：结算/亲裁相位不得召对——否则开的夜会随 submit_decisions 跨月推进而不收（夜不跨月）。
         # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
         # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
-        if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-            raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
+        self._reject_if_settlement_phase()
         gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
         with gate:
-            if getattr(self.state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
-                raise HTTPException(status_code=409, detail="月末结算/亲裁进行中，暂不能召对。")
+            self._reject_if_settlement_phase()
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
             accepted_turn = int(self.state.turn)
@@ -1646,12 +1656,24 @@ class WebGame:
         chat_turn_id = int(target["chat_turn_id"])
         question = str(target["question"])
         accepted_turn = int(target["turn"])
+        # #505 finding4：结算/亲裁相位不得重试召对（与 chat 同相位门，夜不跨月）。锁前快速失败。
+        self._reject_if_settlement_phase()
         gate = self._runtime_write_gate()
+        before_snapshot: Dict[str, Any] = {}
         with gate:
+            self._reject_if_settlement_phase()
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id)
+            # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
+            # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
+            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                raise HTTPException(
+                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+            # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
+            # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
+            # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
+            before_snapshot = self.db.capture_chat_rollback_snapshot()
         try:
             result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
             proposed = None
@@ -1673,6 +1695,8 @@ class WebGame:
                     directive_confirmation_ambiguous=getattr(
                         result, "directive_confirmation_ambiguous", None),
                 )
+                # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 if self._mark_pending_write():
@@ -1686,8 +1710,11 @@ class WebGame:
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
-            # 重试再失败：翻回 interrupted（问话仍在、可再重试），不静默 fail 掉最后一句。
+            # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
+            # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
+            # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
             with gate:
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             raise
 

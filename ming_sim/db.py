@@ -7336,6 +7336,13 @@ class GameDB:
             for row in rows:
                 ctid = int(row["id"])
                 uid = row.get("user_message_id")
+                # #505 finding5：崩溃窗若 agent.run 已写入 Agno runs 而回话未 persist，
+                # 截回本轮起点（agno_runs_before），避免 retry 时上下文双倍——与
+                # fail_chat_turn/undo 同一 agno 截断缝。非删账：只丢没落完那半句的 LLM 工作态。
+                self._truncate_agno_runs_in_tx(
+                    str(row.get("agno_session_id") or ""),
+                    int(row.get("agno_runs_before") or 0),
+                )
                 if uid:
                     self.conn.execute(
                         "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
@@ -7399,14 +7406,47 @@ class GameDB:
         return cur.rowcount > 0
 
     def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> None:
-        """重试再失败：把重入生成态的轮翻回 'interrupted'（仍无回话时），保持可再重试、不误 fail。"""
-        self.conn.execute(
-            "UPDATE chat_turns SET status = 'interrupted' "
-            "WHERE id = ? AND status = 'generating' "
-            "AND (minister_message_id IS NULL OR minister_message_id = 0)",
+        """重试再失败的善后（#505 finding1）：回滚本次重试在 session.chat 落下的副作用
+        （dismiss 账 / 拟旨 / 任免候选等，已由调用方 record_chat_turn_rollback_diffs 记为
+        rollback items）+ 截断本轮 agno runs，把重入生成态的轮翻回 'interrupted' 保持可再
+        重试——但**绝不删问话/回话**（恢复路径永不删账，AC3/AC4）。
+
+        与 fail_chat_turn 同 rollback-items + agno 截断缝，差异仅三点：不删 chat_messages、
+        终态=interrupted（非 failed）、消费后删本轮 rollback_items（轮继续存活，防将来重试
+        成功→撤回时重放已还原的副作用 = 双还原）。仅动重入生成态且尚无回话的轮（幂等 / CAS 安全）。
+        """
+        row = self.conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?", (int(chat_turn_id),)
+        ).fetchone()
+        if row is None:
+            return
+        turn_row = self._row_dict(row)
+        if turn_row["status"] != "generating" or turn_row.get("minister_message_id"):
+            return
+        items = self.conn.execute(
+            """
+            SELECT * FROM chat_turn_rollback_items
+            WHERE chat_turn_id = ?
+            ORDER BY id DESC
+            """,
             (int(chat_turn_id),),
-        )
-        self.conn.commit()
+        ).fetchall()
+        with self.conn:
+            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            # 空 undone 消息集：只还原业务副作用，一句问话/回话都不删。
+            self._restore_chat_rollback_items_in_tx(items, [])
+            self.conn.execute(
+                "DELETE FROM chat_turn_rollback_items WHERE chat_turn_id = ?",
+                (int(chat_turn_id),),
+            )
+            self._truncate_agno_runs_in_tx(
+                str(turn_row.get("agno_session_id") or ""),
+                int(turn_row.get("agno_runs_before") or 0),
+            )
+            self.conn.execute(
+                "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
+                (int(chat_turn_id),),
+            )
 
     def create_chat_turn(
         self,
