@@ -61,6 +61,36 @@ export function isGithubAuthFailure(err: unknown): boolean {
   return false;
 }
 
+const GH_HTTP_STATUS = /\bHTTP\s*(\d{3})\b/i;
+
+/**
+ * #1063 — gh CLI reports the HTTP status only in its stderr/message text (e.g.
+ * `gh: Service Unavailable (HTTP 503)`) while `.status` on the execFileSync
+ * error holds the process EXIT code (1). Extract the numeric HTTP status — a
+ * machine token in gh's own structured error line — and attach it as
+ * `httpStatus` so {@link classifyExternalCallFailure} (which never reads free
+ * text) can key on 5xx ahead of the shadowing exit code. Single boundary shared
+ * by the retry budget below and, through it, the #1063 dual-channel fallback.
+ * Mirrors the existing gh-text HTTP parse in {@link isGithubAuthFailure}.
+ */
+export function withGithubHttpStatus(err: unknown): unknown {
+  if (err === null || typeof err !== "object") return err;
+  const e = err as {
+    httpStatus?: unknown;
+    readonly message?: unknown;
+    readonly stderr?: unknown;
+  };
+  if (Number.isInteger(e.httpStatus)) return err;
+  const text = [e.message, e.stderr]
+    .filter((part): part is string => typeof part === "string")
+    .join("\n");
+  const match = GH_HTTP_STATUS.exec(text);
+  if (match !== null) {
+    (err as { httpStatus?: number }).httpStatus = Number(match[1]);
+  }
+  return err;
+}
+
 /** The sole GitHub metadata retry seam: transient only; deterministic/auth errors do not retry. */
 export function readMetadataWithRetry<T>(read: () => T): T {
   let last: unknown;
@@ -68,12 +98,17 @@ export function readMetadataWithRetry<T>(read: () => T): T {
     try {
       return read();
     } catch (err) {
-      last = err;
+      // #1063: surface gh's HTTP status as a numeric field before classify, so a
+      // persistent 5xx is seen as transient (retry here, then GraphQL fallback)
+      // rather than masked by exit code 1. The rethrown error carries httpStatus
+      // for the downstream dual-channel classify too.
+      const enriched = withGithubHttpStatus(err);
+      last = enriched;
       if (
-        classifyExternalCallFailure(err) !== "transient" ||
+        classifyExternalCallFailure(enriched) !== "transient" ||
         attempt === MAX_METADATA_ATTEMPTS
       ) {
-        throw err;
+        throw enriched;
       }
     }
   }

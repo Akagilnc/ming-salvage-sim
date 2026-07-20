@@ -1,18 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  withGithubHttpStatus,
+} from "../../src/admissionPreflight.js";
+import { classifyExternalCallFailure } from "../../src/externalCall.js";
+import {
   DualChannelMetadataError,
   readGithubMetadataDualChannel,
   type MetadataChannel,
 } from "../../src/githubMetadataChannel.js";
 
-/** A 5xx/network class error `classifyExternalCallFailure` treats as transient. */
+/**
+ * What the dual-channel seam actually sees in production: the gh error AFTER the
+ * `readMetadataWithRetry` boundary attached a numeric `httpStatus` (the raw gh
+ * error only has exit code 1 + the status in stderr text — see the enrichment
+ * test below and graphql-fallback-1063 for the end-to-end).
+ */
 function transient(msg: string): Error {
-  return Object.assign(new Error(msg), { status: 503 });
+  return Object.assign(new Error(msg), { httpStatus: 503 });
 }
-/** A 401/403 class error `classifyExternalCallFailure` treats as durable. */
 function durable(status: number, msg: string): Error {
-  return Object.assign(new Error(msg), { status });
+  return Object.assign(new Error(msg), { httpStatus: status });
 }
 
 describe("#1063 dual-channel gh metadata read", () => {
@@ -96,5 +104,40 @@ describe("#1063 dual-channel gh metadata read", () => {
     expect(thrown).toBeInstanceOf(DualChannelMetadataError);
     expect((thrown as Error).message).toMatch(/REST=REST 503/);
     expect((thrown as Error).message).toMatch(/GraphQL=GraphQL 502 too/);
+  });
+});
+
+describe("#1063 gh HTTP status enrichment (the root of the false-green)", () => {
+  /** The verified real `gh api` failure: exit code 1, HTTP status only in text. */
+  function rawGhError(httpStatus: number, phrase: string): Error {
+    const line = `gh: ${phrase} (HTTP ${httpStatus})`;
+    return Object.assign(new Error(`Command failed: gh api …\n${line}\n`), {
+      status: 1,
+      stderr: `${line}\n`,
+    });
+  }
+
+  it("raw gh 5xx is durable (exit code masks HTTP); enriched it classifies transient", () => {
+    const raw = rawGhError(503, "Service Unavailable");
+    // Before enrichment the exit code (1) is the only numeric field → durable,
+    // which is exactly why the fallback never fired.
+    expect(classifyExternalCallFailure(raw)).toBe("durable");
+    // Enrichment recovers the numeric 503 from gh's own error line.
+    expect(classifyExternalCallFailure(withGithubHttpStatus(raw))).toBe("transient");
+  });
+
+  it("enriched gh 404/401 stay durable (no fallback / needs a human)", () => {
+    expect(
+      classifyExternalCallFailure(withGithubHttpStatus(rawGhError(404, "Not Found"))),
+    ).toBe("durable");
+    expect(
+      classifyExternalCallFailure(withGithubHttpStatus(rawGhError(401, "Bad credentials"))),
+    ).toBe("durable");
+  });
+
+  it("network errno with no HTTP text still classifies transient (untouched path)", () => {
+    const errno = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+    expect(withGithubHttpStatus(errno)).toBe(errno);
+    expect(classifyExternalCallFailure(errno)).toBe("transient");
   });
 });
