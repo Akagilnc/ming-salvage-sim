@@ -2201,6 +2201,36 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
+  // #1027 FINAL / ADR 0145: toolchain terminal — judge classified the red as a
+  // toolchain/environment failure, so the runner falls back to verify_failed
+  // (no coder-fix loop, no decision-gate park). Loud terminal, never silent.
+  if (closure.action === "toolchain") {
+    const reason = `integrated cmr ${pass} toolchain: ${closure.reason} — ${closure.diagnosis}`;
+    const stopSummary: StopSummary = stageFailureStopSummary({
+      status: "verify_failed",
+      summary: reason,
+      repairHint:
+        "family judge classified this red as toolchain/environment " +
+        "(not a cross-slice regression); fix the toolchain/dependency and " +
+        "re-run — do not route through coder-fix",
+    });
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: ledgerPhase,
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        stopSummary,
+      }),
+    );
+    return {
+      result: stageGate("verify_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
+    };
+  }
+
   // continue + live findings → coder-fix (or abort when fix disabled)
   // #952: terminal-only continue (0 live + suppress/refute flips) is already
   // folded to closure.action === "pass" by closeFamilyCourtFromJudgeOutput —
