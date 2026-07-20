@@ -40,12 +40,8 @@
 
 ## 🔴 BUG / 待修（影响游戏正确性）
 
-### B14. 召对取消的内存历史按文本剪枝，并发同文本会误删（P3·自愈，family/362-base CMR defer）
-- **现象**：`WebGame._fail_incomplete_chat_turn`（[web_app.py](web_app.py)）剪内存 `chat_history` 时只按 `role=="user" and content==user_text` 倒序匹配删第一条。若同一大臣有两路 in-flight 同文本召对流（如用户极速重复提交相同问话 + 第一路中途断连），取消较早一路会删掉较晚一路的内存用户条目。
-- **范围/严重度**：DB 侧按精确 `chat_turn_id` 失败/删消息（durable 真源正确，#378 目标已达）；仅内存镜像歧义，且 `undo_last_chat` 等路径会从 DB `load_all_chat_history` 全量重载自愈。单皇帝单活跃大臣 + 需病态并发同文本双提交 → P3。
-- **为何 defer 不当场修**：稳健修法要按消息身份（message_id / 对象身份）剪枝，但 `_fail_incomplete_chat_turn(minister, turn_id, user_text)` 的**文本签名已被 3 个测试**（`tests/test_chat_stream_cancel.py`）锁定，且 `chat_history` 条目 schema（`{"role","content"}`）被前端序列化/agent 上下文多处消费——改成带 id 属性的跨切片接口/schema 设计决策，超出 #370/#378 切片范围。
-- **修法候选**：① `chat_stream` 追加用户条目时保留对象引用，`_fail_incomplete_chat_turn` 改按 `is` 身份剪（需同步改 3 个测试 + 调用点）；② 给内存条目带 `chat_turn_id`，按 id 剪（须核前端/agent 上下文消费方不受新键影响）。任一均需先定 chat_history 条目 schema。
-- **注**：family/362-base 整合 CMR（correctness gate）g2r1 codex 提的 medium；gh 未鉴权无法开 issue，先记此处，family ship/人工转 issue。
+### ~~B14. 召对取消的内存历史按文本剪枝，并发同文本会误删（P3·自愈，family/362-base CMR defer）~~ ✅ 已解决（被 id-based `db.fail_chat_turn(chat_turn_id)` 取代）
+- 原文批评的 `WebGame._fail_incomplete_chat_turn`（按文本签名倒序剪 `chat_history`）与其锁定测试 `tests/test_chat_stream_cancel.py` 均已不存在；取消/失败路径现走 `db.fail_chat_turn(chat_turn_id)`（[db.py](ming_sim/db.py)），按精确 id 操作，原文提出的文本歧义前提不再成立。#505/#506（撤回/续夜）在此 id-based 底座上继续重写 chat-turn 回滚子系统。
 
 ### ~~B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）~~ ✅ 已修（v0.15.0.0, 2026-06-27, cf1038f）
 - **现象**：`web/src/epicOrchestratorWorkflow.test.ts` 「merges reviewed commits from different slice worktrees through one dedicated family worktree」断言 `mergeWorktrees[0].startsWith(repoPath) === false` 失败，实得 `true`（merge worktree 路径在 repo 目录内，不是外部 tmpdir）。
