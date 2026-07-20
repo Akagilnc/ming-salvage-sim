@@ -1569,6 +1569,16 @@ export class RealFamilyBackend implements FamilyBackend {
                 reason: outcome.reason ?? "family judge escalate",
                 diagnosis: outcome.diagnosis ?? "judge declared escalate",
               }
+            : outcome.status === "toolchain"
+              ? {
+                  // #1027 S1 / ADR 0145: toolchain terminal (→ verify_failed).
+                  station: "judge",
+                  status: "toolchain",
+                  reason: outcome.reason ?? "family judge toolchain",
+                  diagnosis:
+                    outcome.diagnosis ??
+                    "judge declared toolchain/environment red",
+                }
             : (() => {
                 // ADR 0138 / #978 CR S2: never invent an empty packet body when
                 // missing — fail at projection (schema already requires body on
@@ -3250,7 +3260,7 @@ export class RealFamilyBackend implements FamilyBackend {
 export type CmrWorkerOutcome =
   | {
       readonly kind: "judge";
-      readonly status: "converged" | "continue" | "escalate";
+      readonly status: "converged" | "continue" | "escalate" | "toolchain";
       readonly findingDispositions?: ReadonlyArray<
         import("../types.js").JudgeFindingDisposition
       >;
@@ -3761,6 +3771,16 @@ function classifyCmrOutcomePayload(
       return {
         kind: "judge",
         status: "escalate",
+        reason: v.reason,
+        diagnosis: v.diagnosis,
+        ...cargo,
+      };
+    }
+    if (v.status === "toolchain") {
+      // #1027 S1 / ADR 0145: toolchain terminal (runner → verify_failed).
+      return {
+        kind: "judge",
+        status: "toolchain",
         reason: v.reason,
         diagnosis: v.diagnosis,
         ...cargo,

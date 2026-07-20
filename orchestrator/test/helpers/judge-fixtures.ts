@@ -106,6 +106,23 @@ export function judgeEscalate(
   };
 }
 
+/**
+ * Fourth terminal (#1027 / ADR 0145) — wave-verify red the judge classifies as
+ * a toolchain/environment failure (runner falls back to verify_failed). Unlike
+ * escalate this is NOT a decision-gate park, so it carries no `escalate` mirror.
+ */
+export function judgeToolchain(
+  reason = "MODULE_NOT_FOUND after merge",
+  diagnosis = "missing dependency; not a cross-slice regression",
+): JudgeResult {
+  return {
+    kind: "judge",
+    status: "toolchain",
+    reason,
+    diagnosis,
+  };
+}
+
 export function completedJudge(
   output: JudgeResult,
   sessionId?: string,
