@@ -136,6 +136,32 @@ describe("reconcileFamilyLedger — branch ① ledger末条 === live HEAD", () =
     expect(plan.escalate).toBe(false);
     expect([...plan.merged].sort()).toEqual([10, 11]);
   });
+
+  it("checkpoint-phase aborted baseline row is a valid recorded head (regression #1064)", async () => {
+    // The IC checkpoint machine (#982) legitimately writes aborted rows at
+    // phase="correctness_checkpoint" that still carry a valid familyHeadAfter
+    // baseline. lastRecordedHead must recognise such a row as a valid baseline
+    // (NOT reject it as invalid → needless escalate) so a clean resume at that
+    // head proceeds via branch ①. #1064 ensured cmrBarrierPhaseOf normalises
+    // correctness_checkpoint so the baseline guard accepts it.
+    const ledger: FamilyLedgerEntry[] = [
+      { childIssue: 1, status: "merged", childHead: "H_CHILD", familyHeadAfter: "H1" },
+      {
+        status: "aborted",
+        event: "aborted",
+        phase: "correctness_checkpoint",
+        familyHeadAfter: "H1",
+      },
+    ];
+    const checkpointChildren = [
+      { issue: 1, blockedBy: [] as number[] },
+    ];
+    const git = new FakeReconcileGit("H1", { 1: "H_CHILD" }, new Set(["H_CHILD"]));
+    const plan = await reconcileFamilyLedger(ledger, checkpointChildren, git);
+    expect(plan.escalate).toBe(false);
+    expect(plan.reconciled).toEqual([]);
+    expect([...plan.merged].sort()).toEqual([1]);
+  });
 });
 
 describe("reconcileFamilyLedger — branch ② live HEAD LEADS (the crash window)", () => {
