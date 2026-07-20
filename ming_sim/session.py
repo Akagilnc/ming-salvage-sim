@@ -1001,7 +1001,10 @@ class GameSession:
                 # 不在场/无开夜时既有 no-op。stream 路 tool 环另处同调 dismiss_from_audience。
                 if hasattr(self.db, "conn"):
                     from ming_sim.audience_night import dismiss_from_audience
-                    dismiss_from_audience(self.db, character.name)
+                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
+                    dismiss_from_audience(
+                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                    )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:

@@ -252,6 +252,7 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "body": str(raw.get("body") or ""),
             "tags": [str(t) for t in _json_list(raw.get("tags"))],
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
+            "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "presence_effect": str(raw.get("presence_effect") or ""),
             "created_at": raw.get("created_at"),
             "kind": "ledger",
@@ -959,10 +960,15 @@ def dismiss_from_audience(
     *,
     night_id: Optional[int] = None,
     body: str = "",
+    origin_chat_turn_id: int = 0,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
-    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。"""
+    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
+
+    `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
+    使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
+    且被令退者永久差出）。0=不属某轮的独立令退（如 CLI「退下」控制口令，无对话轮、无撤回目标）。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("令退人名不能为空", code="empty_person")
@@ -981,6 +987,7 @@ def dismiss_from_audience(
         body=body or f"帝令{name}退下，{name}告退。",
         tags=[TAG_EXIT],
         check_dead=False,
+        origin_chat_turn_id=origin_chat_turn_id,
     )
 
 
@@ -1154,23 +1161,26 @@ def attach_chat_turn_to_night(
     night_id = int(night["id"])
     # 入殿账须早于本轮对话轮落 seq（进殿在先、奏对在后，时序对齐）；chat_turn_id 此时尚未
     # 生成，故先落账后建轮，再回绑 origin_chat_turn_id——撤回本轮据此删该轮所产入殿账（#506）。
-    enter_entry_id = ensure_summon_enter(
-        db, night_id, minister_name, method=summon_method, body=enter_body,
-    )
-    chat_turn_id = db.create_chat_turn(
-        state,
-        minister_name,
-        agno_session_id,
-        agno_runs_before,
-        night_id=night_id,
-    )
-    if enter_entry_id:
-        db.conn.execute(
-            "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
-            (int(chat_turn_id), int(enter_entry_id)),
+    # 三步（落入殿账 / 建轮 / 回绑 origin）整段原子（#506 L2）：中途崩溃则全回滚，绝不留
+    # origin=0 的孤儿入殿账（否则撤回删不掉、与令退残留同形脏账）。seq 时序不变（enter 先 create
+    # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
+    from ming_sim.applier import atomic
+    with atomic(db):
+        enter_entry_id = ensure_summon_enter(
+            db, night_id, minister_name, method=summon_method, body=enter_body,
         )
-        if _should_commit(db):
-            db.conn.commit()
+        chat_turn_id = db.create_chat_turn(
+            state,
+            minister_name,
+            agno_session_id,
+            agno_runs_before,
+            night_id=night_id,
+        )
+        if enter_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(enter_entry_id)),
+            )
     return night_id, int(chat_turn_id)
 
 
