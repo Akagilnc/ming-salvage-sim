@@ -1157,6 +1157,16 @@ class GameSession:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
             augmented = brief + "\n\n" + augmented
+        # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
+        # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
+        # 的组装输入不含殿内对话（区间取数复用 audible_entries_for，御前低语不流入）。
+        try:
+            from ming_sim.audience_night import audience_scene_recap
+            recap = audience_scene_recap(self.db, character.name)
+        except Exception:
+            recap = ""
+        if recap:
+            augmented = recap + "\n\n" + augmented
         # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
         # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented
