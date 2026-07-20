@@ -1090,8 +1090,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       {
         issue: 11,
         status: "failed",
-        branch: undefined,
-        failureCause: "child #11 single-slice execution did not succeed",
+        failureCause: "dispatch threw: coder process crashed (after 6 dispatch attempts)",
       },
     ]);
     // No merge / ledger write for a failed child.
@@ -1128,8 +1127,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       {
         issue: 11,
         status: "failed",
-        branch: undefined,
-        failureCause: "child #11 single-slice execution did not succeed",
+        failureCause: "dispatch threw: coder process crashed (after 6 dispatch attempts)",
       },
       { issue: 10, status: "already_done" },
     ]);
