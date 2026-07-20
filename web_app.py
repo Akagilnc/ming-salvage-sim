@@ -1482,6 +1482,7 @@ class WebGame:
         pending_action_failures: Optional[List[Dict[str, Any]]] = None,
         chat_turn_id: int = 0,
         accepted_turn: Optional[int] = None,
+        directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         # Durable chat_turn message ids first, then memory history.  Publishing
@@ -1517,6 +1518,8 @@ class WebGame:
             "secret_order_id": secret_order_id or 0,
             "pending_action_id": pending_action_id or 0,
             "pending_action_failures": pending_action_failures or [],
+            # #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问；无则 None。
+            "directive_confirmation_ambiguous": directive_confirmation_ambiguous or None,
             "directives": [self.directive_payload(row) for row in self.directive_rows()],
             "pending_count": self.session.pending_count(),
             "suggestions": self.suggestions_for(character),
@@ -1580,6 +1583,9 @@ class WebGame:
                     pending_action_failures=getattr(result, "pending_action_failures", []),
                     chat_turn_id=chat_turn_id,
                     accepted_turn=accepted_turn,
+                    # #502 R1：非流式路径同 surface 结构化含糊态（与 stream 同真源，禁双路径漂移）。
+                    directive_confirmation_ambiguous=getattr(
+                        result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
@@ -1753,10 +1759,9 @@ class WebGame:
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        pending_action_id = self.db.upsert_pending_directive(
-                            self.state.turn, character.name,
-                            payload={"text": draft_text, "actor": character.name},
-                        )
+                        # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
+                        pending_action_id = self.db.stage_explicit_directive(
+                            self.state.turn, character.name, draft_text)
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -1893,6 +1898,10 @@ class WebGame:
                     answer,
                 )
             answer = GameSession._ensure_confirmation_cue(answer)
+        # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
+        directive_ambiguous = res.get("directive_confirmation_ambiguous")
+        if directive_ambiguous:
+            answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         payload = self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
@@ -1904,6 +1913,7 @@ class WebGame:
             pending_action_failures=pending_action_failures,
             chat_turn_id=chat_turn_id,
             accepted_turn=accepted_turn,
+            directive_confirmation_ambiguous=directive_ambiguous,
         )
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return payload

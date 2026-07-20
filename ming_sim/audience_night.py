@@ -24,6 +24,8 @@ TAG_ENTER = "入殿"
 TAG_CLOSE_NIGHT = "收夜"
 TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
+TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
+_MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
 
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
@@ -628,6 +630,29 @@ def close_night(
             content=content, registry=registry,
             directive_status="draft",
         )
+        # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
+        # 机器辨识经 pending_actions↔turn_directives 关联（list_night_promulgated_directives），
+        # 账本正文只作叙事呈现、不被解析。密令私密，不入明发。
+        # 幂等按 directive_id 逐条（#502 L6）：半写后续跑只补缺的那几道、不漏不重——
+        # 不用「整夜已有任意明发标」一门（那会在半写后跳过剩余道，公开账残缺）。
+        if hasattr(db, "list_night_promulgated_directives"):
+            already_ids = {
+                str(t)[len(_MINGFA_ID_PREFIX):]
+                for e in list_ledger(db, night_id) for t in e.get("tags") or []
+                if str(t).startswith(_MINGFA_ID_PREFIX)
+            }
+            for _pd in db.list_night_promulgated_directives(int(night_id)):
+                _did = str(int(_pd.get("directive_id") or 0))
+                if _did in already_ids:
+                    continue
+                append_ledger_entry(
+                    db, night_id,
+                    person_names=[str(_pd.get("actor") or "")] if _pd.get("actor") else [],
+                    audibility=AUDIBILITY_PUBLIC,
+                    body=f"明发旨意：{str(_pd.get('text') or '')}",
+                    tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
+                    check_dead=False,
+                )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
     if cursor < CLOSE_STEP_FINALIZE:

@@ -9138,9 +9138,15 @@ class GameDB:
             # #498：同回合可跨两夜（一月多夜）。旧夜遗留的 pending directive 被本夜复用更新时，
             # 必须把归属原子迁到当前开着的夜并清 night_approved，否则本夜应允的
             # WHERE night_id=当前夜 更新零行、收夜漏交、随后被默认同意旁路批交。
+            # #502 L5（同缝）：合并保留下划线控制键，正文改草不抹待澄清/夜内态。
+            existing_payload = self.conn.execute(
+                "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
+            ).fetchone()
+            merged = self._merge_underscore_control_keys(
+                existing_payload["payload_json"] if existing_payload else "{}", payload or {})
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
-                (json.dumps(payload or {}, ensure_ascii=False),
+                (json.dumps(merged, ensure_ascii=False),
                  self._current_open_night_id(), int(row["id"])),
             )
             self.conn.commit()
@@ -9149,6 +9155,182 @@ class GameDB:
             turn, kind="directive", action="拟旨",
             minister_name=minister_name, target_id=None, payload=payload,
         )
+
+    def stage_directive_candidate(
+        self, turn: int, minister_name: str, payload: Dict[str, object],
+    ) -> int:
+        """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
+        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
+        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。"""
+        return self.stage_pending_action(
+            turn, kind="directive", action="拟旨",
+            minister_name=minister_name, target_id=None, payload=payload,
+        )
+
+    def stage_explicit_directive(
+        self, turn: int, minister_name: str, text: str,
+    ) -> int:
+        """显式拟旨（前缀「拟旨如下：」/ tool propose_directive）落候选的**单一 seam**（#502 L2，
+        CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
+        该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
+        走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。"""
+        payload = {"text": text, "actor": minister_name}
+        existing = [
+            p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
+            if p["kind"] == "directive"
+        ]
+        if existing:
+            return self.stage_directive_candidate(int(turn), minister_name, payload)
+        return self.upsert_pending_directive(int(turn), minister_name, payload)
+
+    def update_directive_candidate(
+        self, candidate_id: int, payload: Dict[str, object],
+    ) -> int:
+        """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
+        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
+        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
+        **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
+        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。"""
+        row = self.conn.execute(
+            "SELECT id, payload_json FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        merged = self._merge_underscore_control_keys(row["payload_json"], payload)
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+            (json.dumps(merged, ensure_ascii=False),
+             self._current_open_night_id(), int(candidate_id)),
+        )
+        self.conn.commit()
+        return int(candidate_id)
+
+    @staticmethod
+    def _merge_underscore_control_keys(
+        existing_json: object, new_payload: Dict[str, object],
+    ) -> Dict[str, object]:
+        """把新 payload 与旧 payload 里的下划线控制键（`_` 前缀）合并：新 payload 为主，
+        旧的下划线键在新里缺席时保留。用于原地改草不抹夜内态/待澄清闸（#502 L5）。"""
+        try:
+            old = json.loads(existing_json or "{}") if not isinstance(
+                existing_json, (dict, list)) else existing_json
+        except (ValueError, TypeError):
+            old = {}
+        merged: Dict[str, object] = dict(new_payload or {})
+        if isinstance(old, dict):
+            for k, v in old.items():
+                if str(k).startswith("_") and k not in merged:
+                    merged[k] = v
+        return merged
+
+    def clear_directive_needs_clarification(self, candidate_id: int) -> int:
+        """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
+        含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
+        通道）。返回该行 id（不存在/非 pending 则 0）。"""
+        row = self.conn.execute(
+            "SELECT id, payload_json FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict) or "_needs_clarification" not in payload:
+            return int(candidate_id)
+        payload.pop("_needs_clarification", None)
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
+        )
+        self.conn.commit()
+        return int(candidate_id)
+
+    def list_night_promulgated_directives(self, night_id: int) -> List[Dict[str, object]]:
+        """按夜取数（#502 AC6）：本夜定案（收夜提交）的明发旨——经 pending_actions（本夜、
+        kind=directive、已 committed、回填了 committed_directive_id）关联 turn_directives。
+        密令（kind=secret_order，私密）天然不入此清单。机器辨识、零自由文本解析。"""
+        rows = self.conn.execute(
+            """
+            SELECT td.id AS directive_id, td.turn, td.year, td.period,
+                   td.actor, td.text, td.status
+            FROM pending_actions pa
+            JOIN turn_directives td ON td.id = pa.committed_directive_id
+            WHERE pa.night_id = ? AND pa.kind = 'directive'
+              AND pa.status = 'committed' AND pa.committed_directive_id > 0
+            ORDER BY td.id
+            """,
+            (int(night_id),),
+        ).fetchall()
+        return [
+            {
+                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
+                "year": int(r["year"]), "period": int(r["period"]),
+                "actor": r["actor"] or "", "text": r["text"] or "", "status": r["status"] or "",
+            }
+            for r in rows
+        ]
+
+    def list_promulgated_directives(
+        self, turn_from: Optional[int] = None, turn_to: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """按区间取数（#502 AC6）：回合区间内各夜定案的明发旨（含所属夜 id）。turn_from/to
+        为闭区间；留空则不设该端界。用于跨夜/跨回合辨识哪些旨已明发。"""
+        clauses = [
+            "pa.kind = 'directive'", "pa.status = 'committed'",
+            "pa.committed_directive_id > 0", "pa.night_id IS NOT NULL",
+        ]
+        params: List[object] = []
+        if turn_from is not None:
+            clauses.append("td.turn >= ?")
+            params.append(int(turn_from))
+        if turn_to is not None:
+            clauses.append("td.turn <= ?")
+            params.append(int(turn_to))
+        rows = self.conn.execute(
+            "SELECT td.id AS directive_id, td.turn, td.actor, td.text, td.status, "
+            "pa.night_id AS night_id FROM pending_actions pa "
+            "JOIN turn_directives td ON td.id = pa.committed_directive_id "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY td.turn, td.id",
+            params,
+        ).fetchall()
+        return [
+            {
+                "directive_id": int(r["directive_id"]), "turn": int(r["turn"]),
+                "night_id": int(r["night_id"] or 0), "actor": r["actor"] or "",
+                "text": r["text"] or "", "status": r["status"] or "",
+            }
+            for r in rows
+        ]
+
+    def flag_directive_needs_clarification(self, candidate_id: int) -> int:
+        """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
+        「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
+        返回该行 id（不存在/非 pending 则 0）。"""
+        row = self.conn.execute(
+            "SELECT id, payload_json FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload["_needs_clarification"] = True
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=? WHERE id=?",
+            (json.dumps(payload, ensure_ascii=False), int(candidate_id)),
+        )
+        self.conn.commit()
+        return int(candidate_id)
 
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
@@ -9254,6 +9436,10 @@ class GameDB:
             except (ValueError, TypeError):
                 payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
+                # 含糊待澄清（#502 AC5）：批量默认提交（action_ids=None=「不回→默认同意」路）跳过
+                # 待澄清候选——含糊口令 ≠ 未表态，不得被静默默认提交；皇帝指明后经 action_ids 显式提交。
+                if action_ids is None and payload.get("_needs_clarification"):
+                    continue
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
                     directive_status=directive_status)
