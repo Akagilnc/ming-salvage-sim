@@ -12,7 +12,7 @@ import {
   expect,
   it,
   vi,
-  CODER_ROSTER,
+  getCoderRoster,
   lookupCoderRosterEntry,
   resolveCoderRecOrder,
   selectCoderRecEntry,

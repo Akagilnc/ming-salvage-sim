@@ -4,10 +4,12 @@
  * marks fail closed (no silent default fallthrough).
  * #920 — pool isolation removed (ADR 0132 D5): same model may occupy coder and
  * review / cmrReview seats; only remaining isolation is fresh context + role prompt.
+ * #1074 / ADR 0146 S2 — roster data rows live in model-data config (S1 loader);
+ * every public lookup re-reads the file (用时现读). No in-code constant table.
  *
  * Designers mark each slice with a `Coder-Rec: X → Y → Z` fallback order.
  * The orchestrator only READS that marking: markdown-strip → parse → filter to
- * this versioned roster → dispatch the first valid entry (sticky stay-put;
+ * the live roster → dispatch the first valid entry (sticky stay-put;
  * ADR 0132 / #919 CR). No round-threshold mechanical advance; judge
  * `advanceCoder` is executed by the runner via {@link resolveAdvanceCoderSuggestion}
  * (#926) with stay-put when the target is unusable. No runtime adaptive state machine.
@@ -18,6 +20,12 @@ import { toString } from "mdast-util-to-string";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
+
+import {
+  loadModelData,
+  type ModelDataEnv,
+  type ModelDataRosterEntry,
+} from "./modelDataConfig.js";
 
 export type CoderPoolId = "supergrok" | "codex" | "claude";
 
@@ -43,71 +51,42 @@ export class CoderRecError extends Error {
   }
 }
 
-/** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-18.1";
+function toCoderEntry(entry: ModelDataRosterEntry): CoderRosterEntry {
+  return {
+    id: entry.id,
+    slug: entry.slug,
+    pool: entry.pool,
+    ...(entry.aliases !== undefined && entry.aliases.length > 0
+      ? { aliases: entry.aliases }
+      : {}),
+  };
+}
 
 /**
- * Eligible coder models (model × pool × aliases). Keep in sync with
- * `docs/CODER_ROSTER.md` and #424 bench updates.
- *
- * #789 — Claude pool entries (`sonnet-5` / `haiku-4.5`) are grok-exhaustion
- * backups (runnable slugs `sonnet` / `haiku`). #920: same-model cross-role is
- * legal, so slug overlap with cmrReview / reviewer seats is not filtered.
+ * Live roster rows from model-data config. **Every call re-reads** (no cache).
+ * Prefer this over holding a snapshot across dispatch boundaries.
  */
-export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
-  {
-    id: "grok-4.5",
-    slug: "grok-4.5",
-    pool: "supergrok",
-  },
-  {
-    id: "terra@med",
-    slug: "gpt-5.6-terra",
-    pool: "codex",
-    aliases: ["terra@med+fast", "gpt-5.6-terra"],
-  },
-  {
-    id: "luna@med",
-    slug: "gpt-5.6-luna",
-    pool: "codex",
-    aliases: ["luna@med+fast", "gpt-5.6-luna"],
-  },
-  {
-    id: "sol@med",
-    slug: "gpt-5.6-sol",
-    pool: "codex",
-    aliases: ["sol@med+fast", "gpt-5.6-sol"],
-  },
-  {
-    id: "sol@low",
-    slug: "gpt-5.6-sol-low",
-    pool: "codex",
-  },
-  {
-    id: "sol@high",
-    slug: "gpt-5.6-sol-high",
-    pool: "codex",
-  },
-  {
-    id: "sonnet-5",
-    slug: "sonnet",
-    pool: "claude",
-    aliases: ["Sonnet 5", "sonnet"],
-  },
-  {
-    id: "haiku-4.5",
-    slug: "haiku",
-    pool: "claude",
-    aliases: ["Haiku 4.5", "haiku"],
-  },
-];
+export function getCoderRoster(
+  env: ModelDataEnv = process.env,
+): ReadonlyArray<CoderRosterEntry> {
+  return loadModelData(env).roster.map(toCoderEntry);
+}
 
-/** Default fallback order when the issue body has no Coder-Rec line. */
-export const DEFAULT_CODER_REC_ORDER: ReadonlyArray<string> = [
-  "grok-4.5",
-  "terra@med",
-  "luna@med",
-];
+/** Live config `version` field (re-reads every call). */
+export function getCoderRosterVersion(
+  env: ModelDataEnv = process.env,
+): string {
+  return loadModelData(env).version;
+}
+
+/**
+ * Default Coder-Rec order when the issue body has no marking (re-reads every call).
+ */
+export function getDefaultCoderRecOrder(
+  env: ModelDataEnv = process.env,
+): ReadonlyArray<string> {
+  return loadModelData(env).defaultCoderRecOrder;
+}
 
 /** Allow optional Markdown bullet markers (`- `, `* `, `+ `) before the label. */
 const CODER_REC_LINE =
@@ -124,8 +103,8 @@ function splitCoderRecTokens(raw: string): string[] {
     .filter((t) => t.length > 0);
 }
 
-function legalRosterIds(): string {
-  return CODER_ROSTER.map((e) => e.id).join(", ");
+function legalRosterIds(roster: ReadonlyArray<CoderRosterEntry>): string {
+  return roster.map((e) => e.id).join(", ");
 }
 
 /**
@@ -208,13 +187,13 @@ function normalizeToken(token: string): string {
   return token.trim().toLowerCase();
 }
 
-/** Look up a roster entry by id or alias (case-insensitive). */
-export function lookupCoderRosterEntry(
+function lookupInRoster(
+  roster: ReadonlyArray<CoderRosterEntry>,
   token: string,
 ): CoderRosterEntry | undefined {
   const needle = normalizeToken(token);
   if (needle.length === 0) return undefined;
-  for (const entry of CODER_ROSTER) {
+  for (const entry of roster) {
     if (normalizeToken(entry.id) === needle) return entry;
     if (normalizeToken(entry.slug) === needle) return entry;
     for (const alias of entry.aliases ?? []) {
@@ -224,13 +203,22 @@ export function lookupCoderRosterEntry(
   return undefined;
 }
 
+/** Look up a roster entry by id or alias (case-insensitive). Re-reads config. */
+export function lookupCoderRosterEntry(
+  token: string,
+  env: ModelDataEnv = process.env,
+): CoderRosterEntry | undefined {
+  return lookupInRoster(getCoderRoster(env), token);
+}
+
 function entriesForTokens(
+  roster: ReadonlyArray<CoderRosterEntry>,
   tokens: ReadonlyArray<string>,
 ): CoderRosterEntry[] {
   const seen = new Set<string>();
   const out: CoderRosterEntry[] = [];
   for (const token of tokens) {
-    const entry = lookupCoderRosterEntry(token);
+    const entry = lookupInRoster(roster, token);
     if (entry === undefined) continue;
     if (seen.has(entry.id)) continue;
     seen.add(entry.id);
@@ -241,29 +229,33 @@ function entriesForTokens(
 
 /**
  * Resolve the roster-valid fallback order for an issue body.
- * Missing marking → {@link DEFAULT_CODER_REC_ORDER}.
+ * Missing marking → live {@link getDefaultCoderRecOrder}.
  * Present marking with any unregistered token → throws {@link CoderRecError}
  * listing legal roster ids (owner rule: never silent-default unknown names).
+ * Re-reads model-data config on every call.
  */
 export function resolveCoderRecOrder(
   issueBody: string | undefined,
+  env: ModelDataEnv = process.env,
 ): ReadonlyArray<CoderRosterEntry> {
+  const data = loadModelData(env);
+  const roster = data.roster.map(toCoderEntry);
   const parsed =
     issueBody !== undefined && issueBody.length > 0
       ? parseCoderRec(issueBody)
       : undefined;
   if (parsed === undefined) {
-    return entriesForTokens(DEFAULT_CODER_REC_ORDER);
+    return entriesForTokens(roster, data.defaultCoderRecOrder);
   }
-  const unknown = parsed.filter((t) => lookupCoderRosterEntry(t) === undefined);
+  const unknown = parsed.filter((t) => lookupInRoster(roster, t) === undefined);
   if (unknown.length > 0) {
     throw new CoderRecError(
       "unknown_model",
       `Coder-Rec contains unregistered model token(s): ${unknown.join(", ")}. ` +
-        `Legal roster ids: ${legalRosterIds()}`,
+        `Legal roster ids: ${legalRosterIds(roster)}`,
     );
   }
-  return entriesForTokens(parsed);
+  return entriesForTokens(roster, parsed);
 }
 
 /**
@@ -293,6 +285,7 @@ export function selectCoderRecEntry(
  * - Empty suggestion or already-active seat → `noop` (no ledger noise)
  *
  * Does not smoke, does not mutate routes — runner owns execution + audit.
+ * Re-reads model-data config on every call (edit config → next advance sees it).
  */
 export type AdvanceCoderDecision =
   | {
@@ -315,6 +308,7 @@ export type AdvanceCoderDecision =
 export function resolveAdvanceCoderSuggestion(
   suggestion: string,
   currentCoderSlug: string,
+  env: ModelDataEnv = process.env,
 ): AdvanceCoderDecision {
   const trimmed = suggestion.trim();
   if (trimmed.length === 0) {
@@ -324,7 +318,8 @@ export function resolveAdvanceCoderSuggestion(
       currentSlug: currentCoderSlug,
     };
   }
-  const entry = lookupCoderRosterEntry(trimmed);
+  const roster = getCoderRoster(env);
+  const entry = lookupInRoster(roster, trimmed);
   if (entry === undefined) {
     return {
       kind: "stay_put",
@@ -334,7 +329,7 @@ export function resolveAdvanceCoderSuggestion(
     };
   }
   // Same seat via exact slug, id token, or roster alias of the current seat.
-  const currentEntry = lookupCoderRosterEntry(currentCoderSlug);
+  const currentEntry = lookupInRoster(roster, currentCoderSlug);
   if (
     entry.slug === currentCoderSlug ||
     normalizeToken(entry.id) === normalizeToken(currentCoderSlug) ||

@@ -12,7 +12,7 @@ import {
   expect,
   it,
   vi,
-  CODER_ROSTER,
+  getCoderRoster,
   lookupCoderRosterEntry,
   resolveCoderRecOrder,
   selectCoderRecEntry,
@@ -384,8 +384,8 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
   });
 
   it("roster table remains the single source (no second relay fallback table)", () => {
-    // Sanity: selection only walks CODER_ROSTER / Coder-Rec order.
-    expect(CODER_ROSTER.map((e) => e.id)).toEqual(
+    // Sanity: selection only walks live coder roster / Coder-Rec order.
+    expect(getCoderRoster().map((e) => e.id)).toEqual(
       expect.arrayContaining(["grok-4.5", "terra@med", "luna@med"]),
     );
     expect(lookupCoderRosterEntry("grok-4.5")?.slug).toBe("grok-4.5");

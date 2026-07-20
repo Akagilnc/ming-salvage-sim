@@ -300,12 +300,12 @@ export type {
   WorkerMonitorHandle,
 } from "./types.js";
 
-// ── design-time Coder-Rec roster (#767) ─────────────────────────────────────
+// ── design-time Coder-Rec roster (#767 / #1074 live config) ──────────────────
 export {
-  CODER_ROSTER,
-  CODER_ROSTER_VERSION,
   CoderRecError,
-  DEFAULT_CODER_REC_ORDER,
+  getCoderRoster,
+  getCoderRosterVersion,
+  getDefaultCoderRecOrder,
   lookupCoderRosterEntry,
   parseCoderRec,
   resolveAdvanceCoderSuggestion,

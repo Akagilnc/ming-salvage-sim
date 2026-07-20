@@ -1,14 +1,15 @@
 /**
  * #1073 / ADR 0146 S1 — model-data config base: env-path injection,
- * read-at-use loader, fail-closed shape validation; dual-track with
- * in-code constant tables (expand phase — constants still present).
+ * read-at-use loader, fail-closed shape validation.
+ * #1074 S2 switched the coder roster onto this loader (constants deleted);
+ * registry remains dual-track until S3.
  */
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CODER_ROSTER, CODER_ROSTER_VERSION } from "../../src/coderRoster.js";
+import { getCoderRoster } from "../../src/coderRoster.js";
 import {
   MODEL_DATA_PATH_ENV,
   loadModelData,
@@ -255,13 +256,7 @@ describe("#1073 loadModelData fail-closed (path + reason)", () => {
   });
 });
 
-describe("#1073 dual-track expand: constants still present", () => {
-  it("in-code CODER_ROSTER constant table is untouched", () => {
-    expect(CODER_ROSTER_VERSION.length).toBeGreaterThan(0);
-    expect(CODER_ROSTER.length).toBeGreaterThan(0);
-    expect(CODER_ROSTER.some((e) => e.id === "grok-4.5")).toBe(true);
-  });
-
+describe("#1073 dual-track residual: registry still in-code (S3 pending)", () => {
   it("in-code model registry still resolves live slugs", () => {
     expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
     expect(resolveModelSlug("gpt-5.6-sol-low")).toMatchObject({
@@ -271,13 +266,11 @@ describe("#1073 dual-track expand: constants still present", () => {
     });
   });
 
-  it("shipped factory roster ids cover the live constant roster ids", () => {
+  it("getCoderRoster matches shipped factory model-data roster", () => {
     delete process.env[MODEL_DATA_PATH_ENV];
     const data = loadModelData({});
-    const constantIds = new Set(CODER_ROSTER.map((e) => e.id));
-    const factoryIds = new Set(data.roster.map((e) => e.id));
-    for (const id of constantIds) {
-      expect(factoryIds.has(id)).toBe(true);
-    }
+    expect(getCoderRoster({}).map((e) => e.id)).toEqual(
+      data.roster.map((e) => e.id),
+    );
   });
 });
