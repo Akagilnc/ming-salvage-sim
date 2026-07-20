@@ -69,6 +69,7 @@ def _stage_office(sess, summoner, *, action, name, office, message):
 
 # ── AC6：暂存免职后「留任」→ 复任对冲掉暂存免职，不被 no-op 误丢 ─────────────
 def test_reinstatement_cancels_staged_dismissal(game):
+    """留任的现实抽取形 office="" —— 不得靠 stuffed office 拧开 no-op 门才对冲（判词 L2）。"""
     db, state, content = game
     target = _active_ming_minister(db, content)
     summoner = _active_ming_minister(db, content, exclude={target.name})
@@ -79,8 +80,9 @@ def test_reinstatement_cancels_staged_dismissal(game):
     staged = _office_pendings(db, state.turn)
     assert len(staged) == 1 and staged[0]["action"] == "罢免"
 
+    # 「留任原职」LLM 常抽不出具体 office → office=""；对冲不得依赖 office 字符串。
     res = _stage_office(sess, summoner, action="任命", name=target.name,
-                        office=target.office,
+                        office="",
                         message=f"再想想，还是命{target.name}留任原职。")
 
     # 复任对冲掉暂存免职：无残留 office 暂存，也不 stage 新任命（净效果 = 留任）。
@@ -91,6 +93,34 @@ def test_reinstatement_cancels_staged_dismissal(game):
         "SELECT status, office FROM characters WHERE name=?", (target.name,)
     ).fetchone()
     assert row["status"] == "active"
+
+
+# ── L3：在职者「改任暂存 + 革职」→ 撤掉暂存任命，但仍落真罢免（不吞） ──────────
+def test_dismissal_after_reassignment_cancels_appointment_but_still_stages(game):
+    db, state, content = game
+    target = _active_ming_minister(db, content)
+    summoner = _active_ming_minister(db, content, exclude={target.name})
+
+    sess = _session(db, state, content)
+    # 改任到一个与现职不同的官（否则同职=no-op，测不到改任）。
+    cur_office = target.office or ""
+    new_office = next(
+        o for o in ("陕西巡抚", "蓟辽总督", "钦差督师", "南京守备")
+        if o not in cur_office)
+    # 先对在职者 stage 一条改任任命（升迁/调任）。
+    _stage_office(sess, summoner, action="任命", name=target.name,
+                  office=new_office, message=f"改授{target.name}{new_office}。")
+    staged = _office_pendings(db, state.turn)
+    assert len(staged) == 1 and staged[0]["action"] == "任命"
+
+    # 再革职：撤掉暂存改任，但目标仍在职有实职 → 仍须落真罢免。
+    res = _stage_office(sess, summoner, action="罢免", name=target.name,
+                        office="", message=f"不必了，将{target.name}革职拿问。")
+
+    remaining = _office_pendings(db, state.turn)
+    assert [p["action"] for p in remaining] == ["罢免"]
+    assert res.get("pending_action_id")
+    assert json.loads(remaining[0]["payload_json"])["name"] == target.name
 
 
 # ── AC7（对称向）：暂存任命后「免去」→ 罢免对冲掉暂存任命，不落孤儿罢免 ────────
@@ -152,7 +182,7 @@ def test_secret_prefix_turn_runs_no_appointment_classifier(game, monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps({
                             "标题": "密查关宁军饷", "内容": "着人密查关宁军饷截留。",
-                            "承办人": minister, "期限月数": 0, "标签": ["关宁"],
+                            "承办人": minister.name, "期限月数": 0, "标签": ["关宁"],
                         }, ensure_ascii=False), 1))
 
     sess = _session(db, state, content)

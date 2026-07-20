@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import inspect
 import re
+import sqlite3
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -217,6 +218,18 @@ def _recent_audience_context_for_secret_order(
     return "\n".join(lines[-limit:])
 
 
+def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
+    """姓名归一到在册原始 key（别名→原名）；无 content / 查不到时返回去空白原名。
+
+    与 apply_appointment / no-op 判定 / 对冲同一口径。_find_existing_minister 不吞异常
+    （ADR 0005：失败须响亮，不静默兜底——apply_appointment 亦直呼不 guard）。"""
+    n = str(name or "").strip()
+    if content is None or not n:
+        return n
+    canon = _find_existing_minister(content, n, db)
+    return str(canon) if canon else n
+
+
 def _appointment_intent_is_current_office_noop(
     db: Any, name: str, office: str, content: Any = None,
 ) -> bool:
@@ -224,24 +237,19 @@ def _appointment_intent_is_current_office_noop(
 
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
-    _find_existing_minister 归一到在册原始名，再查当前 office。"""
+    归一到在册原始名，再查当前 office。"""
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if conn is None or not clean_name or not desired:
         return False
-    canonical = None
-    if content is not None:
-        try:
-            canonical = _find_existing_minister(content, clean_name, db)
-        except Exception:
-            canonical = None
+    canonical = _canonical_minister_key(content, clean_name, db)
     try:
         row = conn.execute(
             "SELECT status, office FROM characters WHERE name = ?",
-            (canonical or clean_name,),
+            (canonical,),
         ).fetchone()
-    except Exception:
+    except sqlite3.Error:
         return False
     if row is None or str(row["status"] or "") != "active":
         return False
@@ -253,34 +261,42 @@ def _appointment_intent_is_current_office_noop(
     return bool(desired_parts) and desired_parts.issubset(current_parts)
 
 
+def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool:
+    """目标当前是否为在职且有实职的名册人（有可罢之职）。
+
+    R2「免去暂存任命」形——被任者尚未落库、非 active，无职可罢，撤掉暂存任命即净空；
+    而在职改任者（active + 有 office）被再革职时，撤暂存任命后仍须落真罢免（不能吞）。"""
+    conn = getattr(db, "conn", None)
+    clean = str(name or "").strip()
+    if conn is None or not clean:
+        return False
+    key = _canonical_minister_key(content, clean, db)
+    try:
+        row = conn.execute(
+            "SELECT status, office FROM characters WHERE name = ?", (key,)
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None:
+        return False
+    return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
+
+
 def _cancel_staged_opposing_office(
     db: Any, opposing_action: str, target_name: str, turn: int, content: Any = None,
 ) -> Optional[int]:
-    """本轮任免与同回合针对同一人的【反向暂存任免】相抵时，撤销那条暂存并返回其 id（对冲，
-    ADR 0028 R1/R2 双向对称）；无相抵暂存返回 None。
+    """撤销同回合针对同一人的一条【反向暂存任免】，返回其 id；无则 None（对冲，ADR 0028
+    R1/R2 双向对称）。
 
     这是「名册 ⊕ 暂存」比对真基准的落地：暂存免职/任命未提交时名册仍是旧态，皇帝反悔
     （留任冲免职、免去冲任命）若只比名册会被误判 no-op 丢弃或另 stage 孤儿。姓名按 canonical
-    口径归一（与 _appointment_intent_is_current_office_noop 同口径），别名/新候选皆按同一
-    兜底比对，故两侧同名即相抵。撤销走 withdraw_pending_action（只删 pending，已 committed
-    不动），night_approved 但未收夜提交的暂存仍属 pending、照样对冲。"""
+    口径归一，别名/新候选按同一原名兜底比对，两侧同名即相抵。撤销走 withdraw_pending_action
+    （只删 pending，已 committed 不动），night_approved 但未收夜提交的暂存仍属 pending、照样对冲。"""
     conn = getattr(db, "conn", None)
     clean = str(target_name or "").strip()
     if conn is None or not clean or opposing_action not in ("任命", "罢免"):
         return None
-
-    def _key(name: str) -> str:
-        n = str(name or "").strip()
-        if content is not None:
-            try:
-                canon = _find_existing_minister(content, n, db)
-            except Exception:
-                canon = None
-            if canon:
-                return str(canon)
-        return n
-
-    target_key = _key(clean)
+    target_key = _canonical_minister_key(content, clean, db)
     for pa in db.list_pending_actions(int(turn)):
         if pa.get("kind") != "office" or pa.get("action") != opposing_action:
             continue
@@ -291,7 +307,7 @@ def _cancel_staged_opposing_office(
         if not isinstance(payload, dict):
             continue
         staged = str(payload.get("name") or "").strip()
-        if staged and _key(staged) == target_key:
+        if staged and _canonical_minister_key(content, staged, db) == target_key:
             if db.withdraw_pending_action(int(pa["id"]), int(turn)):
                 return int(pa["id"])
     return None
@@ -1597,24 +1613,28 @@ class GameSession:
             else:
                 appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
         content_ref = getattr(self, "content", None)
-        if appt["appoint_action"] == "任命" and appt.get("name") and (
-            _appointment_intent_is_current_office_noop(
-                getattr(self, "db", None), appt["name"], appt.get("office", ""),
-                content=content_ref)
-        ):
-            # X 名册在职 → 或背景复述(no-op 丢)，或反悔留任(冲掉同夜暂存免职)：只比名册会把
-            # 留任误判 no-op、免职照旧执行、反悔失效（ADR 0028 R1）。含暂存比对即接住——有暂存
-            # 免职就撤销之，无则纯 no-op 丢弃。两路都不再 stage 新任命。
-            _cancel_staged_opposing_office(
-                self.db, "罢免", appt["name"], int(self.state.turn), content=content_ref)
-            appt = {"appoint_action": "无"}
-        elif appt["appoint_action"] == "罢免" and appt.get("name") and (
-            _cancel_staged_opposing_office(
-                self.db, "任命", appt["name"], int(self.state.turn), content=content_ref)
-        ):
-            # 反悔免去：被任者尚未落库、本无可罢之职，冲掉同夜暂存任命即可，不另 stage 孤儿罢免
-            # （ADR 0028 R2 对称向）。
-            appt = {"appoint_action": "无"}
+        appt_name = appt.get("name", "")
+        if appt["appoint_action"] == "任命" and appt_name:
+            # 对冲优先（ADR 0028 R1）：先按名撤销同回合暂存罢免——「留任」抽取形 office 常空/为
+            # 原职，暂存免职未提交时名册仍在职，只比名册会把留任误判 no-op 丢弃、免职照旧、反悔
+            # 失效。撤销成功=留任接住暂存免职；无相抵暂存时才落回 roster no-op（X 已在该职=背景
+            # 复述）。两路都不 stage 新任命；无对冲且非 no-op 才 stage。
+            hedged = _cancel_staged_opposing_office(
+                self.db, "罢免", appt_name, int(self.state.turn), content=content_ref)
+            if hedged or _appointment_intent_is_current_office_noop(
+                    self.db, appt_name, appt.get("office", ""), content=content_ref):
+                appt = {"appoint_action": "无"}
+        elif appt["appoint_action"] == "罢免" and appt_name:
+            # 对冲（ADR 0028 R2）：撤销同回合暂存任命（清掉反向 pending）。仅当【真撤销了】暂存
+            # 任命、且目标当前无可罢之职（R2「A 本就不在职」形：新任未落库/非 active）才净空、不落
+            # 罢免；目标仍 active 且有职（改任暂存后又革职）→ 撤暂存任命后仍落真罢免，不能吞。
+            # 无暂存任命可撤时按既有路径正常 stage（含非在职者 stage→ 收夜 commit 拒并标 failed 的
+            # 既有契约，不在召对期提前吞掉）。
+            cancelled = _cancel_staged_opposing_office(
+                self.db, "任命", appt_name, int(self.state.turn), content=content_ref)
+            if cancelled and not _target_active_officeholder(
+                    self.db, appt_name, content=content_ref):
+                appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
