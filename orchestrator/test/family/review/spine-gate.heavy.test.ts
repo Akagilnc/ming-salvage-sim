@@ -59,12 +59,11 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
         req.phase === "wave"
           ? { ok: false, errorPackage: { reason: "tsc: TS2345 cross-slice type" } }
           : { ok: true },
-      worker: (spec, ctx) => {
-        if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
-          return completedJudge(
-            judgeToolchain(ctx.waveVerifyFailure, "toolchain/env red, not a cross-slice regression"),
-          );
-        }
+      // The shared default (spine-gate.shared.ts) already returns the typed
+      // `toolchain` verdict for a wave-verify red — do NOT re-script it here.
+      // This hook only OBSERVES that the toolchain terminal never routes to the
+      // coder-fix seat (falls through for every non-coder spec).
+      worker: (spec) => {
         if (spec.kind === "coder") coderFixDispatches.push(spec);
         return undefined;
       },
@@ -76,7 +75,13 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
       familyBase: "family/291-base",
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
-    // AC2 (env红→toolchain 不空转): the toolchain terminal never routes to coder-fix.
+    // The red wave was routed UNIFORMLY through the triage judge court (the
+    // durable wave-verify-judge step is written before the judge dispatch)…
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    // …and the typed `toolchain` terminal never opened a fixer round: no
+    // wave-verify-fix ledger step AND no coder-fix dispatch (AC2 零空转).
+    expect(steps).not.toContain("wave-verify-fix");
     expect(coderFixDispatches).toEqual([]);
     // Wave 1 merged 294; the red wave verify aborted before wave 2 (296 never ran).
     expect(backend.merges.map((m) => m.childIssue)).toEqual([294]);
@@ -150,9 +155,10 @@ describe("#1027 S4 spine tracer — a red wave the judge continues + fixer conve
       // NO verifyCmr injection → the spine uses the real runVerifyCmr wave court.
     });
 
-    // The typed judge `continue` drove the coder-fix seat exactly once (NOT an abort).
+    // The typed judge `continue` drove the coder-fix seat exactly once (NOT an
+    // abort). (coderFixDispatches only ever receives coder-kind specs — see the
+    // worker hook — so its length is the meaningful signal, not the kind.)
     expect(coderFixDispatches).toHaveLength(1);
-    expect(coderFixDispatches[0]?.kind).toBe("coder");
     expect(backend.aborted).toEqual([]);
     // The wave court recorded the triage + fix rounds on the durable ledger.
     const steps = backend.ledger.map((e) => e.workerStep);
@@ -166,6 +172,70 @@ describe("#1027 S4 spine tracer — a red wave the judge continues + fixer conve
     // 止于 PR: the recovered run reaches the final barrier and opens the family PR.
     expect(result.status).toBe("completed");
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+  });
+});
+
+describe("#1027 S4 spine tracer — a red wave the fixer spins on but never converges stays verify_failed", () => {
+  it("red wave → judge continue → coder-fix committed → re-verify STILL red → judge toolchain terminal → verify_failed, next wave never runs", async () => {
+    // The negative pairing of the continue tracer above and acceptance 1: here
+    // the judge DID open a fixer round (round 1 continue → coder-fix commits),
+    // but the deterministic re-verify — the SOLE convergence authority — stays
+    // RED. Production has NO mechanical round cap (ADR 0145: stuck = the resumed
+    // judge's round-trend call), so round 2 the judge returns the typed
+    // `toolchain` terminal → the runner's unchanged verify_failed. Wave 2 (296)
+    // never runs. This proves 不收敛→verify_failed AFTER the fixer already spun
+    // (acceptance 1 proves the fixer never spins at all).
+    let judgeRounds = 0;
+    const coderFixDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      // The wave verify is red the first time AND on every re-verify: the fix
+      // never clears it, so the wave court can never converge.
+      verify: (req) =>
+        req.phase === "wave"
+          ? { ok: false, errorPackage: { reason: "cross-slice seam red: 3 failing" } }
+          : { ok: true },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+          judgeRounds += 1;
+          // Round 1 opens a fixer round; round 2 (re-verify still red) the judge
+          // calls it stuck and returns the typed toolchain terminal.
+          return judgeRounds === 1
+            ? completedJudge(judgeContinue([sampleFinding("seam regression", "a.ts:9")]))
+            : completedJudge(
+                judgeToolchain(ctx.waveVerifyFailure, "fixer round did not converge — stuck by round trend"),
+              );
+        }
+        if (spec.kind === "coder") {
+          coderFixDispatches.push(spec);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        return undefined;
+      },
+    });
+
+    const result = await runFamily({
+      epic: TWO_WAVES,
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      // NO verifyCmr injection → the spine uses the real runVerifyCmr wave court.
+    });
+
+    // The fixer DID spin exactly once (round 1 continue) — this is NOT the
+    // zero-spin toolchain path of acceptance 1.
+    expect(coderFixDispatches).toHaveLength(1);
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).toContain("wave-verify-fix");
+    // But the re-verify never went green → verify_failed at the wave phase; wave
+    // 2 (296, blocked_by 294) never merged, and no PR opened.
+    expect(result.status).toBe("failed");
+    expect(result.failedPhase).toBe("wave");
+    expect(backend.merges.map((m) => m.childIssue)).toEqual([294]);
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.prCalls).toEqual([]);
+    const byIssue = new Map(result.children.map((c) => [c.issue, c.status]));
+    expect(byIssue.get(296)).toBe("skipped");
   });
 });
 
