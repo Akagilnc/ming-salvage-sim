@@ -16,8 +16,22 @@ import {
 } from "./modelRoutes.js";
 import type { Backend, Escalation, StepId } from "./types.js";
 import { classifyExternalCallFailure } from "./externalCall.js";
+import {
+  DISPATCH_RETRY_BACKOFF_MS,
+  MAX_DISPATCH_ATTEMPTS,
+} from "./dispatchRetry.js";
 
-export const MAX_METADATA_ATTEMPTS = 6;
+/**
+ * #1062 — synchronous blocking backoff for the metadata retry seam. The gh reads
+ * are execFileSync at admission (the whole runner already blocks on them), so a
+ * blocking wait is the right shape — no async ripple through the sync {@link Sh}
+ * callers. No-op under vitest (mirrors dispatchRetry's `defaultRetrySleepMs`) so
+ * the shared 15s table never burns wall time in tests.
+ */
+function defaultMetadataSleepSync(ms: number): void {
+  if (process.env.VITEST === "true" || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 /**
  * GitHub authentication / login required (#934 ID-003). Zero retry (durable
@@ -91,10 +105,20 @@ export function withGithubHttpStatus(err: unknown): unknown {
   return err;
 }
 
-/** The sole GitHub metadata retry seam: transient only; deterministic/auth errors do not retry. */
-export function readMetadataWithRetry<T>(read: () => T): T {
+/**
+ * The sole GitHub metadata retry seam: transient only; deterministic/auth errors
+ * do not retry. #1062 — reuses the process-level dispatch retry budget and its
+ * 5×15s backoff table (no parallel metadata constant); a transient 5xx now spans
+ * the outage window across the six attempts instead of firing six times in the
+ * same millisecond. `sleepMs` is injectable so tests observe the backoff without
+ * blocking on the real 75s wall.
+ */
+export function readMetadataWithRetry<T>(
+  read: () => T,
+  sleepMs: (ms: number) => void = defaultMetadataSleepSync,
+): T {
   let last: unknown;
-  for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt += 1) {
     try {
       return read();
     } catch (err) {
@@ -106,10 +130,15 @@ export function readMetadataWithRetry<T>(read: () => T): T {
       last = enriched;
       if (
         classifyExternalCallFailure(enriched) !== "transient" ||
-        attempt === MAX_METADATA_ATTEMPTS
+        attempt === MAX_DISPATCH_ATTEMPTS
       ) {
         throw enriched;
       }
+      // #1062: wait the shared backoff interval before the next attempt (five
+      // 15s slots across six attempts). Index by the just-failed attempt so
+      // attempt 1's failure waits slot 0, ..., attempt 5's waits slot 4.
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 1];
+      if (delayMs !== undefined) sleepMs(delayMs);
     }
   }
   throw last;
