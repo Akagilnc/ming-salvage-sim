@@ -28,7 +28,11 @@ import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
-import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import {
+  completedJudge,
+  judgeToolchain,
+  legacyCmrScriptToWorkerOutput,
+} from "../../helpers/judge-fixtures.js";
 import type {
   Backend,
   DispatchContext,
@@ -137,6 +141,13 @@ class AbortingFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    // #1027 S2: a red wave verify is triaged by the judge; classify it as a
+    // toolchain terminal (→ the runner's unchanged verify_failed abort).
+    if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+      return completedJudge(
+        judgeToolchain(ctx.waveVerifyFailure, "wave-verify env red"),
+      );
+    }
     if (spec.kind === "cmr") {
       const cmr = await this.runIntegratedCmr({
         familyBase: ctx.familyBase!,
@@ -217,6 +228,13 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
     // Carries the abort-time family head in `familyHeadAfter` (reconcile reads末条).
     expect(abort.familyHeadAfter).toBe("+294");
     expect(abort.reason).toContain("TS2345");
+
+    // #1069: the red wave was routed UNIFORMLY through the triage judge court
+    // (typed toolchain verdict), and that terminal never opened a fixer round —
+    // the durable ledger has wave-verify-judge but NO wave-verify-fix (zero-spin).
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).not.toContain("wave-verify-fix");
 
     // mergedSet is untouched: 294 merged counts; the aborted entry does NOT.
     const merged = mergedSet(backend.ledger);

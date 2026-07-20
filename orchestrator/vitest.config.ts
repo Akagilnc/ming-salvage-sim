@@ -20,6 +20,12 @@ const shared = {
   setupFiles: ["test/setup-route-env.ts"],
   // #962: scripted noSandbox injects per-run GIT_CONFIG_GLOBAL, so concurrent
   // sc.run no longer races on host ~/.gitconfig. Default fileParallelism on.
+  // #1071: real-process/real-git tax runs under full-fleet parallelism on a
+  // contended box, so a *correct* test can finish late (the #1070 sibling
+  // caught one at 6.5s). Vitest's 5000ms default reddens those slow-but-green
+  // runs; give both pools a load-tolerant budget so the assertion — not the
+  // wall-clock — decides pass/fail. Not a retry: the test still must pass.
+  testTimeout: 30_000,
 };
 
 /**
