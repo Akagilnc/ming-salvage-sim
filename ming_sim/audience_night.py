@@ -24,6 +24,7 @@ TAG_ENTER = "入殿"
 TAG_CLOSE_NIGHT = "收夜"
 TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
+TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 
 METHOD_XUANRU = "宣入"
 METHOD_CHUANZHAO = "传召"
@@ -622,6 +623,23 @@ def close_night(
             content=content, registry=registry,
             directive_status="draft",
         )
+        # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
+        # 机器辨识经 pending_actions↔turn_directives 关联（list_night_promulgated_directives），
+        # 账本正文只作叙事呈现、不被解析。密令私密，不入明发。
+        if hasattr(db, "list_night_promulgated_directives"):
+            existing_tags = {
+                t for e in list_ledger(db, night_id) for t in e.get("tags") or []
+            }
+            if TAG_MINGFA not in existing_tags:
+                for _pd in db.list_night_promulgated_directives(int(night_id)):
+                    append_ledger_entry(
+                        db, night_id,
+                        person_names=[str(_pd.get("actor") or "")] if _pd.get("actor") else [],
+                        audibility=AUDIBILITY_PUBLIC,
+                        body=f"明发旨意：{str(_pd.get('text') or '')}",
+                        tags=[TAG_MINGFA],
+                        check_dead=False,
+                    )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
     if cursor < CLOSE_STEP_FINALIZE:
