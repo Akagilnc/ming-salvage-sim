@@ -433,6 +433,17 @@ def open_night(
     return night
 
 
+def _validate_summon_method(method: str, *, default: str) -> str:
+    """校验召法白名单（summon_enter / record_summon_in_transit 共用单一真源）。"""
+    m = str(method or default).strip()
+    if m not in SUMMON_METHODS:
+        raise AudienceNightError(
+            f"召法非法：{m!r}（须为 {'/'.join(sorted(SUMMON_METHODS))}）",
+            code="bad_summon_method",
+        )
+    return m
+
+
 def summon_enter(
     db: Any,
     night_id: int,
@@ -445,12 +456,7 @@ def summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    method = str(method or METHOD_XUANRU).strip()
-    if method not in SUMMON_METHODS:
-        raise AudienceNightError(
-            f"召法非法：{method!r}（须为 {'/'.join(sorted(SUMMON_METHODS))}）",
-            code="bad_summon_method",
-        )
+    method = _validate_summon_method(method, default=METHOD_XUANRU)
     text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
@@ -697,14 +703,6 @@ def ensure_open_night_for_audience(
     return open_night(db, state, time_of_day=time_of_day, location=location)
 
 
-def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
-    names: set[str] = set()
-    for entry in list_ledger(db, night_id):
-        if TAG_ENTER in (entry.get("tags") or []):
-            names.update(entry.get("person_names") or [])
-    return names
-
-
 def record_summon_in_transit(
     db: Any,
     night_id: int,
@@ -717,6 +715,7 @@ def record_summon_in_transit(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("传召人名不能为空", code="empty_person")
+    method = _validate_summon_method(method, default=METHOD_CHUANZHAO)
     return append_ledger_entry(
         db, night_id,
         person_names=[name],
@@ -810,7 +809,9 @@ def ensure_summon_enter(
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
-    if name in persons_entered_tonight(db, night_id):
+    # 单一在场真源：已在场者不重复宣入；告退后再宣须重新落入殿账（present_names_at
+    # 会去人，persons_entered_tonight「凡入过即并集」会漏——双真源导致 chat 有名单无）。
+    if name in present_names_at(db, night_id):
         return None
     return summon_enter(db, night_id, name, method=method)
 

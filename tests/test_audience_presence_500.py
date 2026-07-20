@@ -18,7 +18,6 @@ from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     TAG_ENTER,
     TAG_EXIT,
-    TAG_IN_TRANSIT,
     AudienceNightError,
 )
 
@@ -78,6 +77,119 @@ def test_dismiss_noop_when_not_present(game):
     with pytest.raises(AudienceNightError) as ei:
         an.dismiss_from_audience(db, "  ", night_id=nid)
     assert ei.value.code == "empty_person"
+
+
+# ── AC1 真实入口 tracer：CLI 玩家「退下」口令 → 引擎告退账 → 名单即时去人 ──
+
+
+def _cli_session(db, state, content):
+    from types import SimpleNamespace
+
+    def chat(_name, _question, chat_turn_id=0):
+        return SimpleNamespace(
+            answer="臣有本奏。", proposed_directive=None, appointed_minister="",
+            registered_minister="", displaced_minister="", court_action="",
+            next_minister="", secret_order_id=0, pending_action_id=0,
+            pending_action_failures=[],
+        )
+
+    return SimpleNamespace(
+        db=db, state=state, content=content, temporary_characters=set(), chat=chat,
+    )
+
+
+def _active_minister(db, content):
+    return next(
+        c for c in content.characters.values()
+        if db.get_character_status(c.name)[0] == "active"
+        and getattr(c, "power_id", "ming") == "ming"
+        and getattr(c, "office_type", "") != "后宫"
+    )
+
+
+def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
+    """AC1 真实入口：起聊入殿 → 「退下」口令 → 告退账落地、present 即时去人。"""
+    import ming_sim.cli.terminal as term
+
+    db, state, content = game
+    character = _active_minister(db, content)
+    session = _cli_session(db, state, content)
+    answers = iter(["朕问卿边事如何？", "退下"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "dismiss"
+
+    nid = int(an.get_open_night(db)["id"])
+    last = an.list_ledger(db, nid)[-1]
+    assert TAG_EXIT in last["tags"] and character.name in last["person_names"]
+    assert character.name not in an.present_names_at(db, nid)
+
+
+def test_court_break_writes_no_exit_ledger(game, monkeypatch):
+    """负向：退朝（court_break）不落个人告退账——夜由上层顺势收夜整体离场。"""
+    import ming_sim.cli.terminal as term
+
+    db, state, content = game
+    character = _active_minister(db, content)
+    session = _cli_session(db, state, content)
+    answers = iter(["朕问卿边事如何？", "退朝"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    assert term.minister_chat(session, character) == "court_break"
+
+    nid = int(an.get_open_night(db)["id"])
+    exits = [
+        e for e in an.list_ledger(db, nid)
+        if TAG_EXIT in e["tags"] and character.name in e["person_names"]
+    ]
+    assert exits == []  # 未落告退账
+    assert character.name in an.present_names_at(db, nid)  # 仍在场（待收夜）
+
+
+# ── L2：告退后再宣入须重新落入殿账（present_names_at 单一在场真源）──────────
+
+
+def test_reenter_after_exit_reappears_in_roster(game):
+    db, state, content = game
+    _activate(db, state, "毕自严")
+    night = an.open_night(db, state, location="乾清宫")
+    nid = int(night["id"])
+    an.summon_enter(db, nid, "毕自严")
+    an.dismiss_from_audience(db, "毕自严", night_id=nid)
+    assert "毕自严" not in an.present_names_at(db, nid)
+
+    def _enters() -> int:
+        return sum(
+            1 for e in an.list_ledger(db, nid)
+            if TAG_ENTER in e["tags"] and "毕自严" in e["person_names"]
+        )
+
+    before = _enters()
+    reid = an.ensure_summon_enter(db, nid, "毕自严")  # 告退后再宣 → 重新落账
+    assert reid  # 非 None
+    assert "毕自严" in an.present_names_at(db, nid)
+    assert _enters() == before + 1
+    # 负向：在场者 ensure 幂等，不重复落入殿账
+    assert an.ensure_summon_enter(db, nid, "毕自严") is None
+    assert _enters() == before + 1
+
+
+# ── L3：传召在途召法校验与 summon_enter 对齐 ──────────────────────────────
+
+
+def test_transit_rejects_bad_method(game):
+    db, state, content = game
+    _activate(db, state, "洪承畴")
+    night = an.open_night(db, state, location="乾清宫")
+    nid = int(night["id"])
+    seq_before = _last_seq(db, nid)
+    with pytest.raises(AudienceNightError) as ei:
+        an.record_summon_in_transit(db, nid, "洪承畴", method="密召")
+    assert ei.value.code == "bad_summon_method"
+    assert _last_seq(db, nid) == seq_before  # 非法召法不落账
+    # 正向：合法召法入账，在途者不在场
+    eid = an.record_summon_in_transit(db, nid, "洪承畴", method=an.METHOD_CHUANZHAO)
+    assert eid and "洪承畴" not in an.present_names_at(db, nid)
 
 
 # ── AC2/3/5：表驱动进出账 → 任一时刻在场名单 ────────────────────────────
