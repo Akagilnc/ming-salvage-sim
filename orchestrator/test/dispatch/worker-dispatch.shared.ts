@@ -24,7 +24,7 @@ import {
 
 import { familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 
-import { CODER_ROSTER } from "../../src/coderRoster.js";
+import { getCoderRoster } from "../../src/coderRoster.js";
 
 import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 
@@ -167,7 +167,7 @@ export {
   verifyWorkerSpec,
   workerResultToStep,
   familyShipWorkerSpec,
-  CODER_ROSTER,
+  getCoderRoster,
   QuotaWaitForResetError,
   resolveRouteModels,
   routeSmokeEntries,

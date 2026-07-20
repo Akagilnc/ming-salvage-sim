@@ -20,7 +20,7 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
   familyShipWorkerSpec,
-  CODER_ROSTER,
+  getCoderRoster,
   QuotaWaitForResetError,
   resolveRouteModels,
   routeSmokeEntries,
