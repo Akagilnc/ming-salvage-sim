@@ -12,7 +12,7 @@ import json
 import math
 import re
 import sqlite3
-from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.assets import format_money, format_money_delta
@@ -1161,6 +1161,9 @@ class GameDB:
                 night_seq INTEGER NOT NULL DEFAULT 0,
                 -- #499 读心终态：''=待生成 / 'failed'=模型失败 / 'skip'=不适用；用于重开轮询判终止。
                 mindreading_status TEXT NOT NULL DEFAULT '',
+                -- #501 叙事抽取水位（确定性可判、补跑不重复/不漏）：
+                --   ''=未抽 / 'done'=已抽落账 / 'pending'=待补（抽取失败，给玩家原地重试）
+                extract_status TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 undone_at TEXT
             );
@@ -1196,6 +1199,13 @@ class GameDB:
                 audibility TEXT NOT NULL DEFAULT '殿上公开',
                 body TEXT NOT NULL DEFAULT '',
                 tags TEXT NOT NULL DEFAULT '[]',
+                -- #501 抽取账溯源：0=口令/框架账；>0=由该对话轮叙事抽取而来
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                -- #501 机器可读在场效果（ADR 0035 线上 R2）：''=无 / 'enter'=进 / 'exit'=出
+                presence_effect TEXT NOT NULL DEFAULT '',
+                -- #501 时序键（ADR 0036 cmr R7）：口令账=自身 seq；抽取账=源对话轮原始时序，
+                -- 使补跑落回原时间位、不因补跑时刻错位。NULL 时读取端 COALESCE 回退 seq。
+                order_key REAL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(night_id, seq),
                 FOREIGN KEY(night_id) REFERENCES audience_nights(id)
@@ -1664,6 +1674,13 @@ class GameDB:
             "CREATE INDEX IF NOT EXISTS idx_chat_turns_night "
             "ON chat_turns(night_id, id)"
         )
+        # #501 叙事抽取水位 + 抽取账溯源/在场效果/时序键（旧档补列，schema 升级非 fallback）。
+        self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "story_ledger_entries", "presence_effect", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("story_ledger_entries", "order_key", "REAL")
         self.ensure_column(
             "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
         # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
@@ -7610,6 +7627,118 @@ class GameDB:
             (int(chat_turn_id),),
         ).fetchone()
         return str(row["mindreading_status"] or "") if row is not None else ""
+
+    # ----- #501 叙事抽取落账（水位 + 原子落账 + 补跑真源）-----
+
+    def get_story_extract_status(self, chat_turn_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT extract_status FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        return str(row["extract_status"] or "") if row is not None else ""
+
+    def mark_story_extraction_pending(self, chat_turn_id: int) -> None:
+        """抽取失败 → 待补（'' / 'pending' → 'pending'）；不覆盖已 'done'。"""
+        self.conn.execute(
+            "UPDATE chat_turns SET extract_status = 'pending' "
+            "WHERE id = ? AND extract_status IN ('', 'pending')",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
+    def settle_story_extraction(
+        self,
+        chat_turn_id: int,
+        night_id: int,
+        facts: Sequence[Mapping[str, Any]],
+        source_night_seq: int,
+    ) -> List[int]:
+        """一轮抽取产出的多条账在**同一事务内全有或全无**落库 + 抽取水位 → 'done'（ADR 0036 cmr R3）。
+
+        抽取水位二元（已抽/未抽）：已 'done' → 幂等 no-op（补跑不重复落账）。时序键
+        `order_key` 绑源对话轮原始时序（source_night_seq+0.5，落在源轮之后、后续轮之前），
+        使补跑落回原时间位（AC11）。
+        """
+        cid = int(chat_turn_id)
+        if self.get_story_extract_status(cid) == "done":
+            return []
+        base = float(int(source_night_seq or 0)) + 0.5
+        new_ids: List[int] = []
+        with atomic(self):
+            for fact in facts:
+                persons = [
+                    str(n).strip()
+                    for n in (fact.get("person_names") or [])
+                    if str(n).strip()
+                ]
+                audibility = str(fact.get("audibility") or "殿上公开")
+                presence_effect = str(fact.get("presence_effect") or "")
+                tags = [str(t) for t in (fact.get("tags") or []) if str(t)]
+                seq = self.allocate_night_seq(int(night_id))
+                cur = self.conn.execute(
+                    """
+                    INSERT INTO story_ledger_entries
+                        (night_id, seq, person_names, audibility, body, tags,
+                         source_chat_turn_id, presence_effect, order_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(night_id),
+                        seq,
+                        safe_json_dumps(persons, ensure_ascii=False),
+                        audibility,
+                        str(fact.get("body") or ""),
+                        safe_json_dumps(tags, ensure_ascii=False),
+                        cid,
+                        presence_effect,
+                        base,
+                    ),
+                )
+                new_ids.append(int(cur.lastrowid))
+            self.conn.execute(
+                "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
+                (cid,),
+            )
+        return new_ids
+
+    def list_unextracted_replies(
+        self, *, night_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """已持久化完整回话但账未抽（''/'pending'）的对话轮——补跑抽取的重试真源（ADR 0036）。
+
+        完整回话 = minister_message_id 已链接且轮未 failed/undone。带回话正文与源轮夜内时序，
+        供补跑落回原时序。挂夜（night_id>0）轮才进抽取链；未挂夜的旧路径不涉。
+        """
+        clauses = [
+            "t.night_id > 0",
+            "t.status = 'active'",
+            "t.minister_message_id IS NOT NULL",
+            "t.minister_message_id > 0",
+            "t.extract_status IN ('', 'pending')",
+        ]
+        params: List[Any] = []
+        if night_id is not None and int(night_id) > 0:
+            clauses.append("t.night_id = ?")
+            params.append(int(night_id))
+        where = " AND ".join(clauses)
+        rows = self.conn.execute(
+            f"""
+            SELECT t.id AS chat_turn_id, t.minister_name, t.night_id, t.night_seq,
+                   t.extract_status, m.content AS reply
+            FROM chat_turns t
+            JOIN chat_messages m ON m.id = t.minister_message_id
+            WHERE {where}
+            ORDER BY t.night_id ASC, t.night_seq ASC, t.id ASC
+            """,
+            params,
+        ).fetchall()
+        return [self._row_dict(r) for r in rows]
+
+    def count_pending_story_extractions(
+        self, *, night_id: Optional[int] = None,
+    ) -> int:
+        """尚待抽取落账的完整回话轮数（''/'pending' 皆算）；收夜清空待补的判据（AC10）。"""
+        return len(self.list_unextracted_replies(night_id=night_id))
 
     def reconcile_abandoned_mindreading(self) -> int:
         """进程启动时对账：'running' 但未落库的轮 = 其 worker 已随上次进程消亡，任务被遗弃

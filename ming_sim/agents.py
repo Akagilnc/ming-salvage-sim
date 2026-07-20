@@ -329,6 +329,33 @@ def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
+def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
+    """召对叙事抽取员（#501 / ADR 0035）：大臣回话演完后抽取显著故事事实落账。
+
+    同邸报→delta 模式：LLM 只做「机器搬运工」——把已发生的回话叙事结构化，不虚构、
+    不改写。开放标签（站台作保/自行退至殿侧等），涉在场变化带机器可读 presence_effect。
+    """
+    return Agent(
+        name="召对叙事抽取员",
+        id="audience_extractor",
+        model=create_chat_model(llm_config, temperature=0.2, max_tokens=600),
+        instructions=[
+            "你从一段已经发生的大臣回话（+当前在场名单）里，抽取**显著的故事事实**，"
+            "落成故事账。只搬运回话里真实演出的情节，不虚构、不引申、不复述整段原文。",
+            "只输出 JSON，形如 "
+            '{"facts":[{"person_names":["甲","乙"],"audibility":"殿上公开",'
+            '"body":"一句话记该情节","tags":["站台"],"presence_effect":""}]}。',
+            "字段规则：person_names=涉及人（可空数组）；audibility 取 "
+            "「殿上公开」或「御前低语」（递话/读心/私语类御前内容标私，缺省公开）；"
+            "body=一句中文情节记述；tags=开放短标签数组；presence_effect 仅当该情节"
+            "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串。",
+            "没有可抽取的显著情节时输出 {\"facts\":[]}。不输出 JSON 以外任何文字。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def _is_cols_rows_table(v: object) -> bool:
     """判断某字段是否 {cols,rows} 二维表（可转 TSV）。"""
     return isinstance(v, dict) and set(v.keys()) == {"cols", "rows"}

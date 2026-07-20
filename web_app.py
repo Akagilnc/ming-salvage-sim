@@ -71,6 +71,11 @@ from ming_sim.issues import _format_issue_ongoing, commitment_display_text, comm
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import run_mindreading_for_turn
+from ming_sim.audience_extraction import (
+    catch_up_pending_extractions,
+    drain_pending_before_open_night_close,
+    run_extraction_for_turn,
+)
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -667,6 +672,8 @@ class WebGame:
         self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+        # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
+        self._spawn_startup_extraction_catch_up()
 
     # ── 存档管理 ─────────────────────────────────────────────────────────
     def saves_dir(self) -> str:
@@ -760,6 +767,8 @@ class WebGame:
         self.favorites = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+        # #501：换档/重建后同样补跑丢失的叙事抽取账（后台、从不锁档）。
+        self._spawn_startup_extraction_catch_up()
 
     def build_llm_config(
         self,
@@ -1594,6 +1603,8 @@ class WebGame:
                         daemon=True,
                         name="audience-p5-mindreading",
                     ).start()
+                # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
+                self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
             with gate:
@@ -1960,6 +1971,100 @@ class WebGame:
             if owns_pending:
                 self._complete_pending_write()
 
+    def _trail_extraction_after_reply(
+        self,
+        minister_name: str,
+        minister_reply: str,
+        chat_turn_id: int,
+        *,
+        owns_pending: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
+
+        非召对夜轮（night_id<=0）不入故事账。`run_extraction_for_turn` 从不抛：垃圾 shape /
+        模型失败 → 写响亮错误包 + 标待补、不回滚回话；成功 → 单事务原子落账。写库走 runtime
+        write_gate（与读心/月末并发 extractor 同一把）。调用方持 pending ownership；
+        owns_pending=True 时本函数 finally 里 complete。
+        """
+        try:
+            reply = str(minister_reply or "")
+            if not chat_turn_id or not reply.strip() or not hasattr(self.db, "conn"):
+                return None
+            row = self.db.conn.execute(
+                "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
+                (int(chat_turn_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            night_id = int(row["night_id"] or 0)
+            if night_id <= 0:
+                return None
+            return run_extraction_for_turn(
+                db=self.db,
+                minister_name=minister_name,
+                reply=reply,
+                chat_turn_id=int(chat_turn_id),
+                night_id=night_id,
+                source_night_seq=int(row["night_seq"] or 0),
+                llm_config=getattr(self.session, "llm_config", None),
+                write_gate=self._runtime_write_gate(),
+            )
+        except Exception:
+            # run_extraction_for_turn 已兜底，此处仅防 chat_turns 查询等意外——不回滚回话。
+            return None
+        finally:
+            if owns_pending:
+                self._complete_pending_write()
+
+    def _spawn_extraction_trail(
+        self, minister_name: str, minister_reply: str, chat_turn_id: int,
+    ) -> None:
+        """在独立后台线程发起抽取落账尾随（与读心并行）。原子交接 pending ownership：
+        任何 DB 访问前先登记，关闭须等其完成。非召对夜轮由尾随函数内自行短路。"""
+        reply = str(minister_reply or "")
+        if not chat_turn_id or not reply.strip():
+            return
+        if not self._mark_pending_write():
+            return
+        threading.Thread(
+            target=self._trail_extraction_after_reply,
+            args=(minister_name, reply, chat_turn_id),
+            kwargs={"owns_pending": True},
+            daemon=True,
+            name="audience-p5-extraction",
+        ).start()
+
+    def _run_startup_extraction_catch_up(self, *, owns_pending: bool = False) -> None:
+        """重开补跑（ADR 0036）：已持久化回话但账未抽 → 补跑抽取，不回滚对话。
+
+        `catch_up_pending_extractions` 从不抛——补跑失败标待补、不锁档，**永不进启动致命路径**。
+        在后台线程跑，不阻塞存档加载。"""
+        try:
+            catch_up_pending_extractions(
+                db=self.db,
+                llm_config=getattr(self.session, "llm_config", None),
+                write_gate=self._runtime_write_gate(),
+            )
+        except Exception:
+            # 铁律：补跑失败不锁档，绝不冒泡进启动致命路径。
+            pass
+        finally:
+            if owns_pending:
+                self._complete_pending_write()
+
+    def _spawn_startup_extraction_catch_up(self) -> None:
+        """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。"""
+        if not hasattr(self.db, "conn"):
+            return
+        if not self._mark_pending_write():
+            return
+        threading.Thread(
+            target=self._run_startup_extraction_catch_up,
+            kwargs={"owns_pending": True},
+            daemon=True,
+            name="audience-startup-extraction-catchup",
+        ).start()
+
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             yield {"type": "error", "message": f"未找到大臣：{minister_name}"}
@@ -2051,13 +2156,21 @@ class WebGame:
 
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
                 ev_queue.put({"type": "done", "payload": payload or {}})
+                answer = str((payload or {}).get("answer") or "")
+                # #501：叙事抽取落账与读心并行（二者皆只依赖已完成回话，P5）——无玩家可见 SSE
+                # 事件（静默落账）。在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮
+                # pending ownership 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
+                extraction_thread = threading.Thread(
+                    target=self._trail_extraction_after_reply,
+                    args=(minister_name, answer, chat_turn_id),
+                    daemon=True,
+                    name="audience-p5-extraction",
+                )
+                extraction_thread.start()
                 mind_payload: Optional[Dict[str, Any]] = None
                 try:
                     mind_payload = self._trail_mindreading_after_reply(
-                        minister_name,
-                        str((payload or {}).get("answer") or ""),
-                        chat_turn_id,
-                        owns_pending=False,
+                        minister_name, answer, chat_turn_id, owns_pending=False,
                     )
                 except Exception:
                     mind_payload = None
@@ -2067,6 +2180,7 @@ class WebGame:
                         "payload": mind_payload,
                         "chat_turn_id": chat_turn_id,
                     })
+                extraction_thread.join()
                 ev_queue.put({"type": "end"})
             finally:
                 self._complete_pending_write()
@@ -2144,7 +2258,11 @@ def _await_audience_inflight_clear(game) -> None:
     inflight_wait_s=0.0 即时复查），避免持 gate 轮询自锁。无开夜 → no-op；超时抛
     AudienceNightError（夜保持开、可原地重试，端点映射 409）。
 
-    走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。"""
+    走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
+
+    #501（ADR 0036 线上 R3）：在飞回话清空后、持 gate 收夜前，强制同步补跑一次清空待补——
+    收夜是史实书写边界，带在场变化的待补账收夜会把过期名单写成史实。仍有待补 → fail-closed
+    抛 AudienceNightError（端点映射 409、夜保持开、可原地重试），与在飞超时熔断同语义。"""
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
         return
@@ -2152,6 +2270,11 @@ def _await_audience_inflight_clear(game) -> None:
     open_n = get_open_night(db)
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
+        drain_pending_before_open_night_close(
+            db=db,
+            llm_config=getattr(getattr(game, "session", None), "llm_config", None),
+            write_gate=_game_write_gate(game),
+        )
 
 
 def _game_write_gate(game) -> threading.Lock:
