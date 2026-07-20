@@ -447,6 +447,66 @@ def test_settle_refuses_dead_actor_enter_but_allows_mention(game):
     assert len(ids) == 1 and db.get_story_extract_status(ctid2) == "done"
 
 
+def test_extraction_open_tag_enter_does_not_drive_presence(game):
+    """抽取账开放 tags=[入殿] 不驱动在场（机器承重态只认 presence_effect，ADR 0035 R2）——
+    与 settle 死账 check_dead=(effect==enter) 对称。口令账 TAG_ENTER 仍驱动在场。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+
+    # 抽取账（source_chat_turn_id>0）带开放 tag「入殿」但 effect='' → 不入在场
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid)
+    seq = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)).fetchone()["night_seq"]
+    db.settle_story_extraction(
+        ctid, nid,
+        [{"body": "旁白称其入殿", "person_names": [minister], "tags": ["入殿"],
+          "presence_effect": ""}],
+        int(seq),
+    )
+    assert minister not in an.persons_present_tonight(db, nid)
+    # 同人抽取账 effect=enter（机器字段）→ 入在场
+    ctid2 = db.create_chat_turn(state, minister, "s", 0, night_id=nid)
+    seq2 = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid2,)).fetchone()["night_seq"]
+    db.settle_story_extraction(
+        ctid2, nid,
+        [{"body": "近前奏对", "person_names": [minister], "presence_effect": "enter"}],
+        int(seq2),
+    )
+    assert minister in an.persons_present_tonight(db, nid)
+
+
+def test_dead_actor_open_tag_enter_does_not_bypass_dead_check(game):
+    """L1 对称：亡者 + 抽取账开放 tags=[入殿]/effect='' → 落账（叙事）但**不入在场名单**
+    （不旁路 ADR 0035 廉价死账校验）；effect=enter 仍被死账拒写。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    db.set_character_status(state, minister, "dead", "test 卒")
+
+    ctid = db.create_chat_turn(state, minister, "s", 0, night_id=nid)
+    seq = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)).fetchone()["night_seq"]
+    # 开放 tag「入殿」+ effect='' → 死账校验（只认 effect）不触发 → 落账，但亡者不入在场
+    db.settle_story_extraction(
+        ctid, nid,
+        [{"body": "旁白称亡者入殿", "person_names": [minister], "tags": ["入殿"],
+          "presence_effect": ""}],
+        int(seq),
+    )
+    assert minister not in an.persons_present_tonight(db, nid)
+    # effect=enter → 死账拒写（对称仍拦）
+    ctid2 = db.create_chat_turn(state, minister, "s", 0, night_id=nid)
+    with pytest.raises(an.AudienceNightError) as ei:
+        db.settle_story_extraction(
+            ctid2, nid,
+            [{"body": "亡者入殿", "person_names": [minister], "presence_effect": "enter"}], 9)
+    assert ei.value.code == "dead_present"
+
+
 # ── L1 引擎侧 close_night drain 闸（不只挂 web 前门）──────────────────────
 def test_engine_close_night_drains_pending_success(game, monkeypatch):
     db, state, content = game
