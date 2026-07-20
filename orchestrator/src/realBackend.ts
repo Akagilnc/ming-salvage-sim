@@ -130,6 +130,15 @@ import {
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
 import { readMetadataWithRetry } from "./admissionPreflight.js";
+import {
+  graphqlBlockedByArgs,
+  graphqlBlockedByToRestShape,
+  logMetadataChannel,
+  readGithubMetadataDualChannel,
+  restBlockedByArgs,
+  type MetadataChannel,
+  type ShLike,
+} from "./githubMetadataChannel.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -504,6 +513,31 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
     );
   }
   return out;
+}
+
+/**
+ * #1063 — read a native blocked_by list REST-first with a GraphQL fallback.
+ * REST owns the #1062/#936 retry budget; only a transient (5xx/network) REST
+ * exhaustion crosses to a single GraphQL round, and both channels funnel into
+ * the one `parseBlockedBy` decoder. Shared by family admission (root + each
+ * child) and single-slice S0 so the two call sites cannot drift.
+ */
+export function readBlockedByDualChannel(
+  sh: ShLike,
+  repo: string,
+  issue: number,
+  onChannel: (channel: MetadataChannel) => void = (c) =>
+    logMetadataChannel("blocked_by", issue, c),
+): GhBlockedBy[] {
+  return readGithubMetadataDualChannel<GhBlockedBy[]>({
+    rest: () =>
+      JSON.parse(
+        readMetadataWithRetry(() => sh("gh", restBlockedByArgs(repo, issue))),
+      ),
+    graphql: () => graphqlBlockedByToRestShape(sh("gh", graphqlBlockedByArgs(repo, issue))),
+    decode: parseBlockedBy,
+    onChannel,
+  });
 }
 
 /**
@@ -2502,13 +2536,13 @@ export class RealBackend implements Backend {
    * base missing upstream changes. Only a confirmed empty array is no-deps.
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
-    return this.phase(step, "fetchBlockedBy", () => {
-      const raw = readMetadataWithRetry(() => this.sh("gh", [
-        "api",
-        `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]));
-      return parseBlockedBy(JSON.parse(raw));
-    });
+    return this.phase(step, "fetchBlockedBy", () =>
+      readBlockedByDualChannel(
+        (file, args) => this.sh(file, args),
+        this.opts.repo,
+        issueNumber,
+      ),
+    );
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
