@@ -7316,6 +7316,98 @@ class GameDB:
         ).fetchall()
         return [self._row_dict(r) for r in rows]
 
+    def reconcile_interrupted_chat_turns(self) -> List[Dict[str, Any]]:
+        """重开对账（#505 / ADR 0036）：上一进程崩溃遗留的在飞回话轮（generating / active 无
+        回话）终态化。生成半途被 kill 的轮：问话已持久、回话未落。恢复形态——
+
+        - **有问话**（user_message_id 已链接）→ 标 'interrupted'（可重试终态）：问话原句保留、
+          **不删任何账/记录**；解除在飞判定（不再挡续问/收夜）；最后一句上给重新生成回话。
+        - **无问话**（连问话都没落，极窄崩溃窗）→ 标 'failed'：无可保留、无可重试，只解阻塞。
+
+        幂等：只动 generating / active-无回话；'interrupted'/'active'/'failed' 不再重扫。**永不删账。**
+        返回待重试轮列表（chat_turn_id/minister_name/turn/question）供恢复提示取数。
+
+        「在飞」判据单一真源 = `list_in_flight_chat_turns`（无过滤 = 全库崩溃孤儿集）——
+        与在飞守卫同缝，不另抄谓词。
+        """
+        rows = self.list_in_flight_chat_turns()
+        interrupted: List[Dict[str, Any]] = []
+        with self.conn:
+            for row in rows:
+                ctid = int(row["id"])
+                uid = row.get("user_message_id")
+                if uid:
+                    self.conn.execute(
+                        "UPDATE chat_turns SET status = 'interrupted' WHERE id = ?",
+                        (ctid,),
+                    )
+                    qrow = self.conn.execute(
+                        "SELECT content FROM chat_messages WHERE id = ?", (int(uid),)
+                    ).fetchone()
+                    interrupted.append({
+                        "chat_turn_id": ctid,
+                        "minister_name": str(row["minister_name"]),
+                        "turn": int(row["turn"]),
+                        "question": str(qrow["content"]) if qrow is not None else "",
+                    })
+                else:
+                    self.conn.execute(
+                        "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
+                        (ctid,),
+                    )
+        return interrupted
+
+    def get_interrupted_reply_retries(
+        self, minister_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """待重试的中断回话轮（status='interrupted'，问话已落、回话未落）——恢复提示 / 重试取数。"""
+        clauses = ["t.status = 'interrupted'", "t.user_message_id IS NOT NULL"]
+        params: List[Any] = []
+        if minister_name is not None:
+            clauses.append("t.minister_name = ?")
+            params.append(str(minister_name))
+        where = " AND ".join(clauses)
+        rows = self.conn.execute(
+            f"""
+            SELECT t.id, t.minister_name, t.turn, m.content AS question
+            FROM chat_turns t
+            JOIN chat_messages m ON m.id = t.user_message_id
+            WHERE {where}
+            ORDER BY t.id ASC
+            """,
+            params,
+        ).fetchall()
+        return [
+            {
+                "chat_turn_id": int(r["id"]),
+                "minister_name": str(r["minister_name"]),
+                "turn": int(r["turn"]),
+                "question": str(r["question"]),
+            }
+            for r in rows
+        ]
+
+    def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id: int) -> bool:
+        """重试起手：'interrupted' → 'generating'（重入生成态、与在飞守卫一致，回话落库后升 active）。
+        仅当前确为 interrupted 才翻；返回是否翻动（防重复重试竞态）。"""
+        cur = self.conn.execute(
+            "UPDATE chat_turns SET status = 'generating' "
+            "WHERE id = ? AND status = 'interrupted'",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def restore_interrupted_after_failed_retry(self, chat_turn_id: int) -> None:
+        """重试再失败：把重入生成态的轮翻回 'interrupted'（仍无回话时），保持可再重试、不误 fail。"""
+        self.conn.execute(
+            "UPDATE chat_turns SET status = 'interrupted' "
+            "WHERE id = ? AND status = 'generating' "
+            "AND (minister_message_id IS NULL OR minister_message_id = 0)",
+            (int(chat_turn_id),),
+        )
+        self.conn.commit()
+
     def create_chat_turn(
         self,
         state: GameState,

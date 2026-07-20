@@ -673,6 +673,10 @@ class WebGame:
         self.favorites: set = set(json.loads(_fav_raw)) if _fav_raw else set(_DEFAULT_FAVORITES)
         if not _fav_raw:
             self.db.kv_set("favorites", json.dumps(sorted(self.favorites)))
+        # #505：重开对账——上一进程崩溃遗留的在飞回话轮终态化（问话保留 + 可重试，永不删账）。
+        # 解除在飞判定，使续问/收夜不被崩溃孤儿轮永久挡死（ADR 0036）。同步、先于后台补跑。
+        if hasattr(self.db, "conn"):
+            self.db.reconcile_interrupted_chat_turns()
         # #501：重开后补跑崩溃窗口里丢的叙事抽取账（后台、从不锁档）。
         self._spawn_startup_extraction_catch_up()
 
@@ -1621,6 +1625,70 @@ class WebGame:
                     self.chat_history = {name: [] for name in self.session.content.characters}
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
+            raise
+
+    def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
+        """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
+        测试替身无 conn/该接口时返回空（无中断可重试）。"""
+        if not hasattr(self.db, "get_interrupted_reply_retries"):
+            return []
+        return self.db.get_interrupted_reply_retries(minister_name)
+
+    def retry_interrupted_reply(self, minister_name: str) -> Dict[str, Any]:
+        """#505 恢复动作：重开后为最后一条中断轮**重新生成回话**（系统层重试，非内容选项按钮）。
+
+        复用既有 chat_turn 与已持久问话——**绝不再落问话**（对话记录无重复句，AC3）。成功即回话
+        落库、轮 generating→active；重试再失败则翻回 interrupted 保持可再重试。无待重试轮 → 响亮 404。"""
+        retries = self.interrupted_reply_retries(minister_name)
+        if not retries:
+            raise HTTPException(status_code=404, detail=f"{minister_name}没有待重试的中断回话。")
+        target = retries[-1]  # 最后一条中断轮
+        chat_turn_id = int(target["chat_turn_id"])
+        question = str(target["question"])
+        accepted_turn = int(target["turn"])
+        gate = self._runtime_write_gate()
+        with gate:
+            if self._audience_turn_in_flight(minister_name):
+                raise HTTPException(
+                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+            self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id)
+        try:
+            result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
+            proposed = None
+            if result.proposed_directive is not None:
+                d = result.proposed_directive
+                proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            with gate:
+                payload = self._chat_payload(
+                    minister_name, result.answer,
+                    court_action=result.court_action, next_minister=result.next_minister,
+                    proposed_directive=proposed, appointed_minister=result.appointed_minister,
+                    registered_minister=result.registered_minister,
+                    displaced_minister=result.displaced_minister,
+                    secret_order_id=result.secret_order_id,
+                    pending_action_id=getattr(result, "pending_action_id", 0),
+                    pending_action_failures=getattr(result, "pending_action_failures", []),
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    directive_confirmation_ambiguous=getattr(
+                        result, "directive_confirmation_ambiguous", None),
+                )
+            answer_text = str(getattr(result, "answer", "") or "")
+            if chat_turn_id and answer_text:
+                if self._mark_pending_write():
+                    threading.Thread(
+                        target=self._trail_mindreading_after_reply,
+                        args=(minister_name, answer_text, chat_turn_id),
+                        kwargs={"owns_pending": True},
+                        daemon=True,
+                        name="audience-p5-mindreading",
+                    ).start()
+                self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
+            return payload
+        except Exception:
+            # 重试再失败：翻回 interrupted（问话仍在、可再重试），不静默 fail 掉最后一句。
+            with gate:
+                self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             raise
 
     def mindreading_for_minister(
@@ -3279,7 +3347,16 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
         "chat_turn_id": mind["chat_turn_id"],
         "mindreading_pending": mind["mindreading_pending"],
         "pending_turn_ids": mind["pending_turn_ids"],
+        # #505：重开后崩溃遗留的中断轮 → 最后一句上给「重新生成回话」重试（系统层恢复动作）。
+        "reply_retry": (game.interrupted_reply_retries(minister_name) or [None])[-1],
     }
+
+
+@app.post("/api/ministers/{minister_name}/reply/retry")
+async def api_retry_interrupted_reply(minister_name: str) -> Dict[str, Any]:
+    """#505：重开后为中断轮重新生成回话（复用已持久问话，对话记录无重复句）。"""
+    _require_active_minister(minister_name)
+    return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
 
 
 @app.get("/api/ministers/{minister_name}/chat/mindreading")
