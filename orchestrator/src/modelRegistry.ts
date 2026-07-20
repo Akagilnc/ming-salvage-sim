@@ -140,20 +140,12 @@ function unknownSlugError(slug: string): Error {
 
 /**
  * Map an opaque config registry row onto the typed registry entry the
- * provider factories consume. Provider must already be a known wired factory
- * (loader shape check + fail-closed here).
+ * provider factories consume. Provider membership is fail-closed solely by
+ * loadModelData/parseRegistryRow (MODEL_PROVIDERS whitelist) — do not re-check
+ * here; ModelDataProvider and MODEL_PROVIDER_FACTORIES share the same 7 keys.
  */
-function rowFromConfigData(
-  slug: string,
-  data: ModelDataRegistryRow,
-): ModelSlugRegistryRow {
+function rowFromConfigData(data: ModelDataRegistryRow): ModelSlugRegistryRow {
   const provider = data.provider;
-  if (!(provider in MODEL_PROVIDER_FACTORIES)) {
-    throw new Error(
-      `realBackend: unknown provider "${provider}" for model slug "${slug}". ` +
-        `Provider wiring stays in code; fix model-data config or add a factory.`,
-    );
-  }
   const family = data.family as ModelFamily;
   const optionsRaw = data.options;
   if (optionsRaw === undefined) {
@@ -231,7 +223,7 @@ function rowFromConfigData(
 function liveRegistryRow(slug: string): ModelSlugRegistryRow | undefined {
   const data = loadModelData().registry[slug];
   if (data === undefined) return undefined;
-  return rowFromConfigData(slug, data);
+  return rowFromConfigData(data);
 }
 
 function rowForSlug(slug: string): ModelSlugRegistryRow {
