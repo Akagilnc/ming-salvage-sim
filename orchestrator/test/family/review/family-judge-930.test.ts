@@ -42,6 +42,7 @@ import {
   judgeConverged,
   judgeContinue,
   judgeEscalate,
+  judgeToolchain,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
@@ -339,6 +340,25 @@ describe("#930 pure family judge closure", () => {
       reason: "stuck",
       diagnosis: "need owner",
     });
+  });
+
+  it("toolchain → dedicated toolchain action with reason/diagnosis (#1027 S1)", () => {
+    expect(
+      closeFamilyCourtFromJudgeOutput(
+        judgeToolchain("MODULE_NOT_FOUND", "missing dep after merge"),
+      ),
+    ).toEqual({
+      action: "toolchain",
+      reason: "MODULE_NOT_FOUND",
+      diagnosis: "missing dep after merge",
+    });
+  });
+
+  it("negative: toolchain must not collapse into pass/continue", () => {
+    const closure = closeFamilyCourtFromJudgeOutput(judgeToolchain());
+    expect(closure.action).not.toBe("pass");
+    expect(closure.action).not.toBe("continue");
+    expect(closure.action).toBe("toolchain");
   });
 
   it("negative: residual kind:cmr+findingsCount is unusable (not a closer)", () => {
