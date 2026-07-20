@@ -1,0 +1,378 @@
+"""#503 开场/收夜 beat 编排——输入路由 / 零形式约束传递 / P4 不喂 / 见闻供给接口。
+
+seam：
+- assemble_beat_inputs（输入路由的公开边界，断言输入面：AC2/AC4/AC5 审计）；
+- 真实召对会话入口 attach_chat_turn_to_night + close_night（注入 generator/provider）
+  对故事账本 DB 的效果（AC1/AC3/AC5 落账正文，PRD #497「最高 seam」）。
+
+不锁文案质量（归 #472/#478）；注入 echo 生成器把路由后的输入回显进账正文，据此断言编排。
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from ming_sim import audience_night as an
+from ming_sim import beat_orchestration as bo
+from ming_sim.beat_orchestration import (
+    BEAT_CLOSE,
+    BEAT_ENTER,
+    BEAT_OPEN,
+    BeatInputs,
+    assemble_beat_inputs,
+    beat_input_field_names,
+)
+
+
+def _active_minister(db, content, *, exclude=None):
+    skip = exclude or set()
+    for name, ch in content.characters.items():
+        if name in skip:
+            continue
+        if getattr(ch, "power_id", "ming") != "ming":
+            continue
+        if getattr(ch, "office_type", "") == "后宫":
+            continue
+        if db.get_character_status(name)[0] == "active":
+            return name
+    raise AssertionError("no active ming minister")
+
+
+def _echo_generator(inputs: BeatInputs) -> str:
+    """把路由后的输入原样回显进账正文，供断言编排（非文案质量）。"""
+    return "‖".join([
+        f"kind={inputs.beat_kind}",
+        f"person={inputs.person_name}",
+        f"method={inputs.summon_method}",
+        f"tod={inputs.time_of_day}",
+        f"loc={inputs.location}",
+        f"char={inputs.characterization}",
+        f"world={inputs.perspectival_world}",
+        f"tension={inputs.court_tension}",
+        f"prior={'∥'.join(inputs.prior_appearances)}",
+        f"public={'∥'.join(inputs.public_layer)}",
+    ])
+
+
+def _ledger_body(db, night_id, *required_tags):
+    need = set(required_tags)
+    for e in an.list_ledger(db, night_id):
+        if need.issubset(set(e["tags"])):
+            return e["body"]
+    return None
+
+
+def _enter_body(db, night_id, person):
+    for e in an.list_ledger(db, night_id):
+        if an.TAG_ENTER in e["tags"] and person in e["person_names"]:
+            return e["body"]
+    return None
+
+
+def _land_reply(db, state, minister, chat_id, text="臣遵旨。"):
+    """回话入档（清在飞态），使收夜守卫不误挡。"""
+    mid = db.append_chat_message(minister, state.turn, "minister", text)
+    db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
+
+
+# ── AC1：入殿账随（身份/召法/时地）输入不同而不同；时地取自夜容器持久属性 ──
+
+
+def test_enter_beat_varies_by_identity_and_method(game):
+    db, state, content = game
+    a = _active_minister(db, content)
+    b = _active_minister(db, content, exclude={a})
+
+    _nid, _cid = an.attach_chat_turn_to_night(
+        db, state, a, agno_session_id="sa", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫", summon_method=an.METHOD_XUANRU,
+        beat_generator=_echo_generator,
+    )
+    night = an.get_open_night(db)
+    an.attach_chat_turn_to_night(
+        db, state, b, agno_session_id="sb", agno_runs_before=0,
+        summon_method=an.METHOD_YUECI, beat_generator=_echo_generator,
+    )
+
+    body_a = _enter_body(db, night["id"], a)
+    body_b = _enter_body(db, night["id"], b)
+    assert body_a and body_b
+    # 非空且随身份不同而不同
+    assert body_a != body_b
+    assert f"person={a}" in body_a and f"person={b}" in body_b
+    # 随召法不同而不同
+    assert f"method={an.METHOD_XUANRU}" in body_a
+    assert f"method={an.METHOD_YUECI}" in body_b
+    # 时辰/地点取自夜容器持久属性（cmr R7）
+    assert "tod=戌时" in body_a and "loc=乾清宫" in body_a
+    assert "tod=戌时" in body_b and "loc=乾清宫" in body_b
+
+
+def test_enter_beat_time_location_from_night_container_not_call_arg(game):
+    """cmr R7：入殿账时辰/地点取自夜容器持久属性，非本次 attach 传参。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    # 先开夜，持久化 子时/坤宁宫
+    an.open_night(db, state, time_of_day="子时", location="坤宁宫")
+    # attach 传入不同的 时地——入殿账须反映夜的持久属性，忽略本次传参
+    night_id, _cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="午时", location="偏殿", beat_generator=_echo_generator,
+    )
+    body = _enter_body(db, night_id, minister)
+    assert body and "tod=子时" in body and "loc=坤宁宫" in body
+    assert "午时" not in body and "偏殿" not in body
+
+
+# ── AC3：开夜账与收夜账正文落地 ──────────────────────────────────────
+
+
+def test_open_and_close_beat_bodies_land(game):
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, _cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫", beat_generator=_echo_generator,
+    )
+    open_body = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
+    assert open_body and open_body.startswith(f"kind={BEAT_OPEN}")
+    # 夜级框架账不落人名
+    open_entry = next(
+        e for e in an.list_ledger(db, night_id) if an.TAG_OPEN_NIGHT in e["tags"]
+    )
+    assert open_entry["person_names"] == []
+    assert "tod=戌时" in open_body and "loc=乾清宫" in open_body
+
+    _land_reply(db, state, minister, _cid)
+    an.close_night(db, state, night_id=night_id, content=content,
+                   beat_generator=_echo_generator)
+    close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
+    assert close_body and close_body.startswith(f"kind={BEAT_CLOSE}")
+
+
+def test_no_generator_keeps_deterministic_fallback(game):
+    """不注入生成器 = 沿用 #498 确定性兜底正文（编排层可选，不破既有行为）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, _cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫",
+    )
+    enter_body = _enter_body(db, night_id, minister)
+    assert enter_body and "kind=" not in enter_body
+    _land_reply(db, state, minister, _cid)
+    an.close_night(db, state, night_id=night_id, content=content)
+    close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
+    assert close_body == "退朝，今夜召对到此。"
+
+
+# ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────
+
+
+def test_second_summon_inputs_include_prior_enter_and_audience(game):
+    db, state, content = game
+    a = _active_minister(db, content)
+    b = _active_minister(db, content, exclude={a})
+
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], a, method=an.METHOD_XUANRU, body="甲首次入殿·惶恐趋入")
+    tid = db.create_chat_turn(state, a, "sa", 0, night_id=night["id"])
+    mid = db.append_chat_message(a, state.turn, "minister", "臣奏：辽饷积欠三月矣。")
+    db.update_chat_turn_messages(tid, minister_message_id=int(mid))
+
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
+        time_of_day=night["time_of_day"], location=night["location"],
+        person_name=a, summon_method=an.METHOD_XUANRU,
+    )
+    # 首次入殿账 + 奏对回话都在输入面
+    assert any("甲首次入殿" in p for p in inputs.prior_appearances)
+    assert any("辽饷积欠" in p for p in inputs.prior_appearances)
+
+    # 负向：从未入殿/奏对者，输入面无前情
+    inputs_b = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
+        person_name=b, summon_method=an.METHOD_XUANRU,
+    )
+    assert inputs_b.prior_appearances == ()
+
+
+# ── AC4：组装无形式约束参数、无裸数值输入（审计断言）───────────────────
+
+
+def test_beat_inputs_carry_no_form_constraint_or_naked_number(game):
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
+        time_of_day=night["time_of_day"], location=night["location"],
+        person_name=minister, summon_method=an.METHOD_XUANRU,
+    )
+    # 零形式约束：无长度/结构/格式类字段
+    names = set(beat_input_field_names())
+    forbidden = {"max_length", "length", "min_length", "word_limit",
+                 "structure", "format", "template", "few_shot", "style_guide"}
+    assert not (names & forbidden)
+    # 每个字段皆 str / tuple[str]——结构性保证无裸抽象数值字段
+    for name in names:
+        value = getattr(inputs, name)
+        assert isinstance(value, (str, tuple)), name
+        if isinstance(value, tuple):
+            assert all(isinstance(x, str) for x in value), name
+    # P4：特征化走 minister_dossier，不含带量表轴的 character_context 输出（忠诚/党派认同…）
+    assert inputs.characterization
+    assert "忠诚" not in inputs.characterization
+    assert "党派认同" not in inputs.characterization
+
+
+def test_generator_called_with_only_beat_inputs_no_constraints(game):
+    """生成器只收一个 BeatInputs——编排层不向生成施加任何形式约束参数。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    seen = {}
+
+    def recording(inputs, *args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        seen["type"] = type(inputs)
+        return "x"
+
+    an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫", beat_generator=recording,
+    )
+    assert seen["type"] is BeatInputs
+    assert seen["args"] == ()
+    assert seen["kwargs"] == {}
+
+
+# ── AC5：见闻真走供给接口 / 不调全知 builder / 投毒被咬住 ─────────────
+
+
+def _fake_provider(tag):
+    def provider(name):
+        if not name:
+            return {}
+        return {
+            "world": {"role": f"{name}独有见闻#{tag}"},
+            "public_events": [],
+            "events": [],
+        }
+    return provider
+
+
+def test_enter_input_flows_from_injected_knowledge_provider(game):
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, _cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫",
+        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
+    )
+    body = _enter_body(db, night_id, minister)
+    # 见闻输入真来自注入的供给接口（非默认 get_character_knowledge、非全知）
+    assert body and f"{minister}独有见闻#A" in body
+
+
+def test_frame_beats_flow_from_provider_and_vary(game):
+    """AC5：开场/收夜组装输入来自供给接口且随之变化（帧 beat 视角=常在员额首席）。"""
+    db, state, content = game
+    subject = an.resolve_standing_roster(db)[0]
+    minister = _active_minister(db, content)
+
+    night_id, _cid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫",
+        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
+    )
+    open_a = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
+    assert f"{subject}独有见闻#A" in open_a
+
+    _land_reply(db, state, minister, _cid)
+    an.close_night(db, state, night_id=night_id, content=content,
+                   beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"))
+    close_a = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
+    assert f"{subject}独有见闻#A" in close_a
+
+    # 换供给接口内容 → 帧 beat 输入随之变化（投毒版照喂全知只换文案会被此咬住：
+    # 无视 provider 的实现产不出这份 per-character 内容）
+    n2 = an.open_night(db, state, time_of_day="子时", location="文华殿")
+    body_open_b = bo.generate_open_beat_body(
+        db, state, time_of_day="子时", location="文华殿",
+        beat_generator=_echo_generator, knowledge_provider=_fake_provider("B"),
+    )
+    assert f"{subject}独有见闻#B" in body_open_b
+    assert "独有见闻#A" not in body_open_b
+    _ = n2
+
+
+def test_assembly_never_calls_omniscient_builders(game, monkeypatch):
+    """审计断言：组装路径绝不调全知 builder（court_brief / 全员名册类全局块）。"""
+    import ming_sim.registry as registry
+
+    def _boom(*a, **k):
+        raise AssertionError("组装路径调用了全知 builder（违 ADR 0034）")
+
+    monkeypatch.setattr(registry, "build_court_brief", _boom)
+    monkeypatch.setattr(registry, "build_court_roster", _boom)
+    monkeypatch.setattr(registry, "build_court_roster_index", _boom)
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    # 入殿 + 帧 beat 组装都不得踩全知 builder
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
+        person_name=minister, summon_method=an.METHOD_XUANRU,
+        knowledge_provider=_fake_provider("A"),
+    )
+    assert f"{minister}独有见闻#A" in inputs.perspectival_world
+    frame = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫",
+        knowledge_provider=_fake_provider("A"),
+    )
+    subject = an.resolve_standing_roster(db)[0]
+    assert f"{subject}独有见闻#A" in frame.perspectival_world
+
+
+def test_court_tension_routed_from_default_provider(game):
+    """当下朝局张力经默认见闻供给接口路由（court/security 域），定性口径、无裸数值（P4）。"""
+    db, state, content = game
+    # 内阁大臣有 court 域见闻——朝局张力应被路由到位
+    grand = next(
+        n for n, ch in content.characters.items()
+        if ch.office_type == "内阁"
+        and db.get_character_status(n)[0] == "active"
+        and getattr(ch, "power_id", "ming") == "ming"
+    )
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_ENTER, night_id=int(night["id"]),
+        person_name=grand, summon_method=an.METHOD_XUANRU,
+    )
+    assert inputs.court_tension  # 非空：真被路由
+    # 定性口径（满意/势力档），走 audience=True 定性轨——非裸抽象数值（P4）
+    assert "满意" in inputs.court_tension or "势力" in inputs.court_tension
+
+
+def test_public_layer_excludes_private_whispers(game):
+    """本夜公开层账取数只含殿上公开；御前低语（读心/递话）不入侍立者取数区间（PRD R1）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.append_ledger_entry(
+        db, night["id"], person_names=[minister],
+        audibility=an.AUDIBILITY_PUBLIC, body="殿上明发：着户部核边饷。", tags=["明旨"],
+    )
+    an.append_ledger_entry(
+        db, night["id"], person_names=[minister],
+        audibility=an.AUDIBILITY_PRIVATE, body="王承恩御前低语：此人不可信。", tags=["递话"],
+    )
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫",
+        night_id=int(night["id"]),
+    )
+    joined = "".join(inputs.public_layer)
+    assert "着户部核边饷" in joined
+    assert "此人不可信" not in joined
