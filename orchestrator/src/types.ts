@@ -228,6 +228,12 @@ export interface Finding {
   readonly disposition_reason?: string;
   /** Machine-verifiable classification evidence for suppression outcomes. */
   readonly disposition?: FindingDispositionEvidence;
+  /**
+   * Pre-computed stable identity key (ADR 0131 / #1076). When present,
+   * findingIdentityKey() returns it verbatim instead of re-deriving from
+   * category/location/claim_quote (which crashes on sparse cargo).
+   */
+  readonly identityKey?: string;
 }
 
 /**
