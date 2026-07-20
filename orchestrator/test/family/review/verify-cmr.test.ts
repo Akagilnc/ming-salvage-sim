@@ -51,8 +51,12 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import {
+  completedJudge,
+  judgeContinue,
+  judgeToolchain,
   liveCmrJudgeContinue,
   legacyCmrScriptToWorkerOutput,
+  sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
@@ -263,30 +267,42 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
     expect(backend.aborted).toEqual([]);
   });
 
-  it("RED wave verify → ok:false (spine fails-fast), ran:true, and an `aborted` ledger event with the error package", async () => {
+  it("RED wave verify → triage judge toolchain verdict → verify_failed + `aborted`, fixer zero-spin (#1027 S2 AC2)", async () => {
+    // #1027 S2 / ADR 0145 owner FINAL: red is handed UNIFORMLY to the triage
+    // judge (no runner text/exit-code classification). A `toolchain` verdict is
+    // the runner's unchanged verify_failed terminal — and NO coder-fix spins.
+    const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: false, errorPackage: { reason: "tsc: TS2322 in regionApply" } }),
+      worker: (spec) => {
+        if (spec.kind === "coder") coderDispatches.push(spec);
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("MODULE_NOT_FOUND after merge", "missing dep, not a regression"),
+          );
+        }
+        throw new Error(`unexpected wave worker dispatch: ${spec.kind}`);
+      },
     });
     const result = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    // ok:false → the spine aborts before the next wave (decision 3④).
     // #922: stage-named failedStatus (not a bare {ok,ran} mash).
     expect(result).toMatchObject({
       ok: false,
       ran: true,
       failedStatus: "verify_failed",
     });
-    // The red verify writes an `aborted` event carrying the error package +
-    // family base (decision 3④/5; the schema is #298's, #296 only calls it).
+    // The toolchain terminal writes an `aborted` event carrying the error
+    // package + family base.
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.phase).toBe("wave");
     expect(backend.aborted[0]?.familyBase).toBe("family/291-base");
-    expect(backend.aborted[0]?.errorPackage.reason).toContain("TS2322");
-    // No PR / cmr on a red wave.
-    expect(backend.cmrCalls).toEqual([]);
+    // AC2 negative: fixer never spins on a toolchain red.
+    expect(coderDispatches).toEqual([]);
+    // No PR on a red wave.
     expect(backend.prCalls).toEqual([]);
   });
 
@@ -325,6 +341,109 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
         }),
       }),
     );
+  });
+});
+
+describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
+  const completedCoder = (): WorkerResult => ({
+    kind: "completed",
+    output: { kind: "coder", committed: true, commitsAdded: 1 },
+  });
+
+  it("AC1 tracer: red → judge continue → coder-fix → deterministic re-verify green → converge", async () => {
+    let verifyCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      // #1 initial wave verify (red) → court; #2 re-verify after fix (green).
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "cross-slice seam red: 7 failing" } };
+      },
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
+          );
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          return completedCoder();
+        }
+        throw new Error(`unexpected wave worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1027-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    // Green mechanical re-verify is the SOLE convergence authority → ok.
+    expect(result).toEqual({ ok: true, ran: true });
+    // One judge triage, one coder-fix, one re-verify (2 verify calls total).
+    expect(verifyCalls).toBe(2);
+    expect(coderDispatches).toHaveLength(1);
+    expect(coderDispatches[0]?.kind).toBe("coder");
+    // Ledger records the wave triage + fix rounds (与 CMR 庭同构).
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).toContain("wave-verify-fix");
+    // Converged on green → no abort.
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("AC3 negative: judge converged but re-verify RED → forced continue (green receipt is the hard precondition)", async () => {
+    let verifyCalls = 0;
+    let judgeCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      // #1 initial red; #2 still red (after the converged verdict — must NOT
+      // close); #3 green (after the forced-continue fixer round).
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls >= 3
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: `still red @ verify ${verifyCalls}` } };
+      },
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          // Round 1: judge says converged — but the re-verify is still red, so
+          // the court must FORCE another round (not close on the judge's word).
+          // Round 2: a real continue drives the coder-fix that finally converges.
+          return completedJudge(
+            judgeCalls === 1
+              ? { kind: "judge", status: "converged" }
+              : judgeContinue([sampleFinding("seam regression", "b.ts:3")]),
+          );
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          return completedCoder();
+        }
+        throw new Error(`unexpected wave worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1027-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    // Round 1 converged verdict did NOT converge (re-verify #2 red) → forced
+    // continue: the coder-fix only spins in round 2 (converged skips the fixer).
+    expect(judgeCalls).toBe(2);
+    expect(coderDispatches).toHaveLength(1);
+    // 3 verify calls: initial red + red-after-converged + green-after-fix.
+    expect(verifyCalls).toBe(3);
+    expect(backend.aborted).toEqual([]);
   });
 });
 

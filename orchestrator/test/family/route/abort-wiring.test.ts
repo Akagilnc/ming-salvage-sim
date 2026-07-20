@@ -28,7 +28,11 @@ import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
-import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import {
+  completedJudge,
+  judgeToolchain,
+  legacyCmrScriptToWorkerOutput,
+} from "../../helpers/judge-fixtures.js";
 import type {
   Backend,
   DispatchContext,
@@ -137,6 +141,13 @@ class AbortingFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    // #1027 S2: a red wave verify is triaged by the judge; classify it as a
+    // toolchain terminal (→ the runner's unchanged verify_failed abort).
+    if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+      return completedJudge(
+        judgeToolchain(ctx.waveVerifyFailure, "wave-verify env red"),
+      );
+    }
     if (spec.kind === "cmr") {
       const cmr = await this.runIntegratedCmr({
         familyBase: ctx.familyBase!,

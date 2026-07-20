@@ -1675,7 +1675,13 @@ export class RealFamilyBackend implements FamilyBackend {
     // predicate refuses (this file ~877-895). So escalate (verifyCmr routes it as
     // not-passed续跑) rather than checking out the base + spinning the container only
     // to review the wrong scope.
-    if (this.opts.familyBaseStartHead === undefined) {
+    // #1027 S2 / ADR 0145: the wave-verify triage judge presides over the verify
+    // FAILURE, not a diff — there is no cut-SHA scope to pin, so this guard does
+    // not apply to it (its focus is ctx.waveVerifyFailure, written below).
+    if (
+      this.opts.familyBaseStartHead === undefined &&
+      ctx.waveVerifyFailure === undefined
+    ) {
       return {
         kind: "escalate",
         reason:
@@ -1767,7 +1773,14 @@ export class RealFamilyBackend implements FamilyBackend {
       // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
-      this.writeCmrFocusFile(ctx);
+      // #1027 S2 / ADR 0145: the wave-verify triage judge focuses on the verify
+      // FAILURE (a cross-slice-seam red), not a diff scope. Same judge decode +
+      // review-leg machinery; only the focus content differs.
+      if (ctx.waveVerifyFailure !== undefined) {
+        this.writeWaveVerifyFocusFile(ctx);
+      } else {
+        this.writeCmrFocusFile(ctx);
+      }
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
       // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
       // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
@@ -2536,6 +2549,40 @@ export class RealFamilyBackend implements FamilyBackend {
       `Review THIS exact family-base diff (the commits the family base added since it\n` +
       `was cut from its target):\n\n    ${scope}\n\n${passLine}\n\n${focusLine}${moduleBlock}${closureBlock}${priorRoundBlock}${answerBlock}\n`;
     // Git-ignore it (it is a transient runtime artifact, never committed) then write.
+    const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+    this.excludeFromGit(CMR_FOCUS_FILENAME);
+    writeFileSync(target, body, "utf8");
+  }
+
+  /**
+   * #1027 S2 / ADR 0145 — write the wave-verify triage judge focus file.
+   *
+   * The wave-verify judge presides over a red family wave verify (child slices
+   * green in isolation, red only once merged onto the family base). Its material
+   * is the verify FAILURE, pinned verbatim here (the runner carries it on
+   * {@link DispatchContext.waveVerifyFailure}; method for triage lives in the
+   * versioned wave-verify judge prompt/soul — #1068). Shares CMR_FOCUS_FILENAME
+   * so the same in-container judge seat reads one focus path.
+   */
+  protected writeWaveVerifyFocusFile(ctx: DispatchContext): void {
+    const failure = ctx.waveVerifyFailure ?? "";
+    const answerBlock =
+      ctx.escalationAnswer !== undefined
+        ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nRetry the previously paused wave-verify triage with this answer in force.`
+        : "";
+    const body =
+      `# Wave-verify triage — the red family verify to classify (machine-generated; #1027 S2)\n\n` +
+      `The family base full verify (typecheck + tests) went RED after merging the\n` +
+      `child slices. Classify this red and return the shared typed judge verdict:\n` +
+      `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
+      `cross-slice-seam regression) or \`toolchain\` (an environment/toolchain red\n` +
+      `the runner falls back to verify_failed on). Convergence is the deterministic\n` +
+      `green re-verify receipt — never your word alone.\n\n` +
+      `## Verify failure output\n\n\`\`\`\n${failure}\n\`\`\`${answerBlock}\n`;
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
