@@ -646,8 +646,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
       {
         issue: 11,
         status: "failed",
-        branch: undefined,
-        failureCause: "child #11 single-slice execution did not succeed",
+        failureCause: "S0 input gate: issue #11 is not labelled ready-for-agent. Triage the issue and apply the label before running the orchestrator.",
       },
     ]);
     expect(result.stopSummary.reason).toBe("owning_issue_still_red");
