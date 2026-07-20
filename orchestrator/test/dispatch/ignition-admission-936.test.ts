@@ -32,6 +32,10 @@ import {
 } from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
 import {
+  DISPATCH_RETRY_BACKOFF_MS,
+  MAX_DISPATCH_ATTEMPTS,
+} from "../../src/dispatchRetry.js";
+import {
   cutFamilyBase,
   discoverFamilyResidentScene,
   planFamilyTerminalReplay,
@@ -507,24 +511,38 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(backend.workingRepoCalls).toBe(0);
   });
 
-  it("metadata transient retry uses six total attempts; deterministic failures use one", () => {
+  it("#1062: transient retry reuses the shared dispatch budget + 15s backoff between attempts", () => {
+    const sleeps: number[] = [];
     let transientAttempts = 0;
     expect(() =>
-      readMetadataWithRetry(() => {
-        transientAttempts += 1;
-        throw Object.assign(new Error("temporary reset"), { code: "ECONNRESET" });
-      }),
+      readMetadataWithRetry(
+        () => {
+          transientAttempts += 1;
+          throw Object.assign(new Error("temporary reset"), { code: "ECONNRESET" });
+        },
+        (ms) => sleeps.push(ms),
+      ),
     ).toThrow(/temporary reset/);
-    expect(transientAttempts).toBe(6);
+    // Same process retry budget as dispatchRetry — not a parallel metadata table.
+    expect(transientAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    // Five 15s waits span an outage across the six attempts (shared backoff table).
+    expect(sleeps).toEqual([...DISPATCH_RETRY_BACKOFF_MS]);
+  });
 
-    let deterministicAttempts = 0;
+  it("#1062: deterministic 401 auth fails once with no backoff wait (status-code carve-out)", () => {
+    const sleeps: number[] = [];
+    let authAttempts = 0;
     expect(() =>
-      readMetadataWithRetry(() => {
-        deterministicAttempts += 1;
-        throw new SyntaxError("bad JSON contract");
-      }),
-    ).toThrow(/bad JSON contract/);
-    expect(deterministicAttempts).toBe(1);
+      readMetadataWithRetry(
+        () => {
+          authAttempts += 1;
+          throw Object.assign(new Error("Bad credentials"), { httpStatus: 401 });
+        },
+        (ms) => sleeps.push(ms),
+      ),
+    ).toThrow(/Bad credentials/);
+    expect(authAttempts).toBe(1);
+    expect(sleeps).toEqual([]);
   });
 });
 

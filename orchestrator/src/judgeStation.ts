@@ -260,7 +260,12 @@ type PriorJudgeLedgerEntry = {
 };
 
 function isJudgeVerdictStatus(value: unknown): value is JudgeVerdictStatus {
-  return value === "converged" || value === "continue" || value === "escalate";
+  return (
+    value === "converged" ||
+    value === "continue" ||
+    value === "escalate" ||
+    value === "toolchain"
+  );
 }
 
 function pushPriorJudgeRow(
@@ -396,6 +401,17 @@ export function judgeResultFromVerdict(
       reason: verdict.reason,
       diagnosis: verdict.diagnosis,
     });
+  }
+  if (verdict.status === "toolchain") {
+    // #1027 FINAL / ADR 0145: toolchain terminal carries doorbell cargo but is
+    // NOT a decision-gate park — no `escalate` mirror (route() must not treat it
+    // as a human park). Fate is the runner's verify_failed fallback.
+    return {
+      kind: "judge",
+      status: "toolchain",
+      reason: verdict.reason,
+      diagnosis: verdict.diagnosis,
+    };
   }
   // continue — ADR 0138: fixPacketBody is traffic on the envelope; cargo may
   // still ride findings siblings but is never the coder-fix packet path.
@@ -738,6 +754,14 @@ export type FamilyJudgeClosure =
       readonly reason: string;
       readonly diagnosis: string;
     }
+  | {
+      // #1027 FINAL / ADR 0145: judge classified a red wave-verify as a
+      // toolchain/environment failure → runner falls back to verify_failed
+      // (no coder-fix loop, no decision-gate park).
+      readonly action: "toolchain";
+      readonly reason: string;
+      readonly diagnosis: string;
+    }
   | { readonly action: "unusable"; readonly reason: string };
 
 export function closeFamilyCourtFromJudgeOutput(
@@ -835,6 +859,17 @@ export function closeFamilyCourtFromJudgeOutput(
         escalate?.diagnosis ??
         "judge declared escalate";
       return { action: "escalate", reason, diagnosis };
+    }
+    if (status === "toolchain") {
+      // #1027 S1: dedicated toolchain terminal — do NOT fold into pass/continue.
+      // Doorbell cargo mirrors escalate shape; fate (verify_failed) differs.
+      const reason =
+        (typeof rec.reason === "string" ? rec.reason : undefined) ??
+        "family judge toolchain";
+      const diagnosis =
+        (typeof rec.diagnosis === "string" ? rec.diagnosis : undefined) ??
+        "judge declared toolchain/environment red";
+      return { action: "toolchain", reason, diagnosis };
     }
     return {
       action: "unusable",
@@ -950,7 +985,12 @@ export function judgeStatusFromOutput(
       }
       return "continue";
     }
-    return "escalate";
+    if (projected.status === "escalate") return "escalate";
+    // toolchain (#1027 S1): single-slice S3/S6 has no wave-verify triage
+    // scenario. Never silent-clean (converged/S7) and never mis-route as a
+    // decision-gate park — collapse to the loud unusable edge (→ S5), the
+    // established "this court cannot close on this envelope" signal.
+    return "unusable";
   }
   return "unusable";
 }

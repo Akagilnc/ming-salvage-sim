@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+## [0.39.0.0] - 2026-07-20
+
+### Added
+- **#1067 / #1066 判官分诊环**：红 wave 转入判官分诊，判词契约新增 toolchain 终态，唯一绿回执收敛；`wave_verify_judge` 薄 promptFile 落地并入 family prompt 构造期清册。
+- **#1063 admission GraphQL 兜底**：gh reads 在 REST 失败时新增 GraphQL fallback 通道，并丰富 gh HTTP 状态使 5xx 兜底真正触发。
+- **#1062 admission 重试预算复用**：gh reads 复用既有 dispatchRetry 预算 + 15s backoff，不再另起一套重试节奏。
+
+### Changed
+- **#1069 判官 fix packet 五条落地**：消冗、去重言、补不收敛负案、四面零-spin 钉；`runFamily` 多波 spine tracer 全经判官 typed verdict。
+- **#1068 verify 教学表**：改判词枚举态（消三态 vs 四行陈旧），toolchain 补第四终态（owner 亲批 follow-up 草案）；`wave_verify_judge` 对齐 `.cmr-focus.md`，删收敛法理复述。
+
+### Fixed
+- **#1071 cmr-worker.heavy 假红**：`testTimeout` 改为 load-tolerant，不再被负载拖垮判定为红。
+- **#1076 稀疏判官 cargo 崩溃 + 失败原因透传**：`findingIdentityKey` 优先取 finding 自带 identityKey（ADR 0131，拓扑不再从 cargo 散文倒推身份），字段缺失时抛可诊断错误而非裸 TypeError（此崩溃曾致 #1069 六次 S5 进程暴毙）；失败终态的 `gateSummary` 持久化并透传进 `failureCause`，dispatch→infra_failure 黑洞消失。
+- **#1058 名分守卫遗漏 caller 接缝**：显式名分（office_type ∈ PERSON_TITLE_KINDS）此前只在 DB 写侧受守卫，建 Character 与内存 re-infer 两处 caller 接缝仍会被 office 文本反推覆盖（如「诸生」撞词干误判为「生员」）；收敛到 `resolve_office_type_preserving_title` 单一入口，DB 与内存不再分岔。另修 3 处 seam 遗漏 `llm_config` 回落，避免在内存侧静默跳过 LLM 推断分支。
+
 ## [0.38.0.0] - 2026-07-19
 
 ### Changed

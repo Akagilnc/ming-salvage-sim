@@ -20,6 +20,7 @@ import {
   isJudgeSeat,
   isLegalJudgeReviewLegSession,
   judgeContinueFromOpenCount,
+  judgeResultFromVerdict,
   judgeTerminalsToLedgerDispositions,
   judgeReviewLegSessionMode,
   liveDispositionsForOpenCount,
@@ -60,6 +61,7 @@ import {
   judgeConverged,
   judgeContinue,
   judgeEscalate,
+  judgeToolchain,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
 import {
@@ -453,6 +455,37 @@ describe("#925 pure: route tri-state", () => {
       expect(
         route({ from, output: { kind: "reviewer", findingsCount: 0, findings: [] } }),
       ).toEqual({ kind: "next", step: "S5" });
+    }
+  });
+
+  it("single-slice court sees toolchain as loud-unexpected → S5, never silent-clean (#1027 S1)", () => {
+    // Single-slice S3/S6 has no wave-verify triage scenario. A toolchain verdict
+    // must not silently converge (S7) or mis-route as escalate park — it lands on
+    // the fixer edge (unusable-class), the established loud non-pass signal.
+    for (const from of ["S3", "S6", "S4"] as const) {
+      const decision = route({ from, output: judgeToolchain() });
+      expect(decision).not.toEqual({ kind: "next", step: "S7" });
+      expect(decision).not.toEqual({ kind: "handoff", status: "parked" });
+      expect(decision).toEqual({ kind: "next", step: "S5" });
+    }
+  });
+
+  it("production judgeResultFromVerdict(toolchain) is doorbell-only (no escalate mirror) → S5 (#1027 S1)", () => {
+    // Feed the REAL production projection into route (not a hand fixture): a
+    // future change mirroring toolchain onto `escalate` would park via
+    // escalateOf + the route global stop — this pin catches that drift.
+    const out = judgeResultFromVerdict({
+      station: "judge",
+      status: "toolchain",
+      reason: "pytest exit 2 (collection error)",
+      diagnosis: "environment red, not a cross-slice regression",
+    });
+    expect(out.status).toBe("toolchain");
+    expect(out.escalate).toBeUndefined();
+    expect(out.reason).toBe("pytest exit 2 (collection error)");
+    expect(out.diagnosis).toBe("environment red, not a cross-slice regression");
+    for (const from of ["S3", "S6"] as const) {
+      expect(route({ from, output: out })).toEqual({ kind: "next", step: "S5" });
     }
   });
 

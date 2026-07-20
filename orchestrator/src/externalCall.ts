@@ -108,6 +108,7 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     const e = err as {
       readonly name?: unknown;
       readonly code?: unknown;
+      readonly httpStatus?: unknown;
       readonly status?: unknown;
       readonly statusCode?: unknown;
     };
@@ -118,12 +119,18 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     ) {
       return "transient";
     }
+    // #1063: an explicit numeric `httpStatus` (attached at the gh boundary from
+    // the CLI's own error line) wins over `.status`, which for an execFileSync
+    // subprocess error is the process EXIT code — exit codes must never mask the
+    // real HTTP status. Still numeric-only: this classifier never reads free text.
     const status =
-      Number.isInteger(e.status)
-        ? (e.status as number)
-        : Number.isInteger(e.statusCode)
-          ? (e.statusCode as number)
-          : undefined;
+      Number.isInteger(e.httpStatus)
+        ? (e.httpStatus as number)
+        : Number.isInteger(e.status)
+          ? (e.status as number)
+          : Number.isInteger(e.statusCode)
+            ? (e.statusCode as number)
+            : undefined;
     if (status !== undefined) {
       if (status === 429) return "quota";
       if (status >= 500 && status <= 599) return "transient";

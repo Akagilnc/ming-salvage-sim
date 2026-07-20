@@ -16,8 +16,22 @@ import {
 } from "./modelRoutes.js";
 import type { Backend, Escalation, StepId } from "./types.js";
 import { classifyExternalCallFailure } from "./externalCall.js";
+import {
+  DISPATCH_RETRY_BACKOFF_MS,
+  MAX_DISPATCH_ATTEMPTS,
+} from "./dispatchRetry.js";
 
-export const MAX_METADATA_ATTEMPTS = 6;
+/**
+ * #1062 — synchronous blocking backoff for the metadata retry seam. The gh reads
+ * are execFileSync at admission (the whole runner already blocks on them), so a
+ * blocking wait is the right shape — no async ripple through the sync {@link Sh}
+ * callers. No-op under vitest (mirrors dispatchRetry's `defaultRetrySleepMs`) so
+ * the shared 15s table never burns wall time in tests.
+ */
+function defaultMetadataSleepSync(ms: number): void {
+  if (process.env.VITEST === "true" || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 /**
  * GitHub authentication / login required (#934 ID-003). Zero retry (durable
@@ -61,20 +75,70 @@ export function isGithubAuthFailure(err: unknown): boolean {
   return false;
 }
 
-/** The sole GitHub metadata retry seam: transient only; deterministic/auth errors do not retry. */
-export function readMetadataWithRetry<T>(read: () => T): T {
+const GH_HTTP_STATUS = /\bHTTP\s*(\d{3})\b/i;
+
+/**
+ * #1063 — gh CLI reports the HTTP status only in its stderr/message text (e.g.
+ * `gh: Service Unavailable (HTTP 503)`) while `.status` on the execFileSync
+ * error holds the process EXIT code (1). Extract the numeric HTTP status — a
+ * machine token in gh's own structured error line — and attach it as
+ * `httpStatus` so {@link classifyExternalCallFailure} (which never reads free
+ * text) can key on 5xx ahead of the shadowing exit code. Single boundary shared
+ * by the retry budget below and, through it, the #1063 dual-channel fallback.
+ * Mirrors the existing gh-text HTTP parse in {@link isGithubAuthFailure}.
+ */
+export function withGithubHttpStatus(err: unknown): unknown {
+  if (err === null || typeof err !== "object") return err;
+  const e = err as {
+    httpStatus?: unknown;
+    readonly message?: unknown;
+    readonly stderr?: unknown;
+  };
+  if (Number.isInteger(e.httpStatus)) return err;
+  const text = [e.message, e.stderr]
+    .filter((part): part is string => typeof part === "string")
+    .join("\n");
+  const match = GH_HTTP_STATUS.exec(text);
+  if (match !== null) {
+    (err as { httpStatus?: number }).httpStatus = Number(match[1]);
+  }
+  return err;
+}
+
+/**
+ * The sole GitHub metadata retry seam: transient only; deterministic/auth errors
+ * do not retry. #1062 — reuses the process-level dispatch retry budget and its
+ * 5×15s backoff table (no parallel metadata constant); a transient 5xx now spans
+ * the outage window across the six attempts instead of firing six times in the
+ * same millisecond. `sleepMs` is injectable so tests observe the backoff without
+ * blocking on the real 75s wall.
+ */
+export function readMetadataWithRetry<T>(
+  read: () => T,
+  sleepMs: (ms: number) => void = defaultMetadataSleepSync,
+): T {
   let last: unknown;
-  for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt += 1) {
     try {
       return read();
     } catch (err) {
-      last = err;
+      // #1063: surface gh's HTTP status as a numeric field before classify, so a
+      // persistent 5xx is seen as transient (retry here, then GraphQL fallback)
+      // rather than masked by exit code 1. The rethrown error carries httpStatus
+      // for the downstream dual-channel classify too.
+      const enriched = withGithubHttpStatus(err);
+      last = enriched;
       if (
-        classifyExternalCallFailure(err) !== "transient" ||
-        attempt === MAX_METADATA_ATTEMPTS
+        classifyExternalCallFailure(enriched) !== "transient" ||
+        attempt === MAX_DISPATCH_ATTEMPTS
       ) {
-        throw err;
+        throw enriched;
       }
+      // #1062: wait the shared backoff interval before the next attempt (five
+      // 15s slots across six attempts). Index by the just-failed attempt so
+      // attempt 1's failure waits slot 0, ..., attempt 5's waits slot 4.
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 1];
+      if (delayMs !== undefined) sleepMs(delayMs);
     }
   }
   throw last;
