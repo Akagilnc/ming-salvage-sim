@@ -1043,7 +1043,10 @@ def present_names_at(
     非硬状态，不影响本推导。走单一在场模型 `_apply_presence`。"""
     present: set[str] = set()
     for entry in list_ledger(db, night_id):
-        if at_seq is not None and int(entry["seq"]) > int(at_seq):
+        # list_ledger 按时序键 COALESCE(order_key, seq) 排序：抽取账 order_key 可小于其自身
+        # seq，若按裸 seq 截断会误在早排的抽取账处 break、漏掉其后命令账。比对同一时序键
+        # `_entry_order_key`（口令/命令账 order_key 缺省 → 回退 seq，与 at_seq 语义对齐）。
+        if at_seq is not None and _entry_order_key(entry) > float(at_seq):
             break
         _apply_presence(present, entry)
     return present

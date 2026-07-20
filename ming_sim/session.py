@@ -1757,7 +1757,7 @@ class GameSession:
         text = (answer or "").strip()
         cands = (ambiguous or {}).get("candidates") or []
         briefs = "；".join(
-            f"其一「{str(c.get('summary') or '')}」" if i == 0 else f"其{'二三四五六七八九十'[i-1] if i <= 10 else i}「{str(c.get('summary') or '')}」"
+            f"其一「{str(c.get('summary') or '')}」" if i == 0 else f"其{'二三四五六七八九十'[i-1] if i <= 9 else i}「{str(c.get('summary') or '')}」"
             for i, c in enumerate(cands)
         )
         ask = f"陛下方才所指，是这几道中的哪一道？（{briefs}）请明示，臣好照办。" if briefs else "陛下方才所指是哪一道？请明示。"

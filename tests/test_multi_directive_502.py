@@ -509,3 +509,13 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
 
     payload = rt.chat(name, "今日无事")
     assert payload["directive_confirmation_ambiguous"] is None
+
+
+def test_clarification_cue_many_candidates_no_indexerror():
+    """回归（coderabbit #1087）：`_ensure_clarification_cue` 的中文序数表只有 9 字（其二…其十），
+    第 11 道及以后须回退阿拉伯数字。旧码 `i <= 10` 在第 11 道（i==10）仍取字符串支落索引 [9]
+    抛 IndexError。断言 11 道并存时不崩、末道用数字序。"""
+    ambiguous = {"candidates": [{"id": i, "summary": f"第{i}道"} for i in range(11)]}
+    cue = GameSession._ensure_clarification_cue("", ambiguous)
+    assert "其一" in cue and "其十" in cue  # 前十道中文序数
+    assert "其10" in cue  # 第 11 道（i==10）回退阿拉伯数字，不越界

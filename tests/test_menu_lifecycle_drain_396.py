@@ -693,6 +693,37 @@ def test_drain_rejects_late_pending_write_before_gate_acquire():
     assert closed == [1]
 
 
+def test_spawn_pending_write_thread_start_failure_releases_ownership():
+    """回归（coderabbit #1087 / Gap B）：`_spawn_pending_write_thread` 标 pending 后若
+    `Thread.start()` 抛异常，须补偿 `_complete_pending_write` 再上抛——否则 pending 泄漏、
+    drain 在 `_drain_cond` 永阻、关档/重置/加载挂死。断言异常上抛且计数归 0（无泄漏）。"""
+    runtime = object.__new__(web_app.WebGame)
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
+
+    class _FailingThread:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("线程池耗尽（模拟 start 失败）")
+
+    orig_thread = web_app.threading.Thread
+    web_app.threading.Thread = _FailingThread
+    try:
+        raised = False
+        try:
+            runtime._spawn_pending_write_thread(lambda **_k: None, (), "t")
+        except RuntimeError:
+            raised = True
+        assert raised, "start() 抛异常须上抛，不静默吞掉"
+    finally:
+        web_app.threading.Thread = orig_thread
+
+    assert runtime._pending_writes_count == 0  # pending ownership 未泄漏
+
+
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
 
 def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):

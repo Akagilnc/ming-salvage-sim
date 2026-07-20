@@ -1616,14 +1616,11 @@ class WebGame:
             # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
-                if self._mark_pending_write():
-                    threading.Thread(
-                        target=self._trail_mindreading_after_reply,
-                        args=(minister_name, answer_text, chat_turn_id),
-                        kwargs={"owns_pending": True},
-                        daemon=True,
-                        name="audience-p5-mindreading",
-                    ).start()
+                self._spawn_pending_write_thread(
+                    self._trail_mindreading_after_reply,
+                    (minister_name, answer_text, chat_turn_id),
+                    "audience-p5-mindreading",
+                )
                 # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
@@ -1699,14 +1696,11 @@ class WebGame:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
-                if self._mark_pending_write():
-                    threading.Thread(
-                        target=self._trail_mindreading_after_reply,
-                        args=(minister_name, answer_text, chat_turn_id),
-                        kwargs={"owns_pending": True},
-                        daemon=True,
-                        name="audience-p5-mindreading",
-                    ).start()
+                self._spawn_pending_write_thread(
+                    self._trail_mindreading_after_reply,
+                    (minister_name, answer_text, chat_turn_id),
+                    "audience-p5-mindreading",
+                )
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
@@ -2136,6 +2130,28 @@ class WebGame:
             if owns_pending:
                 self._complete_pending_write()
 
+    def _spawn_pending_write_thread(
+        self, target: Any, args: tuple, name: str,
+    ) -> bool:
+        """标 pending 后交接 ownership 起后台线程（#396 Gap B 不变式：标了必收敛）。
+        `Thread.start()` 抛异常时补偿 `_complete_pending_write()` 再上抛，绝不泄漏
+        pending ownership 致 drain 永阻、关档/重置/加载挂死。pending 满载则不起、返 False。"""
+        if not self._mark_pending_write():
+            return False
+        thread = threading.Thread(
+            target=target,
+            args=args,
+            kwargs={"owns_pending": True},
+            daemon=True,
+            name=name,
+        )
+        try:
+            thread.start()
+        except Exception:
+            self._complete_pending_write()
+            raise
+        return True
+
     def _spawn_extraction_trail(
         self, minister_name: str, minister_reply: str, chat_turn_id: int,
     ) -> None:
@@ -2144,15 +2160,11 @@ class WebGame:
         （空白 → 标 done，不占永久待补；与 run 入口一致）。"""
         if not chat_turn_id:
             return
-        if not self._mark_pending_write():
-            return
-        threading.Thread(
-            target=self._trail_extraction_after_reply,
-            args=(minister_name, str(minister_reply or ""), chat_turn_id),
-            kwargs={"owns_pending": True},
-            daemon=True,
-            name="audience-p5-extraction",
-        ).start()
+        self._spawn_pending_write_thread(
+            self._trail_extraction_after_reply,
+            (minister_name, str(minister_reply or ""), chat_turn_id),
+            "audience-p5-extraction",
+        )
 
     def _run_startup_extraction_catch_up(self, *, owns_pending: bool = False) -> None:
         """重开补跑（ADR 0036）：已持久化回话但账未抽 → 补跑抽取，不回滚对话。
@@ -2177,14 +2189,11 @@ class WebGame:
         """存档（重）加载后在后台发起一次抽取补跑（重开崩溃窗口丢的站台/进出账补落）。"""
         if not hasattr(self.db, "conn"):
             return
-        if not self._mark_pending_write():
-            return
-        threading.Thread(
-            target=self._run_startup_extraction_catch_up,
-            kwargs={"owns_pending": True},
-            daemon=True,
-            name="audience-startup-extraction-catchup",
-        ).start()
+        self._spawn_pending_write_thread(
+            self._run_startup_extraction_catch_up,
+            (),
+            "audience-startup-extraction-catchup",
+        )
 
     def pending_story_extractions(self) -> Dict[str, Any]:
         """#501 AC8：待补抽取的玩家可见状态（本开夜 turn ids + 大臣名 + 计数）——显眼提示的取数源，
