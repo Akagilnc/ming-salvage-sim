@@ -596,6 +596,43 @@ def _commit_night_approved(
     return list(applied or [])
 
 
+def _drain_story_extraction_or_fail_closed(
+    db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
+) -> None:
+    """收夜前清空待补抽取（ADR 0036 线上 R3）——引擎侧强制闸，不只挂 web 前门。
+
+    收夜是史实书写边界：带待补账收夜会把过期在场名单写进收尾叙事，补账插回原时序后同一
+    时间线自相矛盾。有待补 → 强制同步补跑；仍有 → fail-closed 中止收夜（夜保持开、可重试）。
+    无 llm_config/write_gate 又有待补 = 无从清空又不得带待补收夜 → 同样 fail-closed
+    （绝不静默跳过史实边界）。无待补则 no-op（无依赖时正常收夜）。测试替身无该接口时跳过。
+    """
+    if not hasattr(db, "count_pending_story_extractions"):
+        return
+    pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+    if pending <= 0:
+        return
+    if llm_config is None or write_gate is None:
+        rows = db.list_unextracted_replies(night_id=int(night_id))
+        ids = [int(r.get("chat_turn_id") or 0) for r in rows]
+        message = (
+            f"收夜中止：本夜仍有 {pending} 条待补抽取，且无 LLM/写锁可清空"
+            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
+        )
+        pack = write_audience_error_pack(
+            kind="pending_extraction", message=message,
+            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+        )
+        raise AudienceNightError(
+            message, code="pending_extraction", error_pack_path=pack,
+            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+        )
+    from ming_sim.audience_extraction import drain_pending_before_close
+
+    drain_pending_before_close(
+        db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
+    )
+
+
 def close_night(
     db: Any,
     state: GameState,
@@ -608,8 +645,15 @@ def close_night(
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    llm_config: Any = None,
+    write_gate: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：在飞守卫 → 仅本夜已应允提交（游标幂等）→ 收夜账 → closed。"""
+    """收夜：在飞守卫 → 收夜前清空待补抽取（引擎侧史实边界闸）→ 仅本夜已应允提交（游标幂等）
+    → 收夜账 → closed。
+
+    `llm_config`/`write_gate` 供收夜前 drain 用；web 前门已预清（pending=0）时本闸 no-op、
+    不重复 drain（也不因此在已持锁的 runtime write_gate 上自锁）。带待补而无依赖 → fail-closed。
+    """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
     if night_id is None:
@@ -626,6 +670,10 @@ def close_night(
 
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
+        # 史实书写边界：收夜前强制清空待补抽取（fail-closed），先于任何收夜写。
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+        )
         _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
         night = get_night(db, night_id)
         assert night is not None
@@ -706,8 +754,13 @@ def auto_close_open_night(
     registry: Any = None,
     wait_timeout_s: float | None = None,
     crash_after_step: Optional[int] = None,
+    llm_config: Any = None,
+    write_gate: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。"""
+    """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
+
+    `llm_config`/`write_gate` 透传给收夜前 drain 闸；web 结算路已在前门预清待补，故此处
+    多数为 no-op（pending=0），无依赖也不会误 fail-closed。"""
     open_n = get_open_night(db)
     if open_n is None:
         return None
@@ -719,6 +772,8 @@ def auto_close_open_night(
         auto=True,
         wait_timeout_s=wait_timeout_s,
         crash_after_step=crash_after_step,
+        llm_config=llm_config,
+        write_gate=write_gate,
     )
 
 
