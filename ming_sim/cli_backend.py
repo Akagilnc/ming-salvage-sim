@@ -1044,7 +1044,8 @@ def extract_draft_intent(
     existing_candidates 非空（多道模式，#502）：本夜已有若干独立圣旨候选，LLM 除判拟旨意图/
     合并草案外，还判本轮**新拟独立一道**（target_candidate="新"）还是**补充/修改某一道**
     （target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
-    多条→新拟一道（不并进任一道，避免误覆盖别道正文）。无候选时 target_candidate 恒空。"""
+    多条→target_candidate="含糊"（交 session 追问哪一道，不静默新建第三道；#502 L7）。
+    无候选时 target_candidate 恒空。"""
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
     supplement_hint = (

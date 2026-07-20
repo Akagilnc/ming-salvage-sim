@@ -425,3 +425,87 @@ def test_prefix_two_decrees_stage_independently(game):
 def _by_pid(db, pid):
     return db.conn.execute(
         "SELECT id, payload_json FROM pending_actions WHERE id=?", (int(pid),)).fetchone()
+
+
+def test_nonstream_web_chat_surfaces_ambiguous():
+    """R1：非流式 WebGame.chat 组装 payload 时透出结构化含糊态（候选集），与 stream 同 surface。
+    临时大臣路径跳过持久化/读心，聚焦 payload 组装是否携带 directive_confirmation_ambiguous。"""
+    import threading
+    from types import SimpleNamespace
+    import web_app
+    from ming_sim.session import ChatTurnResult
+
+    name = "王承恩"
+    amb = {"candidates": [
+        {"id": 11, "summary": "草拟圣旨：着户部清查粮饷"},
+        {"id": 12, "summary": "草拟圣旨：着兵部核饷军械"},
+    ]}
+
+    class _Sess:
+        temporary_characters = {name}
+        content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
+        state = SimpleNamespace(turn=1, turn_phase="")
+
+        def chat(self, minister_name, text, chat_turn_id=0):
+            return ChatTurnResult(
+                answer="请陛下明示是哪一道。", directive_confirmation_ambiguous=amb)
+
+        def pending_count(self):
+            return 0
+
+        def _character(self, n):
+            return self.content.characters[n]
+
+    rt = object.__new__(web_app.WebGame)
+    rt.session = _Sess()
+    rt.chat_history = {name: []}
+    rt._runtime_write_gate = lambda: threading.Lock()
+    rt._audience_turn_in_flight = lambda n: False
+    rt.chat_projection = lambda n: []
+    rt.suggestions_for = lambda c: []
+    rt.can_undo_last_chat = lambda n: False
+    rt.directive_rows = lambda: []
+    rt.directive_payload = lambda row: row
+
+    payload = rt.chat(name, "准了")
+
+    assert payload["directive_confirmation_ambiguous"] == amb, "非流式 payload 应携带结构化含糊态"
+    assert {c["id"] for c in payload["directive_confirmation_ambiguous"]["candidates"]} == {11, 12}
+
+
+def test_nonstream_web_chat_no_ambiguous_key_is_none():
+    """负路：非含糊轮 payload 的含糊态键为 None（不误置）。"""
+    import threading
+    from types import SimpleNamespace
+    import web_app
+    from ming_sim.session import ChatTurnResult
+
+    name = "王承恩"
+
+    class _Sess:
+        temporary_characters = {name}
+        content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
+        state = SimpleNamespace(turn=1, turn_phase="")
+
+        def chat(self, minister_name, text, chat_turn_id=0):
+            return ChatTurnResult(answer="臣遵旨。")
+
+        def pending_count(self):
+            return 0
+
+        def _character(self, n):
+            return self.content.characters[n]
+
+    rt = object.__new__(web_app.WebGame)
+    rt.session = _Sess()
+    rt.chat_history = {name: []}
+    rt._runtime_write_gate = lambda: threading.Lock()
+    rt._audience_turn_in_flight = lambda n: False
+    rt.chat_projection = lambda n: []
+    rt.suggestions_for = lambda c: []
+    rt.can_undo_last_chat = lambda n: False
+    rt.directive_rows = lambda: []
+    rt.directive_payload = lambda row: row
+
+    payload = rt.chat(name, "今日无事")
+    assert payload["directive_confirmation_ambiguous"] is None
