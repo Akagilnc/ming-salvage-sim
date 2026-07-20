@@ -940,6 +940,37 @@ def audible_entries_for(
     return out
 
 
+SCENE_RECAP_HEADER = "【殿上先前所闻】"
+
+
+def audience_scene_recap(
+    db: Any, person_name: str, *, night_id: Optional[int] = None,
+) -> str:
+    """连场组装：某人在场时段所闻的殿上公开对话，渲染为可读回顾块（#507 presence-aware）。
+
+    宣下一个不断场、前一位留殿侧侍立时，对话流按在场名单送入组装：侍立者补话可引用
+    其在场时段殿上公开对话（AC2 区间取数）。未在场者 / 无开夜 / 区间无公开对话 →
+    空串（AC3 负向：未在场者的组装输入不含殿内对话）。区间与可闻性判据复用
+    audible_entries_for（御前低语不流入、入殿前不闻），不另立第二套在场/可闻性真源。"""
+    name = str(person_name or "").strip()
+    if not name or not hasattr(db, "conn"):
+        return ""
+    nid = night_id
+    if nid is None:
+        open_n = get_open_night(db)
+        if open_n is None:
+            return ""
+        nid = int(open_n["id"])
+    bodies: List[str] = []
+    for entry in audible_entries_for(db, int(nid), name):
+        body = str(entry.get("body") or "").strip()
+        if body:
+            bodies.append(body)
+    if not bodies:
+        return ""
+    return SCENE_RECAP_HEADER + "\n" + "\n".join(bodies)
+
+
 def _is_command_entry(entry: Dict[str, Any]) -> bool:
     """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
     抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_CLOSE_NIGHT…）
