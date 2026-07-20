@@ -9150,6 +9150,38 @@ class GameDB:
             minister_name=minister_name, target_id=None, payload=payload,
         )
 
+    def stage_directive_candidate(
+        self, turn: int, minister_name: str, payload: Dict[str, object],
+    ) -> int:
+        """多道模式（#502）：新拟一道**独立**圣旨候选——总是 INSERT 新行、不并进现有候选。
+        与 upsert_pending_directive（同回合同大臣至多一条、last-write-wins）互补：本方法给
+        「一夜拟多道各自独立」用，前者给「补充/修改当前草稿」用。返回新行 id。"""
+        return self.stage_pending_action(
+            turn, kind="directive", action="拟旨",
+            minister_name=minister_name, target_id=None, payload=payload,
+        )
+
+    def update_directive_candidate(
+        self, candidate_id: int, payload: Dict[str, object],
+    ) -> int:
+        """多道模式（#502）：原地更新某一道 pending directive 候选正文（补充/改草，不冻结）。
+        与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
+        使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。"""
+        row = self.conn.execute(
+            "SELECT id FROM pending_actions "
+            "WHERE id=? AND kind='directive' AND status='pending'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+            (json.dumps(payload or {}, ensure_ascii=False),
+             self._current_open_night_id(), int(candidate_id)),
+        )
+        self.conn.commit()
+        return int(candidate_id)
+
     def list_pending_actions(
         self, turn: int, status: str = "pending", minister_name: Optional[str] = None,
     ) -> List[Dict[str, object]]:

@@ -1462,30 +1462,32 @@ class GameSession:
                         _committed_draft = _directive
                         break
             _has_existing_draft = _has_pending_draft or _committed_draft is not None
-            # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
-            # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
+            # 多道模式（#502）：本夜已有 ≥1 道独立 pending 候选时，把各道 (id, 正文) 喂 extract，
+            # 由抽取器判本轮是新拟独立一道（target=新）还是补充某一道（target=该道 id）。
+            _dir_candidates = []
+            for _p in pend_for_minister:
+                if _p["kind"] != "directive":
+                    continue
+                _val = _p["payload_json"] or "{}"
+                try:
+                    _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
+                except (ValueError, TypeError):
+                    _cp = {}
+                _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
+                _dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+            # 补充模式：提取现有草案文本喂 extract，让 LLM 合并新旧草案；直接用大臣回话
+            # （可能是确认语）会覆盖原草案（codex r6 F1）。多道时取最近一道候选正文作合并基线。
             _existing_draft_text = ""
-            if _has_pending_draft:
-                _pdir = next((p for p in pend_for_minister if p["kind"] == "directive"), None)
-                if _pdir:
-                    try:
-                        _val = _pdir["payload_json"] or "{}"
-                        _payload = (
-                            _val if isinstance(_val, (list, dict))
-                            else json.loads(_val)
-                        )
-                    except (ValueError, TypeError):
-                        _payload = {}
-                    if isinstance(_payload, dict):
-                        _existing_draft_text = str(_payload.get("text") or "")
-            elif _committed_draft is not None:
+            if _dir_candidates:
+                _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
+            elif _committed_draft is not None and not _has_pending_draft:
                 _existing_draft_text = str(_committed_draft["text"] or "")
             if intent is not None and intent_kind == "draft" and not _has_existing_draft:
                 # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
-                draft_res = {"draft_action": "拟旨", "draft_text": reply}
+                draft_res = {"draft_action": "拟旨", "draft_text": reply, "target_candidate": ""}
             elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
-                draft_res = {"draft_action": "无", "draft_text": ""}
+                draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
             else:
                 # 【已有草案（pending/committed）的任何后续】或 intent is None（旧路）：一律走
                 # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
@@ -1496,9 +1498,24 @@ class GameSession:
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
                     existing_draft_text=_existing_draft_text,
+                    existing_candidates=_dir_candidates or None,
                 )
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
-                if _committed_draft is not None and not _has_pending_draft:
+                _target = str(draft_res.get("target_candidate") or "")
+                _target_id = int(_target) if _target.isdigit() else None
+                if _dir_candidates and _target == "新":
+                    # 新拟独立一道 → INSERT 新候选，不并进任一现有候选（AC1）。
+                    out["pending_action_id"] = self.db.stage_directive_candidate(
+                        self.state.turn, minister_name,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
+                    # 补充/改草某一道 → 原地更新那道候选正文（不冻结、不新增行；AC2）。
+                    out["pending_action_id"] = self.db.update_directive_candidate(
+                        _target_id,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                elif _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
                     self.db.update_directive_text(did, draft_res["draft_text"])
                     out["directive"] = {

@@ -1371,7 +1371,7 @@ def test_extract_draft_intent_non_object_json_degrades_to_none(monkeypatch):
 
     result = cb.extract_draft_intent("拟旨吧", "臣遵旨。")
 
-    assert result == {"draft_action": "无", "draft_text": ""}
+    assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
 
 
 def test_extract_draft_intent_dirty_action_normalized_to_none(monkeypatch):
@@ -1394,7 +1394,7 @@ def test_extract_draft_intent_no_intent_returns_empty_draft_text(monkeypatch):
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _no_intent)
     result = cb.extract_draft_intent("今日只是问策。", "臣以为当暂缓。")
-    assert result == {"draft_action": "无", "draft_text": ""}
+    assert result == {"draft_action": "无", "draft_text": "", "target_candidate": ""}
 
 
 # ── ⑬ session.py 补充模式 existing_draft_text 提取的 JSON 兜底（894-899）─────────
