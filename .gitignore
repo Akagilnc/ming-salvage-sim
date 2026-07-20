@@ -82,3 +82,4 @@ docs/IMPERIAL_NOTES.md
 web/coverage/
 # 跨 session scratch（自相矛盾的草稿，非项目文档）
 temp_todo.md
+.aider*
