@@ -349,7 +349,7 @@ function legForSlug(slug: string): ModelRouteLeg {
   } catch {
     throw new Error(
       `unknown cmr review leg slug "${trimmed}". Register a live worker in ` +
-        "MODEL_SLUG_REGISTRY before selecting it in a route.",
+        "model-data config before selecting it in a route.",
     );
   }
 }

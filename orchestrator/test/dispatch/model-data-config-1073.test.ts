@@ -14,7 +14,6 @@ import {
   loadModelData,
   resolveModelDataPath,
 } from "../../src/modelDataConfig.js";
-import { resolveModelSlug } from "../../src/modelRegistry.js";
 
 const tempDirs: string[] = [];
 const afterEachFiles: string[] = [];
@@ -255,20 +254,13 @@ describe("#1073 loadModelData fail-closed (path + reason)", () => {
   });
 });
 
-describe("#1073 dual-track expand: constants still present", () => {
+describe("#1073 dual-track expand: roster constants still present (S2)", () => {
+  // S3 (#1075) switched registry consumers onto the loader; roster constants
+  // remain until S2 (#1074). Registry resolution is covered by #1075 tests.
   it("in-code CODER_ROSTER constant table is untouched", () => {
     expect(CODER_ROSTER_VERSION.length).toBeGreaterThan(0);
     expect(CODER_ROSTER.length).toBeGreaterThan(0);
     expect(CODER_ROSTER.some((e) => e.id === "grok-4.5")).toBe(true);
-  });
-
-  it("in-code model registry still resolves live slugs", () => {
-    expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
-    expect(resolveModelSlug("gpt-5.6-sol-low")).toMatchObject({
-      provider: "codex",
-      model: "gpt-5.6-sol",
-      options: { effort: "low" },
-    });
   });
 
   it("shipped factory roster ids cover the live constant roster ids", () => {
