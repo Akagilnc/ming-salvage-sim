@@ -253,6 +253,50 @@ def _appointment_intent_is_current_office_noop(
     return bool(desired_parts) and desired_parts.issubset(current_parts)
 
 
+def _cancel_staged_opposing_office(
+    db: Any, opposing_action: str, target_name: str, turn: int, content: Any = None,
+) -> Optional[int]:
+    """本轮任免与同回合针对同一人的【反向暂存任免】相抵时，撤销那条暂存并返回其 id（对冲，
+    ADR 0028 R1/R2 双向对称）；无相抵暂存返回 None。
+
+    这是「名册 ⊕ 暂存」比对真基准的落地：暂存免职/任命未提交时名册仍是旧态，皇帝反悔
+    （留任冲免职、免去冲任命）若只比名册会被误判 no-op 丢弃或另 stage 孤儿。姓名按 canonical
+    口径归一（与 _appointment_intent_is_current_office_noop 同口径），别名/新候选皆按同一
+    兜底比对，故两侧同名即相抵。撤销走 withdraw_pending_action（只删 pending，已 committed
+    不动），night_approved 但未收夜提交的暂存仍属 pending、照样对冲。"""
+    conn = getattr(db, "conn", None)
+    clean = str(target_name or "").strip()
+    if conn is None or not clean or opposing_action not in ("任命", "罢免"):
+        return None
+
+    def _key(name: str) -> str:
+        n = str(name or "").strip()
+        if content is not None:
+            try:
+                canon = _find_existing_minister(content, n, db)
+            except Exception:
+                canon = None
+            if canon:
+                return str(canon)
+        return n
+
+    target_key = _key(clean)
+    for pa in db.list_pending_actions(int(turn)):
+        if pa.get("kind") != "office" or pa.get("action") != opposing_action:
+            continue
+        try:
+            payload = json.loads(pa.get("payload_json") or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        staged = str(payload.get("name") or "").strip()
+        if staged and _key(staged) == target_key:
+            if db.withdraw_pending_action(int(pa["id"]), int(turn)):
+                return int(pa["id"])
+    return None
+
+
 def apply_appointment(
     db: GameDB,
     state: GameState,
@@ -1552,12 +1596,24 @@ class GameSession:
                 appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
             else:
                 appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
-        if (
-            appt["appoint_action"] == "任命"
-            and _appointment_intent_is_current_office_noop(
-                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""),
-                content=getattr(self, "content", None))
+        content_ref = getattr(self, "content", None)
+        if appt["appoint_action"] == "任命" and appt.get("name") and (
+            _appointment_intent_is_current_office_noop(
+                getattr(self, "db", None), appt["name"], appt.get("office", ""),
+                content=content_ref)
         ):
+            # X 名册在职 → 或背景复述(no-op 丢)，或反悔留任(冲掉同夜暂存免职)：只比名册会把
+            # 留任误判 no-op、免职照旧执行、反悔失效（ADR 0028 R1）。含暂存比对即接住——有暂存
+            # 免职就撤销之，无则纯 no-op 丢弃。两路都不再 stage 新任命。
+            _cancel_staged_opposing_office(
+                self.db, "罢免", appt["name"], int(self.state.turn), content=content_ref)
+            appt = {"appoint_action": "无"}
+        elif appt["appoint_action"] == "罢免" and appt.get("name") and (
+            _cancel_staged_opposing_office(
+                self.db, "任命", appt["name"], int(self.state.turn), content=content_ref)
+        ):
+            # 反悔免去：被任者尚未落库、本无可罢之职，冲掉同夜暂存任命即可，不另 stage 孤儿罢免
+            # （ADR 0028 R2 对称向）。
             appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
