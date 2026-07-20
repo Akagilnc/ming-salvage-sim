@@ -127,6 +127,8 @@ class ChatTurnResult:
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
+    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
+    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -959,10 +961,9 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    result.pending_action_id = self.db.upsert_pending_directive(
-                        self.state.turn, character.name,
-                        payload={"text": draft_text, "actor": character.name},
-                    )
+                    # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
+                    result.pending_action_id = self.db.stage_explicit_directive(
+                        self.state.turn, character.name, draft_text)
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1159,8 +1160,9 @@ class GameSession:
                 confirm = extract_confirmation_intent(
                     player_message, reply, summaries, llm_config=llm_config)
             # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳须指向具体某道。
-            # 结构化指认 → 只作用于点名的那几道；含糊 → 阻断（不准不驳、留待大臣追问、
-            # 标待澄清以免默认提交），其余家族照常。
+            # 点名指认 → 只作用那几道 + 清全组待澄清标（含糊 episode 了结）；否则（含糊/无/
+            # 空指向）一律按含糊处置——结构化含糊态 + 追问 + 标待澄清 + **本轮不再 stage 新拟旨**，
+            # 直接 return（L1：删 else free-fall，杜绝纯准驳口令误建第三道）。
             if confirm in ("应允", "拒绝") and len(directive_confirm_targets) >= 2:
                 dir_cands = [
                     {"id": int(p["id"]), "summary": _pending_action_brief(p)}
@@ -1170,17 +1172,12 @@ class GameSession:
                     player_message, reply, dir_cands, llm_config=llm_config)
                 decision = res.get("decision")
                 tids = {int(i) for i in (res.get("target_ids") or [])}
-                if decision == "含糊" or (decision in ("应允", "拒绝") and not tids):
-                    out["directive_confirmation_ambiguous"] = {"candidates": dir_cands}
+                named = decision in ("应允", "拒绝") and bool(tids)
+                if named:
+                    # 指明了哪道：清全组待澄清标（未点名兄弟复位普通 pending、重回「不回→默认同意」；
+                    # L4 兑现 docstring「下一句指明后清标」），confirm 收窄为点名那几道。
                     for p in directive_confirm_targets:
-                        self.db.flag_directive_needs_clarification(int(p["id"]))
-                    drop = {int(p["id"]) for p in directive_confirm_targets}
-                    confirm_targets = [p for p in confirm_targets if int(p["id"]) not in drop]
-                    directive_confirm_targets = []
-                    confirm_action_ids = {int(p["id"]) for p in confirm_targets}
-                    if not confirm_targets:
-                        return out
-                else:
+                        self.db.clear_directive_needs_clarification(int(p["id"]))
                     confirm = decision
                     directive_confirm_targets = [
                         p for p in directive_confirm_targets if int(p["id"]) in tids]
@@ -1188,6 +1185,11 @@ class GameSession:
                         p for p in confirm_targets
                         if p["kind"] != "directive" or int(p["id"]) in tids]
                     confirm_action_ids = {int(p["id"]) for p in confirm_targets}
+                else:
+                    out["directive_confirmation_ambiguous"] = {"candidates": dir_cands}
+                    for p in directive_confirm_targets:
+                        self.db.flag_directive_needs_clarification(int(p["id"]))
+                    return out
             if confirm == "应允":
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
@@ -1200,6 +1202,7 @@ class GameSession:
                         if not isinstance(payload, dict):
                             payload = {}
                         payload["_directive_status"] = "pending"
+                        payload.pop("_needs_clarification", None)  # #502 L4：应允该道即消其待澄清标（勿从旧快照回灌）
                         self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? WHERE id=?",
                             (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
@@ -1228,6 +1231,7 @@ class GameSession:
                                 if not isinstance(payload, dict):
                                     payload = {}
                                 payload["_directive_status"] = "pending"
+                                payload.pop("_needs_clarification", None)  # #502 L4：同上（夜内应允路）
                                 self.db.conn.execute(
                                     "UPDATE pending_actions SET payload_json=? WHERE id=?",
                                     (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
@@ -1293,12 +1297,9 @@ class GameSession:
         else:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
-            text = acts["decree_text"]
-            pid = self.db.upsert_pending_directive(
-                self.state.turn, minister_name,
-                payload={"text": text, "actor": minister_name},
-            )
-            out["pending_action_id"] = pid
+            # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
+            out["pending_action_id"] = self.db.stage_explicit_directive(
+                self.state.turn, minister_name, acts["decree_text"])
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             return self.db.stage_pending_action(
@@ -1530,6 +1531,12 @@ class GameSession:
                     existing_draft_text=_existing_draft_text,
                     existing_candidates=_dir_candidates or None,
                 )
+            # 多道并存、改/补目标不明（#502 L7）：不静默新建第三道 → 结构化含糊态 + 追问哪一道。
+            if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
+                out["directive_confirmation_ambiguous"] = {
+                    "candidates": [{"id": c["id"], "summary": c["summary"]} for c in _dir_candidates]
+                }
+                return True
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
                 _target = str(draft_res.get("target_candidate") or "")
                 _target_id = int(_target) if _target.isdigit() else None
@@ -1634,6 +1641,21 @@ class GameSession:
         )):
             return text
         return text + "\n请陛下定夺准驳。"
+
+    @staticmethod
+    def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
+        """#502 AC5：多道并存、准驳指称含糊时，大臣当场追问是哪一道（确定性 post-pass 句，
+        不串 LLM）。列出候选摘要供皇帝指名，避免被静默当「不回」。"""
+        text = (answer or "").strip()
+        cands = (ambiguous or {}).get("candidates") or []
+        briefs = "；".join(
+            f"其一「{str(c.get('summary') or '')}」" if i == 0 else f"其{'二三四五六七八九十'[i-1] if i <= 10 else i}「{str(c.get('summary') or '')}」"
+            for i, c in enumerate(cands)
+        )
+        ask = f"陛下方才所指，是这几道中的哪一道？（{briefs}）请明示，臣好照办。" if briefs else "陛下方才所指是哪一道？请明示。"
+        if not text:
+            return ask
+        return text + "\n" + ask
 
     @staticmethod
     def _normalized_content_key(text: str) -> str:
@@ -1763,6 +1785,11 @@ class GameSession:
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             result.pending_action_failures = list(res["pending_action_failures"])
+        # #502 AC5：把结构化含糊态透到 ChatTurnResult，供大臣当场追问哪一道（表面契约可达）。
+        if res.get("directive_confirmation_ambiguous"):
+            result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
+            result.answer = GameSession._ensure_clarification_cue(
+                result.answer or "", res["directive_confirmation_ambiguous"])
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

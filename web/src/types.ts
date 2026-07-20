@@ -404,6 +404,12 @@ export type ChatResponse = {
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
   pending_action_failures?: PendingActionFailure[];
+  // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
+  directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
+};
+
+export type DirectiveConfirmationAmbiguous = {
+  candidates: { id: number; summary: string }[];
 };
 
 export type ChatUndoResponse = {

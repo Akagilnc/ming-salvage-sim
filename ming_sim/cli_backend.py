@@ -1066,7 +1066,8 @@ def extract_draft_intent(
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
-        '  "目标草案": "新",       // 新拟独立一道=「新」；补充/修改现有某一道=填该道方括号里的编号\n'
+        '  "目标草案": "新",       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
+        '想改/补但没指明是哪道=「含糊」\n'
         if _candidates else ""
     )
     merge_schema_line = (
@@ -1120,7 +1121,8 @@ def extract_draft_intent(
         else:
             draft_text = (minister_reply or "").strip()
         return {"draft_action": _action, "draft_text": draft_text, "target_candidate": ""}
-    # 多道：归一目标——命中候选 id=补那道；「新」=新拟；含糊按候选条数兜底（单条补、多条新）。
+    # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
+    # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
     target_id: Optional[int] = None
     if target_raw and target_raw != "新":
@@ -1134,7 +1136,10 @@ def extract_draft_intent(
     elif len(_by_id) == 1:
         target = str(next(iter(_by_id)))
     else:
-        target = "新"
+        target = "含糊"
+    if target == "含糊":
+        # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
+        return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
     if target == "新":
         draft_text = merged if merged else (minister_reply or "").strip()
     else:
