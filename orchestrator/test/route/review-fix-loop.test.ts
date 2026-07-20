@@ -1836,6 +1836,36 @@ describe("#369 finding identity", () => {
     );
   });
 
+  // #1076 L2 / ADR 0131: identityKey short-circuit must not re-derive from
+  // sparse cargo prose (would crash on undefined .trim()). Lock the explicit-
+  // key branch + the loud typed fallback for missing prose fields.
+  it("#1076: sparse finding with explicit identityKey returns it verbatim (no prose crash)", () => {
+    const sparse = {
+      identityKey: "x",
+      severity: "medium",
+      title: "t",
+    } as unknown as Finding;
+    expect(findingIdentityKey(sparse)).toBe("x");
+  });
+
+  it("#1076: missing identityKey with undefined category throws a loud typed field-name error (not TypeError)", () => {
+    const noKeySparse = {
+      severity: "medium",
+      location: "src/x.ts:1",
+      claim_quote: "claim",
+      // category deliberately omitted
+    } as unknown as Finding;
+    let caught: unknown;
+    try {
+      findingIdentityKey(noKeySparse);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(TypeError);
+    expect((caught as Error).message).toMatch(/category/);
+  });
+
 });
 
 describe("#369 legacy S5 landing file", () => {
