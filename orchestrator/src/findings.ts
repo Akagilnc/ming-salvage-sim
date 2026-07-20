@@ -33,7 +33,7 @@ export function findingIdentityKey(finding: Finding): string {
   // cargo prose. When a finding carries a pre-computed identityKey, use it
   // verbatim instead of recomputing from category/location/claim_quote
   // (which crashes on sparse cargo — undefined .trim() TypeError).
-  const explicit = (finding as { identityKey?: unknown }).identityKey;
+  const explicit = finding.identityKey;
   if (typeof explicit === "string" && explicit.length > 0) {
     return explicit;
   }
