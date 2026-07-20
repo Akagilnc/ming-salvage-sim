@@ -38,6 +38,12 @@ SUMMON_METHODS = frozenset({METHOD_XUANRU, METHOD_CHUANZHAO, METHOD_YUECI})
 AUDIBILITY_PUBLIC = "殿上公开"
 AUDIBILITY_PRIVATE = "御前低语"
 
+# #501 机器可读在场效果（ADR 0035 线上 R2）：在场是机器承重态，其输入不靠解析自由文本。
+PRESENCE_ENTER = "enter"
+PRESENCE_EXIT = "exit"
+PRESENCE_NONE = ""
+PRESENCE_EFFECTS = frozenset({PRESENCE_NONE, PRESENCE_ENTER, PRESENCE_EXIT})
+
 NIGHT_STATUS_OPEN = "open"
 NIGHT_STATUS_CLOSING = "closing"
 NIGHT_STATUS_CLOSED = "closed"
@@ -198,22 +204,37 @@ def _hydrate_night(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _entry_order_key(raw: Dict[str, Any]) -> float:
+    """时序排序键：抽取账绑源对话轮原始时序（order_key），口令账回退自身 seq。"""
+    ok = raw.get("order_key")
+    if ok is None:
+        return float(int(raw.get("seq") or 0))
+    return float(ok)
+
+
 def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    # 时序键排序（#501 AC11）：COALESCE(order_key, seq) 使补跑的抽取账落回源轮原位、
+    # 不因补跑执行时刻排到后续轮之后；同键内 id 稳定次序。
     rows = db.conn.execute(
-        "SELECT * FROM story_ledger_entries WHERE night_id = ? ORDER BY seq ASC, id ASC",
+        "SELECT * FROM story_ledger_entries WHERE night_id = ? "
+        "ORDER BY COALESCE(order_key, seq) ASC, id ASC",
         (int(night_id),),
     ).fetchall()
     out: List[Dict[str, Any]] = []
     for row in rows:
         raw = _row_dict(row)
+        ok = raw.get("order_key")
         out.append({
             "id": int(raw["id"]),
             "night_id": int(raw["night_id"]),
             "seq": int(raw["seq"]),
+            "order_key": None if ok is None else float(ok),
             "person_names": [str(n) for n in _json_list(raw.get("person_names"))],
             "audibility": str(raw.get("audibility") or AUDIBILITY_PUBLIC),
             "body": str(raw.get("body") or ""),
             "tags": [str(t) for t in _json_list(raw.get("tags"))],
+            "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
+            "presence_effect": str(raw.get("presence_effect") or ""),
             "created_at": raw.get("created_at"),
             "kind": "ledger",
         })
@@ -232,18 +253,19 @@ def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """账本 + 对话轮按 night_seq/seq 合流（AC4 时序对齐真源）。"""
     events: List[Dict[str, Any]] = []
     for e in list_ledger(db, night_id):
+        # 抽取账用 order_key（源轮时序）排序；口令/框架账回退 seq。
         events.append({
             "kind": "ledger",
-            "seq": int(e["seq"]),
+            "seq": _entry_order_key(e),
             "payload": e,
         })
     for t in list_chat_turns_for_night(db, night_id):
         events.append({
             "kind": "chat_turn",
-            "seq": int(t.get("night_seq") or 0),
+            "seq": float(int(t.get("night_seq") or 0)),
             "payload": t,
         })
-    events.sort(key=lambda x: (int(x["seq"]), 0 if x["kind"] == "ledger" else 1, int(x["payload"].get("id") or 0)))
+    events.sort(key=lambda x: (float(x["seq"]), 0 if x["kind"] == "ledger" else 1, int(x["payload"].get("id") or 0)))
     return events
 
 
@@ -311,8 +333,16 @@ def append_ledger_entry(
     tags: Optional[Sequence[str]] = None,
     check_dead: bool = True,
     commit: bool = True,
+    source_chat_turn_id: int = 0,
+    presence_effect: str = "",
+    order_key: Optional[float] = None,
 ) -> int:
-    """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。"""
+    """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
+
+    抽取账（#501）额外带溯源 `source_chat_turn_id`、机器可读 `presence_effect`
+    （''/enter/exit）与时序键 `order_key`（绑定源对话轮原始时序，补跑落回原位）；
+    口令/框架账三者取默认（0/''/NULL），读取端 order_key 缺省 COALESCE 回退 seq。
+    """
     night = get_night(db, night_id)
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
@@ -327,13 +357,18 @@ def append_ledger_entry(
         raise AudienceNightError(
             f"可闻性非法：{audibility!r}", code="bad_audibility",
         )
+    if presence_effect not in PRESENCE_EFFECTS:
+        raise AudienceNightError(
+            f"在场效果非法：{presence_effect!r}", code="bad_presence_effect",
+        )
     tag_list = [str(t) for t in (tags or []) if str(t)]
     seq = _allocate_seq(db, night_id)
     cur = db.conn.execute(
         """
         INSERT INTO story_ledger_entries
-            (night_id, seq, person_names, audibility, body, tags)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (night_id, seq, person_names, audibility, body, tags,
+             source_chat_turn_id, presence_effect, order_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(night_id),
@@ -342,6 +377,9 @@ def append_ledger_entry(
             audibility,
             body or "",
             json.dumps(tag_list, ensure_ascii=False),
+            int(source_chat_turn_id or 0),
+            presence_effect or "",
+            None if order_key is None else float(order_key),
         ),
     )
     if commit and _should_commit(db):
@@ -569,6 +607,43 @@ def _commit_night_approved(
     return list(applied or [])
 
 
+def _drain_story_extraction_or_fail_closed(
+    db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
+) -> None:
+    """收夜前清空待补抽取（ADR 0036 线上 R3）——引擎侧强制闸，不只挂 web 前门。
+
+    收夜是史实书写边界：带待补账收夜会把过期在场名单写进收尾叙事，补账插回原时序后同一
+    时间线自相矛盾。有待补 → 强制同步补跑；仍有 → fail-closed 中止收夜（夜保持开、可重试）。
+    无 llm_config/write_gate 又有待补 = 无从清空又不得带待补收夜 → 同样 fail-closed
+    （绝不静默跳过史实边界）。无待补则 no-op（无依赖时正常收夜）。测试替身无该接口时跳过。
+    """
+    if not hasattr(db, "count_pending_story_extractions"):
+        return
+    pending = int(db.count_pending_story_extractions(night_id=int(night_id)) or 0)
+    if pending <= 0:
+        return
+    if llm_config is None or write_gate is None:
+        rows = db.list_unextracted_replies(night_id=int(night_id))
+        ids = [int(r.get("chat_turn_id") or 0) for r in rows]
+        message = (
+            f"收夜中止：本夜仍有 {pending} 条待补抽取，且无 LLM/写锁可清空"
+            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
+        )
+        pack = write_audience_error_pack(
+            kind="pending_extraction", message=message,
+            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+        )
+        raise AudienceNightError(
+            message, code="pending_extraction", error_pack_path=pack,
+            detail={"night_id": int(night_id), "chat_turn_ids": ids},
+        )
+    from ming_sim.audience_extraction import drain_pending_before_close
+
+    drain_pending_before_close(
+        db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
+    )
+
+
 def close_night(
     db: Any,
     state: GameState,
@@ -583,11 +658,17 @@ def close_night(
     on_step: Optional[Callable[[int, Dict[str, Any]], None]] = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
+    llm_config: Any = None,
+    write_gate: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：在飞守卫 → 仅本夜已应允提交（游标幂等）→ 收夜账 → closed。
+    """收夜：在飞守卫 → 收夜前清空待补抽取（引擎侧史实边界闸）→ 仅本夜已应允提交（游标幂等）
+    → 收夜账 → closed。
 
     beat_generator 注入时（#503 编排）：收夜账正文经编排层路由输入后由内容生成填充；
     不注入（或返空）则沿用 #498 确定性兜底正文。见 beat_orchestration。
+
+    `llm_config`/`write_gate` 供收夜前 drain 用；web 前门已预清（pending=0）时本闸 no-op、
+    不重复 drain（也不因此在已持锁的 runtime write_gate 上自锁）。带待补而无依赖 → fail-closed。
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
@@ -605,6 +686,10 @@ def close_night(
 
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
+        # 史实书写边界：收夜前强制清空待补抽取（fail-closed），先于任何收夜写。
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+        )
         _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
         night = get_night(db, night_id)
         assert night is not None
@@ -668,8 +753,11 @@ def close_night(
         tags = [TAG_CLOSE_NIGHT]
         if auto:
             tags.append(TAG_AUTO_CLOSE)
+        # 收夜账幂等只看口令账的确定性收夜标——抽取账开放 tags 里的「收夜」不算数
+        # （否则 LLM 叙事标签旁路收夜账、夜 closed 却无退朝账）。
         existing_tags = {
-            t for e in list_ledger(db, night_id) for t in e.get("tags") or []
+            t for e in list_ledger(db, night_id) if _is_command_entry(e)
+            for t in e.get("tags") or []
         }
         if TAG_CLOSE_NIGHT not in existing_tags:
             # 收夜账正文只在真要落且无显式正文时才生成——避免为已落账/已给 body 的
@@ -720,8 +808,13 @@ def auto_close_open_night(
     crash_after_step: Optional[int] = None,
     beat_generator: Any = None,
     knowledge_provider: Any = None,
+    llm_config: Any = None,
+    write_gate: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。"""
+    """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
+
+    `llm_config`/`write_gate` 透传给收夜前 drain 闸；web 结算路已在前门预清待补，故此处
+    多数为 no-op（pending=0），无依赖也不会误 fail-closed。"""
     open_n = get_open_night(db)
     if open_n is None:
         return None
@@ -735,6 +828,8 @@ def auto_close_open_night(
         crash_after_step=crash_after_step,
         beat_generator=beat_generator,
         knowledge_provider=knowledge_provider,
+        llm_config=llm_config,
+        write_gate=write_gate,
     )
 
 
@@ -843,6 +938,47 @@ def audible_entries_for(
         if name in present and entry.get("audibility") == AUDIBILITY_PUBLIC:
             out.append(entry)
     return out
+
+
+def _is_command_entry(entry: Dict[str, Any]) -> bool:
+    """口令/框架账（发起/进出/收夜/常在员额）由引擎侧确定性写入、`source_chat_turn_id==0`；
+    抽取账（`>0`）的 tags 是 LLM 开放叙事标签。引擎口令常量标（TAG_ENTER/TAG_CLOSE_NIGHT…）
+    只在口令账上机器承重——抽取账开放 tags 不得驱动机器态（ADR 0035：在场等机器承重态输入
+    不解析自由文本；否则 LLM 写「入殿」旁路死账、写「收夜」旁路收夜账幂等）。"""
+    return int(entry.get("source_chat_turn_id") or 0) == 0
+
+
+def _command_entry_has_tag_enter(entry: Dict[str, Any]) -> bool:
+    """在场进=口令账（宣入/常在员额）的确定性 TAG_ENTER；抽取账进只认机器 `presence_effect`。"""
+    return _is_command_entry(entry) and TAG_ENTER in (entry.get("tags") or [])
+
+
+def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
+    names: set[str] = set()
+    for entry in list_ledger(db, night_id):
+        if _command_entry_has_tag_enter(entry):
+            names.update(entry.get("person_names") or [])
+    return names
+
+
+def persons_present_tonight(db: Any, night_id: int) -> set[str]:
+    """当前在场名单：按时序键消费机器可读的进/出效果（#501 AC2/AC9）。
+
+    在场是机器承重态，其输入**不解析自由文本**——进=口令账 TAG_ENTER（宣入/常在员额，
+    引擎确定性写）**或**抽取账 presence_effect='enter'（机器可读字段）；出=抽取账
+    presence_effect='exit'。抽取账开放 tags 不驱动在场（否则 LLM 写「入殿」旁路死账校验、
+    与 settle 的 `check_dead=(presence_effect==enter)` 不对称）。派生只认已落账（list_ledger
+    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
+    """
+    present: set[str] = set()
+    for entry in list_ledger(db, night_id):  # 已按时序键排序
+        persons = [str(n) for n in (entry.get("person_names") or [])]
+        effect = str(entry.get("presence_effect") or "")
+        if effect == PRESENCE_ENTER or _command_entry_has_tag_enter(entry):
+            present.update(persons)
+        if effect == PRESENCE_EXIT:
+            present.difference_update(persons)
+    return present
 
 
 def ensure_summon_enter(
