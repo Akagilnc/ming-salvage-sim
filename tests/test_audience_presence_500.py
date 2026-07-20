@@ -327,6 +327,27 @@ def test_present_names_at_table(game, label, at_key, expected_present, expected_
     assert not (expected_absent & present), f"{label}: 误含 {expected_absent & present}"
 
 
+def test_present_names_at_uses_timeline_key_not_raw_seq(game):
+    """回归（coderabbit #1087）：list_ledger 按 COALESCE(order_key, seq) 排序，补跑抽取账
+    order_key 可小于其自身 seq。present_names_at 若按裸 seq 截断，会在早排却大 seq 的抽取账
+    处误 break、漏掉其后命令账。断言按时序键截断——时序上更晚的入殿账仍计入名单。"""
+    db, state, content = game
+    _activate(db, state, "徐光启", "毕自严")
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    an.summon_enter(db, nid, "徐光启")
+    xu_seq = _last_seq(db, nid)
+    an.summon_enter(db, nid, "毕自严")
+    bi_seq = _last_seq(db, nid)
+    # 补跑抽取账：时序键落在两道入殿账之间（早排），但其自身 seq 最大（补跑晚落）。
+    an.append_ledger_entry(
+        db, nid, body="（补跑抽取账·无在场效果）", order_key=float(xu_seq) + 0.5,
+    )
+    present = an.present_names_at(db, nid, at_seq=bi_seq)
+    assert "毕自严" in present  # 旧码在大 seq 抽取账处误 break → 毕自严漏掉
+    assert "徐光启" in present
+
+
 def test_standing_roster_present_throughout(game):
     """AC3：王承恩（常在员额）全程在场——每个关键时刻均在名单。"""
     db, state, content = game

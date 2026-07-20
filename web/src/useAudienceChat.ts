@@ -51,7 +51,14 @@ export function useAudienceChat(
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   // 短暂请求归属：每次 sendChat 自增。
   const requestTokenRef = React.useRef(0);
-  const abortRef = React.useRef<AbortController | null>(null);
+  // 全部在飞流的取消句柄：sendChat 每次登记自己的 controller、结束即摘除。close/cancel 须
+  // 中止**所有**在飞流——单句柄只留最新，重叠请求会漏掉更早的 controller，旧 SSE/fetch 连接
+  // 悬到服务端自闭。abortAll 统一中止并清空。
+  const activeAbortsRef = React.useRef<Set<AbortController>>(new Set());
+  const abortAll = React.useCallback(() => {
+    for (const controller of activeAbortsRef.current) controller.abort();
+    activeAbortsRef.current.clear();
+  }, []);
   // 历史快照 generation：load / send / reset 都推进；陈旧历史响应据此丢弃。
   const chatGenRef = React.useRef(0);
   // 读心 poll-batch 归属：一次「面板观察会话」的全部待读心轮轮询共此代次。close / reset /
@@ -62,10 +69,10 @@ export function useAudienceChat(
   // 唯一 chat-exit 归属 effect：面板关闭即取消流观察者 + 作废 poll-batch（selectedMinister 不变也停）。
   React.useEffect(() => {
     if (!chatOpen) {
-      abortRef.current?.abort();
+      abortAll();
       pollBatchRef.current += 1;
     }
-  }, [chatOpen]);
+  }, [chatOpen, abortAll]);
 
   const resetPanel = React.useCallback(() => {
     chatGenRef.current += 1;   // 作废在飞的历史加载
@@ -122,7 +129,7 @@ export function useAudienceChat(
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
       const abort = new AbortController();
-      abortRef.current = abort;
+      activeAbortsRef.current.add(abort);
       const ownsEphemeral = () => requestTokenRef.current === token;
       const panelMatches = () => selectedMinisterRef.current === minister;
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
@@ -170,15 +177,15 @@ export function useAudienceChat(
         else cb.onError?.(err);
       } finally {
         if (ownsEphemeral()) setBusy("");
-        if (abortRef.current === abort) abortRef.current = null;
+        activeAbortsRef.current.delete(abort);
       }
     },
     [setBusy, selectedMinisterRef],
   );
 
   const cancelChat = React.useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+    abortAll();
+  }, [abortAll]);
 
   return {
     chat,
