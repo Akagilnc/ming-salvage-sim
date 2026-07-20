@@ -76,6 +76,7 @@ from ming_sim.audience_extraction import (
     drain_pending_before_open_night_close,
     run_extraction_for_turn,
 )
+from ming_sim.token_stats import tlog
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
 from ming_sim.context import match_minister_from_text
 from ming_sim.flows import compute_budget_lines
@@ -1981,14 +1982,15 @@ class WebGame:
     ) -> Optional[Dict[str, Any]]:
         """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
 
-        非召对夜轮（night_id<=0）不入故事账。`run_extraction_for_turn` 从不抛：垃圾 shape /
-        模型失败 → 写响亮错误包 + 标待补、不回滚回话；成功 → 单事务原子落账。写库走 runtime
-        write_gate（与读心/月末并发 extractor 同一把）。调用方持 pending ownership；
+        非召对夜轮（night_id<=0）不入故事账。`run_extraction_for_turn` 契约上**从不抛**：垃圾
+        shape / 模型失败 / 落账失败 → 写响亮错误包 + 标待补、不回滚回话；成功（含空白回话）→
+        标 done。空白回话不短路跳过——与 run 入口一致交给它标 done（不占永久待补）。写库走
+        runtime write_gate（与读心/月末并发 extractor 同一把）。调用方持 pending ownership；
         owns_pending=True 时本函数 finally 里 complete。
         """
         try:
             reply = str(minister_reply or "")
-            if not chat_turn_id or not reply.strip() or not hasattr(self.db, "conn"):
+            if not chat_turn_id or not hasattr(self.db, "conn"):
                 return None
             row = self.db.conn.execute(
                 "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
@@ -2009,8 +2011,15 @@ class WebGame:
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._runtime_write_gate(),
             )
-        except Exception:
-            # run_extraction_for_turn 已兜底，此处仅防 chat_turns 查询等意外——不回滚回话。
+        except Exception as exc:
+            # run_extraction_for_turn 契约从不抛；到此=chat_turns 查询等意外故障。**不静默**：
+            # 留痕 + 标待补（下轮 catch_up / 收夜前 drain 会重试），不回滚回话（ADR 0005）。
+            tlog(f"[audience-extraction] 尾随意外故障 chat_turn_id={chat_turn_id}：{exc}；标待补")
+            try:
+                with self._runtime_write_gate():
+                    self.db.mark_story_extraction_pending(int(chat_turn_id))
+            except Exception as exc2:
+                tlog(f"[audience-extraction] 标待补亦失败 chat_turn_id={chat_turn_id}：{exc2}")
             return None
         finally:
             if owns_pending:
@@ -2020,15 +2029,15 @@ class WebGame:
         self, minister_name: str, minister_reply: str, chat_turn_id: int,
     ) -> None:
         """在独立后台线程发起抽取落账尾随（与读心并行）。原子交接 pending ownership：
-        任何 DB 访问前先登记，关闭须等其完成。非召对夜轮由尾随函数内自行短路。"""
-        reply = str(minister_reply or "")
-        if not chat_turn_id or not reply.strip():
+        任何 DB 访问前先登记，关闭须等其完成。非召对夜轮 / 空白回话由尾随函数内自决
+        （空白 → 标 done，不占永久待补；与 run 入口一致）。"""
+        if not chat_turn_id:
             return
         if not self._mark_pending_write():
             return
         threading.Thread(
             target=self._trail_extraction_after_reply,
-            args=(minister_name, reply, chat_turn_id),
+            args=(minister_name, str(minister_reply or ""), chat_turn_id),
             kwargs={"owns_pending": True},
             daemon=True,
             name="audience-p5-extraction",
@@ -2045,9 +2054,10 @@ class WebGame:
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._runtime_write_gate(),
             )
-        except Exception:
-            # 铁律：补跑失败不锁档，绝不冒泡进启动致命路径。
-            pass
+        except Exception as exc:
+            # catch_up 契约从不抛；到此=意外故障。铁律：不锁档、不进启动致命路径——
+            # 但**留痕不静默**（窄捕 + log，账仍待补候下轮 drain/重试）。
+            tlog(f"[audience-extraction] 启动补跑意外故障（不锁档、已忽略）：{exc}")
         finally:
             if owns_pending:
                 self._complete_pending_write()
@@ -2064,6 +2074,41 @@ class WebGame:
             daemon=True,
             name="audience-startup-extraction-catchup",
         ).start()
+
+    def pending_story_extractions(self) -> Dict[str, Any]:
+        """#501 AC8：待补抽取的玩家可见状态（本开夜 turn ids + 大臣名 + 计数）——显眼提示的取数源，
+        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。"""
+        if not hasattr(self.db, "conn"):
+            return {"night_id": 0, "count": 0, "pending": []}
+        from ming_sim.audience_night import get_open_night
+
+        open_n = get_open_night(self.db)
+        nid = int(open_n["id"]) if open_n else None
+        rows = self.db.list_unextracted_replies(night_id=nid)
+        pending = [
+            {
+                "chat_turn_id": int(r.get("chat_turn_id") or 0),
+                "minister_name": str(r.get("minister_name") or ""),
+                "night_id": int(r.get("night_id") or 0),
+            }
+            for r in rows
+        ]
+        return {"night_id": int(nid or 0), "count": len(pending), "pending": pending}
+
+    def retry_story_extractions(self) -> Dict[str, Any]:
+        """#501 AC8：玩家原地重试补跑——并入既有补跑通道（catch_up），不造第二套失败总线。
+        gate 外调（drain 内部按写抢 runtime write_gate）；返回重试后的待补状态。"""
+        from ming_sim.audience_night import get_open_night
+
+        open_n = get_open_night(self.db) if hasattr(self.db, "conn") else None
+        nid = int(open_n["id"]) if open_n else None
+        catch_up_pending_extractions(
+            db=self.db,
+            llm_config=getattr(self.session, "llm_config", None),
+            write_gate=self._runtime_write_gate(),
+            night_id=nid,
+        )
+        return self.pending_story_extractions()
 
     def chat_stream(self, minister_name: str, message: str) -> Iterator[Dict[str, Any]]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
@@ -3233,6 +3278,18 @@ async def api_chat_mindreading(minister_name: str, chat_turn_id: int = 0) -> Dic
     """
     _require_active_minister(minister_name)
     return get_game().mindreading_for_minister(minister_name, chat_turn_id)
+
+
+@app.get("/api/audience/extraction/pending")
+async def api_pending_story_extractions() -> Dict[str, Any]:
+    """#501 AC8：本开夜待补叙事抽取的显眼状态（可读 + 供重试按钮）。"""
+    return get_game().pending_story_extractions()
+
+
+@app.post("/api/audience/extraction/retry")
+async def api_retry_story_extractions() -> Dict[str, Any]:
+    """#501 AC8：玩家原地重试补跑（含 LLM 调用 → threadpool，不冻结 event loop）。"""
+    return await run_in_threadpool(get_game().retry_story_extractions)
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")

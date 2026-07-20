@@ -7658,7 +7658,14 @@ class GameDB:
         抽取水位二元（已抽/未抽）：已 'done' → 幂等 no-op（补跑不重复落账）。时序键
         `order_key` 绑源对话轮原始时序（source_night_seq+0.5，落在源轮之后、后续轮之前），
         使补跑落回原时间位（AC11）。
+
+        落账走账本唯一写入入口 `append_ledger_entry`（ADR 0035）——不抄第二份 INSERT：
+        closed 夜 / 非法可闻性 / 非法在场效果一律响亮拒写（回滚整轮）；死账仅对「进」效果校验
+        （已死者不能在场；纯提及不拦）。seq/时序键与口令账同源。空 facts（空白回话）合法 →
+        仅推进水位、不落账（不占永久待补，AC10/L4）。
         """
+        from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
+
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
             return []
@@ -7671,30 +7678,21 @@ class GameDB:
                     for n in (fact.get("person_names") or [])
                     if str(n).strip()
                 ]
-                audibility = str(fact.get("audibility") or "殿上公开")
                 presence_effect = str(fact.get("presence_effect") or "")
-                tags = [str(t) for t in (fact.get("tags") or []) if str(t)]
-                seq = self.allocate_night_seq(int(night_id))
-                cur = self.conn.execute(
-                    """
-                    INSERT INTO story_ledger_entries
-                        (night_id, seq, person_names, audibility, body, tags,
-                         source_chat_turn_id, presence_effect, order_key)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        int(night_id),
-                        seq,
-                        safe_json_dumps(persons, ensure_ascii=False),
-                        audibility,
-                        str(fact.get("body") or ""),
-                        safe_json_dumps(tags, ensure_ascii=False),
-                        cid,
-                        presence_effect,
-                        base,
-                    ),
+                entry_id = append_ledger_entry(
+                    self,
+                    int(night_id),
+                    person_names=persons,
+                    audibility=str(fact.get("audibility") or "殿上公开"),
+                    body=str(fact.get("body") or ""),
+                    tags=[str(t) for t in (fact.get("tags") or []) if str(t)],
+                    check_dead=(presence_effect == PRESENCE_ENTER),
+                    commit=False,
+                    source_chat_turn_id=cid,
+                    presence_effect=presence_effect,
+                    order_key=base,
                 )
-                new_ids.append(int(cur.lastrowid))
+                new_ids.append(int(entry_id))
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),

@@ -182,17 +182,26 @@ def run_extraction_for_turn(
     """一轮叙事抽取落账尾随：幂等水位判 → 抽取 → 原子落账；失败 → 响亮错误包 + 待补。
 
     - 已 'done' → 幂等跳过（补跑不重复，AC6）。
-    - 垃圾 shape / 模型失败 → 写错误包 + `mark_story_extraction_pending`，**不回滚对话、不抛**
-      （回话已 done；返回 status='pending' 携错误包路径供玩家原地重试，AC3/AC8）。
+    - 空白完整回话 ≡ 无显著情节 → 直接标 done（无需 LLM），不占永久待补阻塞 drain（AC10）。
+    - 垃圾 shape / 模型失败 / **落账失败** → 写错误包 + `mark_story_extraction_pending`，
+      **不回滚对话、绝不抛穿**（settle 与 extract 同失败语义，保「补跑从不抛」，AC3/AC8）；
+      返回 status='pending' 携错误包路径供玩家原地重试。
     - 成功 → `settle_story_extraction` 单事务全有或全无（AC7），返回 status='done'。
 
     `write_gate` 必传：落账走真实 runtime 写锁（与月末并发 extractor / 其它端点写同一把）。
     """
     cid = int(chat_turn_id)
-    if not cid or not str(reply or "").strip():
+    if not cid:
         return {"status": "skipped", "chat_turn_id": cid}
     if db.get_story_extract_status(cid) == "done":
         return {"status": "done", "chat_turn_id": cid, "already": True}
+
+    # 空白完整回话：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
+    if not str(reply or "").strip():
+        return _settle_or_pending(
+            db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
+            facts=[], source_night_seq=source_night_seq, fact_count=0,
+        )
 
     if present_names is None:
         try:
@@ -209,38 +218,69 @@ def run_extraction_for_turn(
             extractor_agent=extractor_agent,
         )
     except Exception as exc:
-        code = getattr(exc, "code", "extraction_failed")
-        pack = write_audience_error_pack(
-            kind="extraction_failed",
-            message=f"叙事抽取失败（{code}）：{exc}",
-            detail={
-                "chat_turn_id": cid,
-                "night_id": int(night_id),
-                "minister_name": minister_name,
-                "code": code,
-            },
+        return _pending_with_pack(
+            db, write_gate, cid=cid, night_id=night_id,
+            minister_name=minister_name, exc=exc, stage="extract",
         )
-        with write_gate:
-            db.mark_story_extraction_pending(cid)
-        return {
-            "status": "pending",
-            "chat_turn_id": cid,
-            "error_pack_path": pack,
-            "code": code,
-        }
 
+    return _settle_or_pending(
+        db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
+        facts=facts, source_night_seq=source_night_seq, fact_count=len(facts),
+    )
+
+
+def _pending_with_pack(
+    db: Any, write_gate: threading.Lock, *,
+    cid: int, night_id: int, minister_name: str, exc: BaseException, stage: str,
+) -> Dict[str, Any]:
+    """抽取/落账失败的统一响亮降级：写错误包 + 标待补 + 返回 pending（绝不抛，ADR 0005/0036）。"""
+    code = getattr(exc, "code", f"{stage}_failed")
+    verb = "落账" if stage == "settle" else "抽取"
+    pack = write_audience_error_pack(
+        kind="extraction_failed",
+        message=f"叙事{verb}失败（{code}）：{exc}",
+        detail={
+            "chat_turn_id": cid,
+            "night_id": int(night_id),
+            "minister_name": minister_name,
+            "code": code,
+            "stage": stage,
+        },
+    )
     with write_gate:
-        # 二次幂等复查（持锁后）：另一并发补跑可能已落账。
-        if db.get_story_extract_status(cid) == "done":
-            return {"status": "done", "chat_turn_id": cid, "already": True}
-        entry_ids = db.settle_story_extraction(
-            cid, int(night_id), facts, int(source_night_seq),
+        db.mark_story_extraction_pending(cid)
+    return {
+        "status": "pending",
+        "chat_turn_id": cid,
+        "error_pack_path": pack,
+        "code": code,
+    }
+
+
+def _settle_or_pending(
+    db: Any, write_gate: threading.Lock, *,
+    cid: int, night_id: int, minister_name: str,
+    facts: Sequence[Mapping[str, Any]], source_night_seq: int, fact_count: int,
+) -> Dict[str, Any]:
+    """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。"""
+    try:
+        with write_gate:
+            # 二次幂等复查（持锁后）：另一并发补跑可能已落账。
+            if db.get_story_extract_status(cid) == "done":
+                return {"status": "done", "chat_turn_id": cid, "already": True}
+            entry_ids = db.settle_story_extraction(
+                cid, int(night_id), facts, int(source_night_seq),
+            )
+    except Exception as exc:
+        return _pending_with_pack(
+            db, write_gate, cid=cid, night_id=night_id,
+            minister_name=minister_name, exc=exc, stage="settle",
         )
     return {
         "status": "done",
         "chat_turn_id": cid,
         "entry_ids": entry_ids,
-        "fact_count": len(facts),
+        "fact_count": fact_count,
     }
 
 
