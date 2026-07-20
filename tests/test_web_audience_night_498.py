@@ -25,11 +25,22 @@ import httpx
 import pytest
 
 import web_app
+import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
+
+
+class _CannedExtractor:
+    """#501 叙事抽取员离线边界：回话尾随 / 收夜前 drain 会调它——默认抽出空 facts
+    （不改本文件既有账本/收夜断言，仅把新 LLM 边界中和成离线，与 verify_llm 同理）。"""
+
+    def run(self, _material):
+        class _R:
+            content = '{"facts":[]}'
+        return _R()
 
 
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
@@ -92,6 +103,10 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
+    # #501：叙事抽取是每条召对夜回话的新 LLM 边界（回话尾随 + 收夜前 drain）——离线中和，
+    # 默认抽空 facts，避免本 #498 用例走真实网络。
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game

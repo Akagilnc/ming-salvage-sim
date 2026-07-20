@@ -69,10 +69,11 @@ def _enter_body(db, night_id, person):
     return None
 
 
-def _land_reply(db, state, minister, chat_id, text="臣遵旨。"):
-    """回话入档（清在飞态），使收夜守卫不误挡。"""
+def _land_reply(db, state, minister, chat_id, night_id, text="臣遵旨。"):
+    """回话入档（清在飞态）+ 落抽取水位（清待补），使收夜守卫（在飞/#501 drain）不误挡。"""
     mid = db.append_chat_message(minister, state.turn, "minister", text)
     db.update_chat_turn_messages(chat_id, minister_message_id=int(mid))
+    db.settle_story_extraction(int(chat_id), int(night_id), [], 0)
 
 
 # ── AC1：入殿账随（身份/召法/时地）输入不同而不同；时地取自夜容器持久属性 ──
@@ -141,7 +142,7 @@ def test_whitespace_generator_falls_back_to_deterministic_bodies(game):
     )
     assert _ledger_body(db, night_id, an.TAG_OPEN_NIGHT) == "乾清宫·戌时，召对夜启。"
     assert _enter_body(db, night_id, minister) == f"{an.METHOD_XUANRU}{minister}入殿。"
-    _land_reply(db, state, minister, cid)
+    _land_reply(db, state, minister, cid, night_id)
     an.close_night(db, state, night_id=night_id, content=content,
                    beat_generator=_blank_generator)
     assert _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT) == "退朝，今夜召对到此。"
@@ -212,7 +213,7 @@ def test_open_and_close_beat_bodies_land(game):
     assert open_entry["person_names"] == []
     assert "tod=戌时" in open_body and "loc=乾清宫" in open_body
 
-    _land_reply(db, state, minister, _cid)
+    _land_reply(db, state, minister, _cid, night_id)
     an.close_night(db, state, night_id=night_id, content=content,
                    beat_generator=_echo_generator)
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
@@ -229,7 +230,7 @@ def test_no_generator_keeps_deterministic_fallback(game):
     )
     enter_body = _enter_body(db, night_id, minister)
     assert enter_body and "kind=" not in enter_body
-    _land_reply(db, state, minister, _cid)
+    _land_reply(db, state, minister, _cid, night_id)
     an.close_night(db, state, night_id=night_id, content=content)
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
     assert close_body == "退朝，今夜召对到此。"
@@ -361,7 +362,7 @@ def test_frame_beats_flow_from_provider_and_vary(game):
     open_a = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
     assert f"{subject}独有见闻#A" in open_a
 
-    _land_reply(db, state, minister, _cid)
+    _land_reply(db, state, minister, _cid, night_id)
     an.close_night(db, state, night_id=night_id, content=content,
                    beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"))
     close_a = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
