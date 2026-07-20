@@ -187,6 +187,20 @@ def test_chat_completion_via_attach(game):
     assert done["status"] == "active"
 
 
+def test_attach_without_scene_anchors_persists_readable_defaults(game):
+    """真实入口（web/CLI attach）不带玩家选值时，夜容器时辰/地点仍持久非空、可读（#498 AC）。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, _chat_id = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="s1", agno_runs_before=0,
+    )
+    row = db.conn.execute(
+        "SELECT time_of_day, location FROM audience_nights WHERE id=?", (night_id,)
+    ).fetchone()
+    assert str(row["time_of_day"]).strip()  # 非空可读，非裸空串
+    assert str(row["location"]).strip()
+
+
 # ── AC6/7 死账与员额 ────────────────────────────────────────────────
 
 

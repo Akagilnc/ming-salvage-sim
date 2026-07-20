@@ -38,6 +38,11 @@ SUMMON_METHODS = frozenset({METHOD_XUANRU, METHOD_CHUANZHAO, METHOD_YUECI})
 AUDIBILITY_PUBLIC = "殿上公开"
 AUDIBILITY_PRIVATE = "御前低语"
 
+# 夜容器时地兜底（#498 AC：时辰/地点须持久且可读）。真实入口（web/CLI attach）多不带玩家
+# 选值——缺省时以 in-world 兜底落库（非空字符串），而非留空串成不可读的裸空。开夜账正文同用。
+DEFAULT_TIME_OF_DAY = "此时"
+DEFAULT_LOCATION = "便殿"
+
 # #501 机器可读在场效果（ADR 0035 线上 R2）：在场是机器承重态，其输入不靠解析自由文本。
 PRESENCE_ENTER = "enter"
 PRESENCE_EXIT = "exit"
@@ -410,10 +415,12 @@ def open_night(
             detail={"night_id": int(existing["id"])},
         )
 
+    # 时地兜底在落库前统一定死（单一 seam）：真实入口缺玩家选值时也持久非空、可读（#498 AC）。
+    time_of_day = str(time_of_day or "").strip() or DEFAULT_TIME_OF_DAY
+    location = str(location or "").strip() or DEFAULT_LOCATION
+
     roster = resolve_standing_roster(db)
-    open_body = body or (
-        f"{location or '便殿'}·{time_of_day or '此时'}，召对夜启。"
-    )
+    open_body = body or f"{location}·{time_of_day}，召对夜启。"
 
     # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
     # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
@@ -431,8 +438,8 @@ def open_night(
                 int(state.turn),
                 int(state.year),
                 int(state.period),
-                time_of_day or "",
-                location or "",
+                time_of_day,
+                location,
                 NIGHT_STATUS_OPEN,
             ),
         )
@@ -898,13 +905,30 @@ def dismiss_from_audience(
 
 
 def _apply_presence(present: set[str], entry: Dict[str, Any]) -> None:
-    """按一条进出账更新在场集：入殿=进、告退=出、传召在途=无在场效果。"""
-    tags = entry.get("tags") or []
-    persons = entry.get("person_names") or []
-    if TAG_EXIT in tags:
-        present.difference_update(persons)
-    elif TAG_ENTER in tags:
-        present.update(persons)
+    """单一在场模型：按一条账更新在场集（ADR 0035：在场是机器承重态，输入不解析自由文本）。
+
+    - 口令/框架账（`source_chat_turn_id==0`）：认引擎常量 TAG_ENTER=进 / TAG_EXIT=出
+      （宣入/常在员额入殿、令退告退）；TAG_IN_TRANSIT 无在场效果（人在途）。
+    - 抽取账（`source_chat_turn_id>0`）：只认机器可读 `presence_effect`（enter=进/exit=出）；
+      开放叙事 tags 不驱动在场——否则 LLM 写「入殿/告退」旁路死账校验，与 settle 的
+      `check_dead=(presence_effect==enter)` 不对称（#501 08e1ecfe 不变式）。
+
+    所有在场派生（present_names_at / audible_entries_for / persons_present_tonight）共用本模型，
+    杜绝「口令派生认 tag、抽取派生认 presence_effect」的双真源分叉（抽取退场后名单不去人的见闻泄漏）。
+    """
+    persons = [str(n) for n in (entry.get("person_names") or [])]
+    if _is_command_entry(entry):
+        tags = entry.get("tags") or []
+        if TAG_EXIT in tags:
+            present.difference_update(persons)
+        elif TAG_ENTER in tags:
+            present.update(persons)
+    else:
+        effect = str(entry.get("presence_effect") or "")
+        if effect == PRESENCE_EXIT:
+            present.difference_update(persons)
+        elif effect == PRESENCE_ENTER:
+            present.update(persons)
 
 
 def present_names_at(
@@ -913,7 +937,7 @@ def present_names_at(
     """确定性推导任一时刻在场名单：进出账累积到 at_seq（含）为止的净在场者。
 
     机器承重态只有在场/不在场；at_seq=None 取夜内末态。侍立/正对奏是叙事层次
-    非硬状态，不影响本推导。"""
+    非硬状态，不影响本推导。走单一在场模型 `_apply_presence`。"""
     present: set[str] = set()
     for entry in list_ledger(db, night_id):
         if at_seq is not None and int(entry["seq"]) > int(at_seq):
@@ -962,23 +986,15 @@ def persons_entered_tonight(db: Any, night_id: int) -> set[str]:
 
 
 def persons_present_tonight(db: Any, night_id: int) -> set[str]:
-    """当前在场名单：按时序键消费机器可读的进/出效果（#501 AC2/AC9）。
+    """当前在场名单 = 夜内末态（#501 AC2/AC9），走单一在场模型 `_apply_presence`。
 
     在场是机器承重态，其输入**不解析自由文本**——进=口令账 TAG_ENTER（宣入/常在员额，
-    引擎确定性写）**或**抽取账 presence_effect='enter'（机器可读字段）；出=抽取账
-    presence_effect='exit'。抽取账开放 tags 不驱动在场（否则 LLM 写「入殿」旁路死账校验、
-    与 settle 的 `check_dead=(presence_effect==enter)` 不对称）。派生只认已落账（list_ledger
-    只返回已 settle 的账），故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。
+    引擎确定性写）**或**抽取账 presence_effect='enter'；出=口令账 TAG_EXIT（令退）**或**
+    抽取账 presence_effect='exit'。派生只认已落账（list_ledger 只返回已 settle 的账），
+    故待补期间缺账 = 尚未发生、不猜（AC9）；补账落地后自然校正。与 present_names_at 同核，
+    不再各持一份判据（防抽取退场后 chat 侧去人、见闻侧不去人的分叉）。
     """
-    present: set[str] = set()
-    for entry in list_ledger(db, night_id):  # 已按时序键排序
-        persons = [str(n) for n in (entry.get("person_names") or [])]
-        effect = str(entry.get("presence_effect") or "")
-        if effect == PRESENCE_ENTER or _command_entry_has_tag_enter(entry):
-            present.update(persons)
-        if effect == PRESENCE_EXIT:
-            present.difference_update(persons)
-    return present
+    return present_names_at(db, night_id)
 
 
 def ensure_summon_enter(
