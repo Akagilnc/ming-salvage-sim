@@ -381,6 +381,10 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
+    // #1068 added a thin wave-verify triage judge promptFile
+    // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
+    // construction-time inventory the same as the integrated CMR prompts.
+    "wave_verify_judge.md",
     "coder_fix.md",
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
