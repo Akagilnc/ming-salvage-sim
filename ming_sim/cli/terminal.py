@@ -190,6 +190,16 @@ def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
     return unique
 
 
+def _record_audience_exit(session: GameSession, name: str) -> None:
+    """令退落地：写确定性告退账，名单查询即时去人（AC1 数据→引擎→交互闭环）。
+    无开夜/不在场时既有 no-op；CLI 与 web 同源共用 dismiss_from_audience 引擎缝。
+    无夜域基座（缺 conn 的轻量 session double，与 attach 同款能力门）时跳过。"""
+    if not hasattr(session.db, "conn"):
+        return
+    from ming_sim.audience_night import dismiss_from_audience
+    dismiss_from_audience(session.db, name)
+
+
 def _handle_court_command(
     session: GameSession, text: str, current: Character
 ) -> Optional[str]:
@@ -307,6 +317,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if cmd == "handled":
             continue
         if cmd == "dismiss":
+            _record_audience_exit(session, character.name)
             print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
@@ -389,6 +400,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         if result.displaced_minister:
             print(f"【腾缺去职】{result.displaced_minister}原任官缺由新任接掌，已罢黜出朝堂名册。\n")
         if result.court_action == "dismiss":
+            _record_audience_exit(session, character.name)
             print(f"{character.name}退下。\n")
             return "dismiss"
         if result.court_action == "summon" and result.next_minister:
