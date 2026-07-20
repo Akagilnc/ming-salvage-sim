@@ -20,6 +20,7 @@ import {
   encodeMergerEnvelope,
   encodeOnlineReviewEnvelope,
   encodeShipEnvelope,
+  judgeStationReceiptSchema,
   parseFindingDisposition,
   parseLegalRefuseReason,
   type CoderStationEnvelope,
@@ -41,6 +42,7 @@ describe("#921 judge verdict three-state", () => {
     ["converged"],
     ["continue"],
     ["escalate"],
+    ["toolchain"],
   ] as const)("accepts status %s (positive)", (status) => {
     const raw =
       status === "continue"
@@ -58,7 +60,14 @@ describe("#921 judge verdict three-state", () => {
               reason: "stuck trend",
               diagnosis: "same disease N rounds",
             }
-          : { station: "judge", status: "converged" };
+          : status === "toolchain"
+            ? {
+                station: "judge",
+                status: "toolchain",
+                reason: "MODULE_NOT_FOUND after merge",
+                diagnosis: "missing dependency, not a real regression",
+              }
+            : { station: "judge", status: "converged" };
 
     const parsed = decodeJudgeVerdict(raw);
     expect(parsed.ok).toBe(true);
@@ -147,6 +156,67 @@ describe("#921 judge verdict three-state", () => {
     if (!parsed.ok) {
       expect(parsed.reason).toMatch(/diagnosis/i);
     }
+  });
+
+  it("toolchain requires non-empty reason + diagnosis (positive)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "toolchain",
+      reason: "pytest exit 2 (collection error)",
+      diagnosis: "environment red, not a cross-slice regression",
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.value.status === "toolchain") {
+      expect(parsed.value.reason).toBe("pytest exit 2 (collection error)");
+      expect(parsed.value.diagnosis).toBe(
+        "environment red, not a cross-slice regression",
+      );
+    }
+  });
+
+  it("rejects toolchain missing diagnosis (negative)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "toolchain",
+      reason: "MODULE_NOT_FOUND",
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/diagnosis/i);
+    }
+  });
+
+  it("production SO schema accepts toolchain envelope + cargo sibling (positive)", () => {
+    const parsed = judgeStationReceiptSchema().safeParse({
+      station: "judge",
+      status: "toolchain",
+      reason: "pip install failed",
+      diagnosis: "environment red",
+      // opaque cargo sibling passes through (only illegal traffic re-asks)
+      verifyEvidencePath: "artifacts/wave-verify.log",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("production SO schema rejects toolchain missing diagnosis (negative)", () => {
+    const parsed = judgeStationReceiptSchema().safeParse({
+      station: "judge",
+      status: "toolchain",
+      reason: "pip install failed",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("round-trips encode → decode for toolchain terminal", () => {
+    const verdict: JudgeVerdict = {
+      station: "judge",
+      status: "toolchain",
+      reason: "npm ci failed at wave verify",
+      diagnosis: "lockfile drift; hand back to runner as verify_failed",
+    };
+    const encoded = encodeJudgeVerdict(verdict);
+    const decoded = decodeJudgeVerdict(encoded);
+    expect(decoded).toEqual({ ok: true, value: verdict });
   });
 
   it("round-trips encode → decode for continue with dispositions", () => {
