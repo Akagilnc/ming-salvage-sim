@@ -16,7 +16,11 @@ import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 
 import { runFamily } from "../../../src/family/runner.js";
 
-import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import {
+  completedJudge,
+  judgeToolchain,
+  legacyCmrScriptToWorkerOutput,
+} from "../../helpers/judge-fixtures.js";
 
 import type {
   Backend,
@@ -159,6 +163,14 @@ class CapableFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    // #1027 S2: a red wave verify is triaged by the judge; default this shared
+    // fake to a toolchain terminal (→ the runner's unchanged verify_failed
+    // abort). Tests exercising the fixer path script the judge explicitly.
+    if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+      return completedJudge(
+        judgeToolchain(ctx.waveVerifyFailure, "wave-verify env red"),
+      );
+    }
     if (spec.kind === "cmr") {
       const cmr = await this.runIntegratedCmr({
         familyBase: ctx.familyBase!,
