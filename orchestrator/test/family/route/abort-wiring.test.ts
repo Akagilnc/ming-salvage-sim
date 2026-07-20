@@ -229,6 +229,13 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
     expect(abort.familyHeadAfter).toBe("+294");
     expect(abort.reason).toContain("TS2345");
 
+    // #1069: the red wave was routed UNIFORMLY through the triage judge court
+    // (typed toolchain verdict), and that terminal never opened a fixer round —
+    // the durable ledger has wave-verify-judge but NO wave-verify-fix (zero-spin).
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).not.toContain("wave-verify-fix");
+
     // mergedSet is untouched: 294 merged counts; the aborted entry does NOT.
     const merged = mergedSet(backend.ledger);
     expect(merged.has(294)).toBe(true);
