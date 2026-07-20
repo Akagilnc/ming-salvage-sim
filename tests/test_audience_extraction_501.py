@@ -269,6 +269,39 @@ def test_present_roster_consumes_presence_effect_not_freetext(game):
     assert "甲" not in present and "乙" in present
 
 
+def test_extraction_exit_with_open_tag_leaves_all_presence_derivers(game):
+    """单一在场模型：抽取退场（presence_effect=exit，tags 为开放叙事标签「退侍」而非口令常量）
+    须同时反映于 present_names_at 与 audible_entries_for，不得只在 persons_present_tonight 生效。
+
+    防双真源分叉——present_names_at 若仍只认 tags，退场者会留在名单、其退场后的殿上公开条目
+    仍流入其可闻区间（见知泄漏）。"""
+    db, state, content = game
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.ensure_summon_enter(db, nid, "甲")
+    an.ensure_summon_enter(db, nid, "乙")
+
+    ctid = db.create_chat_turn(state, "甲", "s", 0, night_id=nid)
+    ctid_seq = db.conn.execute(
+        "SELECT night_seq FROM chat_turns WHERE id=?", (ctid,)
+    ).fetchone()["night_seq"]
+    # 开放叙事标签「退侍」≠ 口令常量 TAG_EXIT；退场只由机器可读 presence_effect 承载。
+    db.settle_story_extraction(
+        ctid, nid,
+        [{"person_names": ["甲"], "body": "甲自行退至殿侧后离去", "presence_effect": "exit",
+          "tags": ["退侍"]}],
+        int(ctid_seq),
+    )
+    # 甲退场后又有一条殿上公开入殿账（丙宣入）——甲已不在场，不该闻此后公开条目。
+    an.ensure_summon_enter(db, nid, "丙")
+
+    present = an.present_names_at(db, nid)
+    assert "甲" not in present  # 与 persons_present_tonight 一致，不留在名单
+    assert an.persons_present_tonight(db, nid) == present  # 两派生同核
+    audible_bodies = [e["body"] for e in an.audible_entries_for(db, nid, "甲")]
+    assert not any("丙" in b for b in audible_bodies)  # 退场后公开条目不泄漏给甲
+
+
 def test_present_roster_ignores_unextracted_reply(game):
     """待补期间派生只认已落账：未抽的回话涉及人不进在场名单（AC9）。"""
     db, state, content = game
