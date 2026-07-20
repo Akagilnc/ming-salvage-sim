@@ -1201,6 +1201,8 @@ class GameDB:
                 tags TEXT NOT NULL DEFAULT '[]',
                 -- #501 抽取账溯源：0=口令/框架账；>0=由该对话轮叙事抽取而来
                 source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                -- #506 轮级撤销绑定：口令账由某轮 attach 创建时绑该轮；0=框架账不随轮撤
+                origin_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 -- #501 机器可读在场效果（ADR 0035 线上 R2）：''=无 / 'enter'=进 / 'exit'=出
                 presence_effect TEXT NOT NULL DEFAULT '',
                 -- #501 时序键（ADR 0036 cmr R7）：口令账=自身 seq；抽取账=源对话轮原始时序，
@@ -1678,6 +1680,11 @@ class GameDB:
         self.ensure_column("chat_turns", "extract_status", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "story_ledger_entries", "source_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
+        # #506 轮级撤销：口令账（入殿/告退等，source_chat_turn_id==0）由某一轮 attach 创建时
+        # 绑该轮 chat_turn_id，供撤回按轮删（抽取账走 source_chat_turn_id，口令账走此列）。
+        # 0=非某轮所产的框架账（开夜/员额/收夜），撤回不删。
+        self.ensure_column(
+            "story_ledger_entries", "origin_chat_turn_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "story_ledger_entries", "presence_effect", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("story_ledger_entries", "order_key", "REAL")
@@ -7801,6 +7808,14 @@ class GameDB:
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
             return []
+        # #506 撤回安全（ADR 0038 cmr R4）：后台写入前校验目标轮存活——已撤回/失败的轮
+        # 不得被在飞抽取补跑复活（否则留 source_chat_turn_id 指向已撤轮的孤儿账）。与
+        # audience_pipeline 读心尾的死轮闸同判据（status ∈ {failed, undone} = 死轮）。
+        srow = self.conn.execute(
+            "SELECT status FROM chat_turns WHERE id = ?", (cid,),
+        ).fetchone()
+        if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
+            return []
         base = float(int(source_night_seq or 0)) + 0.5
         new_ids: List[int] = []
         with atomic(self):
@@ -8059,6 +8074,16 @@ class GameDB:
             raise ValueError("该召对已经撤回或不可撤回。")
         if not self.is_global_last_active_chat_turn(int(chat_turn_id)):
             raise ValueError("只能撤回全局最后一轮召对。")
+        # #506 封窗：收夜/颁诏封住撤回窗口（ADR 0038）。该轮所在夜一旦进入 closing/closed，
+        # 撤回不跨已收的夜——已应允暂存已在收夜提交、账已成史，此后反悔按 ADR 0006 是新的
+        # 游戏内命令而非 undo。phase 闸只守颁诏结算相位、守不住「夜已收但相位未变」的窗口。
+        night_id = int(turn_row.get("night_id") or 0)
+        if night_id > 0:
+            nrow = self.conn.execute(
+                "SELECT status FROM audience_nights WHERE id = ?", (night_id,),
+            ).fetchone()
+            if nrow is not None and str(nrow["status"] or "") in {"closing", "closed"}:
+                raise ValueError("本夜已收（或颁诏封窗），撤回窗口已关，不能撤回该轮召对。")
         items = self.conn.execute(
             """
             SELECT * FROM chat_turn_rollback_items
@@ -8114,6 +8139,15 @@ class GameDB:
             self.conn.execute(
                 "DELETE FROM mindreading_records WHERE chat_turn_id = ?",
                 (int(chat_turn_id),),
+            )
+            # #506：删该轮所产故事账——抽取账走 source_chat_turn_id、该轮 attach 创建的
+            # 入殿等口令账走 origin_chat_turn_id。晚落的补跑抽取账也按 source 删（不受
+            # 前像快照时刻限制）；开夜/员额/收夜等框架账 origin==0、不随本轮撤。撤回后
+            # 「按夜取数（账+在场）与该轮未发生等价」（ADR 0038）。
+            self.conn.execute(
+                "DELETE FROM story_ledger_entries "
+                "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
+                (int(chat_turn_id), int(chat_turn_id)),
             )
             self._restore_chat_rollback_items_in_tx(items, message_ids)
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。

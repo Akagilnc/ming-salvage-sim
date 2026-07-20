@@ -70,6 +70,24 @@ DEFAULT_IN_FLIGHT_POLL_S = 0.05
 _CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office", "consort"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
 
+# ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）───────────────────────
+# 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**这可枚举的两项，其余结构化
+# 后果一律走 ADR 0006 待确认暂存、收夜才提交。每项映射其直写落地的真实盘面表；新增任何
+# 夜内直写必须过设计审、显式扩本表，否则撤回逆转不净。〔白名单第三项「召对口关系边事件」
+# 随 #479/ADR 0082 另片过审，不在本片。〕
+NIGHT_DIRECT_WRITE_WHITELIST: Dict[str, frozenset] = {
+    "密令落地": frozenset({"secret_orders", "secret_order_briefs"}),
+    "未在册人物入册": frozenset({"characters", "character_offices"}),
+}
+
+# 夜内结构化写可能触及、且属真实盘面（非暂存/候选层）的表全集——审计据此判越权：落在此集
+# 却不在白名单授权的直写 = 越权夜内直写。暂存/候选层（pending_actions/turn_directives）是
+# 待确认层、收夜才提交，不算真实盘面直写，不在此集。
+_REAL_BOARD_TABLES = frozenset({
+    "characters", "character_offices", "consort_traits", "factions",
+    "secret_orders", "secret_order_briefs",
+})
+
 
 class AudienceNightError(Exception):
     """召对夜域响亮失败（死账 / 在飞 / 坏输入 / 提交失败）。"""
@@ -239,6 +257,7 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
             "body": str(raw.get("body") or ""),
             "tags": [str(t) for t in _json_list(raw.get("tags"))],
             "source_chat_turn_id": int(raw.get("source_chat_turn_id") or 0),
+            "origin_chat_turn_id": int(raw.get("origin_chat_turn_id") or 0),
             "presence_effect": str(raw.get("presence_effect") or ""),
             "created_at": raw.get("created_at"),
             "kind": "ledger",
@@ -247,8 +266,11 @@ def list_ledger(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
 
 def list_chat_turns_for_night(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    # 撤回的轮（status='undone'）从「按夜取数」隐去——与「该轮未发生」等价（#506）。
+    # failed 半场轮同样不计入夜时间线。
     rows = db.conn.execute(
-        "SELECT * FROM chat_turns WHERE night_id = ? ORDER BY night_seq ASC, id ASC",
+        "SELECT * FROM chat_turns WHERE night_id = ? AND status NOT IN ('undone', 'failed') "
+        "ORDER BY night_seq ASC, id ASC",
         (int(night_id),),
     ).fetchall()
     return [_row_dict(r) for r in rows]
@@ -272,6 +294,65 @@ def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
         })
     events.sort(key=lambda x: (float(x["seq"]), 0 if x["kind"] == "ledger" else 1, int(x["payload"].get("id") or 0)))
     return events
+
+
+def _night_direct_write_allowed_tables() -> frozenset:
+    allowed: set[str] = set()
+    for tables in NIGHT_DIRECT_WRITE_WHITELIST.values():
+        allowed |= set(tables)
+    return frozenset(allowed)
+
+
+def audit_night_direct_writes(db: Any, night_id: int) -> set[str]:
+    """审计一夜内对真实盘面的直写全部落在可枚举白名单内（ADR 0038 防坑不变式，#506 AC3）。
+
+    撤回逆转干净的前提 = 夜内对真实盘面的直写只有白名单两项（密令落地、未在册人物入册），
+    其余结构化后果全走待确认暂存、收夜才提交。经该夜各未撤/未失败轮的前像撤销日志
+    （chat_turn_rollback_items 记录本轮触碰过的业务表）核真：任一真实盘面表被直写、却不属
+    白名单授权 → 越权夜内直写，写错误包并响亮咬住（此类直写撤回逆转不净，是设计洞）。
+
+    返回观测到的白名单操作名集（合法夜用于确认「密令落地/入册」确经白名单落地）。
+    """
+    allowed = _night_direct_write_allowed_tables()
+    rows = db.conn.execute(
+        """
+        SELECT DISTINCT i.target_table
+        FROM chat_turn_rollback_items i
+        JOIN chat_turns t ON t.id = i.chat_turn_id
+        WHERE t.night_id = ? AND t.status NOT IN ('undone', 'failed')
+        """,
+        (int(night_id),),
+    ).fetchall()
+    observed_ops: set[str] = set()
+    violations: List[str] = []
+    for row in rows:
+        table = str(row["target_table"] if hasattr(row, "keys") else row[0])
+        if table not in _REAL_BOARD_TABLES:
+            continue  # 暂存/候选层非真实盘面直写，不审
+        if table not in allowed:
+            violations.append(table)
+            continue
+        for op, tables in NIGHT_DIRECT_WRITE_WHITELIST.items():
+            if table in tables:
+                observed_ops.add(op)
+    if violations:
+        tables_sorted = sorted(set(violations))
+        message = (
+            f"越权夜内直写：{('、'.join(tables_sorted))} 不在夜内直写白名单"
+            f"（授权表：{sorted(allowed)}）——须走待确认暂存或过设计审扩白名单。"
+        )
+        pack = write_audience_error_pack(
+            kind="unwhitelisted_night_write",
+            message=message,
+            detail={"night_id": int(night_id), "tables": tables_sorted},
+        )
+        raise AudienceNightError(
+            message,
+            code="unwhitelisted_night_write",
+            error_pack_path=pack,
+            detail={"night_id": int(night_id), "tables": tables_sorted},
+        )
+    return observed_ops
 
 
 def _allocate_seq(db: Any, night_id: int) -> int:
@@ -341,12 +422,16 @@ def append_ledger_entry(
     source_chat_turn_id: int = 0,
     presence_effect: str = "",
     order_key: Optional[float] = None,
+    origin_chat_turn_id: int = 0,
 ) -> int:
     """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
 
     抽取账（#501）额外带溯源 `source_chat_turn_id`、机器可读 `presence_effect`
     （''/enter/exit）与时序键 `order_key`（绑定源对话轮原始时序，补跑落回原位）；
     口令/框架账三者取默认（0/''/NULL），读取端 order_key 缺省 COALESCE 回退 seq。
+
+    `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
+    撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
     """
     night = get_night(db, night_id)
     if night is None:
@@ -372,8 +457,8 @@ def append_ledger_entry(
         """
         INSERT INTO story_ledger_entries
             (night_id, seq, person_names, audibility, body, tags,
-             source_chat_turn_id, presence_effect, order_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_chat_turn_id, presence_effect, order_key, origin_chat_turn_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(night_id),
@@ -385,6 +470,7 @@ def append_ledger_entry(
             int(source_chat_turn_id or 0),
             presence_effect or "",
             None if order_key is None else float(order_key),
+            int(origin_chat_turn_id or 0),
         ),
     )
     if commit and _should_commit(db):
@@ -499,6 +585,7 @@ def summon_enter(
     method: str = METHOD_XUANRU,
     body: str = "",
     audibility: str = AUDIBILITY_PUBLIC,
+    origin_chat_turn_id: int = 0,
 ) -> int:
     name = str(person_name or "").strip()
     if not name:
@@ -512,6 +599,7 @@ def summon_enter(
         body=text,
         tags=[TAG_ENTER, method],
         check_dead=True,
+        origin_chat_turn_id=origin_chat_turn_id,
     )
 
 
@@ -879,10 +967,15 @@ def dismiss_from_audience(
     *,
     night_id: Optional[int] = None,
     body: str = "",
+    origin_chat_turn_id: int = 0,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
-    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。"""
+    不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
+
+    `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
+    使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
+    且被令退者永久差出）。0=不属某轮的独立令退（如 CLI「退下」控制口令，无对话轮、无撤回目标）。"""
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("令退人名不能为空", code="empty_person")
@@ -901,6 +994,7 @@ def dismiss_from_audience(
         body=body or f"帝令{name}退下，{name}告退。",
         tags=[TAG_EXIT],
         check_dead=False,
+        origin_chat_turn_id=origin_chat_turn_id,
     )
 
 
@@ -1004,6 +1098,7 @@ def ensure_summon_enter(
     *,
     method: str = METHOD_XUANRU,
     body: str = "",
+    origin_chat_turn_id: int = 0,
 ) -> Optional[int]:
     name = str(person_name or "").strip()
     if not name:
@@ -1012,7 +1107,10 @@ def ensure_summon_enter(
     # 会去人，persons_entered_tonight「凡入过即并集」会漏——双真源导致 chat 有名单无）。
     if name in present_names_at(db, night_id):
         return None
-    return summon_enter(db, night_id, name, method=method, body=body)
+    return summon_enter(
+        db, night_id, name, method=method, body=body,
+        origin_chat_turn_id=origin_chat_turn_id,
+    )
 
 
 def attach_chat_turn_to_night(
@@ -1077,14 +1175,28 @@ def attach_chat_turn_to_night(
             db, state, time_of_day=time_of_day, location=location, body=open_body,
         )
     night_id = int(night["id"])
-    ensure_summon_enter(db, night_id, minister_name, method=summon_method, body=enter_body)
-    chat_turn_id = db.create_chat_turn(
-        state,
-        minister_name,
-        agno_session_id,
-        agno_runs_before,
-        night_id=night_id,
-    )
+    # 入殿账须早于本轮对话轮落 seq（进殿在先、奏对在后，时序对齐）；chat_turn_id 此时尚未
+    # 生成，故先落账后建轮，再回绑 origin_chat_turn_id——撤回本轮据此删该轮所产入殿账（#506）。
+    # 三步（落入殿账 / 建轮 / 回绑 origin）整段原子（#506 L2）：中途崩溃则全回滚，绝不留
+    # origin=0 的孤儿入殿账（否则撤回删不掉、与令退残留同形脏账）。seq 时序不变（enter 先 create
+    # 后，各自单调分配）；atomic 暂停内层 commit、末尾一次落定或整体回滚。
+    from ming_sim.applier import atomic
+    with atomic(db):
+        enter_entry_id = ensure_summon_enter(
+            db, night_id, minister_name, method=summon_method, body=enter_body,
+        )
+        chat_turn_id = db.create_chat_turn(
+            state,
+            minister_name,
+            agno_session_id,
+            agno_runs_before,
+            night_id=night_id,
+        )
+        if enter_entry_id:
+            db.conn.execute(
+                "UPDATE story_ledger_entries SET origin_chat_turn_id = ? WHERE id = ?",
+                (int(chat_turn_id), int(enter_entry_id)),
+            )
     return night_id, int(chat_turn_id)
 
 
