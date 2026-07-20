@@ -19,14 +19,9 @@ wave's children merged) came back RED. Triage which kind of red it is:
 - a toolchain / environment failure that only a fresh green re-verify can clear.
 
 The red verify evidence (the failing run's output package) is mounted for you in
-the git-ignored focus file `.wave-verify-focus.md` in the family-base worktree —
-read it first. Prior court verdicts (session-loss recovery, trajectory) follow
-the persistent judge seat rules already in your soul.
-
-Green is a fact, not an opinion: the **green mechanical re-verify receipt is the
-only convergence authority** (ADR 0145). Review opinion only guides the repair —
-never declares the gate closed. A `converged` verdict is impossible here until a
-re-verify comes back green; while the rerun is red you route `continue`.
+the git-ignored focus file `.cmr-focus.md` in the family-base worktree — read it
+first. Prior court verdicts (session-loss recovery, trajectory) follow the
+persistent judge seat rules already in your soul.
 
 ## Output contract
 
