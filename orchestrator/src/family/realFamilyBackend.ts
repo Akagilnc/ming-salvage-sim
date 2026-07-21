@@ -2458,6 +2458,10 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
+    // #1091: mount claude credentials file for panel-leg `claude` CLIs, same as
+    // cmrSandboxConfig. Without it claude-family panel legs fail to authenticate
+    // (claude-family judge workers scrub CLAUDE_CODE_OAUTH_TOKEN from children).
+    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };

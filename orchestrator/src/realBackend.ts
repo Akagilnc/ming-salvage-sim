@@ -921,14 +921,19 @@ export function assertClaudePanelLegAuth(input: {
 }): string | undefined {
   const hasClaudeLeg = input.reviewLegs.some((leg) => leg.family === "claude");
   if (!hasClaudeLeg) return undefined;
-  if (input.claudeToken !== undefined) return undefined;
+  // #1091 fix: claude-family judge workers scrub CLAUDE_CODE_OAUTH_TOKEN from
+  // their Bash children, so nested `claude -p` panel legs never see the token
+  // env. The credentials FILE mount (claudeAuthDir) is the only path that works
+  // for panel legs; the token alone no longer passes.
   if (input.claudeAuthDir !== undefined) return undefined;
   return (
-    "cmrReview includes a claude-family panel leg but no Claude auth path is " +
-    "available (need ~/.sc-claude-token for CLAUDE_CODE_OAUTH_TOKEN and/or a " +
-    "readable ~/.claude/.credentials.json to mount). Keychain-only host " +
-    "Claude login cannot be exported into the sandbox — pick a non-claude " +
-    "cmrReview leg or materialize file/token credentials."
+    "cmrReview includes a claude-family panel leg but no Claude credentials " +
+    "file mount is available (claude-family judge workers scrub " +
+    "CLAUDE_CODE_OAUTH_TOKEN from child processes, so nested `claude -p` " +
+    "panel legs need a readable ~/.claude/.credentials.json mounted at " +
+    SANDBOX_CLAUDE_CREDENTIALS_FILE +
+    "). Keychain-only host Claude login cannot be exported into the sandbox " +
+    "— pick a non-claude cmrReview leg or materialize file credentials."
   );
 }
 

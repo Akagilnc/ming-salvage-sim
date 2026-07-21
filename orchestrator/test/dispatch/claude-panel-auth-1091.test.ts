@@ -20,6 +20,8 @@ import {
   assertClaudePanelLegAuth,
   provisionFamilyWorkerAuth,
 } from "../../src/realBackend.js";
+import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import type { WorkerSpec, DispatchContext } from "../../src/types.js";
 
 const tempRoots: string[] = [];
 afterEach(() => {
@@ -89,23 +91,92 @@ describe("#1091 claude panel-leg auth", () => {
     expect(msg).toMatch(/credentials/i);
   });
 
-  it("assertClaudePanelLegAuth accepts token-only or credentials-dir auth", () => {
+  it("assertClaudePanelLegAuth requires credentials-dir for claude legs (token alone insufficient)", () => {
+    // Token-only no longer passes: claude-family judge workers scrub
+    // CLAUDE_CODE_OAUTH_TOKEN from child processes (#1091 fix).
     expect(
       assertClaudePanelLegAuth({
         reviewLegs: [{ family: "claude" }],
         claudeToken: "tok",
       }),
-    ).toBeUndefined();
+    ).toMatch(/credentials/i);
+    // Credentials dir is the valid auth path for claude panel legs.
     expect(
       assertClaudePanelLegAuth({
         reviewLegs: [{ family: "claude" }],
         claudeAuthDir: "/tmp/cmr-claude-auth-xyz",
       }),
     ).toBeUndefined();
+    // Non-claude legs are unaffected.
     expect(
       assertClaudePanelLegAuth({
         reviewLegs: [{ family: "grok" }],
       }),
     ).toBeUndefined();
+  });
+
+  it("familyReviewLoopSandboxConfig mounts claude credentials when claudeAuthDir is set", () => {
+    const home = mkHome("1091-review-loop-claude-");
+    // Create the claude auth dir + credentials file (ensureRegularFileForBindMount
+    // requires the file to exist before docker bind-mount).
+    const claudeAuthDir = join(home, "cmr-claude-auth-test");
+    mkdirSync(claudeAuthDir, { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(claudeAuthDir, CLAUDE_CREDENTIALS_FILENAME),
+      JSON.stringify({ claudeAiOauth: { accessToken: "tok" } }),
+      { mode: 0o600 },
+    );
+
+    const soulsDir = join(home, "souls");
+    mkdirSync(soulsDir, { recursive: true });
+
+    // Bypass constructor validation — only the pure config method is under test.
+    const backend = Object.create(
+      RealFamilyBackend.prototype,
+    ) as RealFamilyBackend;
+    (backend as any).opts = {
+      workingRepo: join(home, "repo"),
+      familyBase: "family-base",
+      ledgerDir: join(home, "ledger"),
+      repo: "owner/repo",
+      base: "main",
+      promptsDir: join(home, "prompts"),
+      soulsDir,
+      imageName: "test-image",
+      homeEnvFile: join(home, ".sc-home-env"),
+    };
+
+    const auth = {
+      claudeAuthDir,
+      claudeToken: "oauth-tok",
+    } as any;
+
+    const spec = {
+      id: "S9",
+      kind: "verify",
+      role: "verify",
+      soul: "verify",
+      model: "codex",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "clean",
+      promptFile: "verify.md",
+      maxIter: 1,
+      toolchain: [],
+    } as unknown as WorkerSpec;
+
+    const ctx = { familyBase: "family-base" } as unknown as DispatchContext;
+
+    const config = (backend as any).familyReviewLoopSandboxConfig(
+      auth,
+      spec,
+      ctx,
+    );
+
+    expect(config.mounts).toContainEqual({
+      hostPath: join(claudeAuthDir, CLAUDE_CREDENTIALS_FILENAME),
+      sandboxPath: SANDBOX_CLAUDE_CREDENTIALS_FILE,
+      readonly: true,
+    });
   });
 });
