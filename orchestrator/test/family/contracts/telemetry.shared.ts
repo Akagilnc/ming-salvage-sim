@@ -176,9 +176,11 @@ class FamilyTelemetryBackend implements FamilyBackend {
   }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    // Record every dispatch (including panel-leg short-circuits) so runId
+    // telemetry assertions cover the full fan-out, not only non-leg workers.
+    this.ctxs.push(ctx);
     const panelLeg = completeCmrPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
-    this.ctxs.push(ctx);
     if (spec.kind === "cmr") {
       const cmrPass = ctx.cmrPass ?? "correctness";
       // #919 M1/M2: live ship green is typed kind:judge status:converged.
