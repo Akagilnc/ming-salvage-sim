@@ -527,25 +527,6 @@ export function shouldOpenResidentJudgeCourtAtDispatch(
   return env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT === "1";
 }
 
-/** @deprecated use {@link shouldOpenResidentJudgeCourtAtDispatch} */
-export type OpenCourtDispatchMode = "real" | "test-stub";
-
-/** @deprecated use env ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1 */
-export function setOpenCourtDispatchModeForTests(
-  mode: OpenCourtDispatchMode,
-): void {
-  if (mode === "real") {
-    process.env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT = "1";
-  } else {
-    delete process.env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT;
-  }
-}
-
-/** @deprecated use {@link shouldOpenResidentJudgeCourtAtDispatch} */
-export function openCourtDispatchModeForTests(): OpenCourtDispatchMode {
-  return shouldOpenResidentJudgeCourtAtDispatch() ? "real" : "test-stub";
-}
-
 /**
  * THE seam entry point: dispatch a worker, preferring the backend's unified
  * `dispatchWorker` when implemented, else the legacy forwarding wrapper. The

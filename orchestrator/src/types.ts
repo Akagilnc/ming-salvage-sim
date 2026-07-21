@@ -636,6 +636,12 @@ export interface SessionContinuityLostEvent {
  */
 export interface CourtOpenedEvent {
   readonly event: "court_opened";
+  /**
+   * Resident judge session id — required. Only written after
+   * {@link requireOpenCourtSession} validates a non-empty id; rebuild treats
+   * missing sessionId as absent (would silent-fresh if omitted).
+   */
+  readonly sessionId: string;
   /** Model slug that owns the resident judge session. */
   readonly modelSlug: string;
   /** Human-readable open-court note (context loaded / authority set). */

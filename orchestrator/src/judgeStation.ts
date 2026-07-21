@@ -1074,7 +1074,10 @@ type ResidentJudgeLedgerRow = {
  * - judge-seat step with sessionId (S3/S6) → open (continuity refresh)
  * - else → absent
  *
- * Bookkeeping `session_continuity_lost` does not resurrect a dropped id.
+ * Bookkeeping `session_continuity_lost` on a **judge seat** does not resurrect
+ * a dropped id. Coder-seat continuity losses (S2/S5) must NOT orphan an open
+ * court — only judge seats write judge continuity loss post-#1081, and pre-#1081
+ * migration ledgers may still carry judge-seat rows.
  */
 export function rebuildResidentJudgeFromLedger(
   ledger: ReadonlyArray<ResidentJudgeLedgerRow>,
@@ -1084,8 +1087,11 @@ export function rebuildResidentJudgeFromLedger(
     if (entry.event === "court_dismissed") {
       return { status: "dismissed" };
     }
-    if (entry.event === "session_continuity_lost") {
-      // Continuity was abandoned; do not revive the dropped id from older rows.
+    if (
+      entry.event === "session_continuity_lost" &&
+      isJudgeSeat({ step: entry.step })
+    ) {
+      // Judge continuity abandoned; do not revive the dropped id from older rows.
       return { status: "absent" };
     }
     if (
@@ -1133,6 +1139,9 @@ export function rebuildResidentJudgeFromLedger(
  * - verify model changed under an open court (quota relay) — re-birth under
  *   the new seat model (old session cannot cross models)
  *
+ * Open + same model + not resume-capable → **fail** (AC#3: no silent fresh
+ * while court is open; matches runner resumeFor judge provider_incapable path).
+ *
  * `dismissed` always fails (no hanging resumeable session after converge).
  */
 export function requireResidentJudgeResume(input: {
@@ -1166,10 +1175,15 @@ export function requireResidentJudgeResume(input: {
     return { kind: "establish" };
   }
   if (!seatResumeCapable) {
-    // Provider cannot resume: re-establish fresh rather than hand a dead id.
-    // Distinct from silent mid-loop degrade — court model still matches seat;
-    // only the transport capability is missing (#955 / #1081).
-    return { kind: "establish" };
+    // AC#3 / resumeFor judge path: open same-model court + provider incapable
+    // must fail loud — never silent-establish a fresh per-round judge.
+    return {
+      kind: "fail",
+      reason:
+        `resident judge resume refused: seat model ${seatModel} is not ` +
+        "resume-capable (provider cannot continue the open-court session); " +
+        "silent fresh judge is illegal",
+    };
   }
   return { kind: "resume", sessionId: lifecycle.sessionId };
 }
