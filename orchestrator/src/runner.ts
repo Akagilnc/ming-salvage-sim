@@ -136,6 +136,7 @@ import {
   isJudgeSeat,
   JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeStatusFromOutput,
+  mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
@@ -173,6 +174,7 @@ import type {
   FindingRepairScope,
   HandoffStatus,
   IssueMeta,
+  LedgerBookkeepingEvent,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -339,6 +341,13 @@ function buildPersistentEntry(opts: {
    * Written on agent steps so planResume / resumeFor never guesses from memory.
    */
   modelSlug?: string;
+  /**
+   * Optional bookkeeping event folded onto the same durable write as an agent
+   * step (e.g. court_dismissed + judge converge — #1081 atomic dismiss).
+   */
+  event?: LedgerBookkeepingEvent["event"];
+  /** Human-readable note for a folded lifecycle event. */
+  reason?: string;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -371,6 +380,12 @@ function buildPersistentEntry(opts: {
   }
   if (opts.modelSlug !== undefined) {
     entry = { ...entry, modelSlug: opts.modelSlug };
+  }
+  if (opts.event !== undefined) {
+    entry = { ...entry, event: opts.event };
+  }
+  if (opts.reason !== undefined) {
+    entry = { ...entry, reason: opts.reason };
   }
   return entry;
 }
@@ -477,8 +492,13 @@ function answerPayload(
   };
 }
 
+/**
+ * Pure bookkeeping rows (event marker, no topology output). Agent steps that
+ * fold a lifecycle event onto the same durable write as their StepOutput
+ * (e.g. #1081 court_dismissed + judge converge) remain executable resume truth.
+ */
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
-  return entry.event != null;
+  return entry.event != null && entry.output == null;
 }
 
 /**
@@ -2311,6 +2331,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
     monitorHandle?: import("./types.js").WorkerMonitorHandle,
+    /**
+     * #1081: optional lifecycle event folded into the same durable write as
+     * this step (court_dismissed + judge converge atomicity).
+     */
+    lifecycleEvent?: {
+      readonly event: LedgerBookkeepingEvent["event"];
+      readonly reason?: string;
+    },
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
@@ -2330,6 +2358,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
       monitorHandle,
       ...(stepModelSlug !== undefined ? { modelSlug: stepModelSlug } : {}),
+      ...(lifecycleEvent !== undefined
+        ? {
+            event: lifecycleEvent.event,
+            ...(lifecycleEvent.reason !== undefined
+              ? { reason: lifecycleEvent.reason }
+              : {}),
+          }
+        : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -3374,6 +3410,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 }),
               },
             );
+          }
+          // Legal open-court escalate (same judgeStationReceiptSchema as S3/S6)
+          // must park via the global decision-gate edge — never swallow into
+          // court_opened / S2. Thread output into the loop so route(escalateOf)
+          // sees it (S1 previously left lastOutput stale).
+          const openCourtOutput: StepOutput | undefined =
+            openResult.kind === "completed"
+              ? openResult.output
+              : openResult.kind === "escalated"
+                ? mintJudgeEscalate(openResult.escalation)
+                : undefined;
+          const openCourtEscalate =
+            escalateOf(openCourtOutput) != null ||
+            (openCourtOutput?.kind === "judge" &&
+              openCourtOutput.status === "escalate");
+          if (openCourtEscalate && openCourtOutput !== undefined) {
+            const parked: StepOutput =
+              openCourtOutput.kind === "judge" &&
+              openCourtOutput.status === "escalate" &&
+              escalateOf(openCourtOutput) != null
+                ? openCourtOutput
+                : mintJudgeEscalate(
+                    escalateOf(openCourtOutput) ?? {
+                      reason: "open court escalated",
+                      diagnosis:
+                        "resident judge open court escalated at slice dispatch",
+                    },
+                  );
+            output = parked;
+            lastOutput = parked;
+            stepSessionId =
+              openResult.kind === "completed" || openResult.kind === "escalated"
+                ? openResult.sessionId
+                : undefined;
+            promptFile = JUDGE_OPEN_COURT_PROMPT_FILE;
+            break;
           }
           const openGate = requireOpenCourtSession({
             resultKind: openResult.kind,
@@ -4423,9 +4495,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
     // (zero readers; dual-write already gone). #926 owns any roster consumption.
     // #955: in-memory parity with emitLedger modelSlug (resume identity).
+    //
+    // #1081 / ADR 0147: fold court_dismissed into the SAME durable write as the
+    // product-converge judge step (no two-write crash window that leaves a
+    // permanently open court after full completion). Product convergence
+    // includes terminal-only continue that routes like converged. Only when
+    // court was opened at dispatch (court_opened row) — late S3 establish
+    // without birth has no hanging court to dismiss.
     const inMemoryModelSlug = isWorkerStep(step)
       ? stepSpecs[step].model
       : undefined;
+    const dismissCourtOnThisWrite =
+      isJudgeSeat({ step }) &&
+      output !== undefined &&
+      judgeStatusFromOutput(output) === "converged" &&
+      typeof judgeSessionId === "string" &&
+      ledger.some((e) => e.event === "court_opened");
+    const courtDismissReason =
+      "resident judge court dismissed after slice convergence (#1081)";
+    if (dismissCourtOnThisWrite) {
+      // Clear in-memory resident handle before the write so a later failure
+      // path cannot resume a court we already decided to close.
+      judgeSessionId = undefined;
+      judgeSessionModel = undefined;
+    }
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
@@ -4443,6 +4536,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined
         ? { monitorHandle: stepMonitorHandle }
+        : {}),
+      ...(dismissCourtOnThisWrite
+        ? {
+            event: "court_dismissed" as const,
+            reason: courtDismissReason,
+          }
         : {}),
     });
     // #6: a writeLedger failure here is a backend-call exception → it must
@@ -4463,6 +4562,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         stepMonitorHandle,
+        dismissCourtOnThisWrite
+          ? {
+              event: "court_dismissed",
+              reason: courtDismissReason,
+            }
+          : undefined,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
@@ -4477,64 +4582,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         output,
         findingDispositions: stepFindingDispositions,
       });
-    }
-
-    // #1081 / ADR 0147: dismiss resident court after the judge step row is
-    // recorded (so agent-step finds stay clean). Product convergence includes
-    // terminal-only continue that routes like converged. No residual resumeable
-    // hanging session after the slice closes. Only when court was opened at
-    // dispatch (court_opened row) — late S3 establish without birth has no
-    // hanging court to dismiss.
-    if (
-      isJudgeSeat({ step }) &&
-      output !== undefined &&
-      judgeStatusFromOutput(output) === "converged" &&
-      typeof judgeSessionId === "string" &&
-      ledger.some((e) => e.event === "court_opened")
-    ) {
-      const dismissedId = judgeSessionId;
-      judgeSessionId = undefined;
-      judgeSessionModel = undefined;
-      const dismissTs = new Date().toISOString();
-      const dismissEntry = {
-        step,
-        event: "court_dismissed" as const,
-        sessionId: dismissedId,
-        reason:
-          "resident judge court dismissed after slice convergence (#1081)",
-        ts: dismissTs,
-      };
-      ledger.push(dismissEntry);
-      if (stateDir !== undefined) {
-        try {
-          await backend.writeLedger(
-            {
-              ...dismissEntry,
-              sessionId: dismissedId,
-              prompt_hash: await hashPrompt(undefined, step, backend),
-              branchHEAD: await resolveBranchHEAD(),
-              ts: dismissTs,
-              runId,
-            },
-            stateDir,
-          );
-        } catch (err) {
-          return await errorTermination(
-            step,
-            new Error(
-              `record_persist_failed: court_dismissed: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            ),
-            {
-              recordInMemory: false,
-              output,
-              findingDispositions: stepFindingDispositions,
-              cause: "record_persist_failed",
-            },
-          );
-        }
-      }
     }
 
     // #926: after a judge continue row is durably recorded, execute optional

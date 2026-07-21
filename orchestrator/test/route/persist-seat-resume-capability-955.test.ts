@@ -157,10 +157,11 @@ describe("#955 persistent seat resume capability gate", () => {
     expect(resumeCapableForSlug("grok-4.5")).toBe(true);
   });
 
-  it("same slug but resume-incapable provider: coder S5 fresh; judge does not silent-fresh (AC#3)", async () => {
+  it("same slug but resume-incapable provider: coder S2 ok; judge establish fails loud (AC#3)", async () => {
     // #936: seat via Coder-Rec. Spy capability gate — no permanent incapable roster slug.
-    // Coder soft-degrades to fresh. Resident judge with an established session +
-    // incapable provider fails loud (#1081 AC#3 / L2 — no per-round fresh judge).
+    // Coder soft-degrades to fresh. Resident judge establish (absent + incapable)
+    // fails loud at create time — same gate as open-court (#1081 AC#3; never mint
+    // a non-resume-capable "resident" and waste a judging round).
     const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
     const mod = await import("../../src/modelRegistry.js");
     const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
@@ -173,12 +174,13 @@ describe("#955 persistent seat resume capability gate", () => {
         return { spec: backend.specs[i]!, ctx: backend.ctxs[i]! };
       };
       expect(byId("S2").spec.model).toBe("grok-4.5");
-      const s5 = byId("S5");
-      expect(s5.spec.session).toBe("fresh");
-      expect(s5.ctx.resumeSessionId).toBeUndefined();
-      // Negative: no silent-fresh S6 resident judge after open same-model court.
+      expect(byId("S2").spec.session).toBe("fresh");
+      // Negative: establish failed before any fix/re-judge round.
+      expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+      expect(backend.specs.some((s) => s.id === "S6")).toBe(false);
+      // Negative: no silent-fresh S3 resident judge under an incapable seat.
       expect(
-        backend.specs.some((s) => s.id === "S6" && s.session === "fresh"),
+        backend.specs.some((s) => s.id === "S3" && s.session === "fresh"),
       ).toBe(false);
     } finally {
       spy.mockRestore();
