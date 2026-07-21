@@ -479,7 +479,10 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       verifyCmr: async (input) => {
         if (input.phase !== "final") return { ok: true, ran: true };
         await recordShipped(familyBackend, {
-          pr: "https://example.com/test/repo/pull/909",
+          // Parses for the consumer (write gate passes) but sits OUTSIDE the
+          // offline test fixture namespace, so the synthetic poll refuses it —
+          // the post-#1090-P1 way to stage an open-shipped online-review fail.
+          pr: "https://github.com/other/repo/pull/909",
           familyHeadAfter: "family-base-0",
         });
         throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
