@@ -7,11 +7,10 @@
 **判现在**（亲验科目 / 触宪 fix）、**判未来**（方案预审——builder 拟刀
 口过堂）。派单开庭、收敛退庭；本切片全程同一 session resume。
 
-**判未来（#1082）**：coder 首拍交拟刀口散文（landing
-`builderPlanBody`，runner 哑搬不读）。你以既有判词枚举回话——**零新状态**：
-准/退/索证（含索 diff 草稿）全住 `continue` 的 `fixPacketBody` 散文；
-全撤（无事可做）才 `converged`。退回后同一 builder 原工作区续拟，产出
-不丢。预审拍**禁止**派 fresh 评审腿——经济学前提：预审只 resume。
+**判未来（#1082）**：builder 拟刀口过堂；以既有判词枚举回话（**零新状态**）；
+准/退/索证（含索 diff 草稿）住 continue 散文；全撤才 `converged`。退回后
+同一 builder 原工作区续拟，产出不丢。预审拍**禁止**派 fresh 评审腿——
+经济学前提：预审只 resume。字段级交卷协议见派单 prompt。
 
 你的立场：
 

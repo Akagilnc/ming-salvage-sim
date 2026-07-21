@@ -1,9 +1,8 @@
 /**
  * #1082 / ADR 0147 — coder plan-phase closed loop (铺码前过堂).
  *
- * Seams (Testing Decisions #1080 / PRD):
- * 1. Pure helpers — beat resolve / plan phase / route continue
- * 2. runOrchestrator + scripted Backend — plan→judge→construct resume
+ * Seam (Testing Decisions #1080 / PRD): family/slice route entry + scripted
+ * worker backend only — no parallel helper-test seam.
  *
  * Vitest requires ORCHESTRATOR_CODER_PLAN_PHASE=1 (production always on).
  */
@@ -13,11 +12,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CODER_BEAT_CONSTRUCT,
   CODER_BEAT_PLAN,
-  coderBeatFromOutput,
-  isCoderPlanPhase,
-  latestPlanBodyFromLedger,
-  nextCoderBeatHint,
-  routeJudgeContinueForPlanPhase,
   shouldRunCoderPlanPhase,
 } from "../../src/coderPlanPhase.js";
 import { isJudgeOpenCourtSpec } from "../../src/judgeStation.js";
@@ -36,6 +30,7 @@ import type {
 import {
   completedJudge,
   judgeConverged,
+  judgeContinue,
   judgePlanContinue,
   OPEN_COURT_SESSION,
   openCourtWorkerResultIfMatch,
@@ -65,6 +60,11 @@ class PlanPhaseBackend implements Backend {
       readonly judgeResults?: ReadonlyArray<WorkerResult>;
       /** Force second coder beat to re-plan (退回 path). */
       readonly replanOnce?: boolean;
+      /**
+       * First S2 lies with construct cargo (committed+beat) — runner must
+       * still treat first wave as plan (AC: no construct before judge).
+       */
+      readonly firstBeatConstructLie?: boolean;
     },
   ) {}
 
@@ -116,6 +116,20 @@ class PlanPhaseBackend implements Backend {
           ? ctx.resumeSessionId
           : "sess-coder-plan";
       if (this.coderRound === 1) {
+        if (this.opts?.firstBeatConstructLie === true) {
+          // Lying cargo: claim construct on first beat — structural plan wins.
+          return {
+            kind: "completed",
+            sessionId,
+            output: {
+              kind: "coder",
+              committed: true,
+              commitsAdded: 1,
+              beat: CODER_BEAT_CONSTRUCT,
+              planBody: PLAN_BODY,
+            },
+          };
+        }
         return {
           kind: "completed",
           sessionId,
@@ -177,11 +191,7 @@ class PlanPhaseBackend implements Backend {
   }
 }
 
-describe("#1082 pure: coder plan-phase helpers", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
+describe("#1082 env gate (production always on)", () => {
   it("shouldRunCoderPlanPhase: production on; vitest off unless env (pos+neg)", () => {
     expect(shouldRunCoderPlanPhase({} as NodeJS.ProcessEnv)).toBe(true);
     expect(
@@ -194,118 +204,10 @@ describe("#1082 pure: coder plan-phase helpers", () => {
       } as NodeJS.ProcessEnv),
     ).toBe(true);
   });
+});
 
-  it("coderBeatFromOutput: explicit beat wins; commits imply construct (pos+neg)", () => {
-    expect(coderBeatFromOutput({ beat: "plan", committed: true, commitsAdded: 9 })).toBe(
-      CODER_BEAT_PLAN,
-    );
-    expect(
-      coderBeatFromOutput({ beat: "construct", committed: false, commitsAdded: 0 }),
-    ).toBe(CODER_BEAT_CONSTRUCT);
-    expect(coderBeatFromOutput({ committed: true, commitsAdded: 1 })).toBe(
-      CODER_BEAT_CONSTRUCT,
-    );
-    expect(coderBeatFromOutput({ committed: false, commitsAdded: 0 })).toBe(
-      CODER_BEAT_PLAN,
-    );
-    expect(coderBeatFromOutput(undefined)).toBe(CODER_BEAT_PLAN);
-  });
-
-  it("isCoderPlanPhase: first S2 always plan; construct after verdict ends phase", () => {
-    expect(isCoderPlanPhase([])).toBe(true);
-    expect(
-      isCoderPlanPhase([
-        {
-          step: "S2",
-          output: {
-            kind: "coder",
-            beat: "construct",
-            committed: true,
-            commitsAdded: 1,
-          },
-        },
-      ]),
-    ).toBe(true); // first wave is structurally plan even if cargo lies
-
-    const afterPlanApprove = [
-      {
-        step: "S2",
-        output: { kind: "coder", beat: "plan", committed: false, commitsAdded: 0 },
-      },
-      {
-        step: "S3",
-        output: { kind: "judge", status: "continue" },
-      },
-    ];
-    expect(isCoderPlanPhase(afterPlanApprove)).toBe(true);
-    expect(nextCoderBeatHint(afterPlanApprove)).toBe("after_plan_verdict");
-
-    expect(
-      isCoderPlanPhase([
-        ...afterPlanApprove,
-        {
-          step: "S2",
-          output: {
-            kind: "coder",
-            beat: "construct",
-            committed: true,
-            commitsAdded: 1,
-          },
-        },
-      ]),
-    ).toBe(false);
-
-    // 退回: re-plan keeps phase
-    expect(
-      isCoderPlanPhase([
-        ...afterPlanApprove,
-        {
-          step: "S2",
-          output: { kind: "coder", beat: "plan", committed: false, commitsAdded: 0 },
-        },
-      ]),
-    ).toBe(true);
-  });
-
-  it("latestPlanBodyFromLedger: positive body + negative missing", () => {
-    expect(latestPlanBodyFromLedger([])).toBeUndefined();
-    expect(
-      latestPlanBodyFromLedger([
-        {
-          step: "S2",
-          output: {
-            kind: "coder",
-            planBody: PLAN_BODY,
-          },
-        },
-      ]),
-    ).toBe(PLAN_BODY);
-  });
-
-  it("routeJudgeContinueForPlanPhase + route(): plan continue→S2; else S5/drift", () => {
-    expect(
-      routeJudgeContinueForPlanPhase({
-        planPhase: true,
-        liveFindingCount: 0,
-        terminalDispositionCount: 0,
-      }),
-    ).toEqual({ kind: "builder", step: "S2" });
-    expect(
-      routeJudgeContinueForPlanPhase({
-        planPhase: false,
-        liveFindingCount: 1,
-        terminalDispositionCount: 0,
-      }),
-    ).toEqual({ kind: "fixer", step: "S5" });
-    expect(
-      routeJudgeContinueForPlanPhase({
-        planPhase: false,
-        liveFindingCount: 0,
-        terminalDispositionCount: 0,
-      }),
-    ).toEqual({ kind: "empty_continue_drift" });
-
-    // Production route table
+describe("#1082 route table (real entry)", () => {
+  it("plan-phase continue→S2; post-construction continue→S5; S2→S3", () => {
     expect(
       route({
         from: "S3",
@@ -320,9 +222,12 @@ describe("#1082 pure: coder plan-phase helpers", () => {
         coderPlanPhase: false,
       }),
     ).toEqual({ kind: "next", step: "S5" });
-    expect(route({ from: "S2", output: { kind: "coder", committed: false, commitsAdded: 0 } })).toEqual(
-      { kind: "next", step: "S3" },
-    );
+    expect(
+      route({
+        from: "S2",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+      }),
+    ).toEqual({ kind: "next", step: "S3" });
   });
 });
 
@@ -429,6 +334,24 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
     });
   });
 
+  it("negative: first-beat construct cargo lie still routes plan→S2 not S5/S7", async () => {
+    await runPlanPhase(async () => {
+      const backend = new PlanPhaseBackend({
+        firstBeatConstructLie: true,
+      });
+      const result = await runOrchestrator({ issueNumber: 10823, backend });
+      expect(result.status).toBe("completed");
+      // Structural first wave stays plan: empty plan-continue resumes S2.
+      const s2 = backend.specs.filter((s) => s.id === "S2");
+      expect(s2.length).toBe(2);
+      expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+      const ids = backend.specs.map((s) =>
+        isJudgeOpenCourtSpec(s) ? "open-court" : s.id,
+      );
+      expect(ids).toEqual(["open-court", "S2", "S3", "S2", "S3"]);
+    });
+  });
+
   it("negative: without plan-phase env, empty continue still fails (no S2 spin)", async () => {
     vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
     // deliberately NOT set ORCHESTRATOR_CODER_PLAN_PHASE
@@ -443,5 +366,33 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
     // Must not resume a second S2 from empty continue.
     const s2Count = backend.specs.filter((s) => s.id === "S2").length;
     expect(s2Count).toBe(1);
+  });
+
+  it("negative: plan-phase terminal-only continue fails loud (no silent S7)", async () => {
+    await runPlanPhase(async () => {
+      const backend = new PlanPhaseBackend({
+        judgeResults: [
+          completedJudge(
+            judgeContinue([], {
+              kill: [
+                {
+                  identityKey: "bogus-plan-kill",
+                  action: "refute",
+                  reason: "not_established",
+                  evidence: "plan pre-review must not emit kill rows",
+                },
+              ],
+              fixPacketBody: "terminal-only under plan phase (illegal)",
+            }),
+          ),
+        ],
+      });
+      const result = await runOrchestrator({ issueNumber: 10824, backend });
+      expect(result.status).toBe("failed");
+      expect(result.errorPackage).toBeDefined();
+      // No second S2 construct and no silent completed handoff.
+      expect(backend.specs.filter((s) => s.id === "S2").length).toBe(1);
+      expect(result.status).not.toBe("completed");
+    });
   });
 });
