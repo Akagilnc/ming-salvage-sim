@@ -104,10 +104,10 @@ import {
   type LegTransport,
 } from "../legPaper.js";
 import {
-  cmrPanelLegPromptFile,
+  CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE,
+  CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE,
   panelLegCompletedResult,
 } from "./cmrPanelLegs.js";
-import type { IntegratedCmrPass } from "./types.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -1779,29 +1779,40 @@ export class RealFamilyBackend implements FamilyBackend {
       ).trim();
       legClone = this.preparePanelLegClone(spec.model, headSha);
       // Focus file was written once on workingRepo; copy into the independent clone.
+      // #1094 R3 F4: failed copy is a degraded transport (fail-loud), never a
+      // present leg reviewing invent-your-own scope.
       const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
       try {
         copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
-      } catch {
-        // Focus optional for degraded fixtures; leg still reviews the clone HEAD.
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        return {
+          kind: "failed",
+          reason:
+            `panel leg ${spec.model}: failed to stage ${CMR_FOCUS_FILENAME} ` +
+            `(pinned review scope) — ${detail}`,
+        };
       }
       const reviewerSoul = readFileSync(
         join(this.opts.soulsDir, "reviewer.md"),
         "utf8",
       );
-      // #1094 R2 F8: pass-keyed lens prompt (completeness vs correctness).
-      const pass: IntegratedCmrPass =
-        ctx.cmrPass === "completeness" || ctx.cmrPass === "correctness"
-          ? ctx.cmrPass
-          : "correctness";
+      // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
+      // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
       const promptTemplate = readFileSync(
-        join(this.opts.promptsDir, cmrPanelLegPromptFile(pass)),
+        join(this.opts.promptsDir, spec.promptFile),
         "utf8",
       );
+      const passLabel =
+        spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
+          ? "completeness"
+          : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
+            ? "correctness"
+            : spec.promptFile;
       const taskBody =
         `${promptTemplate.trim()}\n\n` +
         `Panel leg slug: ${spec.model}.\n` +
-        `CMR pass: ${pass}.\n` +
+        `CMR pass: ${passLabel}.\n` +
         `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
         `(or the assigned clone scope) and emit prose review on stdout.`;
       const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
@@ -1912,22 +1923,23 @@ export class RealFamilyBackend implements FamilyBackend {
       sandboxPath: string;
       readonly?: boolean;
     }[] = [];
-    // Mount only THIS leg's provider credentials (top-level agent — no nested CLI).
-    // CMR-leg-aware family resolution (#1094 R2 F7).
-    const family = modelFamilyForCmrReviewLeg(spec.model);
-    if (family === "codex" && auth.codexAuthDir !== undefined) {
+    // Mount credentials for the provider that will actually execute (#1094 R3 F1):
+    // pool rewrite (ctx.billingPool) can change the CLI even when the registry
+    // row stays e.g. gpt-5.6-sol / opus.
+    const pool = isBillingPoolDispatchId(ctx.billingPool)
+      ? ctx.billingPool
+      : undefined;
+    const provider = resolveModelSlugForPool(spec.model, pool).provider;
+    if (provider === "codex" && auth.codexAuthDir !== undefined) {
       mounts.push({
         hostPath: auth.codexAuthDir,
         sandboxPath: SANDBOX_CODEX_DIR,
       });
     }
-    if (family === "agy" && auth.agyDir !== undefined) {
+    if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
     }
-    if (
-      (family === "other" || spec.host === "grok") &&
-      auth.grokAuthDir !== undefined
-    ) {
+    if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
         hostPath: auth.grokAuthDir,
         sandboxPath: SANDBOX_GROK_DIR,
@@ -3023,11 +3035,11 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Pure config for the cmr sandbox — #1094 F7 pure court + R2 F1 judge identity.
-   * Mounts ONLY the judge's own model-family credential (isomorphic to
-   * {@link panelLegSandboxConfig}). Nested-panel armament (review-legs env,
-   * CMR_* model env, multi-provider auth mounts) stays deleted — panel legs are
-   * runner-dispatched first-class workers.
+   * Pure config for the cmr sandbox — #1094 F7 pure court + R2 F1 judge identity
+   * + R3 F1 executing-provider mount.
+   * Mounts ONLY the credential for the CLI that will actually run (pool-aware
+   * via {@link resolveModelSlugForPool}), isomorphic to
+   * {@link panelLegSandboxConfig}. Nested-panel armament stays deleted.
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
@@ -3040,7 +3052,6 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    void ctx;
     // ORCHESTRATOR_REPO: the cmr worker runs `gh issue view` / `gh issue create`
     // needing `--repo "$ORCHESTRATOR_REPO"`.
     const env: Record<string, string> = {
@@ -3063,21 +3074,23 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
-    // Judge's OWN identity credential only (#1094 R2 F1) — not multi-provider armament.
-    const family = modelFamilyForSlug(spec.model);
-    if (family === "codex" && auth.codexAuthDir !== undefined) {
+    // Executing-provider credential only (#1094 R3 F1) — not registry-row family,
+    // not multi-provider armament. A 429 relay onto grok-build must mount ~/.grok
+    // even when the judge slug stays gpt-5.6-sol.
+    const pool = isBillingPoolDispatchId(ctx?.billingPool)
+      ? ctx.billingPool
+      : undefined;
+    const provider = resolveModelSlugForPool(spec.model, pool).provider;
+    if (provider === "codex" && auth.codexAuthDir !== undefined) {
       mounts.push({
         hostPath: auth.codexAuthDir,
         sandboxPath: SANDBOX_CODEX_DIR,
       });
     }
-    if (family === "agy" && auth.agyDir !== undefined) {
+    if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
     }
-    if (
-      (family === "other" || spec.host === "grok") &&
-      auth.grokAuthDir !== undefined
-    ) {
+    if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
         hostPath: auth.grokAuthDir,
         sandboxPath: SANDBOX_GROK_DIR,

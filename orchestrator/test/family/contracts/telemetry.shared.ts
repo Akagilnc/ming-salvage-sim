@@ -23,6 +23,8 @@ import { resolveRouteModels, routeSmokeEntries } from "../../../src/modelRoutes.
 
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+
 import {
   clearTelemetryRunEnvironment,
   readTelemetryRecords,
@@ -174,6 +176,8 @@ class FamilyTelemetryBackend implements FamilyBackend {
   }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const panelLeg = completeCmrPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     this.ctxs.push(ctx);
     if (spec.kind === "cmr") {
       const cmrPass = ctx.cmrPass ?? "correctness";

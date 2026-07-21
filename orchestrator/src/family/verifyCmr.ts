@@ -74,6 +74,7 @@ import {
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
+import { successfulLegsFromTransports } from "../legPaper.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2432,16 +2433,79 @@ async function runIntegratedCmrPass(input: {
     const panelRound = await dispatchFamilyCmrPanelLegs({
       legs: frozenLegs,
       cmrPass: pass,
-      dispatch: (legSpec) =>
-        dispatchOrAbort(familyBackend, legSpec, dispatchCtx, undefined, {
-          onMonitorHandle: (handle) => {
-            reviewerMonitorHandle = handle;
+      // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
+      // binding is for the cmr court slot (quota relay). Cross-vendor panel
+      // legs keep their own registry providers (or none).
+      dispatch: (legSpec) => {
+        const { billingPool: _judgePool, ...legDispatchCtx } = dispatchCtx;
+        void _judgePool;
+        return dispatchOrAbort(
+          familyBackend,
+          legSpec,
+          legDispatchCtx,
+          undefined,
+          {
+            onMonitorHandle: (handle) => {
+              reviewerMonitorHandle = handle;
+            },
           },
-        }),
+        );
+      },
     });
     // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
     // (not judge prose cargo). Empty array after a real fan-out still wins.
     const hostSkippedLegs = panelRound.skippedLegs;
+    // #1094 R3 F3: pure court with declared legs but ZERO successful transports
+    // must not converge — escalate (decision park) with skippedLegs reasons.
+    // One or more successful legs → optional-leg degrade still never blocks.
+    const successfulPanelLegs = successfulLegsFromTransports(
+      panelRound.transports,
+    );
+    if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
+      const reason = `family integrated cmr ${pass}: zero successful panel legs`;
+      const diagnosis =
+        hostSkippedLegs.length > 0
+          ? hostSkippedLegs
+              .map((leg) => `${leg.slug}: ${leg.reason}`)
+              .join("; ")
+          : "all declared panel legs failed or produced no legal review paper";
+      reviewRoundResult = {
+        kind: "escalated",
+        escalation: { reason, diagnosis },
+      };
+      const stopSummary = decisionGateParkStopSummary({
+        summary: `${reason} — ${diagnosis}`,
+        repairHint:
+          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
+        heads:
+          resolvedFamilyHeadAfter !== undefined
+            ? { actualFamilyHead: resolvedFamilyHeadAfter }
+            : undefined,
+      });
+      await persistFinalReviewRound("accepted", async () => {
+        await recordCmrReviewed(familyBackend, {
+          phase: ledgerPhase,
+          cmrPass: pass,
+          reason,
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          blockingFindingIdentityKeys: [],
+          judgeStatus: "escalate",
+          stopSummary,
+        });
+        await familyBackend.escalateFamily?.({
+          reason,
+          diagnosis,
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          stopSummary,
+          escalationKind: "decision",
+        });
+      });
+      return {
+        result: { ok: false, ran: true },
+        familyHeadAfter: resolvedFamilyHeadAfter,
+        resolvedRoute: activeRoute,
+      };
+    }
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       panelLegTransports: panelRound.transports.map((t) => ({

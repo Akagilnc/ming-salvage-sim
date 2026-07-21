@@ -40,6 +40,8 @@ import type {
 
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+
 const tempDirs: string[] = [];
 
 const STAGE_SHIP: ShipResult = {
@@ -146,6 +148,8 @@ class DispatchCapableBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    const panelLeg = completeCmrPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     return this.onDispatch(spec);
   }
 }
