@@ -4,6 +4,15 @@
 
 ## [未发布]
 
+## [0.40.0.0] - 2026-07-21
+
+### Added
+- **#1073–#1075 model-data 外置配置**：你现在可以直接改 `orchestrator/config/model-data.json`（或设 `ORCHESTRATOR_MODEL_DATA_PATH`）增减 coder 名册与 model registry 数据行，无需为名单开 PR；每次派工/换棒现读文件（无进程内缓存），缺文件或坏形状 fail-closed。
+
+### Changed
+- **#1074 coder roster** 与 **#1075 model registry** 消费者统一从 model-data 加载数据行；provider 工厂与 quota pool 表仍留在代码（ADR 0146）。
+- 文档 `docs/CODER_ROSTER.md` 改为指向外置配置真源，不再维护硬编码副本。
+
 ## [0.39.0.0] - 2026-07-20
 
 ### Added

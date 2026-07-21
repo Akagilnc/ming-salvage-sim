@@ -140,7 +140,7 @@ export const DEFAULT_POOL_MODELS: Readonly<
 /**
  * Map a modelRegistry provider factory onto the ADR 0124 billing boundary it
  * draws from. Orthogonal to roster: effort-variant registry slugs (e.g.
- * gpt-5.6-sol-low) are not CODER_ROSTER ids but still bill on codex-5h.
+ * gpt-5.6-sol-low) are not roster designer ids but still bill on codex-5h.
  */
 function billingPoolFromProvider(
   provider: string,
@@ -165,7 +165,7 @@ function billingPoolFromProvider(
  * Distinct from quota probing: codex and Claude have no #683 probe-pool id,
  * but their dispatched slugs still identify a billing pool for capacity relay.
  *
- * Order: CODER_ROSTER first (designer ids / aliases), then modelRegistry
+ * Order: live coder roster first (designer ids / aliases), then modelRegistry
  * provider (effort-variant / non-roster runnable slugs), then reverse
  * {@link DEFAULT_POOL_MODELS} membership (dual keys already listed on a pool).
  */
@@ -176,7 +176,7 @@ export function billingPoolForModelRef(
   // string-typed registry/roster peek (Gemini R1 / family/914 online).
   if (typeof modelRef !== "string") return undefined;
   // Single normalized token for roster + registry + pool membership.
-  // MODEL_SLUG_REGISTRY keys are lowercase; trim+lower matches that surface
+  // model-data registry keys are lowercase; trim+lower matches that surface
   // (Gemini R2 G2 / family/914 online).
   const needle = modelRef.trim().toLowerCase();
   if (needle.length === 0) return undefined;
