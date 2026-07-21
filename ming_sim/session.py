@@ -197,20 +197,50 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
 def _recent_audience_context_for_secret_order(
     db: Any, minister_name: str, turn: int, current_message: str, limit: int = 8,
 ) -> str:
-    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。"""
+    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。
+
+    #504 AC2「按夜取回」：喂料按**当前开着的夜**取回——只认本夜该大臣的对话轮
+    （撤回/失败轮排除），不让同回合上一夜的密谋正文串进本夜（接缝④「密令喂料按夜
+    从账/记录取回」）。无开着的夜（旧档/无夜路径）才回落 turn 域取回，语义不变。"""
     conn = getattr(db, "conn", None)
     if conn is None:
         return ""
+    night_id = 0
+    night_getter = getattr(db, "_current_open_night_id", None)
+    if callable(night_getter):
+        try:
+            night_id = int(night_getter() or 0)
+        except Exception:
+            night_id = 0
     try:
-        rows = conn.execute(
-            """
-            SELECT role, content FROM chat_messages
-            WHERE minister_name = ? AND turn = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (str(minister_name or ""), int(turn), int(limit)),
-        ).fetchall()
+        if night_id > 0:
+            # 本夜该大臣对话轮的用户/大臣消息（撤回 undone_at / failed·undone 轮排除）；
+            # 一轮两条消息各成一行，按 message id 序取最近 limit 条。
+            rows = conn.execute(
+                """
+                SELECT m.role AS role, m.content AS content
+                FROM chat_turns t
+                JOIN chat_messages m
+                  ON m.id IN (t.user_message_id, t.minister_message_id)
+                WHERE t.night_id = ?
+                  AND t.minister_name = ?
+                  AND t.undone_at IS NULL
+                  AND t.status NOT IN ('failed', 'undone')
+                ORDER BY m.id DESC
+                LIMIT ?
+                """,
+                (int(night_id), str(minister_name or ""), int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT role, content FROM chat_messages
+                WHERE minister_name = ? AND turn = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (str(minister_name or ""), int(turn), int(limit)),
+            ).fetchall()
     except Exception:
         return ""
     current = (current_message or "").strip()
