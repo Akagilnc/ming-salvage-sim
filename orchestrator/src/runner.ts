@@ -136,6 +136,7 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
+  isTerminalOnlyContinueDispositions,
   JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeStatusFromOutput,
   priorJudgeVerdictRowsFromLedger,
@@ -148,9 +149,8 @@ import {
   storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
-  isCoderPlanPhase,
   latestPlanBodyFromLedger,
-  nextCoderBeatHint,
+  scanCoderPlanPhase,
   shouldRunCoderPlanPhase,
 } from "./coderPlanPhase.js";
 import {
@@ -1185,7 +1185,8 @@ function planResume(
   const routeOutput = agentEntry?.output;
   // #1082: plan-phase continue resumes S2; ledger is sole phase truth.
   const coderPlanPhase =
-    shouldRunCoderPlanPhase() && isCoderPlanPhase(ledger as ReadonlyArray<LedgerEntry>);
+    shouldRunCoderPlanPhase() &&
+    scanCoderPlanPhase(ledger as ReadonlyArray<LedgerEntry>).planPhase;
   const decision = route({
     from: routeFrom,
     output: routeOutput,
@@ -3750,14 +3751,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               // #1082: plan-phase landing — transport plan body to judge and
               // judge boundary prose / beat hint to S2 without reading content.
-              const planPhaseActive =
-                shouldRunCoderPlanPhase() && isCoderPlanPhase(ledger);
+              // One ledger scan for phase + beat hint (no double walk).
+              const planScan = shouldRunCoderPlanPhase()
+                ? scanCoderPlanPhase(ledger)
+                : undefined;
               const planLanding =
-                planPhaseActive && (step === "S2" || step === "S3")
+                planScan?.planPhase === true && (step === "S2" || step === "S3")
                   ? {
                       ...(step === "S2"
                         ? {
-                            builderBeat: nextCoderBeatHint(ledger),
+                            builderBeat: planScan.beatHint,
                             ...(pendingFixPacketBody !== undefined
                               ? { fixPacketBody: pendingFixPacketBody }
                               : {}),
@@ -4362,10 +4365,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // (0 live AND 0 terminals) remains M6 contract drift —
                   // **except** #1082 plan-phase pre-review continue (准/退/索证
                   // live in fixPacketBody prose; resume same S2 builder).
+                  const inPlanPhase =
+                    shouldRunCoderPlanPhase() &&
+                    scanCoderPlanPhase(ledger).planPhase;
                   if (projected.terminalDispositions.length === 0) {
-                    const planPhaseEmptyContinue =
-                      shouldRunCoderPlanPhase() && isCoderPlanPhase(ledger);
-                    if (!planPhaseEmptyContinue) {
+                    if (!inPlanPhase) {
                       // #919 M6 / family M1 isomorphic: true empty continue is
                       // court contract drift — never empty-spin S5. Unusable
                       // (non-judge) still routes to S5 above; route() continue→S5
@@ -4391,9 +4395,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     pendingBlockingFindingIdentityKeys = [];
                     pendingBlockingFindingCount = 0;
                     pendingFixPacketBody = authoredBody;
+                  } else if (
+                    inPlanPhase &&
+                    isTerminalOnlyContinueDispositions(output.findingDispositions)
+                  ) {
+                    // #1082 G1: plan pre-review is zero-finding; terminal-only
+                    // continue would collapse to converged→S7 with no construct
+                    // (silent early completion). Fail loud — do not swallow.
+                    const reason =
+                      `judge ${step} plan-phase continue with terminal-only ` +
+                      `dispositions (0 live, ≥1 refute/suppress) — plan pre-review ` +
+                      `must not silent-converge without a construct beat`;
+                    return await errorTermination(step, new Error(reason), {
+                      output,
+                      findingDispositions,
+                      stopSummary: contractDriftStopSummary({
+                        summary: reason,
+                        repairHint:
+                          "plan pre-review continue carries boundaries in " +
+                          "fixPacketBody only (0 findingDispositions); do not " +
+                          "emit refute/suppress rows before construction",
+                      }),
+                    });
                   }
-                  // Terminal-only: pending open set already 0; fall through so
-                  // ledger records flips + continue envelope, then route → S7.
+                  // Post-construction terminal-only: fall through so ledger
+                  // records flips + continue envelope, then route → S7.
                 }
               }
             } else {
@@ -4627,7 +4653,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // not a fate input. Residual open-count paper is projected before route().
     // #1082: ledger already includes this step row — plan phase is sole truth.
     const coderPlanPhase =
-      shouldRunCoderPlanPhase() && isCoderPlanPhase(ledger);
+      shouldRunCoderPlanPhase() && scanCoderPlanPhase(ledger).planPhase;
     const decision = route({
       from: step,
       output: lastOutput,
