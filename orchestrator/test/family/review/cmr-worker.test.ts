@@ -681,7 +681,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
-    expect(spec.skill).toBe("ak-cross-m-review");
+    expect(spec.skill).toBe("ak-cmr-correctness");
     // FRESH session = a new pass-worker session, not a crash/escalate resume.
     expect(spec.session).toBe("fresh");
     // The pass worker is a clean reviewer boundary; blocking findings return to the
@@ -905,7 +905,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
 // ═══════════════════ 4. cmrSandboxConfig — agy auth runtime-mount + codex + claude ═══════════════════
 
-describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable dir)", () => {
+describe("#1094 cmrSandboxConfig — pure court (no nested-panel armament)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
   resolveLandingLiveHooks(input: {
@@ -922,13 +922,14 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
 
     public config(
       auth: CmrAuth,
-      spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+      _spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      return this.cmrSandboxConfig(auth, spec.cmrReviewLegs!);
+      void _spec;
+      return this.cmrSandboxConfig(auth);
     }
   }
 
@@ -949,77 +950,45 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     codexAuthDir: "/tmp/cmr-codex-auth",
     agyDir: "/tmp/cmr-agy",
     claudeToken: "tok-xyz",
+    grokAuthDir: "/tmp/cmr-grok-auth",
   };
 
-  it("mounts the agy writable dir onto the antigravity token path (the #333 gotcha)", () => {
+  it("injects the judge Claude token + cmr soul + ORCHESTRATOR_REPO (no nested legs)", () => {
     const cfg = cfgBackend().config(auth);
-    const agyMount = cfg.mounts.find((m) => m.sandboxPath === SANDBOX_AGY_DIR);
-    expect(agyMount).toBeDefined();
-    expect(agyMount!.hostPath).toBe("/tmp/cmr-agy");
-    // The agy leg WRITES into its config dir → it must NOT be read-only.
-    expect(agyMount!.readonly).not.toBe(true);
-  });
-
-  it("still mounts codex auth + injects the claude token + cmr soul (all three legs)", () => {
-    const cfg = cfgBackend().config(auth);
-    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("verify");
-    // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
-    // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
-    // (codex #384).
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
-  it("mounts isolated grok auth when the CMR route can dispatch grok", () => {
-    const cfg = cfgBackend().config({ ...auth, grokAuthDir: "/tmp/cmr-grok-auth" });
-    expect(cfg.mounts).toContainEqual({
-      hostPath: "/tmp/cmr-grok-auth",
-      sandboxPath: SANDBOX_GROK_DIR,
-    });
+  it("does NOT mount nested-panel provider auth dirs (codex/agy/grok)", () => {
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
   });
 
-  it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
-    // The completeness gate grounds against the live issue body via `gh issue view`;
-    // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
+  it("does NOT export ORCHESTRATOR_CMR_REVIEW_LEGS or CMR_CODEX_* nested-panel env", () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const cfg = cfgBackend().config(auth);
+    expect(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS).toBeUndefined();
+    expect(cfg.env.CMR_CODEX_MODEL).toBeUndefined();
+    expect(cfg.env.CMR_CODEX_EFFORT).toBeUndefined();
+  });
+
+  it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view`", () => {
     const cfg = cfgBackend().config({
-      codexAuthDir: "/tmp/cmr-codex-auth",
-      agyDir: "/tmp/cmr-agy",
       claudeToken: "tok-xyz",
       ghToken: "gho_cmr",
     });
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_cmr");
   });
 
-  it("omits GH_TOKEN when no gh token is present (NOT a hard blocker for cmr — the gate degrades but still runs)", () => {
-    // Unlike ship (which fail-closes on missing gh because it must `gh pr create`),
-    // the cmr worker injects gh only when present and still runs without it.
+  it("omits GH_TOKEN when no gh token is present", () => {
     const cfg = cfgBackend().config(auth);
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBeUndefined();
   });
 
-  it("the antigravity token path is the host-mirrored gemini path (#333 contract)", () => {
-    expect(SANDBOX_AGY_DIR).toBe("/home/agent/.gemini/antigravity-cli");
-  });
-
-  it("a leg whose auth is ABSENT degrades — no mount/env, never a crash (codex cmr R1)", () => {
-    // agy token absent ⇒ no agy mount, but the rest still mount (the 降级链).
-    const noAgy = cfgBackend().config({
-      codexAuthDir: "/tmp/cmr-codex-auth",
-      claudeToken: "tok",
-    });
-    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
-    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
-    expect(noAgy.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-
-    // claude token absent ⇒ no env var (the Claude Agent leg degrades).
-    const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
-    expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("verify");
-
-    // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
-    // no credential mounts, only the soul env — still no throw (the skill runs and
-    // will degrade/escalate in-container, never a host crash).
+  it("souls + home env mounts remain without credential mounts", () => {
     const none = cfgBackend().config({});
     expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
@@ -1031,83 +1000,6 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const cfg = cfgBackend().config(auth);
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
-  });
-
-  it("exports the route-selected CMR leg collection to the worker", () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-    const cfg = cfgBackend().config(auth);
-    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
-
-    expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.6-sol" },
-      { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy", optional: true },
-    ]);
-  });
-
-  it("exports frozen CMR legs from the worker spec, not later route env", () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-    const spec = cmrWorkerSpec("fresh", "correctness");
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    const cfg = cfgBackend().config(auth, spec);
-    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
-
-    expect(legs).toEqual([
-      { family: "codex", slug: "gpt-5.6-sol" },
-      { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy", optional: true },
-    ]);
-  });
-
-  // #768: baked skill `codex-review.sh` reads CMR_CODEX_MODEL (default gpt-5.5)
-  // and CMR_CODEX_EFFORT (default medium). Route labels alone are soft — sandbox
-  // must pin model + effort from the frozen cmrReview codex leg so leg
-  // execution ≡ registry/route authority.
-  it("#768 pins CMR_CODEX_MODEL from the route's cmrReview codex leg (sol)", () => {
-    const solLegs = [
-      { family: "codex", slug: "gpt-5.6-sol" },
-      { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy" },
-    ] as const;
-    const spec = {
-      ...cmrWorkerSpec("fresh", "correctness"),
-      cmrReviewLegs: solLegs,
-    };
-    const cfg = cfgBackend().config(auth, spec);
-    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
-    // Plain sol registry row effort is medium — must pin so baked default cannot
-    // silently diverge if the script default ever changes.
-    expect(cfg.env.CMR_CODEX_EFFORT).toBe("medium");
-  });
-
-  // Effort-variant registry slugs must pin CLI model id (gpt-5.6-sol) AND the
-  // registry row's effort — collapsing to model alone drops effort authority.
-  it("#768 pins CMR_CODEX_MODEL + CMR_CODEX_EFFORT for effort-variant codex legs", () => {
-    const lowLegs = [
-      { family: "codex", slug: "gpt-5.6-sol-low" },
-      { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy" },
-    ] as const;
-    const spec = {
-      ...cmrWorkerSpec("fresh", "correctness"),
-      cmrReviewLegs: lowLegs,
-    };
-    const cfg = cfgBackend().config(auth, spec);
-    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
-    expect(cfg.env.CMR_CODEX_EFFORT).toBe("low");
-  });
-
-  it("#768 omits CMR_CODEX_MODEL when the frozen legs have no codex review leg", () => {
-    const noCodex = {
-      ...cmrWorkerSpec("fresh", "correctness"),
-      cmrReviewLegs: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy" },
-      ],
-    };
-    const cfg = cfgBackend().config(auth, noCodex);
-    expect(cfg.env.CMR_CODEX_MODEL).toBeUndefined();
-    expect(cfg.env.CMR_CODEX_EFFORT).toBeUndefined();
   });
 
 });

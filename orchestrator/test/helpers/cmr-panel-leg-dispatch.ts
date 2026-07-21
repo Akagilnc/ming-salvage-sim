@@ -27,19 +27,3 @@ export function completeCmrPanelLegWorker(
   if (!isCmrPanelLegWorker(spec)) return undefined;
   return panelLegCompletedResult(stdout);
 }
-
-/** Topology assertions: drop panel-leg reviewer dispatches. */
-export function nonPanelDispatchKinds<T extends { readonly kind: string }>(
-  dispatches: ReadonlyArray<T>,
-): string[] {
-  return dispatches
-    .filter((dispatch) => dispatch.kind !== "reviewer")
-    .map((dispatch) => dispatch.kind);
-}
-
-/** Filter dispatch records for topology / sequencing assertions. */
-export function withoutPanelLegDispatches<T extends { readonly kind: string }>(
-  dispatches: ReadonlyArray<T>,
-): T[] {
-  return dispatches.filter((dispatch) => dispatch.kind !== "reviewer");
-}

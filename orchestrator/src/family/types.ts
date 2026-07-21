@@ -616,6 +616,13 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
+   * #1094 — once before panel-leg fan-out: checkout familyBase + write CMR focus
+   * on the shared workingRepo. Legs then only clone (no concurrent checkout).
+   */
+  prepareFamilyCmrPanelRound?(
+    ctx: DispatchContext,
+  ): { readonly headSha: string } | Promise<{ readonly headSha: string }>;
+  /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.
    */

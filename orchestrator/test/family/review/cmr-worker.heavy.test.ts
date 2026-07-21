@@ -1352,7 +1352,8 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
       outcomeLanding?: { path: string; sandboxPath: string },
       ctx?: Pick<DispatchContext, "billingPool">,
     ): sc.SandboxProvider {
-      this.config = this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx);
+      void reviewLegs;
+      this.config = this.cmrSandboxConfig(auth, outcomeLanding, ctx);
       return docker(this.config);
     }
 

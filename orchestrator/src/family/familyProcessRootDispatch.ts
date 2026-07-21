@@ -28,7 +28,17 @@ export function familyWorkerStepKey(
   spec: WorkerSpec,
   ctx: DispatchContext,
 ): string {
-  return `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`;
+  const pass =
+    ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : "";
+  // #1094 F6: panel legs share kind+pass — bind budget per leg model/slug.
+  if (
+    spec.kind === "reviewer" &&
+    typeof spec.model === "string" &&
+    spec.model.length > 0
+  ) {
+    return `${spec.kind}${pass}:${spec.model}`;
+  }
+  return `${spec.kind}${pass}`;
 }
 
 /**

@@ -103,7 +103,10 @@ import {
   successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
-import { panelLegCompletedResult } from "./cmrPanelLegs.js";
+import {
+  CMR_PANEL_LEG_PROMPT_FILE,
+  panelLegCompletedResult,
+} from "./cmrPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -118,8 +121,6 @@ import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
-  modelIdForSlug,
-  resolveModelSlug,
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
@@ -385,6 +386,8 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
+    // #1094: panel-leg reviewer prompt (runner-dispatched first-class workers).
+    "cmr_panel_leg.md",
     // #1068 added a thin wave-verify triage judge promptFile
     // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
     // construction-time inventory the same as the integrated CMR prompts.
@@ -1662,24 +1665,36 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Run the integrated cmr WORKER: ONE `sc.run` of the 2b container's
-   * route-selected agent invoking `ak-cross-m-review` over the merged family base
-   * diff (#335).
-   * `protected` so a unit test fixtures the outcome without a real container (the
-   * real container only runs on the driver / manual-smoke / e2e path).
-   *
-   * The worker is the container's TOP-LEVEL route-selected reviewer, running on the
-   * resident family base (`branchStrategy: head` keeps it on the full current diff)
-   * under the dedicated `cmr` soul. Completion is clean exit + typed receipt /
-   * legal sidecar (#928); the `<cmr>` verdict is parsed into a
-   * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
-   * and accounting around that verdict.
+   * #1094 — once-per-round repo prep BEFORE panel-leg fan-out.
+   * Checkout familyBase + write focus on workingRepo exactly once; legs then
+   * only clone (never concurrent checkout / exclude rewrite on the shared repo).
    */
+  prepareFamilyCmrPanelRound(ctx: DispatchContext): { readonly headSha: string } {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "prepareFamilyCmrPanelRound: requires ctx.familyBase",
+      );
+    }
+    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    if (ctx.waveVerifyFailure === undefined) {
+      this.writeCmrFocusFile(ctx);
+    }
+    const headSha = this.sh(
+      "git",
+      ["rev-parse", "HEAD"],
+      this.opts.workingRepo,
+    ).trim();
+    return { headSha };
+  }
+
   /**
    * #1094 — one runner-dispatched CMR panel-leg worker (fresh READ-ONLY reviewer).
    * Top-level sandcastle agent for the leg's model (credential injection = same
    * as single-slice fresh reviewer). Independent clone at PRE_HEAD; prose stdout
    * is the legal paper (ADR 0141).
+   *
+   * Does NOT checkout or rewrite focus on workingRepo — that is
+   * {@link prepareFamilyCmrPanelRound}'s job (once before fan-out).
    */
   protected async runCmrPanelLegWorker(
     spec: WorkerSpec,
@@ -1696,9 +1711,16 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
       if (missingProvider !== undefined) {
+        // #1094 F6: missing auth is terminal for this leg (escalate → no
+        // mechanical 6× retry). Transport layer maps escalate → skipped evidence.
+        const reason = `no ${missingProvider} auth — panel leg ${spec.model} cannot start`;
         return {
-          kind: "failed",
-          reason: `no ${missingProvider} auth — panel leg ${spec.model} cannot start`,
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason,
+            diagnosis:
+              "typed provider availability preflight rejected the panel leg before sc.run",
+          }),
         };
       }
       if (
@@ -1706,22 +1728,23 @@ export class RealFamilyBackend implements FamilyBackend {
         auth.claudeToken === undefined
       ) {
         return {
-          kind: "failed",
-          reason:
-            "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — panel leg cannot start",
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — panel leg cannot start",
+            diagnosis:
+              "panel leg Claude OAuth token missing; escalate (no mechanical retry)",
+          }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      if (ctx.waveVerifyFailure === undefined) {
-        this.writeCmrFocusFile(ctx);
-      }
+      // Resolve familyBase SHA without checkout (prep already did that once).
       const headSha = this.sh(
         "git",
-        ["rev-parse", "HEAD"],
+        ["rev-parse", ctx.familyBase],
         this.opts.workingRepo,
       ).trim();
       legClone = this.preparePanelLegClone(spec.model, headSha);
-      // Focus file lives on the family base worktree; copy into the independent clone.
+      // Focus file was written once on workingRepo; copy into the independent clone.
       const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
       try {
         copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
@@ -1732,7 +1755,14 @@ export class RealFamilyBackend implements FamilyBackend {
         join(this.opts.soulsDir, "reviewer.md"),
         "utf8",
       );
+      // #1094 F5: one authoritative prompt source — versioned cmr_panel_leg.md
+      // (not a second inline rules copy). Runtime slug line is not a rule duplicate.
+      const promptTemplate = readFileSync(
+        join(this.opts.promptsDir, CMR_PANEL_LEG_PROMPT_FILE),
+        "utf8",
+      );
       const taskBody =
+        `${promptTemplate.trim()}\n\n` +
         `Panel leg slug: ${spec.model}.\n` +
         `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
         `(or the assigned clone scope) and emit prose review on stdout.`;
@@ -1888,7 +1918,8 @@ export class RealFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<CmrWorkerOutcome> {
-    // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
+    // #1094: pure-court judge — panel legs already ran via runner fan-out;
+    // this worker reads landed prose and emits the typed verdict.
     // EXACT cut-SHA review-scope diff (prompt contract in the integrated CMR pass prompts — do
     // NOT guess main...HEAD). With no recorded cut SHA there is no honest scope to
     // hand the review, and a `main...familyBase` fallback would silently disable the
@@ -2893,15 +2924,15 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected cmrSandbox(
     auth: CmrAuth,
-    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    _reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
+    void _reviewLegs;
     return docker(
       this.cmrSandboxConfig(
         auth,
-        reviewLegs,
         outcomeLanding,
         ctx,
         fixFindingsLanding,
@@ -2965,25 +2996,13 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The docker options the cmr worker sandbox runs under — the pure SANDBOX-CONFIG
-   * seam (mirrors `mergerSandboxConfig` / `RealBackend.boxConfig` testability). No
-   * container, no I/O: a unit test asserts the mounts + soul env without a real
-   * sandbox.
-   *
-   * Wires ALL THREE reviewer legs' auth (#335 / #333 gotcha): the codex auth dir
-   * (host-mirrored `~/.codex`), the agy OAuth token (host-mirrored
-   * `~/.gemini/antigravity-cli`, mounted WRITABLE — the leg writes runtime state
-   * there), and the claude OAuth token (env var). Without the agy mount the agy
-   * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
-   * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). Also injects `CMR_CODEX_MODEL` from the frozen
-   * cmrReview codex leg (#768) so the baked skill's executable model cannot drift
-   * from the route label. The dedicated `cmr` soul carries review/outcome
-   * discipline only; persistent fixes route through the family coder-fix worker.
+   * Pure config for the cmr sandbox — #1094 F7 pure court.
+   * Judge gets soul + own Claude/gh env + outcome landing; nested-panel
+   * armament (review-legs env, CMR_* model env, multi-provider auth mounts)
+   * is deleted — panel legs are runner-dispatched first-class workers.
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
-    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -2992,70 +3011,29 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    // ORCHESTRATOR_REPO too: the cmr worker runs `gh issue view` (completeness
-    // authority) AND `gh issue create` (defer→tracker), both needing `--repo
-    // "$ORCHESTRATOR_REPO"`. In a clone-from-LOCAL family run (launch sets
-    // sourceRepo to the local repo) the container's git remote is the local path,
-    // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
-    // (codex #384). Mirrors ship/coder.
-    // #768: pin the baked skill's CMR_CODEX_MODEL + CMR_CODEX_EFFORT to the
-    // frozen route's codex cmrReview leg. Without this, route labels
-    // (ORCHESTRATOR_CMR_REVIEW_LEGS / .cmr-route.json) can say sol while
-    // codex-review.sh still defaults to gpt-5.5 / medium — leg execution ≠
-    // route/registry authority. Derive from reviewLegs; never hardcode.
+    void ctx;
+    // ORCHESTRATOR_REPO: the cmr worker runs `gh issue view` / `gh issue create`
+    // needing `--repo "$ORCHESTRATOR_REPO"`.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
-      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
-    const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
-    if (codexReviewLeg !== undefined) {
-      // Resolve effort-variant registry slugs (e.g. gpt-5.6-sol-low) to the CLI
-      // model id the baked codex-review.sh expects — not the registry key.
-      env.CMR_CODEX_MODEL = modelIdForSlug(codexReviewLeg.slug);
-      // Effort authority = registry row for the slug. codex-review.sh reads
-      // CMR_CODEX_EFFORT (default medium); omitting it collapses sol-low/high
-      // variants to medium and defeats route/registry effort selection.
-      const entry = resolveModelSlug(codexReviewLeg.slug);
-      if (entry.provider === "codex" && entry.options?.effort !== undefined) {
-        env.CMR_CODEX_EFFORT = entry.options.effort;
-      }
-    }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
-    // The in-container completeness gate's `gh issue view` (the live issue body =
-    // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
-    // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
-    // gh absence degrades the gate's authority, it never blocks the cmr worker.
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    // #919 R2: same fix-findings env pointer as single-slice judge / family coder.
     if (fixFindingsLanding !== undefined) {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] = fixFindingsLanding.sandboxPath;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    // Each leg's auth is mounted only when present (the 降级链 — a missing leg
-    // degrades, the rest still review). The agy dir is WRITABLE (default, no
-    // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
-    if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
-    }
-    appendAgyAuthMount(mounts, auth.agyDir);
-    if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
-    }
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
-    // Fix-findings is written into the worktree cwd (workingRepo); no extra
-    // bind-mount is required — env points at the sandbox-relative filename.
-    // #372: souls mount live for integrated cmr worker (souls not baked).
-    // Shared helper (single source for the mount + readonly:true).
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
