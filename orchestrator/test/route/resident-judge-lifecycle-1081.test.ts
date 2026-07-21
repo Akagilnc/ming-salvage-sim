@@ -31,6 +31,7 @@ import {
   completedJudge,
   judgeConverged,
   judgeContinue,
+  judgeEscalate,
   OPEN_COURT_SESSION,
   openCourtWorkerResultIfMatch,
   sampleFinding,
@@ -265,6 +266,26 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         seatResumeCapable: false,
       }).kind,
     ).toBe("fail");
+    // Absent / model-move establish arms also require resume-capable seat
+    // (same gate as open-court; no silent non-resident mint).
+    expect(
+      requireResidentJudgeResume({
+        lifecycle: { status: "absent" },
+        seatModel: "gpt-5.4",
+        seatResumeCapable: false,
+      }).kind,
+    ).toBe("fail");
+    expect(
+      requireResidentJudgeResume({
+        lifecycle: {
+          status: "open",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+        },
+        seatModel: "other-model",
+        seatResumeCapable: false,
+      }).kind,
+    ).toBe("fail");
     // Dismissed never reopens.
     expect(
       requireResidentJudgeResume({
@@ -273,6 +294,46 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         seatResumeCapable: true,
       }).kind,
     ).toBe("fail");
+  });
+
+  it("rebuild heal: court_opened + product converge without dismiss → dismissed", () => {
+    // Pre-atomic two-write crash window: converge row landed, dismiss did not.
+    expect(
+      rebuildResidentJudgeFromLedger([
+        {
+          event: "court_opened",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+        },
+        {
+          step: "S3",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+          output: { kind: "judge", status: "converged" },
+        },
+      ]),
+    ).toEqual({ status: "dismissed" });
+    // Negative: continue is not product converge — court stays open.
+    expect(
+      rebuildResidentJudgeFromLedger([
+        {
+          event: "court_opened",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+        },
+        {
+          step: "S3",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+          output: {
+            kind: "judge",
+            status: "continue",
+            findingDispositions: [],
+            fixPacketBody: "still open",
+          },
+        },
+      ]),
+    ).toEqual({ status: "open", sessionId: "j1", modelSlug: "gpt-5.4" });
   });
 
   it("open-court gate: missing session / not resume-capable fail (negative)", () => {
@@ -360,6 +421,9 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     );
     expect(opened?.sessionId).toBe(OPEN_COURT_SESSION);
     expect(dismissed?.sessionId).toBe(OPEN_COURT_SESSION);
+    // Atomic fold: court_dismissed rides the same durable row as the
+    // product-converge judge step (no separate two-write window).
+    expect(dismissed?.output?.kind).toBe("judge");
     // Negative: no hanging open court after dismiss in durable writes.
     const lastLifecycle = [...backend.ledgerWrites]
       .reverse()
@@ -367,6 +431,36 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         (e) => e.event === "court_opened" || e.event === "court_dismissed",
       );
     expect(lastLifecycle?.event).toBe("court_dismissed");
+    // Single durable write carries both converge output and dismiss event.
+    expect(lastLifecycle?.output?.kind).toBe("judge");
+    });
+  });
+
+  it("open-court escalate parks via decision gate — no court_opened / no S2", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend(undefined, {
+        kind: "completed",
+        output: judgeEscalate(
+          "slice authority fork",
+          "owner must choose between AC and ADR before construction",
+        ),
+        sessionId: OPEN_COURT_SESSION,
+      });
+      const result = await runOrchestrator({ issueNumber: 10816, backend });
+      // Decision-gate park — not infra failure, not silent S2.
+      expect(result.status).toBe("parked");
+      expect(backend.specs.some((s) => s.id === "S2")).toBe(false);
+      expect(result.stepLedger.some((e) => e.event === "court_opened")).toBe(
+        false,
+      );
+      // S1 ledger carries the escalate output so resume/route see the bell.
+      const s1 = result.stepLedger.find(
+        (e) => e.step === "S1" && e.output?.kind === "judge",
+      );
+      expect(s1?.output).toMatchObject({
+        kind: "judge",
+        status: "escalate",
+      });
     });
   });
 

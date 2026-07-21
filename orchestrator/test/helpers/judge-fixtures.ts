@@ -26,15 +26,20 @@ export const OPEN_COURT_SESSION = "sess-judge-court-open";
 /**
  * #1081: open-court birth dispatch — return court-ready ack without consuming
  * S3/S6 judge scripts. Callers check this before scripted judge queues.
+ *
+ * Default is the production court-ready ack (`converged`). Tests that exercise
+ * legal open-court escalate should pass a custom WorkerResult instead of this
+ * helper (or supply openCourtResult to the lifecycle backend).
  */
 export function openCourtWorkerResultIfMatch(
   spec: Pick<WorkerSpec, "promptFile">,
   sessionId: string = OPEN_COURT_SESSION,
+  output: JudgeResult = { kind: "judge", status: "converged" },
 ): WorkerResult | undefined {
   if (!isJudgeOpenCourtSpec(spec)) return undefined;
   return {
     kind: "completed",
-    output: { kind: "judge", status: "converged" },
+    output,
     sessionId,
   };
 }
