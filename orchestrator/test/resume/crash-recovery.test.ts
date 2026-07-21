@@ -104,6 +104,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     ]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
+    // Prior-ledger S2 is preserved verbatim (no re-stamp of historical rows).
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
   });
 

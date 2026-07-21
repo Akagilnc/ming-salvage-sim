@@ -136,7 +136,13 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     // The ledger captures the structured S2 output route() consumed.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
-    expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
+    // #1086: durable builder rows stamp typed 拍别 (construct when commits land).
+    expect(s2?.output).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+      beat: "construct",
+    });
 
     // A committed build plus clean independent review → local handoff succeeds.
     expect(result.status).toBe("completed");
