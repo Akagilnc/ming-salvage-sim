@@ -72,6 +72,7 @@ import {
   mergerReceiptOutput,
   onlineReviewReceiptOutput,
   requireTypedTrafficSignal,
+  runSandcastleWithOnlineReviewSoGuard,
   shipReceiptOutput,
   workerReceiptOutput,
 } from "../receiptRecovery.js";
@@ -129,6 +130,8 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
+  appendClaudeAuthMount,
+  assertClaudePanelLegAuth,
   provisionFamilyWorkerAuth,
   providerAuthFromCore,
   type FamilyWorkerAuthCore,
@@ -1067,7 +1070,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
     }
   }
 
@@ -1765,6 +1768,27 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
+      // #1091: claude-family panel legs need token env and/or credentials mount.
+      const claudePanelAuthGap = assertClaudePanelLegAuth({
+        reviewLegs: frozenReviewLegs,
+        ...(auth.claudeToken !== undefined
+          ? { claudeToken: auth.claudeToken }
+          : {}),
+        ...(auth.claudeAuthDir !== undefined
+          ? { claudeAuthDir: auth.claudeAuthDir }
+          : {}),
+      });
+      if (claudePanelAuthGap !== undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude panel-leg auth for cmrReview claude-family leg",
+          diagnosis: claudePanelAuthGap,
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "no Claude panel-leg auth for cmrReview claude-family leg",
+            diagnosis: claudePanelAuthGap,
+          }),
+        };
+      }
       // Check out the family base so the in-container ak-cross-m-review reviews the
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
@@ -1884,7 +1908,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
     }
   }
 
@@ -1899,7 +1923,11 @@ export class RealFamilyBackend implements FamilyBackend {
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     // #899 / #928 / #919 F2: shared wrap — same helper as RealBackend.
-    return await sc.run(withSandcastleInvokeDefaults(options));
+    // #1092: onlineReview seats get one schema-rich SO resume before #598.
+    return await runSandcastleWithOnlineReviewSoGuard(
+      (opts) => sc.run(withSandcastleInvokeDefaults(opts)),
+      options,
+    );
   }
 
   /**
@@ -2017,7 +2045,7 @@ export class RealFamilyBackend implements FamilyBackend {
         });
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
@@ -2317,7 +2345,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
@@ -2799,6 +2827,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
+    // #1091: claude panel legs get credentials file mount + token env (above).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2806,6 +2835,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2988,7 +3018,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
