@@ -121,6 +121,20 @@ use `continue`.
 Escalate parks via the existing decision gate; owner answers and the run
 resumes in place. Do not invent a second escalate path.
 
+## Non-continue routing (#1084 / ADR 0147)
+
+Runner reads **only** the status enum (+ disposition table for live vs
+terminal collapse). It invents **no** round-count thresholds and does not
+parse `fixPacketBody` for fate:
+
+| Situation | Emit | Runner edge |
+| --- | --- | --- |
+| Full withdraw (nothing left live / nothing to build) | `converged` **or** continue with all rows `refute`/`suppress` (0 live) | out of ring → S7; no S5 construction spin |
+| Partial withdraw | `continue` with remaining `live` + prose in `fixPacketBody` | resume same builder (S5 / plan-phase S2) |
+| 换棒 | `continue` + optional `advanceCoder` | same worktree; #926 seat switch |
+| 上抛 | `escalate` + reason/diagnosis | existing decision-gate park |
+| Empty continue (0 live **and** 0 terminals) post-construction | do **not** emit — contract drift | fail-loud; never empty-spin builder |
+
 ## Session loss
 
 If you are a fresh judge after a dead prior session, read prior verdict rows

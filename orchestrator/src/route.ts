@@ -20,6 +20,16 @@
  * same S2 builder (plan pre-review / construction) instead of S5 — 准/退/索证
  * live in judge prose, not live-finding rows.
  *
+ * #1084 / ADR 0147 — non-continue paths on this hub (zero new thresholds):
+ *   - full withdraw (live findings → 0): status:converged **or** terminal-only
+ *     continue (all refute/suppress) → S7; no S5 construction spin
+ *   - partial withdraw: continue with remaining live → S5; prose is cargo only
+ *   - 换棒: optional `advanceCoder` on continue (runner #926; same worktree)
+ *   - 上抛: status:escalate → existing decision-gate park (not a new channel)
+ *   - empty continue (0 live, 0 terminals): not a clean S7; runner M6 fail-loud
+ *   - prose wording never forks edges — only JudgeVerdictStatus does
+ *   - fuses: no blind round cap (ADR 0132); process failures use dispatchRetry
+ *
  * S4 mechanical open-count classification is dissolved. A valid decision
  * escalation stays the global stop edge (checked FIRST). Envelope shape never
  * decides fate beyond the typed status enum: an unusable envelope follows the
@@ -79,12 +89,19 @@ export function routeBuilderBeatToResidentJudge(
 }
 
 /**
- * S3 / S6 / residual-S4 status → edge table (single copy).
+ * S3 / S6 / residual-S4 status → edge table (single copy) — #1084 sole non-
+ * continue edge seam for the builder↔judge hub.
+ *
  * Unusable and continue both go to S5 (never silent clean / S7) — except
- * #1082 plan phase, where continue resumes S2.
+ * #1082 plan phase, where continue resumes S2. Full withdraw collapses to
+ * `converged` inside {@link judgeStatusFromOutput} (terminal-only continue);
+ * escalate is decision-gate park. No prose / no live-count thresholds here.
  *
  * Status collapse itself is {@link judgeStatusFromOutput} in judgeStation
  * (#919 S1 — shared with runner normalize; no parallel predicate here).
+ *
+ * Consumers (audit):
+ * - route() S3 / S6 / residual-S4 cases
  */
 function routeEdgesFromJudgeStatus(
   status: "converged" | "continue" | "escalate" | "unusable",
