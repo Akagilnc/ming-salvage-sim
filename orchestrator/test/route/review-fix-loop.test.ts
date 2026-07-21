@@ -147,7 +147,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ).toEqual({ kind: "next", step: "S7" });
   });
 
-  it("routes a completed S5 no-commit report to fresh re-review", () => {
+  it("routes a completed S5 no-commit report to resident judge hub (#1083)", () => {
     expect(
       route({
         from: "S5",

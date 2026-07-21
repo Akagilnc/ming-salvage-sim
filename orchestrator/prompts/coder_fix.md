@@ -40,6 +40,15 @@ AC to close a finding. Fix the rest, commit, and emit a `status:"refused"`
 envelope with `refusedFindingIdentityKeys` (traffic) plus 四理由 + evidence in
 cargo for the judge (see below). Do not amend; new commit only.
 
+## Hub routing (#1083 / ADR 0147)
+
+Every beat you emit (plan prose or construction commit — runner does **not**
+classify on that distinction) is dumb-relayed to the **resident judge**.
+You never go straight to a fresh reviewer. On judge bounce-back you resume in
+this same worktree: either re-draft as instructed or present load-bearing
+defense evidence; 「删压过加」 only yields when you can prove the kept
+surface is load-bearing.
+
 ## Required output
 
 When you are done (or are escalating / refusing), the real completion evidence
