@@ -415,6 +415,69 @@ def test_web_reply_trail_ledgers_via_real_wiring(web_game, monkeypatch):
     assert game._trail_extraction_after_reply(minister, "闲话一句。", off) is None
 
 
+def test_cli_trail_extraction_runs_after_reply_persist(game, monkeypatch):
+    """#501 CLI：回话入档后自动尾随抽取（与 Web 同核；不靠玩家手动「重试补写」）。"""
+    from ming_sim.cli import terminal as term
+
+    db, state, content = game
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent",
+        lambda cfg: _FactsAgent(_STAGE_FACT_JSON),
+    )
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    an.ensure_summon_enter(db, nid, minister)
+    ctid = db.create_chat_turn(state, minister, "cli:s", 0, night_id=nid)
+    reply = "臣为洪承畴作保，愿以官身担之。"
+    # 模拟 CLI 正常回话落库（append + update_chat_turn_messages）
+    mid = db.append_chat_message(minister, int(state.turn), "minister", reply)
+    db.update_chat_turn_messages(ctid, minister_message_id=int(mid))
+
+    # llm_config 非 None 才会进 create_audience_extractor_agent（与 web 同）；离线用 object 即可。
+    session = SimpleNamespace(
+        db=db, state=state, content=content, llm_config=object(),
+        _write_gate=threading.Lock(),
+    )
+    # 生产 CLI 尾随入口（minister_chat / 重试回话成功后同调）
+    term._trail_extraction_after_reply_cli(session, minister, reply, ctid)
+
+    assert db.get_story_extract_status(ctid) == "done"
+    entries = [e for e in an.list_ledger(db, nid) if e["source_chat_turn_id"] == ctid]
+    assert len(entries) == 1 and "洪承畴" in entries[0]["person_names"]
+    # 无待补——自动尾随后不应再挂 pending 逼玩家手动补
+    assert db.count_pending_story_extractions(night_id=nid) == 0
+
+
+def test_cli_trail_extraction_failure_marks_pending_not_raises(game, monkeypatch):
+    """#501 CLI 负向：抽取失败标待补、不抛、回话不回滚。"""
+    from ming_sim.cli import terminal as term
+
+    db, state, content = game
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent(),
+    )
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    nid = int(night["id"])
+    an.ensure_summon_enter(db, nid, minister)
+    ctid = db.create_chat_turn(state, minister, "cli:s", 0, night_id=nid)
+    reply = "臣作保。"
+    mid = db.append_chat_message(minister, int(state.turn), "minister", reply)
+    db.update_chat_turn_messages(ctid, minister_message_id=int(mid))
+    session = SimpleNamespace(
+        db=db, state=state, content=content, llm_config=object(),
+        _write_gate=threading.Lock(),
+    )
+    # 不得抛
+    term._trail_extraction_after_reply_cli(session, minister, reply, ctid)
+    # 回话仍在、标待补
+    assert db.conn.execute(
+        "SELECT content FROM chat_messages WHERE id=?", (mid,)
+    ).fetchone()["content"] == reply
+    assert db.get_story_extract_status(ctid) == "pending"
+
+
 def test_web_await_inflight_drains_pending_before_close(web_game, monkeypatch):
     """收夜前门（_await_audience_inflight_clear）：带待补 → fail-closed 抛，夜保持开（AC10）。"""
     game = web_game
