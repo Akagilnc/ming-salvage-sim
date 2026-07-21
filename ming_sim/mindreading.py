@@ -204,3 +204,9 @@ def generate_mindreading_payload(
         "precision": materials.get("precision"),
         "narration": subtext,
     }
+
+
+# P5（#499）：读心语义依赖当轮完整回话，不可与回话生成并行；编排层据此串行尾随。
+generate_mindreading_payload.parallel_safe = False
+generate_mindreading_payload.dependencies = frozenset({"minister_reply"})
+build_mindreading_materials.dependencies = frozenset({"minister_reply"})

@@ -1973,6 +1973,43 @@ def test_secret_context_path_keeps_offtopic_llm_guard(game, monkeypatch):
     assert "本轮确认" not in body
 
 
+def _link_night_chat_turn(db, state, night_id, minister, user_text, minister_text):
+    """在指定夜为大臣落一条完成态对话轮（user+minister 消息已 link），供按夜取回测。"""
+    tid = db.create_chat_turn(
+        state, minister, agno_session_id="", agno_runs_before=0, night_id=int(night_id))
+    uid = db.append_chat_message(minister, state.turn, "user", user_text)
+    mid = db.append_chat_message(minister, state.turn, "minister", minister_text)
+    db.update_chat_turn_messages(tid, user_message_id=uid, minister_message_id=mid)
+    return tid
+
+
+def test_secret_context_feed_isolates_by_open_night(game):
+    """#504 AC2「按夜取回」：同回合多夜时，密令喂料只取当前开着的夜——上一夜（已收）
+    的密谋正文不得串进本夜的按钮确认喂料（接缝④·multi-night isolation #498）。"""
+    import ming_sim.audience_night as an
+    db, state, _ = game
+    minister = "魏忠贤"
+
+    # 第一夜：一段密谋，随后收夜
+    n1 = an.open_night(db, state)["id"]
+    _link_night_chat_turn(
+        db, state, n1, minister, "命东厂暗查阉党第一夜密谋。", "臣领密旨，第一夜遵办。")
+    db.conn.execute(
+        "UPDATE audience_nights SET status='closed' WHERE id=?", (int(n1),))
+    db.conn.commit()
+
+    # 第二夜：另起一段任务，按钮确认取喂料
+    n2 = an.open_night(db, state)["id"]
+    _link_night_chat_turn(
+        db, state, n2, minister, "命李若琏第二夜暗查关宁军饷。", "臣领命，第二夜遵办。")
+
+    ctx = session_mod._recent_audience_context_for_secret_order(
+        db, minister, int(state.turn), "密令如下：可，照办")
+
+    assert "第二夜暗查关宁军饷" in ctx  # 本夜正文取到
+    assert "第一夜密谋" not in ctx      # 上一夜正文不串入
+
+
 def test_noop_appointment_alias_target_is_not_staged(read_game, monkeypatch):
     """#354 (cmr): no-op 任免丢弃须按 canonical 口径——背景句用别名提到「某人已任某职」、
     其规范名当前已在该职时，照样确定性丢弃，不因别名查不到精确行而漏判成假任免。"""

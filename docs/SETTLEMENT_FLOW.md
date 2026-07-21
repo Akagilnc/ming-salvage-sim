@@ -15,6 +15,9 @@
 
   ── 前半段：pre_settle + 占位 context 同一外层 atomic；提交后保持已落 ──
   2. pre_settle(state, db, content=, registry=)   # 内层事务被外层 atomic 并入（flat 可重入）
+     a0. auto_close_open_night(db, state, ...)     # #498 颁诏遇开夜→顺势自动收夜（王承恩代宣）；
+         ↳ 在 atomic 外单独调用，收夜自有写与错误包，不与结算事务半嵌；
+           在飞回话 fail-closed 会挡住本路（夜保持开、settle 不进 settling）——见 `ming_sim/audience_night.py`
      a. db.commit_pending_actions(...)            # 动作闸门：聊天暂存的结构化写动作批量落库（driver 路无暂存=no-op）
         # 〔ADR 0055/ADR 0057 interim：经外廷受判类此步改为只物化案卷、效果结算判决后落（颁布判官），见 ADR 0055〕
      b. apply_historical_fiscal_rates(state, db)  # #259 饷率事件前置：同 tick 置结局 + 改 settle.p
@@ -157,6 +160,7 @@
 advance_without_edict(state, db, *, content=None, registry=None):
   前半段已完成（turn_phase ∈ FRONT_HALF_DONE_PHASES）→ 直接 raise：
     结算欠账不可退朝跳过，只能续跑 / 重新推演（awaiting 态则先亲裁）——ADR 0008 决定 6
+  auto_close_open_night(db, state, ...)           # #498 同上：退朝遇开夜也顺势自动收夜，放在 atomic 外
   否则整条推进尾包单事务 atomic：
     db.commit_pending_actions(...)                # 聊天暂存动作先落库，否则成孤儿
     apply_fixed_period_flows(db, state)           # 只走固定 tick
@@ -207,6 +211,7 @@ advance_without_edict(state, db, *, content=None, registry=None):
 | 文件 | 看什么 |
 |---|---|
 | `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；`advance_without_edict`；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
+| `ming_sim/audience_night.py` | `auto_close_open_night`：颁诏 / 退朝遇开夜时顺势自动收夜（`pre_settle` / `advance_without_edict` 起手调用，#498），在飞回话 fail-closed |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
 | `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包 / `clear_for_resimulation` 重新推演逃生口 |
 | `ming_sim/session.py` | settling/awaiting 恢复分流入口 + 恢复窗口冻结（`_refuse_if_settling` 7 入口；`_proposal_blocked` 即时写/新暂存总闸） |

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import inspect
 import re
+import sqlite3
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -132,6 +133,8 @@ class ChatTurnResult:
     secret_order_id: int = 0       # 本轮新建密令 id（0=未下密令）
     pending_action_id: int = 0     # 本轮暂存的待颁诏动作 id（动作闸门 ADR 0006，0=无）
     pending_action_failures: List[Dict[str, Any]] = field(default_factory=list)
+    # #502 AC5：多道并存时口头准驳含糊 → 结构化含糊态（含候选集），驱动大臣当场追问哪一道。
+    directive_confirmation_ambiguous: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -194,20 +197,50 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
 def _recent_audience_context_for_secret_order(
     db: Any, minister_name: str, turn: int, current_message: str, limit: int = 8,
 ) -> str:
-    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。"""
+    """取当前大臣最近召对正文，供“密令”按钮确认短句补足任务上下文。
+
+    #504 AC2「按夜取回」：喂料按**当前开着的夜**取回——只认本夜该大臣的对话轮
+    （撤回/失败轮排除），不让同回合上一夜的密谋正文串进本夜（接缝④「密令喂料按夜
+    从账/记录取回」）。无开着的夜（旧档/无夜路径）才回落 turn 域取回，语义不变。"""
     conn = getattr(db, "conn", None)
     if conn is None:
         return ""
+    night_id = 0
+    night_getter = getattr(db, "_current_open_night_id", None)
+    if callable(night_getter):
+        try:
+            night_id = int(night_getter() or 0)
+        except Exception:
+            night_id = 0
     try:
-        rows = conn.execute(
-            """
-            SELECT role, content FROM chat_messages
-            WHERE minister_name = ? AND turn = ?
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (str(minister_name or ""), int(turn), int(limit)),
-        ).fetchall()
+        if night_id > 0:
+            # 本夜该大臣对话轮的用户/大臣消息（撤回 undone_at / failed·undone 轮排除）；
+            # 一轮两条消息各成一行，按 message id 序取最近 limit 条。
+            rows = conn.execute(
+                """
+                SELECT m.role AS role, m.content AS content
+                FROM chat_turns t
+                JOIN chat_messages m
+                  ON m.id IN (t.user_message_id, t.minister_message_id)
+                WHERE t.night_id = ?
+                  AND t.minister_name = ?
+                  AND t.undone_at IS NULL
+                  AND t.status NOT IN ('failed', 'undone')
+                ORDER BY m.id DESC
+                LIMIT ?
+                """,
+                (int(night_id), str(minister_name or ""), int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT role, content FROM chat_messages
+                WHERE minister_name = ? AND turn = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (str(minister_name or ""), int(turn), int(limit)),
+            ).fetchall()
     except Exception:
         return ""
     current = (current_message or "").strip()
@@ -222,6 +255,18 @@ def _recent_audience_context_for_secret_order(
     return "\n".join(lines[-limit:])
 
 
+def _canonical_minister_key(content: Any, name: str, db: "GameDB") -> str:
+    """姓名归一到在册原始 key（别名→原名）；无 content / 查不到时返回去空白原名。
+
+    与 apply_appointment / no-op 判定 / 对冲同一口径。_find_existing_minister 不吞异常
+    （ADR 0005：失败须响亮，不静默兜底——apply_appointment 亦直呼不 guard）。"""
+    n = str(name or "").strip()
+    if content is None or not n:
+        return n
+    canon = _find_existing_minister(content, n, db)
+    return str(canon) if canon else n
+
+
 def _appointment_intent_is_current_office_noop(
     db: Any, name: str, office: str, content: Any = None,
 ) -> bool:
@@ -229,24 +274,19 @@ def _appointment_intent_is_current_office_noop(
 
     姓名按 canonical 口径归一（与真正落任命 apply_office_appointment 同口径）：LLM 抽到的可能是
     别名（『韩阁老』而非『韩爌』），精确名查不到行会漏判成假任免（cmr #354 correctness）。先
-    _find_existing_minister 归一到在册原始名，再查当前 office。"""
+    归一到在册原始名，再查当前 office。"""
     conn = getattr(db, "conn", None)
     clean_name = str(name or "").strip()
     desired = normalize_office(str(office or ""))
     if conn is None or not clean_name or not desired:
         return False
-    canonical = None
-    if content is not None:
-        try:
-            canonical = _find_existing_minister(content, clean_name, db)
-        except Exception:
-            canonical = None
+    canonical = _canonical_minister_key(content, clean_name, db)
     try:
         row = conn.execute(
             "SELECT status, office FROM characters WHERE name = ?",
-            (canonical or clean_name,),
+            (canonical,),
         ).fetchone()
-    except Exception:
+    except sqlite3.Error:
         return False
     if row is None or str(row["status"] or "") != "active":
         return False
@@ -256,6 +296,58 @@ def _appointment_intent_is_current_office_noop(
     desired_parts = {p for p in desired.split(",") if p}
     current_parts = {p for p in current.split(",") if p}
     return bool(desired_parts) and desired_parts.issubset(current_parts)
+
+
+def _target_active_officeholder(db: Any, name: str, content: Any = None) -> bool:
+    """目标当前是否为在职且有实职的名册人（有可罢之职）。
+
+    R2「免去暂存任命」形——被任者尚未落库、非 active，无职可罢，撤掉暂存任命即净空；
+    而在职改任者（active + 有 office）被再革职时，撤暂存任命后仍须落真罢免（不能吞）。"""
+    conn = getattr(db, "conn", None)
+    clean = str(name or "").strip()
+    if conn is None or not clean:
+        return False
+    key = _canonical_minister_key(content, clean, db)
+    try:
+        row = conn.execute(
+            "SELECT status, office FROM characters WHERE name = ?", (key,)
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None:
+        return False
+    return str(row["status"] or "") == "active" and bool(str(row["office"] or "").strip())
+
+
+def _cancel_staged_opposing_office(
+    db: Any, opposing_action: str, target_name: str, turn: int, content: Any = None,
+) -> Optional[int]:
+    """撤销同回合针对同一人的一条【反向暂存任免】，返回其 id；无则 None（对冲，ADR 0028
+    R1/R2 双向对称）。
+
+    这是「名册 ⊕ 暂存」比对真基准的落地：暂存免职/任命未提交时名册仍是旧态，皇帝反悔
+    （留任冲免职、免去冲任命）若只比名册会被误判 no-op 丢弃或另 stage 孤儿。姓名按 canonical
+    口径归一，别名/新候选按同一原名兜底比对，两侧同名即相抵。撤销走 withdraw_pending_action
+    （只删 pending，已 committed 不动），night_approved 但未收夜提交的暂存仍属 pending、照样对冲。"""
+    conn = getattr(db, "conn", None)
+    clean = str(target_name or "").strip()
+    if conn is None or not clean or opposing_action not in ("任命", "罢免"):
+        return None
+    target_key = _canonical_minister_key(content, clean, db)
+    for pa in db.list_pending_actions(int(turn)):
+        if pa.get("kind") != "office" or pa.get("action") != opposing_action:
+            continue
+        try:
+            payload = json.loads(pa.get("payload_json") or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        staged = str(payload.get("name") or "").strip()
+        if staged and _canonical_minister_key(content, staged, db) == target_key:
+            if db.withdraw_pending_action(int(pa["id"]), int(turn)):
+                return int(pa["id"])
+    return None
 
 
 def apply_appointment(
@@ -947,6 +1039,15 @@ class GameSession:
             tool_result = str(getattr(tool_exec, "result", "") or "")
             if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
                 result.court_action = "dismiss"
+                # AC1（#500）：令退在此单缝落确定性告退账，一切经 session.chat 的消费者
+                # （CLI 召对 / 非流式 web /api/ministers/{name}/chat）自动闭合，名单查询即时去人；
+                # 不在场/无开夜时既有 no-op。stream 路 tool 环另处同调 dismiss_from_audience。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import dismiss_from_audience
+                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
+                    dismiss_from_audience(
+                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                    )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:
@@ -972,10 +1073,9 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    result.pending_action_id = self.db.upsert_pending_directive(
-                        self.state.turn, character.name,
-                        payload={"text": draft_text, "actor": character.name},
-                    )
+                    # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
+                    result.pending_action_id = self.db.stage_explicit_directive(
+                        self.state.turn, character.name, draft_text)
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1103,6 +1203,16 @@ class GameSession:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
             augmented = brief + "\n\n" + augmented
+        # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
+        # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
+        # 的组装输入不含殿内对话（区间取数复用 audible_entries_for，御前低语不流入）。
+        try:
+            from ming_sim.audience_night import audience_scene_recap
+            recap = audience_scene_recap(self.db, character.name)
+        except Exception:
+            recap = ""
+        if recap:
+            augmented = recap + "\n\n" + augmented
         # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
         # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented
@@ -1125,7 +1235,7 @@ class GameSession:
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
-            _extract_secret_order,
+            extract_directive_confirmation, _extract_secret_order,
         )
         out: Dict[str, Any] = {
             "directive": None,
@@ -1171,6 +1281,37 @@ class GameSession:
             else:
                 confirm = extract_confirmation_intent(
                     player_message, reply, summaries, llm_config=llm_config)
+            # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳须指向具体某道。
+            # 点名指认 → 只作用那几道 + 清全组待澄清标（含糊 episode 了结）；否则（含糊/无/
+            # 空指向）一律按含糊处置——结构化含糊态 + 追问 + 标待澄清 + **本轮不再 stage 新拟旨**，
+            # 直接 return（L1：删 else free-fall，杜绝纯准驳口令误建第三道）。
+            if confirm in ("应允", "拒绝") and len(directive_confirm_targets) >= 2:
+                dir_cands = [
+                    {"id": int(p["id"]), "summary": _pending_action_brief(p)}
+                    for p in directive_confirm_targets
+                ]
+                res = extract_directive_confirmation(
+                    player_message, reply, dir_cands, llm_config=llm_config)
+                decision = res.get("decision")
+                tids = {int(i) for i in (res.get("target_ids") or [])}
+                named = decision in ("应允", "拒绝") and bool(tids)
+                if named:
+                    # 指明了哪道：清全组待澄清标（未点名兄弟复位普通 pending、重回「不回→默认同意」；
+                    # L4 兑现 docstring「下一句指明后清标」），confirm 收窄为点名那几道。
+                    for p in directive_confirm_targets:
+                        self.db.clear_directive_needs_clarification(int(p["id"]))
+                    confirm = decision
+                    directive_confirm_targets = [
+                        p for p in directive_confirm_targets if int(p["id"]) in tids]
+                    confirm_targets = [
+                        p for p in confirm_targets
+                        if p["kind"] != "directive" or int(p["id"]) in tids]
+                    confirm_action_ids = {int(p["id"]) for p in confirm_targets}
+                else:
+                    out["directive_confirmation_ambiguous"] = {"candidates": dir_cands}
+                    for p in directive_confirm_targets:
+                        self.db.flag_directive_needs_clarification(int(p["id"]))
+                    return out
             if confirm == "应允":
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
@@ -1183,6 +1324,7 @@ class GameSession:
                         if not isinstance(payload, dict):
                             payload = {}
                         payload["_directive_status"] = "pending"
+                        payload.pop("_needs_clarification", None)  # #502 L4：应允该道即消其待澄清标（勿从旧快照回灌）
                         self.db.conn.execute(
                             "UPDATE pending_actions SET payload_json=? WHERE id=?",
                             (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
@@ -1190,12 +1332,49 @@ class GameSession:
                     if directive_confirm_targets:
                         self.db.conn.commit()
                 else:
-                    self.db.commit_pending_actions(
-                        self.state, minister_name=minister_name,
-                        directive_status="pending" if directive_confirm_targets else "draft",
-                        action_ids=confirm_action_ids,
-                        content=getattr(self, "content", None),
-                        registry=getattr(self, "registry", None))
+                    # #498 / ADR 0038：开夜期间 office/consort/directive 应允 = 标 night_approved，
+                    # 收夜才提交；密令仍应允即落地（白名单直写）。无开夜则保持历史即时 commit。
+                    from ming_sim.audience_night import get_open_night, mark_actions_night_approved
+                    open_n = get_open_night(self.db)
+                    if open_n is not None:
+                        defer_ids = {
+                            int(p["id"]) for p in confirm_targets
+                            if p["kind"] in {"office", "consort", "directive"}
+                        }
+                        immediate_ids = confirm_action_ids - defer_ids
+                        if defer_ids:
+                            for pending_directive in directive_confirm_targets:
+                                if int(pending_directive["id"]) not in defer_ids:
+                                    continue
+                                try:
+                                    payload = json.loads(pending_directive.get("payload_json") or "{}")
+                                except (ValueError, TypeError):
+                                    payload = {}
+                                if not isinstance(payload, dict):
+                                    payload = {}
+                                payload["_directive_status"] = "pending"
+                                payload.pop("_needs_clarification", None)  # #502 L4：同上（夜内应允路）
+                                self.db.conn.execute(
+                                    "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                                    (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
+                                )
+                            if directive_confirm_targets:
+                                self.db.conn.commit()
+                            mark_actions_night_approved(
+                                self.db, sorted(defer_ids), night_id=int(open_n["id"]))
+                        if immediate_ids:
+                            self.db.commit_pending_actions(
+                                self.state, minister_name=minister_name,
+                                action_ids=immediate_ids,
+                                content=getattr(self, "content", None),
+                                registry=getattr(self, "registry", None))
+                    else:
+                        self.db.commit_pending_actions(
+                            self.state, minister_name=minister_name,
+                            directive_status="pending" if directive_confirm_targets else "draft",
+                            action_ids=confirm_action_ids,
+                            content=getattr(self, "content", None),
+                            registry=getattr(self, "registry", None))
                     failures = [
                         _pending_action_failure_payload(p)
                         for p in self.db.list_pending_actions(
@@ -1240,12 +1419,9 @@ class GameSession:
         else:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
-            text = acts["decree_text"]
-            pid = self.db.upsert_pending_directive(
-                self.state.turn, minister_name,
-                payload={"text": text, "actor": minister_name},
-            )
-            out["pending_action_id"] = pid
+            # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
+            out["pending_action_id"] = self.db.stage_explicit_directive(
+                self.state.turn, minister_name, acts["decree_text"])
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             return self.db.stage_pending_action(
@@ -1439,30 +1615,32 @@ class GameSession:
                         _committed_draft = _directive
                         break
             _has_existing_draft = _has_pending_draft or _committed_draft is not None
-            # 补充模式：提取现有草案文本喂给 extract_draft_intent，让 LLM 合并新旧草案；
-            # 直接用大臣回话（可能是确认语）会覆盖原草案（codex r6 F1）。
+            # 多道模式（#502）：本夜已有 ≥1 道独立 pending 候选时，把各道 (id, 正文) 喂 extract，
+            # 由抽取器判本轮是新拟独立一道（target=新）还是补充某一道（target=该道 id）。
+            _dir_candidates = []
+            for _p in pend_for_minister:
+                if _p["kind"] != "directive":
+                    continue
+                _val = _p["payload_json"] or "{}"
+                try:
+                    _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
+                except (ValueError, TypeError):
+                    _cp = {}
+                _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
+                _dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+            # 补充模式：提取现有草案文本喂 extract，让 LLM 合并新旧草案；直接用大臣回话
+            # （可能是确认语）会覆盖原草案（codex r6 F1）。多道时取最近一道候选正文作合并基线。
             _existing_draft_text = ""
-            if _has_pending_draft:
-                _pdir = next((p for p in pend_for_minister if p["kind"] == "directive"), None)
-                if _pdir:
-                    try:
-                        _val = _pdir["payload_json"] or "{}"
-                        _payload = (
-                            _val if isinstance(_val, (list, dict))
-                            else json.loads(_val)
-                        )
-                    except (ValueError, TypeError):
-                        _payload = {}
-                    if isinstance(_payload, dict):
-                        _existing_draft_text = str(_payload.get("text") or "")
-            elif _committed_draft is not None:
+            if _dir_candidates:
+                _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
+            elif _committed_draft is not None and not _has_pending_draft:
                 _existing_draft_text = str(_committed_draft["text"] or "")
             if intent is not None and intent_kind == "draft" and not _has_existing_draft:
                 # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
-                draft_res = {"draft_action": "拟旨", "draft_text": reply}
+                draft_res = {"draft_action": "拟旨", "draft_text": reply, "target_candidate": ""}
             elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
-                draft_res = {"draft_action": "无", "draft_text": ""}
+                draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
             else:
                 # 【已有草案（pending/committed）的任何后续】或 intent is None（旧路）：一律走
                 # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
@@ -1473,9 +1651,30 @@ class GameSession:
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
                     existing_draft_text=_existing_draft_text,
+                    existing_candidates=_dir_candidates or None,
                 )
+            # 多道并存、改/补目标不明（#502 L7）：不静默新建第三道 → 结构化含糊态 + 追问哪一道。
+            if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
+                out["directive_confirmation_ambiguous"] = {
+                    "candidates": [{"id": c["id"], "summary": c["summary"]} for c in _dir_candidates]
+                }
+                return True
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
-                if _committed_draft is not None and not _has_pending_draft:
+                _target = str(draft_res.get("target_candidate") or "")
+                _target_id = int(_target) if _target.isdigit() else None
+                if _dir_candidates and _target == "新":
+                    # 新拟独立一道 → INSERT 新候选，不并进任一现有候选（AC1）。
+                    out["pending_action_id"] = self.db.stage_directive_candidate(
+                        self.state.turn, minister_name,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
+                    # 补充/改草某一道 → 原地更新那道候选正文（不冻结、不新增行；AC2）。
+                    out["pending_action_id"] = self.db.update_directive_candidate(
+                        _target_id,
+                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                    )
+                elif _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
                     self.db.update_directive_text(did, draft_res["draft_text"])
                     out["directive"] = {
@@ -1529,13 +1728,29 @@ class GameSession:
                 appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
             else:
                 appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
-        if (
-            appt["appoint_action"] == "任命"
-            and _appointment_intent_is_current_office_noop(
-                getattr(self, "db", None), appt.get("name", ""), appt.get("office", ""),
-                content=getattr(self, "content", None))
-        ):
-            appt = {"appoint_action": "无"}
+        content_ref = getattr(self, "content", None)
+        appt_name = appt.get("name", "")
+        if appt["appoint_action"] == "任命" and appt_name:
+            # 对冲优先（ADR 0028 R1）：先按名撤销同回合暂存罢免——「留任」抽取形 office 常空/为
+            # 原职，暂存免职未提交时名册仍在职，只比名册会把留任误判 no-op 丢弃、免职照旧、反悔
+            # 失效。撤销成功=留任接住暂存免职；无相抵暂存时才落回 roster no-op（X 已在该职=背景
+            # 复述）。两路都不 stage 新任命；无对冲且非 no-op 才 stage。
+            hedged = _cancel_staged_opposing_office(
+                self.db, "罢免", appt_name, int(self.state.turn), content=content_ref)
+            if hedged or _appointment_intent_is_current_office_noop(
+                    self.db, appt_name, appt.get("office", ""), content=content_ref):
+                appt = {"appoint_action": "无"}
+        elif appt["appoint_action"] == "罢免" and appt_name:
+            # 对冲（ADR 0028 R2）：撤销同回合暂存任命（清掉反向 pending）。仅当【真撤销了】暂存
+            # 任命、且目标当前无可罢之职（R2「A 本就不在职」形：新任未落库/非 active）才净空、不落
+            # 罢免；目标仍 active 且有职（改任暂存后又革职）→ 撤暂存任命后仍落真罢免，不能吞。
+            # 无暂存任命可撤时按既有路径正常 stage（含非在职者 stage→ 收夜 commit 拒并标 failed 的
+            # 既有契约，不在召对期提前吞掉）。
+            cancelled = _cancel_staged_opposing_office(
+                self.db, "任命", appt_name, int(self.state.turn), content=content_ref)
+            if cancelled and not _target_active_officeholder(
+                    self.db, appt_name, content=content_ref):
+                appt = {"appoint_action": "无"}
         if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
             # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
             # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
@@ -1564,6 +1779,21 @@ class GameSession:
         )):
             return text
         return text + "\n请陛下定夺准驳。"
+
+    @staticmethod
+    def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
+        """#502 AC5：多道并存、准驳指称含糊时，大臣当场追问是哪一道（确定性 post-pass 句，
+        不串 LLM）。列出候选摘要供皇帝指名，避免被静默当「不回」。"""
+        text = (answer or "").strip()
+        cands = (ambiguous or {}).get("candidates") or []
+        briefs = "；".join(
+            f"其一「{str(c.get('summary') or '')}」" if i == 0 else f"其{'二三四五六七八九十'[i-1] if i <= 9 else i}「{str(c.get('summary') or '')}」"
+            for i, c in enumerate(cands)
+        )
+        ask = f"陛下方才所指，是这几道中的哪一道？（{briefs}）请明示，臣好照办。" if briefs else "陛下方才所指是哪一道？请明示。"
+        if not text:
+            return ask
+        return text + "\n" + ask
 
     @staticmethod
     def _normalized_content_key(text: str) -> str:
@@ -1693,6 +1923,11 @@ class GameSession:
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
             result.pending_action_failures = list(res["pending_action_failures"])
+        # #502 AC5：把结构化含糊态透到 ChatTurnResult，供大臣当场追问哪一道（表面契约可达）。
+        if res.get("directive_confirmation_ambiguous"):
+            result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
+            result.answer = GameSession._ensure_clarification_cue(
+                result.answer or "", res["directive_confirmation_ambiguous"])
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。
@@ -2014,20 +2249,18 @@ class GameSession:
             # （web 映射 400 / terminal 打印拟诏失败）。幂等返回决策点的守门在 resolve_turn。
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
+        # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
+        # （resolve_turn / advance_without_edict）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         if self.pending_count() > 0:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
-        # "不回=默认同意"（ADR 0006）：把对话式拟旨暂存（pending_actions kind=directive）
-        # 提交为 draft，使 list_directives(status='draft') 能拾取——这是 web「拟诏」按钮
-        # 的真实入口路径，不经过 resolve_turn 的 auto-commit。幂等，无副作用。
-        self.db.commit_pending_actions(
-            self.state, kind_filter="directive",
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None))
+        # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
+        # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
+        # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
         directives = self.db.list_directives(self.state, statuses=("draft",))
         if not directives:
-            raise ValueError("无草案不能拟诏。")
+            raise ValueError("无草案不能拟诏（未表态拟旨须先准驳，或于颁诏时默认同意）。")
         decree = write_decree_with_agno(self.llm_config, self.agno_db, self.state, directives, db=self.db)
         self.last_decree = decree
         # P1-1：记下本份生成稿覆盖的 draft 集指纹。颁诏时若 draft 集已变（玩家拟诏后又新建
@@ -2047,7 +2280,8 @@ class GameSession:
         self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return self.last_decree
 
-    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "") -> ResolveResult:
+    def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
+                     inflight_wait_s: float | None = None) -> ResolveResult:
         """颁诏并推演本回合（phase1）。要求无 pending 残留、≥1 条 draft。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
@@ -2110,6 +2344,20 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # #498 AC8：颁诏入口顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
+        # inflight_wait_s：web 入口已在 gate 外先等在飞落档（web_app._await_audience_inflight_clear），
+        # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
+        # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
+        from ming_sim.audience_night import auto_close_open_night
+        from ming_sim.beat_orchestration import production_beat_generator
+        # #503：收夜 beat 生产路径接通编排缝（与 attach 入殿同 generator）。
+        auto_close_open_night(
+            self.db, self.state,
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None),
+            wait_timeout_s=inflight_wait_s,
+            beat_generator=production_beat_generator,
+        )
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
@@ -2117,6 +2365,7 @@ class GameSession:
             raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
+        # 收夜已交本夜已应允；此处交剩余未应允 default-agree。
         committed_directives = self.db.commit_pending_actions(
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
