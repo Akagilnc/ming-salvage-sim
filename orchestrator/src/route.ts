@@ -53,11 +53,6 @@ export interface RouteContext {
  */
 export type BuilderBeatStep = "S2" | "S5";
 
-/** True when `step` is a builder beat that must return to the resident judge. */
-export function isBuilderBeatStep(step: string): step is BuilderBeatStep {
-  return step === "S2" || step === "S5";
-}
-
 /**
  * #1083 / ADR 0147 — single seam: every builder beat routes to the resident
  * judge. No envelope classification (committed / plan-only / refuse cargo
@@ -66,7 +61,6 @@ export function isBuilderBeatStep(step: string): step is BuilderBeatStep {
  *
  * Consumers (audit):
  * - route() S2 / S5 cases
- * - #1083 pure + e2e tests (fixer-judge-hub-1083)
  */
 export function routeBuilderBeatToResidentJudge(
   from: BuilderBeatStep,
