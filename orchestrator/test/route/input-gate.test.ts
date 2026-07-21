@@ -45,7 +45,8 @@ class GateTestBackend implements Backend {
   }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`resumeSession(${spec.id})`);
-    return { kind: "coder", committed: false, commitsAdded: 0 };
+    // #1081: S3/S6 resume the resident judge — reuse runStep body.
+    return this.runStep(spec);
   }
 
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {

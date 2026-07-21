@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import { ensureGitInfoExclude } from "./gitInfoExclude.js";
 import {
+  isJudgeOpenCourtSpec,
   isJudgeSeat,
   materializeLandingFixPacketBody,
   mintJudgeEscalate,
@@ -506,6 +507,43 @@ export async function legacyDispatchWorker(
   }
   const { output, sessionId } = normalizeStepReturn(ret);
   return { kind: "completed", output, sessionId };
+}
+
+/**
+ * #1081: whether open-court birth runs as a real agent dispatch.
+ *
+ * Production (no vitest): always true.
+ * Vitest: off by default so scripted backends keep the pre-#1081 S3-establish
+ * shape. Suites that exercise open-court set
+ * `ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1` (process-env, not a shared
+ * mutable flag — parallel vitest workers must not race a global).
+ */
+export function shouldOpenResidentJudgeCourtAtDispatch(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const underVitest =
+    env.VITEST === "true" || typeof env.VITEST_WORKER_ID === "string";
+  if (!underVitest) return true;
+  return env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT === "1";
+}
+
+/** @deprecated use {@link shouldOpenResidentJudgeCourtAtDispatch} */
+export type OpenCourtDispatchMode = "real" | "test-stub";
+
+/** @deprecated use env ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1 */
+export function setOpenCourtDispatchModeForTests(
+  mode: OpenCourtDispatchMode,
+): void {
+  if (mode === "real") {
+    process.env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT = "1";
+  } else {
+    delete process.env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT;
+  }
+}
+
+/** @deprecated use {@link shouldOpenResidentJudgeCourtAtDispatch} */
+export function openCourtDispatchModeForTests(): OpenCourtDispatchMode {
+  return shouldOpenResidentJudgeCourtAtDispatch() ? "real" : "test-stub";
 }
 
 /**
