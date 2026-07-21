@@ -2349,11 +2349,14 @@ class GameSession:
         # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
         # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
         from ming_sim.audience_night import auto_close_open_night
+        from ming_sim.beat_orchestration import production_beat_generator
+        # #503：收夜 beat 生产路径接通编排缝（与 attach 入殿同 generator）。
         auto_close_open_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
+            beat_generator=production_beat_generator,
         )
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。

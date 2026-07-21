@@ -213,9 +213,12 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
     # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
     # 放在 atomic 外：收夜自有写与错误包，不与推进事务半嵌。
+    # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
+    from ming_sim.beat_orchestration import production_beat_generator
     auto_close_open_night(db, state, content=content, registry=registry,
-                          wait_timeout_s=inflight_wait_s)
+                          wait_timeout_s=inflight_wait_s,
+                          beat_generator=production_beat_generator)
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
@@ -991,8 +994,11 @@ def pre_settle(
     auto_triggered: List[Dict[str, object]] = []
     # #498：颁诏遇开夜 → 顺势自动收夜（王承恩代宣）；在飞回话 fail-closed 中止，不进 settling。
     # 放在 atomic 外：收夜提交与错误包独立；成功后 pre_settle 事务内 commit_pending 仍幂等。
+    # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
-    auto_close_open_night(db, state, content=content, registry=registry)
+    from ming_sim.beat_orchestration import production_beat_generator
+    auto_close_open_night(db, state, content=content, registry=registry,
+                          beat_generator=production_beat_generator)
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。

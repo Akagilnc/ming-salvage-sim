@@ -45,6 +45,10 @@ function renderModal(props: {
   onCancel?: () => void;
   chatFailures?: PendingActionFailure[];
   onRetryFailure?: (failure: PendingActionFailure) => void;
+  replyRetry?: { chat_turn_id: number; question: string } | null;
+  onRetryReply?: () => void;
+  extractionPendingCount?: number;
+  onRetryExtraction?: () => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -66,9 +70,13 @@ function renderModal(props: {
         input=""
         error=""
         secretOrders={[]}
+        replyRetry={props.replyRetry}
+        extractionPendingCount={props.extractionPendingCount}
         onInput={() => {}}
         onSend={() => {}}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
+        onRetryReply={props.onRetryReply}
+        onRetryExtraction={props.onRetryExtraction}
         onUndo={() => {}}
         onHint={() => {}}
         onFavorite={() => {}}
@@ -325,6 +333,44 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(document.querySelector(".chat-failure-note")?.textContent).toContain("任免未能正式落库");
     const button = Array.from(document.querySelectorAll("button")).find((node) => node.textContent === "重试");
     expect(button).toBeUndefined();
+  });
+
+  it("shows #505 system-layer reply retry control when replyRetry is set", () => {
+    const retry = vi.fn();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "剿抚孰先？" }],
+      replyRetry: { chat_turn_id: 12, question: "剿抚孰先？" },
+      onRetryReply: retry,
+    });
+    const note = document.querySelector('[data-testid="reply-retry"]');
+    expect(note?.textContent).toContain("重新生成回话");
+    expect(note?.textContent).toContain("剿抚孰先？");
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (node) => node.textContent === "重新生成回话",
+    );
+    expect(button).toBeTruthy();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows #501 extraction-pending notice with in-place retry", () => {
+    const retry = vi.fn();
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      extractionPendingCount: 2,
+      onRetryExtraction: retry,
+    });
+    const note = document.querySelector('[data-testid="extraction-pending"]');
+    expect(note?.textContent).toContain("2 段");
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (node) => node.textContent === "重试补写",
+    );
+    expect(button).toBeTruthy();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 });
 

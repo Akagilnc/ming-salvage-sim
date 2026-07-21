@@ -391,6 +391,25 @@ export type PendingActionFailure = {
   message: string;
 };
 
+/** #505：崩溃后待重试的中断回话（系统层恢复，非内容选项）。 */
+export type ReplyRetry = {
+  chat_turn_id: number;
+  minister_name: string;
+  turn: number;
+  question: string;
+};
+
+/** #501：待补叙事抽取状态（显眼提示 + 原地重试）。 */
+export type ExtractionPendingStatus = {
+  night_id: number;
+  count: number;
+  pending: Array<{
+    chat_turn_id: number;
+    minister_name: string;
+    night_id: number;
+  }>;
+};
+
 export type ChatResponse = {
   answer: string;
   history: ServerChatMessage[];
