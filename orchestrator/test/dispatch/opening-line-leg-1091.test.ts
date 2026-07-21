@@ -13,6 +13,17 @@ describe("#1091 opening-line stdout is degraded", () => {
   it("classifies a single short opening line as opening-line-only", () => {
     expect(isOpeningLineOnlyStdout("我要开始审…")).toBe(true);
     expect(isOpeningLineOnlyStdout("I'll start the review now.")).toBe(true);
+    expect(isOpeningLineOnlyStdout("好的，开始审。")).toBe(true);
+    expect(isOpeningLineOnlyStdout("好的，开始进行审查")).toBe(true);
+  });
+
+  it("does not degrade a greeting followed by substantive content", () => {
+    const greetingPlusContent =
+      "I'll start the review now. The auth mount is missing.";
+    expect(isOpeningLineOnlyStdout(greetingPlusContent)).toBe(false);
+    expect(
+      isLegalLegPaper({ exitCode: 0, stdout: greetingPlusContent }),
+    ).toBe(true);
   });
 
   it("rejects opening-line-only stdout as legal paper (exit 0)", () => {

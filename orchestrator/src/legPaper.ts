@@ -36,15 +36,20 @@ const OPENING_LINE_MAX_CHARS = 120;
  * findings body. Progress narration ("Working… still scanning…") is NOT an
  * opening line under ADR 0141.
  *
+ * The 「好的」 greeting variant makes 「我」 optional so forms like
+ * 「好的，开始审」 / 「好的，开始进行审查」 also match (finding 2a).
+ *
  * Note: do not trail CJK alternatives with `\b` — JS word boundaries are
  * ASCII-centric and reject matches like 「我要开始审…」.
  */
 const OPENING_LINE_RE =
-  /^(?:我要开始|开始审|好的[，,]?\s*我(?:来|要)?开始|I'll start\b|I will start\b|Let me (?:start|begin)\b|Starting (?:the )?review\b)/i;
+  /^(?:我要开始|开始审|好的[，,]?\s*(?:我(?:来|要)?)?开始|I'll start\b|I will start\b|Let me (?:start|begin)\b|Starting (?:the )?review\b)/i;
 
 /**
  * #1091 — true when stdout is a single short greeting / opening line with
  * no findings-like structure (empty-success variant after grok exits early).
+ * A greeting followed by substantive content on the same line (sentence break
+ * + trailing word content) is NOT greeting-only — it stays legal paper.
  */
 export function isOpeningLineOnlyStdout(
   stdout: string | null | undefined,
@@ -56,6 +61,9 @@ export function isOpeningLineOnlyStdout(
   const line = lines[0]!;
   if (line.length > OPENING_LINE_MAX_CHARS) return false;
   if (!OPENING_LINE_RE.test(line)) return false;
+  // #1091 finding 2b: a greeting prefix followed by substantive content on the
+  // same line is NOT greeting-only — keep it as legal paper.
+  if (/[.!?。！？…]\s+\S/.test(line)) return false;
   // Findings / review structure → still legal paper even if short.
   if (/findings?\s*[:\[]/i.test(line)) return false;
   if (/^\s*[{[]/.test(line)) return false;

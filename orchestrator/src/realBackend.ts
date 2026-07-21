@@ -1034,23 +1034,27 @@ export function provisionWorkerAuth(input: {
       : `slice-agy-${pathPolicy.issueNumber}-`;
   const agyDir = provisionAgyAuthDir(home, root, agyPrefix);
 
+  // #1091 finding 1: only the family/cmr flow consumes and cleans the claude
+  // credentials temp dir. The slice path's mountAuth never returns claudeAuthDir
+  // and never reclaims it — provisioning it there leaked credential copies into
+  // undeleted temp dirs. Skip on slice; codex/grok/agy behavior unchanged.
   let claudeAuthDir: string | undefined;
-  let tempClaudeDir: string | undefined;
-  try {
-    const claudePrefix =
-      pathPolicy.kind === "family"
-        ? `${pathPolicy.rolePrefix}-claude-auth-`
-        : `claude-auth-${pathPolicy.issueNumber}-`;
-    tempClaudeDir = mkdtempSync(join(root, claudePrefix));
-    chmodSync(tempClaudeDir, 0o700);
-    const srcCreds = join(home, ".claude", CLAUDE_CREDENTIALS_FILENAME);
-    const destCreds = join(tempClaudeDir, CLAUDE_CREDENTIALS_FILENAME);
-    copyFileSync(srcCreds, destCreds);
-    chmodSync(destCreds, 0o600);
-    claudeAuthDir = tempClaudeDir;
-  } catch {
-    if (claudeAuthDir === undefined && tempClaudeDir !== undefined) {
-      rmSync(tempClaudeDir, { recursive: true, force: true });
+  if (pathPolicy.kind === "family") {
+    let tempClaudeDir: string | undefined;
+    try {
+      tempClaudeDir = mkdtempSync(
+        join(root, `${pathPolicy.rolePrefix}-claude-auth-`),
+      );
+      chmodSync(tempClaudeDir, 0o700);
+      const srcCreds = join(home, ".claude", CLAUDE_CREDENTIALS_FILENAME);
+      const destCreds = join(tempClaudeDir, CLAUDE_CREDENTIALS_FILENAME);
+      copyFileSync(srcCreds, destCreds);
+      chmodSync(destCreds, 0o600);
+      claudeAuthDir = tempClaudeDir;
+    } catch {
+      if (claudeAuthDir === undefined && tempClaudeDir !== undefined) {
+        rmSync(tempClaudeDir, { recursive: true, force: true });
+      }
     }
   }
 

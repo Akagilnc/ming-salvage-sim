@@ -54,9 +54,15 @@ describe("#1091 claude panel-leg auth", () => {
     });
     expect(auth.claudeAuthDir).toBeTruthy();
     expect(auth.claudeAuthDir).toMatch(/cmr-claude-auth-/);
-    expect(
-      readFileSync(join(auth.claudeAuthDir!, CLAUDE_CREDENTIALS_FILENAME), "utf8"),
-    ).toContain("claudeAiOauth");
+    const srcCreds = readFileSync(
+      join(home, ".claude", CLAUDE_CREDENTIALS_FILENAME),
+      "utf8",
+    );
+    const destCreds = readFileSync(
+      join(auth.claudeAuthDir!, CLAUDE_CREDENTIALS_FILENAME),
+      "utf8",
+    );
+    expect(destCreds).toBe(srcCreds);
     expect(auth.claudeToken).toBe("oauth-tok");
 
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] =
