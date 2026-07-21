@@ -73,6 +73,8 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
+import { successfulLegsFromTransports } from "../legPaper.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2380,11 +2382,147 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
+    // #1094: runner dispatches panel legs as first-class workers BEFORE the
+    // pure judge court. Judge never spawns nested model CLIs.
+    const frozenLegs = spec.cmrReviewLegs ?? [];
+    // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
+    if (
+      frozenLegs.length > 0 &&
+      typeof familyBackend.prepareFamilyCmrPanelRound === "function"
+    ) {
+      const prep = await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
+      if (
+        prep !== undefined &&
+        typeof prep === "object" &&
+        "kind" in prep &&
+        prep.kind === "escalate"
+      ) {
+        const reason = prep.reason;
+        const diagnosis = prep.diagnosis;
+        reviewRoundResult = {
+          kind: "escalated",
+          escalation: prep.escalation,
+        };
+        const stopSummary = stageFailureStopSummary({
+          status: "cmr_failed",
+          summary: `${reason} — ${diagnosis}`,
+          repairHint:
+            "repair the integrated CMR worker startup/configuration failure, then re-feed the family run",
+        });
+        await persistFinalReviewRound("accepted", async () => {
+          await recordDurableAbort(familyBackend, {
+            phase: ledgerPhase,
+            cmrPass: pass,
+            reason,
+            stopSummary,
+          });
+          await familyBackend.escalateFamily?.({
+            reason,
+            diagnosis,
+            stopSummary,
+            escalationKind: "failure",
+          });
+        });
+        return {
+          result: stageGate("cmr_failed"),
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          resolvedRoute: activeRoute,
+        };
+      }
+    }
+    const panelRound = await dispatchFamilyCmrPanelLegs({
+      legs: frozenLegs,
+      cmrPass: pass,
+      // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
+      // binding is for the cmr court slot (quota relay). Cross-vendor panel
+      // legs keep their own registry providers (or none).
+      dispatch: (legSpec) => {
+        const { billingPool: _judgePool, ...legDispatchCtx } = dispatchCtx;
+        void _judgePool;
+        return dispatchOrAbort(
+          familyBackend,
+          legSpec,
+          legDispatchCtx,
+          undefined,
+          {
+            onMonitorHandle: (handle) => {
+              reviewerMonitorHandle = handle;
+            },
+          },
+        );
+      },
+    });
+    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
+    // (not judge prose cargo). Empty array after a real fan-out still wins.
+    const hostSkippedLegs = panelRound.skippedLegs;
+    // #1094 R3 F3: pure court with declared legs but ZERO successful transports
+    // must not converge — escalate (decision park) with skippedLegs reasons.
+    // One or more successful legs → optional-leg degrade still never blocks.
+    const successfulPanelLegs = successfulLegsFromTransports(
+      panelRound.transports,
+    );
+    if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
+      const reason = `family integrated cmr ${pass}: zero successful panel legs`;
+      const diagnosis =
+        hostSkippedLegs.length > 0
+          ? hostSkippedLegs
+              .map((leg) => `${leg.slug}: ${leg.reason}`)
+              .join("; ")
+          : "all declared panel legs failed or produced no legal review paper";
+      reviewRoundResult = {
+        kind: "escalated",
+        escalation: { reason, diagnosis },
+      };
+      const stopSummary = decisionGateParkStopSummary({
+        summary: `${reason} — ${diagnosis}`,
+        repairHint:
+          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
+        heads:
+          resolvedFamilyHeadAfter !== undefined
+            ? { actualFamilyHead: resolvedFamilyHeadAfter }
+            : undefined,
+      });
+      await persistFinalReviewRound("accepted", async () => {
+        await recordCmrReviewed(familyBackend, {
+          phase: ledgerPhase,
+          cmrPass: pass,
+          reason,
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          blockingFindingIdentityKeys: [],
+          judgeStatus: "escalate",
+          stopSummary,
+        });
+        await familyBackend.escalateFamily?.({
+          reason,
+          diagnosis,
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          stopSummary,
+          escalationKind: "decision",
+        });
+      });
+      return {
+        result: { ok: false, ran: true },
+        familyHeadAfter: resolvedFamilyHeadAfter,
+        resolvedRoute: activeRoute,
+      };
+    }
+    const panelLanding: WorkerLandingPayload = {
+      ...(refuseReopenLanding ?? {}),
+      panelLegTransports: panelRound.transports.map((t) => ({
+        slug: t.slug,
+        exitCode: t.exitCode,
+        stdout: t.stdout,
+      })),
+    };
+    const judgeDispatchCtx: DispatchContext = {
+      ...dispatchCtx,
+      panelLegTransports: panelLanding.panelLegTransports,
+    };
     const cmrResult = await dispatchOrAbort(
       familyBackend,
       spec,
-      dispatchCtx,
-      refuseReopenLanding,
+      judgeDispatchCtx,
+      panelLanding,
       {
       onMonitorHandle: (handle) => {
         reviewerMonitorHandle = handle;
@@ -2558,7 +2696,9 @@ async function runIntegratedCmrPass(input: {
       findings: judgeTraffic.findings,
     });
   }
-  // S3: skippedLegs must not drop on kind:judge (cargo rides).
+  // #1094 F4: host-mechanical skippedLegs are authoritative when panel legs
+  // were fan-out (including empty = none skipped). Judge cargo is fallback only
+  // when no legs were declared.
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"
       ? (rawOutput as {
@@ -2568,7 +2708,8 @@ async function runIntegratedCmrPass(input: {
           }>;
         })
       : undefined;
-  const skippedLegs = cargoSource?.skippedLegs;
+  const skippedLegs =
+    frozenLegs.length > 0 ? [...hostSkippedLegs] : cargoSource?.skippedLegs;
 
   if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>

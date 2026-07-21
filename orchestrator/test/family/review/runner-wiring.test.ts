@@ -44,6 +44,7 @@ import type {
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
@@ -1185,6 +1186,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         spec: WorkerSpec,
         _ctx: DispatchContext,
       ): Promise<WorkerResult> {
+        const panelLeg = completeCmrPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") return this.cmrOutput;
         // No coder-fix worker: the coder-fix dispatch fails → the family aborts,
         // but the pre-fix `cmr_reviewed` row is the row under test.

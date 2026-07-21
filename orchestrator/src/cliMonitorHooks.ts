@@ -87,8 +87,17 @@ export function resolveMonitorLogDir(ctx: DispatchContext): string | undefined {
   return undefined;
 }
 
-export function monitorJobPath(logDir: string, stepId: string): string {
-  return join(logDir, `${stepId}.job.json`);
+export function monitorJobPath(
+  logDir: string,
+  stepId: string,
+  dispatchId?: string,
+): string {
+  return join(
+    logDir,
+    dispatchId === undefined
+      ? `${stepId}.job.json`
+      : `${stepId}.${dispatchId}.job.json`,
+  );
 }
 
 export function monitorResultPath(
@@ -130,8 +139,11 @@ export function buildCliMonitorSpawnSpec(input: {
   if (logDir === undefined) return undefined;
 
   mkdirSync(logDir, { recursive: true });
-  const resultPath = monitorResultPath(logDir, input.spec.id, randomUUID());
-  const jobPath = monitorJobPath(logDir, input.spec.id);
+  // #1094: concurrent same-stepId dispatches (panel legs all sat on "S3") must
+  // not share one job/log file — mint a per-dispatch identity like resultPath.
+  const dispatchId = randomUUID();
+  const resultPath = monitorResultPath(logDir, input.spec.id, dispatchId);
+  const jobPath = monitorJobPath(logDir, input.spec.id, dispatchId);
   const job: CliMonitorJobFile = {
     backendKind: input.backendKind,
     backendOpts: input.backendOpts,
@@ -147,6 +159,10 @@ export function buildCliMonitorSpawnSpec(input: {
     ...process.env,
     [CLI_MONITOR_CHILD_ENV]: "1",
   };
+  const modelSuffix =
+    typeof input.spec.model === "string" && input.spec.model.length > 0
+      ? `.${input.spec.model.replace(/[^a-zA-Z0-9._-]+/g, "-")}`
+      : "";
 
   return {
     command: process.execPath,
@@ -161,7 +177,7 @@ export function buildCliMonitorSpawnSpec(input: {
       ? { cwd: input.ctx.worktree.path }
       : {}),
     env,
-    logBasename: `${input.spec.id}.log`,
+    logBasename: `${input.spec.id}${modelSuffix}.${dispatchId}.log`,
     resultPath,
   };
 }

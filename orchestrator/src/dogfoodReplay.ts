@@ -27,6 +27,10 @@ import {
   smokeRouteModels,
   type ModelRouteEnv,
 } from "./modelRoutes.js";
+import {
+  isCmrPanelLegPromptFile,
+  panelLegCompletedResult,
+} from "./family/cmrPanelLegs.js";
 import { runOrchestrator } from "./runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
@@ -592,14 +596,18 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
   readonly escalations: FamilyEscalation[] = [];
   private familyWorkerAttempt = 0;
   private familyHeadCursor: string;
+  /** #1094: panel-leg slugs that must fail (host-authoritative skippedLegs). */
+  private readonly panelLegFailures: ReadonlySet<string>;
 
   constructor(
     currentHead = "family-head",
     initialLedger: ReadonlyArray<FamilyLedgerEntry> = [],
     private readonly familyWorkerOutputs: ReadonlyArray<WorkerResult> = [],
+    panelLegFailures: ReadonlyArray<string> = [],
   ) {
     super(currentHead, initialLedger);
     this.familyHeadCursor = currentHead;
+    this.panelLegFailures = new Set(panelLegFailures);
   }
 
   override async runFamilyVerify(): Promise<FamilyVerifyResult> {
@@ -626,6 +634,21 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     this.dispatches.push(
       `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
     );
+    if (
+      spec.kind === "reviewer" &&
+      spec.role === "reviewer" &&
+      isCmrPanelLegPromptFile(spec.promptFile)
+    ) {
+      if (this.panelLegFailures.has(spec.model)) {
+        return {
+          kind: "failed",
+          reason: `provider quota unavailable`,
+        };
+      }
+      return panelLegCompletedResult(
+        "dogfood panel leg review prose (ADR 0141)",
+      );
+    }
     const scripted = this.familyWorkerOutputs[this.familyWorkerAttempt];
     this.familyWorkerAttempt += 1;
     if (scripted !== undefined) {
@@ -2117,7 +2140,10 @@ async function providerBlockingReplay(): Promise<SeamReplay> {
 async function providerStrongLegPassReplay(input: {
   readonly familyBase: string;
 }): Promise<SeamReplay> {
-  const backend = new DogfoodCmrFamilyBackend("provider-pass-head", [], [
+  const backend = new DogfoodCmrFamilyBackend(
+    "provider-pass-head",
+    [],
+    [
     {
       kind: "completed",
       output: judgeGreenOutput({        successfulLegs: ["gpt-5.6-sol"],
@@ -2148,7 +2174,9 @@ async function providerStrongLegPassReplay(input: {
         prHead: "provider-pass-head",
       },
     },
-  ]);
+  ],
+    ["agy"],
+  );
   const result = await withRouteEnv(
     { ORCHESTRATOR_ROUTE: "claude-tight" },
     () =>

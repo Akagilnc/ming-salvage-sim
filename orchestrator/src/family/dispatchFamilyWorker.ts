@@ -102,7 +102,9 @@ export function cmrWorkerSpec(
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",
-    skill: "ak-cross-m-review",
+    // #1094 F7 pure court: promptFile is the load-bearing lens selector
+    // (completeness vs correctness). WorkerSpec.skill is unused write-only metadata
+    // — omitted on purpose (honesty by deletion).
     promptFile:
       pass === "completeness"
         ? "integrated_cmr_completeness.md"
@@ -145,8 +147,8 @@ export function waveVerifyJudgeWorkerSpec(
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",
-    skill: "ak-cross-m-review",
     // #1068 authors the wave-verify judge prompt; this spec only pins the file.
+    // skill omitted — write-only metadata (#1094 R2 honesty by deletion).
     promptFile: "wave_verify_judge.md",
     maxIter: 1,
     model,

@@ -551,12 +551,22 @@ describe("#451 dogfood replay fixture", () => {
         seam: "family_verify_cmr_provider_worker_failure",
         failedLeg: "agy",
         status: "aborted",
-        dispatches: Array.from(
-          { length: MAX_DISPATCH_ATTEMPTS },
-          () => "cmr:completeness",
-        ),
       }),
     });
+    // #1094 F8: arrayContaining collapses duplicate literals — assert exact
+    // retry count via filter + toHaveLength (MAX_DISPATCH_ATTEMPTS).
+    {
+      const row = rowsById.get("376-provider-degraded-blocking") as {
+        sourceEvidence?: { dispatches?: unknown };
+      };
+      const dispatches = Array.isArray(row.sourceEvidence?.dispatches)
+        ? (row.sourceEvidence!.dispatches as unknown[])
+        : [];
+      const completenessDispatches = dispatches.filter(
+        (d) => d === "cmr:completeness",
+      );
+      expect(completenessDispatches).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    }
     expect(rowsById.get("376-provider-degraded-nonblocking")).toMatchObject({
       source: "family",
       classification: "provider_degraded",

@@ -8,18 +8,26 @@ Read the role soul first (live-mounted):
 
 Then follow that soul (判官 soul; symlink → `verify.md`) and the
 worktree's `CLAUDE.md`. This is the runner-dispatched step6 correctness gate.
-The runner only schedules you after step5 completeness has passed and writes
-`.cmr-focus.md` plus `.cmr-route.json`.
+The runner schedules panel legs first, then you as a pure court after step5
+completeness has passed, and writes `.cmr-focus.md` plus `.cmr-route.json`.
 
-**Invoke `ak-cmr-correctness` only** (this pass's skill). Do not re-run
-completeness. You judge the review surface; do not repair code or create fix
-commits.
+Do not re-run completeness. You judge the review surface from landed panel-leg
+prose; do not repair code, create fix commits, or spawn model CLIs.
 
 ## Pass scope
 
 Run only the correctness gate over the complete family base: review behavioral
 correctness, cross-slice contracts, and regressions. Do not re-run the completeness
 gate in this worker.
+
+## Panel legs (#1094)
+
+The runner already dispatched the fresh panel-leg workers and landed their
+prose transports (see `$ORCHESTRATOR_FIX_FINDINGS_PATH` / fix-findings landing
+`panelLegTransports` when set). **You are a pure court** — read those prose
+verdicts as evidence, distill anchors and dispositions, and emit the typed
+judge receipt. Do **not** spawn model CLIs, invoke nested review backends, or
+re-dispatch a panel.
 
 ## Required output
 

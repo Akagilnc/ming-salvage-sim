@@ -41,6 +41,7 @@ import {
   TWO_WAVES,
   epicWith,
 } from "./spine-gate.shared.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 describe("#296 spine integration — fail-safe: verify-green but a required final-barrier capability missing must NOT be success", () => {
   it("a real backend that verifies green but lacks runIntegratedCmr leaves the run cmr_failed (NOT a false success)", async () => {
@@ -80,7 +81,16 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
         this.verifyCalls.push(req);
         return { ok: true };
       }
-      // No integrated-CMR or family worker capability (a real-but-incomplete backend).
+      // #1094 F3: complete panel legs so missing CMR fails as cmr_failed
+      // (not zero-successful-transport escalate).
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        const panelLeg = completeCmrPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
+        return {
+          kind: "failed",
+          reason: "backend has no integrated CMR / family worker capability",
+        };
+      }
     }
     const backend = new VerifyOnlySpineBackend();
     const result = await runFamily({

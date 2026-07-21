@@ -53,6 +53,7 @@ import {
 } from "../gitInfoExclude.js";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -93,6 +94,7 @@ import {
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
 import {
+  buildJudgeReviewLegPrompt,
   judgeResultFromVerdict,
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
@@ -101,6 +103,11 @@ import {
   successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
+import {
+  CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE,
+  CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE,
+  panelLegCompletedResult,
+} from "./cmrPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -115,8 +122,7 @@ import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
-  modelIdForSlug,
-  resolveModelSlug,
+  modelFamilyForCmrReviewLeg,
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
@@ -130,8 +136,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
-  appendClaudeAuthMount,
-  assertClaudePanelLegAuth,
   provisionFamilyWorkerAuth,
   providerAuthFromCore,
   type FamilyWorkerAuthCore,
@@ -162,8 +166,10 @@ import {
 } from "../rawReviewerArtifacts.js";
 import {
   ONLINE_REVIEW_LANDING_FILE,
+  OnlineReviewLoopTerminal,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
 } from "./onlineReviewLoop.js";
+import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import {
   PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
@@ -384,6 +390,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
+    // #1094: pass-distinct panel-leg prompts (one authoritative source per lens).
+    "cmr_panel_leg_completeness.md",
+    "cmr_panel_leg_correctness.md",
     // #1068 added a thin wave-verify triage judge promptFile
     // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
     // construction-time inventory the same as the integrated CMR prompts.
@@ -1070,7 +1079,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1465,6 +1474,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
+    // #1094: family CMR panel legs are first-class reviewer workers (not nested
+    // CLIs inside the judge sandbox).
+    if (spec.kind === "reviewer") {
+      return this.runCmrPanelLegWorker(spec, ctx, landing);
+    }
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
@@ -1656,25 +1670,310 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Run the integrated cmr WORKER: ONE `sc.run` of the 2b container's
-   * route-selected agent invoking `ak-cross-m-review` over the merged family base
-   * diff (#335).
-   * `protected` so a unit test fixtures the outcome without a real container (the
-   * real container only runs on the driver / manual-smoke / e2e path).
-   *
-   * The worker is the container's TOP-LEVEL route-selected reviewer, running on the
-   * resident family base (`branchStrategy: head` keeps it on the full current diff)
-   * under the dedicated `cmr` soul. Completion is clean exit + typed receipt /
-   * legal sidecar (#928); the `<cmr>` verdict is parsed into a
-   * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
-   * and accounting around that verdict.
+   * #1094 — once-per-round repo prep BEFORE panel-leg fan-out.
+   * Checkout familyBase + write focus + shared-repo outcome exclude on
+   * workingRepo exactly once; legs then only clone (never concurrent checkout /
+   * exclude rewrite on the shared repo). Missing cut-SHA returns structured
+   * escalate (same reason/diagnosis as runCmrWorker) — never a bare throw.
    */
+  prepareFamilyCmrPanelRound(ctx: DispatchContext):
+    | { readonly headSha: string }
+    | {
+        readonly kind: "escalate";
+        readonly reason: string;
+        readonly diagnosis: string;
+        readonly escalation: ReturnType<typeof runnerSynthesizedFailureEscalation>;
+      } {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "prepareFamilyCmrPanelRound: requires ctx.familyBase",
+      );
+    }
+    // Shared-repo exclude once before fan-out (#1094 R2 F4) — legs must not
+    // concurrently rewrite `.git/info/exclude`.
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
+    if (
+      this.opts.familyBaseStartHead === undefined &&
+      ctx.waveVerifyFailure === undefined
+    ) {
+      const reason =
+        "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope";
+      const diagnosis =
+        "the integrated cmr focus file must pin the EXACT git diff <cut SHA>...<familyBase> " +
+        "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
+        "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
+        "RealFamilyBackendOptions.familyBaseStartHead.";
+      return {
+        kind: "escalate",
+        reason,
+        diagnosis,
+        escalation: runnerSynthesizedFailureEscalation({ reason, diagnosis }),
+      };
+    }
+    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    if (ctx.waveVerifyFailure === undefined) {
+      this.writeCmrFocusFile(ctx);
+    }
+    const headSha = this.sh(
+      "git",
+      ["rev-parse", "HEAD"],
+      this.opts.workingRepo,
+    ).trim();
+    return { headSha };
+  }
+
+  /**
+   * #1094 — one runner-dispatched CMR panel-leg worker (fresh READ-ONLY reviewer).
+   * Top-level sandcastle agent for the leg's model (credential injection = same
+   * as single-slice fresh reviewer). Independent clone at PRE_HEAD; prose stdout
+   * is the legal paper (ADR 0141).
+   *
+   * Does NOT checkout or rewrite focus on workingRepo — that is
+   * {@link prepareFamilyCmrPanelRound}'s job (once before fan-out).
+   * Does NOT provision an outcome sidecar — legs are prose-only (ADR 0141).
+   */
+  protected async runCmrPanelLegWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(reviewer panel leg): requires ctx.familyBase",
+      );
+    }
+    const auth = this.mountCmrAuth();
+    let legClone: string | undefined;
+    try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        // #1094 F6: missing auth is terminal for this leg (escalate → no
+        // mechanical 6× retry). Transport layer maps escalate → skipped evidence.
+        const reason = `no ${missingProvider} auth — panel leg ${spec.model} cannot start`;
+        return {
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason,
+            diagnosis:
+              "typed provider availability preflight rejected the panel leg before sc.run",
+          }),
+        };
+      }
+      if (
+        modelFamilyForCmrReviewLeg(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
+        return {
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — panel leg cannot start",
+            diagnosis:
+              "panel leg Claude OAuth token missing; escalate (no mechanical retry)",
+          }),
+        };
+      }
+      // #1094 R4 F-A: setup infra (clone / soul / prompt / sandbox) throws degrade
+      // THIS leg to {kind:"failed"} — same transport shape as R3 F4 focus-copy —
+      // so allSettled siblings keep running and the pure court still opens.
+      // Park/relay / OnlineReviewLoopTerminal escalate throws must rethrow so
+      // fan-out can drain peers then surface the typed terminal (never collapse
+      // into leg-kill failed, never whole-pass cmr_failed via bare Error).
+      try {
+        // Resolve familyBase SHA without checkout (prep already did that once).
+        const headSha = this.sh(
+          "git",
+          ["rev-parse", ctx.familyBase],
+          this.opts.workingRepo,
+        ).trim();
+        legClone = this.preparePanelLegClone(spec.model, headSha);
+        // Focus file was written once on workingRepo; copy into the independent clone.
+        // #1094 R3 F4: failed copy is a degraded transport (fail-loud), never a
+        // present leg reviewing invent-your-own scope.
+        const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+        try {
+          copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            kind: "failed",
+            reason:
+              `panel leg ${spec.model}: failed to stage ${CMR_FOCUS_FILENAME} ` +
+              `(pinned review scope) — ${detail}`,
+          };
+        }
+        const reviewerSoul = readFileSync(
+          join(this.opts.soulsDir, "reviewer.md"),
+          "utf8",
+        );
+        // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
+        // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
+        const promptTemplate = readFileSync(
+          join(this.opts.promptsDir, spec.promptFile),
+          "utf8",
+        );
+        const passLabel =
+          spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
+            ? "completeness"
+            : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
+              ? "correctness"
+              : spec.promptFile;
+        const taskBody =
+          `${promptTemplate.trim()}\n\n` +
+          `Panel leg slug: ${spec.model}.\n` +
+          `CMR pass: ${passLabel}.\n` +
+          `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
+          `(or the assigned clone scope) and emit prose review on stdout.`;
+        const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
+        const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
+        writeFileSync(promptPath, promptBody, "utf8");
+        const result = await this.runAgentSandbox({
+          name: `family-cmr-panel-${spec.model}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: legClone,
+          sandbox: this.panelLegSandbox(auth, spec, ctx),
+          agent: this.agentForSpec(spec, ctx),
+          maxIterations: 1,
+          branchStrategy: { type: "head" },
+          promptFile: promptPath,
+        });
+        const stdout =
+          typeof (result as { stdout?: unknown }).stdout === "string"
+            ? (result as { stdout: string }).stdout
+            : "";
+        return panelLegCompletedResult(stdout);
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) throw err;
+        if (isQuotaWaitForResetError(err)) throw err;
+        const reason = err instanceof Error ? err.message : String(err);
+        return { kind: "failed", reason: `panel leg ${spec.model}: ${reason}` };
+      }
+    } finally {
+      this.cleanupTempAuthDirs([
+        auth.codexAuthDir,
+        auth.agyDir,
+        auth.grokAuthDir,
+      ]);
+      if (legClone !== undefined) {
+        rmSync(legClone, { recursive: true, force: true });
+      }
+    }
+  }
+
+  /**
+   * Independent writable clone for one panel leg (#1094 / ak-cross-m-review
+   * clone semantics): no linked worktree, no shared object store.
+   */
+  protected preparePanelLegClone(slug: string, headSha: string): string {
+    const safe = slug.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const legRoot = mkdtempSync(
+      join(this.opts.ledgerDir, `panel-leg-${safe}-`),
+    );
+    try {
+      this.sh("git", [
+        "clone",
+        "--origin",
+        "origin",
+        "--no-local",
+        "--no-checkout",
+        this.opts.workingRepo,
+        legRoot,
+      ]);
+      this.sh("git", ["checkout", "--detach", headSha], legRoot);
+    } catch (err) {
+      // #1094 R4 F-A: mkdtempSync already created legRoot — reclaim on
+      // clone/checkout failure so ledgerDir does not leak half-built clones.
+      rmSync(legRoot, { recursive: true, force: true });
+      throw err;
+    }
+    try {
+      this.sh("git", ["remote", "remove", "origin"], legRoot);
+    } catch {
+      // already remote-free
+    }
+    return legRoot;
+  }
+
+  protected panelLegSandbox(
+    auth: CmrAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): sc.SandboxProvider {
+    return docker(this.panelLegSandboxConfig(auth, spec, ctx));
+  }
+
+  protected panelLegSandboxConfig(
+    auth: CmrAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
+  } {
+    const soul = soulForStep({
+      id: spec.id,
+      role: spec.role,
+      soul: spec.soul,
+    });
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
+    if (ctx.familyIssue !== undefined) {
+      const issue = String(ctx.familyIssue);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.claudeToken !== undefined) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    }
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
+    // Mount credentials for the provider that will actually execute (#1094 R3 F1):
+    // pool rewrite (ctx.billingPool) can change the CLI even when the registry
+    // row stays e.g. gpt-5.6-sol / opus.
+    const pool = isBillingPoolDispatchId(ctx.billingPool)
+      ? ctx.billingPool
+      : undefined;
+    const provider = resolveModelSlugForPool(spec.model, pool).provider;
+    if (provider === "codex" && auth.codexAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
+    }
+    if (provider === "agy" && auth.agyDir !== undefined) {
+      appendAgyAuthMount(mounts, auth.agyDir);
+    }
+    if (provider === "grok" && auth.grokAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
+    }
+    mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
   protected async runCmrWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<CmrWorkerOutcome> {
-    // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
+    // #1094: pure-court judge — panel legs already ran via runner fan-out;
+    // this worker reads landed prose and emits the typed verdict.
     // EXACT cut-SHA review-scope diff (prompt contract in the integrated CMR pass prompts — do
     // NOT guess main...HEAD). With no recorded cut SHA there is no honest scope to
     // hand the review, and a `main...familyBase` fallback would silently disable the
@@ -1768,24 +2067,6 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      // #1091: claude-family panel legs need token env and/or credentials mount.
-      const claudePanelAuthGap = assertClaudePanelLegAuth({
-        reviewLegs: frozenReviewLegs,
-        ...(auth.claudeAuthDir !== undefined
-          ? { claudeAuthDir: auth.claudeAuthDir }
-          : {}),
-      });
-      if (claudePanelAuthGap !== undefined) {
-        return {
-          kind: "escalate",
-          reason: "no Claude panel-leg auth for cmrReview claude-family leg",
-          diagnosis: claudePanelAuthGap,
-          escalation: runnerSynthesizedFailureEscalation({
-            reason: "no Claude panel-leg auth for cmrReview claude-family leg",
-            diagnosis: claudePanelAuthGap,
-          }),
-        };
-      }
       // Check out the family base so the in-container ak-cross-m-review reviews the
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
@@ -1810,13 +2091,19 @@ export class RealFamilyBackend implements FamilyBackend {
       // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
       // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
       // Trigger on ctx keys OR landing refuseRecords OR priorJudgeVerdicts.
+      // #1094: also land when runner-dispatched panel-leg transports are present
+      // so the pure judge court can read prose evidence.
       const needsFixFindingsLanding =
         (landing?.refuseRecords !== undefined &&
           landing.refuseRecords.length > 0) ||
+        (landing?.panelLegTransports !== undefined &&
+          landing.panelLegTransports.length > 0) ||
         (ctx.refusedFindingIdentityKeys !== undefined &&
           ctx.refusedFindingIdentityKeys.length > 0) ||
         (ctx.priorJudgeVerdicts !== undefined &&
-          ctx.priorJudgeVerdicts.length > 0);
+          ctx.priorJudgeVerdicts.length > 0) ||
+        (ctx.panelLegTransports !== undefined &&
+          ctx.panelLegTransports.length > 0);
       const fixFindingsLanding = needsFixFindingsLanding
         ? this.writeFamilyFixFindingsFile(ctx, landing)
         : undefined;
@@ -1843,7 +2130,7 @@ export class RealFamilyBackend implements FamilyBackend {
             cwd: this.opts.workingRepo,
             sandbox: this.cmrSandbox(
               auth,
-              frozenReviewLegs,
+              spec,
               outcomeLanding,
               ctx,
               fixFindingsLanding,
@@ -1885,9 +2172,13 @@ export class RealFamilyBackend implements FamilyBackend {
           (result as { readonly output?: unknown }).output,
           "family CMR",
         );
-        // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
-        // host rebuilds successfulLegs transport-only (production panel path).
-        const legTransports = legTransportsFromCmrSandboxResult(result);
+        // #1005 / ADR 0141 / #1094: host-observed panel-leg transports from
+        // runner-dispatched first-class workers win over nested sandbox cargo.
+        const hostTransports = normalizePanelLegTransports(
+          ctx.panelLegTransports ?? landing?.panelLegTransports,
+        );
+        const legTransports =
+          hostTransports ?? legTransportsFromCmrSandboxResult(result);
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
@@ -1905,7 +2196,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -2042,7 +2333,7 @@ export class RealFamilyBackend implements FamilyBackend {
         });
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2109,6 +2400,15 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(ctx.priorJudgeVerdicts !== undefined &&
           ctx.priorJudgeVerdicts.length > 0
             ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
+            : {}),
+          // #1094: runner-dispatched panel-leg prose for the pure judge court.
+          ...((landing?.panelLegTransports ?? ctx.panelLegTransports) !==
+            undefined &&
+          (landing?.panelLegTransports ?? ctx.panelLegTransports)!.length > 0
+            ? {
+                panelLegTransports:
+                  landing?.panelLegTransports ?? ctx.panelLegTransports,
+              }
             : {}),
         },
         null,
@@ -2342,7 +2642,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2455,10 +2755,6 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
-    // #1091: mount claude credentials file for panel-leg `claude` CLIs, same as
-    // cmrSandboxConfig. Without it claude-family panel legs fail to authenticate
-    // (claude-family judge workers scrub CLAUDE_CODE_OAUTH_TOKEN from children).
-    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2656,6 +2952,8 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
+    // Shared-repo exclude is written once in prepareFamilyCmrPanelRound
+    // (#1094 R2 F4). Judge-only path (no panel prep) still needs it here.
     ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
@@ -2677,12 +2975,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
-   * double-mount. The route legs are also explicit so the container env cannot
-   * drift from the already-resolved worker spec.
+   * double-mount. Judge identity credential is keyed by {@link WorkerSpec.model}
+   * family — isomorphic to {@link panelLegSandboxConfig} (#1094 R2 F1).
    */
   protected cmrSandbox(
     auth: CmrAuth,
-    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    spec: Pick<WorkerSpec, "model" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -2690,7 +2988,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return docker(
       this.cmrSandboxConfig(
         auth,
-        reviewLegs,
+        spec,
         outcomeLanding,
         ctx,
         fixFindingsLanding,
@@ -2754,25 +3052,15 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The docker options the cmr worker sandbox runs under — the pure SANDBOX-CONFIG
-   * seam (mirrors `mergerSandboxConfig` / `RealBackend.boxConfig` testability). No
-   * container, no I/O: a unit test asserts the mounts + soul env without a real
-   * sandbox.
-   *
-   * Wires ALL THREE reviewer legs' auth (#335 / #333 gotcha): the codex auth dir
-   * (host-mirrored `~/.codex`), the agy OAuth token (host-mirrored
-   * `~/.gemini/antigravity-cli`, mounted WRITABLE — the leg writes runtime state
-   * there), and the claude OAuth token (env var). Without the agy mount the agy
-   * cmr leg has no auth and the cmr degrades to codex-only. NO skills mount: the 2b
-   * image BAKES ak-cross-m-review + its closure (#333) — a runtime mount would
-   * SHADOW the baked skill (#334). Also injects `CMR_CODEX_MODEL` from the frozen
-   * cmrReview codex leg (#768) so the baked skill's executable model cannot drift
-   * from the route label. The dedicated `cmr` soul carries review/outcome
-   * discipline only; persistent fixes route through the family coder-fix worker.
+   * Pure config for the cmr sandbox — #1094 F7 pure court + R2 F1 judge identity
+   * + R3 F1 executing-provider mount.
+   * Mounts ONLY the credential for the CLI that will actually run (pool-aware
+   * via {@link resolveModelSlugForPool}), isomorphic to
+   * {@link panelLegSandboxConfig}. Nested-panel armament stays deleted.
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
-    reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    spec: Pick<WorkerSpec, "model" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -2781,72 +3069,50 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    // ORCHESTRATOR_REPO too: the cmr worker runs `gh issue view` (completeness
-    // authority) AND `gh issue create` (defer→tracker), both needing `--repo
-    // "$ORCHESTRATOR_REPO"`. In a clone-from-LOCAL family run (launch sets
-    // sourceRepo to the local repo) the container's git remote is the local path,
-    // so gh's repo INFERENCE would target the wrong place — pass the slug explicitly
-    // (codex #384). Mirrors ship/coder.
-    // #768: pin the baked skill's CMR_CODEX_MODEL + CMR_CODEX_EFFORT to the
-    // frozen route's codex cmrReview leg. Without this, route labels
-    // (ORCHESTRATOR_CMR_REVIEW_LEGS / .cmr-route.json) can say sol while
-    // codex-review.sh still defaults to gpt-5.5 / medium — leg execution ≠
-    // route/registry authority. Derive from reviewLegs; never hardcode.
+    // ORCHESTRATOR_REPO: the cmr worker runs `gh issue view` / `gh issue create`
+    // needing `--repo "$ORCHESTRATOR_REPO"`.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
-      ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
-    const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
-    if (codexReviewLeg !== undefined) {
-      // Resolve effort-variant registry slugs (e.g. gpt-5.6-sol-low) to the CLI
-      // model id the baked codex-review.sh expects — not the registry key.
-      env.CMR_CODEX_MODEL = modelIdForSlug(codexReviewLeg.slug);
-      // Effort authority = registry row for the slug. codex-review.sh reads
-      // CMR_CODEX_EFFORT (default medium); omitting it collapses sol-low/high
-      // variants to medium and defeats route/registry effort selection.
-      const entry = resolveModelSlug(codexReviewLeg.slug);
-      if (entry.provider === "codex" && entry.options?.effort !== undefined) {
-        env.CMR_CODEX_EFFORT = entry.options.effort;
-      }
-    }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
-    // The in-container completeness gate's `gh issue view` (the live issue body =
-    // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
-    // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
-    // gh absence degrades the gate's authority, it never blocks the cmr worker.
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    // #919 R2: same fix-findings env pointer as single-slice judge / family coder.
     if (fixFindingsLanding !== undefined) {
       env[SANDBOX_FIX_FINDINGS_PATH_ENV] = fixFindingsLanding.sandboxPath;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    // Each leg's auth is mounted only when present (the 降级链 — a missing leg
-    // degrades, the rest still review). The agy dir is WRITABLE (default, no
-    // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
-    // #1091: claude panel legs get credentials file mount + token env (above).
-    if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
-    }
-    appendAgyAuthMount(mounts, auth.agyDir);
-    if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
-    }
-    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
-    // Fix-findings is written into the worktree cwd (workingRepo); no extra
-    // bind-mount is required — env points at the sandbox-relative filename.
-    // #372: souls mount live for integrated cmr worker (souls not baked).
-    // Shared helper (single source for the mount + readonly:true).
+    // Executing-provider credential only (#1094 R3 F1) — not registry-row family,
+    // not multi-provider armament. A 429 relay onto grok-build must mount ~/.grok
+    // even when the judge slug stays gpt-5.6-sol.
+    const pool = isBillingPoolDispatchId(ctx?.billingPool)
+      ? ctx.billingPool
+      : undefined;
+    const provider = resolveModelSlugForPool(spec.model, pool).provider;
+    if (provider === "codex" && auth.codexAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
+    }
+    if (provider === "agy" && auth.agyDir !== undefined) {
+      appendAgyAuthMount(mounts, auth.agyDir);
+    }
+    if (provider === "grok" && auth.grokAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
+    }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -3019,7 +3285,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -3616,6 +3882,23 @@ function softParseLegTransports(
  *   2. typed-output soft cargo `result.output.legTransports` (SO passthrough)
  * Absent → undefined; cargo soft path may still rebuild from payload.
  */
+function normalizePanelLegTransports(
+  raw:
+    | ReadonlyArray<{
+        readonly slug: string;
+        readonly exitCode: number;
+        readonly stdout: string | null | undefined;
+      }>
+    | undefined,
+): ReadonlyArray<LegTransport> | undefined {
+  if (raw === undefined || raw.length === 0) return undefined;
+  return raw.map((t) => ({
+    slug: t.slug,
+    exitCode: t.exitCode,
+    stdout: t.stdout,
+  }));
+}
+
 function legTransportsFromCmrSandboxResult(
   result: unknown,
 ): ReadonlyArray<LegTransport> | undefined {

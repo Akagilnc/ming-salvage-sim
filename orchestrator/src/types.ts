@@ -376,6 +376,12 @@ export interface ReviewerOutput {
    * runner never invents a placeholder body from open-count / findings.
    */
   readonly fixPacketBody?: string;
+  /**
+   * #1094 — raw panel-leg prose when this reviewer is a runner-dispatched
+   * family CMR panel leg. Host rebuilds {@link import("./legPaper.js").LegTransport}
+   * from exit + this stdout (ADR 0141); content shape is never a gate.
+   */
+  readonly rawStdout?: string;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
@@ -974,6 +980,15 @@ export interface WorkerLandingPayload {
     readonly mergedHeadOid: string;
     readonly convergedHeadOid: string;
   };
+  /**
+   * #1094 — runner-dispatched family CMR panel-leg transports (ADR 0141).
+   * Judge reads prose as court evidence; never spawns nested model CLIs.
+   */
+  readonly panelLegTransports?: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
 }
 
 /**
@@ -1138,6 +1153,15 @@ export interface DispatchContext {
    * at dispatch. Not a worktree file; injected via env into the worker.
    */
   readonly relayBrief?: string;
+  /**
+   * #1094 — host-observed panel-leg transports for the family judge court.
+   * Runner dispatches legs first; judge receives prose only (pure court).
+   */
+  readonly panelLegTransports?: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */

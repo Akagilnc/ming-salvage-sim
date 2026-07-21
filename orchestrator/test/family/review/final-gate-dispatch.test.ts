@@ -32,6 +32,7 @@ import {
   completedJudgeGreen,
   CapableFamilyBackend,
 } from "./final-gate-dispatch.shared.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", () => {
   it("derives every family worker host from its route-selected model", () => {
@@ -189,6 +190,8 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       spec: WorkerSpec,
       ctx: DispatchContext,
     ): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       this.dispatched.push({
         kind: spec.kind,
         promptFile: spec.promptFile,
@@ -342,6 +345,8 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
@@ -420,6 +425,8 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
@@ -611,6 +618,8 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       return spec.kind === "cmr" ? this.cmrOut : this.shipOut;
     }
   }
@@ -654,6 +663,8 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     // (the pre-#919 backend had no dispatchWorker at all; residual unusable now
     // fails earlier as cmr_failed, so this keeps the ship-unavailability intent).
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
@@ -700,6 +711,8 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }
@@ -817,6 +830,8 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       this.escalations.push(e);
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === this.escalateOn) {
         return {
           kind: "escalated",
@@ -864,6 +879,8 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      const autoPanelLeg = completeCmrPanelLegWorker(spec);
+      if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind === "cmr") {
         return completedJudgeGreen();
       }

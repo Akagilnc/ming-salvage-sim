@@ -124,7 +124,7 @@ describe("#966 family judge session from ledger", () => {
         return this.runCmrWorker(workerSpec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok", claudeAuthDir: mkDir("966-claude-auth-") };
+        return { claudeToken: "tok" };
       }
       protected override agentForSpec(
         workerSpec: WorkerSpec,
@@ -193,7 +193,7 @@ describe("#966 family judge session from ledger", () => {
         return this.runCmrWorker(workerSpec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok", claudeAuthDir: mkDir("966-claude-auth-") };
+        return { claudeToken: "tok" };
       }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
@@ -240,7 +240,7 @@ describe("#966 family judge session from ledger", () => {
         return this.runCmrWorker(workerSpec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok", claudeAuthDir: mkDir("966-claude-auth-") };
+        return { claudeToken: "tok" };
       }
       protected override agentForSpec(
         spec: WorkerSpec,
@@ -318,11 +318,8 @@ describe("#966 family judge session from ledger", () => {
       }
       protected override mountCmrAuth(): CmrAuth {
         // Grok seat preflight requires grokAuthDir (providerAuth.grok).
-        // #1091: normal route cmrReview includes claude-family panel legs —
-        // credentials file mount satisfies assertClaudePanelLegAuth.
         return {
           grokAuthDir: mkDir("966-grok-auth-"),
-          claudeAuthDir: mkDir("966-claude-auth-"),
           claudeToken: "test-claude-panel-tok",
           providerAuth: { claude: true, grok: true, agy: false },
         };
