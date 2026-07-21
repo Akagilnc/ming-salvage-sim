@@ -6,17 +6,19 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030 / #925 / #1081 (ADR 0147): the child runner owns the visible
- * per-slice review/fix loop with a resident judge born at dispatch:
+ * ADR 0030 / #925 / #1081 / #1083 (ADR 0147): the child runner owns the visible
+ * per-slice review/fix loop with a resident judge born at dispatch — **judge hub**:
  *
- *   S0(gate) → S1(context + open court) → S2(implement) → S3(judge resume)
+ *   S0(gate) → S1(context + open court) → S2(builder beat) → S3(judge resume)
  *     converged → dismiss court → S7(local handoff) → S8(handoff)
- *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     continue  → S5(builder beat) → S6(judge resume) → (verdict again)
  *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 resume the same verify judge session created
- * at S1 open court. S4 mechanical open-count classification is dissolved into
- * the judge verdict tri-state.
+ * S2/S5 are builder beats (coder implement / coder-fix). Every beat dumb-relays
+ * to the resident judge with no envelope classification; builder never connects
+ * straight to a fresh reviewer. S3/S6 resume the same verify judge session
+ * created at S1 open court. S4 mechanical open-count classification is dissolved
+ * into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).

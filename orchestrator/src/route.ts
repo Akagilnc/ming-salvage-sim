@@ -5,12 +5,16 @@
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
- * #925 / ADR 0132: per-slice review/fix convergence is judge-verdict driven:
+ * #925 / ADR 0132 + #1083 / ADR 0147: per-slice review/fix is a **judge hub**:
  *
- *   S0→S1→S2(implement)→S3(judge establish)
+ *   S0→S1→S2(builder beat)→S3(resident judge)
  *     converged → S7(local handoff) → S8(completed)
- *     continue  → S5(fix)→S6(judge resume)→(verdict again)
+ *     continue  → S5(builder beat)→S6(resident judge)→(verdict again)
  *     escalate  → decision-kind park (global stop edge)
+ *
+ * Builder beats (S2 / S5 — plan or construction, no envelope classification)
+ * always dumb-relay to the resident judge. Builder and fresh reviewer never
+ * connect directly; fresh review legs are the judge's post-receive outer gate.
  *
  * S4 mechanical open-count classification is dissolved. A valid decision
  * escalation stays the global stop edge (checked FIRST). Envelope shape never
@@ -44,6 +48,34 @@ export interface RouteContext {
 }
 
 /**
+ * Builder beat seats that always dumb-relay to the resident judge hub
+ * (#1083 / ADR 0147). Plan vs construction is not a runner concern.
+ */
+export type BuilderBeatStep = "S2" | "S5";
+
+/** True when `step` is a builder beat that must return to the resident judge. */
+export function isBuilderBeatStep(step: string): step is BuilderBeatStep {
+  return step === "S2" || step === "S5";
+}
+
+/**
+ * #1083 / ADR 0147 — single seam: every builder beat routes to the resident
+ * judge. No envelope classification (committed / plan-only / refuse cargo
+ * never forks this edge). Fresh reviewer is never the next step from a
+ * builder beat — judge receives first, then may dispatch fresh legs.
+ *
+ * Consumers (audit):
+ * - route() S2 / S5 cases
+ * - #1083 pure + e2e tests (fixer-judge-hub-1083)
+ */
+export function routeBuilderBeatToResidentJudge(
+  from: BuilderBeatStep,
+): RouteDecision {
+  if (from === "S2") return { kind: "next", step: "S3" };
+  return { kind: "next", step: "S6" };
+}
+
+/**
  * S3 / S6 / residual-S4 status → edge table (single copy).
  * Unusable and continue both go to S5 (never silent clean / S7).
  *
@@ -63,8 +95,9 @@ function routeEdgesFromJudgeStatus(
 /**
  * Decide the next step.
  *
- * #925 edges: S2 → S3 judge; S3/S6 judge verdict → S7 / S5 / escalate park;
- * S5 → S6. The global escalate stop (#251) is still checked FIRST.
+ * #925 / #1083 edges: S2/S5 builder beat → resident judge (S3/S6);
+ * S3/S6 judge verdict → S7 / S5 / escalate park. The global escalate stop
+ * (#251) is still checked FIRST.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
@@ -84,10 +117,9 @@ export function route(ctx: RouteContext): RouteDecision {
     case "S1":
       return { kind: "next", step: "S2" };
 
-    case "S2": {
-      // Implementation always hands the scene to the judge (S3 establish).
-      return { kind: "next", step: "S3" };
-    }
+    case "S2":
+      // #1083: builder beat → resident judge hub (no envelope fork).
+      return routeBuilderBeatToResidentJudge("S2");
 
     case "S3":
     case "S6":
@@ -98,10 +130,9 @@ export function route(ctx: RouteContext): RouteDecision {
       return routeEdgesFromJudgeStatus(judgeStatusFromOutput(ctx.output));
     }
 
-    case "S5": {
-      // Fix and fresh re-judge alternate by topology.
-      return { kind: "next", step: "S6" };
-    }
+    case "S5":
+      // #1083: fixer beat → resident judge hub (never direct fresh reviewer).
+      return routeBuilderBeatToResidentJudge("S5");
 
     case "S7":
       return { kind: "handoff", status: "completed" };
