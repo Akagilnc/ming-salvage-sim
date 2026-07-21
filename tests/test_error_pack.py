@@ -317,7 +317,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     from ming_sim.exceptions import SettlementAbort
 
     class _StubSession:
-        def resolve_turn(self, cheat_directive=""):
+        def resolve_turn(self, cheat_directive="", inflight_wait_s=None):
             raise SettlementAbort(
                 "本月结算失败，进度已保存，可重试。\n错误包已生成：/tmp/x\n请把该文件夹发给作者，以便排查。",
                 turn=3, stage="extract", error_pack_path="/tmp/x")
@@ -330,7 +330,7 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
 
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_issue_decree())
+        web_app.api_issue_decree()
 
     assert ei.value.status_code != 500
     assert "可重试" in str(ei.value.detail)

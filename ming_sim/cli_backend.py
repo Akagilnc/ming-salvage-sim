@@ -1033,35 +1033,58 @@ def extract_draft_intent(
     llm_config: Any = None,
     has_pending_draft: bool = False,
     existing_draft_text: str = "",
+    existing_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图与草案文本。
-    失败/无 → {"draft_action": "无", "draft_text": ""}。
+    """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
+    失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
     has_pending_draft=True：本回合已有草案暂存，皇帝「补充/修改当前草稿」也归拟旨。
     existing_draft_text 非空时（补充模式）：LLM 输出合并草案，payload 存合并后全文；
-    不能用大臣确认回话（「好的，加上…」）覆盖原草案。"""
+    不能用大臣确认回话（「好的，加上…」）覆盖原草案。
+
+    existing_candidates 非空（多道模式，#502）：本夜已有若干独立圣旨候选，LLM 除判拟旨意图/
+    合并草案外，还判本轮**新拟独立一道**（target_candidate="新"）还是**补充/修改某一道**
+    （target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
+    多条→target_candidate="含糊"（交 session 追问哪一道，不静默新建第三道；#502 L7）。
+    无候选时 target_candidate 恒空。"""
+    _candidates = [c for c in (existing_candidates or []) if c]
+    _by_id = {int(c["id"]): c for c in _candidates}
     supplement_hint = (
         "本回合已有草案暂存；如果皇帝是在补充/修改/扩充当前草稿"
         "（如「再补一条」「加上」「改成」「把…去掉」等），也归拟旨。\n"
-        if has_pending_draft else ""
+        if (has_pending_draft or _candidates) else ""
     )
     # 补充模式（has_pending_draft + existing_draft_text）：注入现有草案，要求 LLM 输出合并草案。
     # 直接用大臣回话（可能是「好的，加上…」等确认语）会覆盖原草案——须由 LLM 合并。
     _existing_draft_text = (
         "" if existing_draft_text is None else str(existing_draft_text)
     ).strip()
-    _supplement_mode = has_pending_draft and bool(_existing_draft_text)
+    _supplement_mode = (has_pending_draft or bool(_candidates)) and (
+        bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
         if _supplement_mode else
         '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
     )
+    # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
+    target_schema_line = (
+        '  "目标草案": "新",       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
+        '想改/补但没指明是哪道=「含糊」\n'
+        if _candidates else ""
+    )
     merge_schema_line = (
-        '  "合并草案": ""   // 仅拟旨时必填：把【现有草案】与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
+        '  "合并草案": ""   // 仅拟旨时必填：把现有草案与本轮新增/修改指令合并成完整草案；无拟旨意图时留空\n'
         if _supplement_mode else ""
     )
     draft_context = (
         f"【现有草案】{_existing_draft_text}\n"
-        if _supplement_mode else ""
+        if _existing_draft_text else ""
+    )
+    candidates_context = (
+        "【现有候选】\n" + "\n".join(
+            f"  [{int(c['id'])}] {str(c.get('summary') or c.get('text') or '')[:40]}"
+            for c in _candidates
+        ) + "\n"
+        if _candidates else ""
     )
     prompt = (
         "你是信息抽取器，不扮演、不写圣旨。读皇帝这句话 + 大臣回话，判断皇帝**本轮**"
@@ -1070,10 +1093,12 @@ def extract_draft_intent(
         + "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
         "{\n"
         + intent_schema_line
+        + target_schema_line
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
         + draft_context
+        + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
@@ -1087,18 +1112,42 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
-    # 无意图时保持空草案；补充模式优先用 LLM 输出的合并草案，未填时保留现有草案。
+    merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
-        draft_text = ""
-    elif _supplement_mode:
-        merged = str(obj.get("合并草案") or "").strip()
-        draft_text = merged if merged else _existing_draft_text
+        return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    if not _candidates:
+        # 无候选：沿用单条语义——补充模式合并、否则大臣回话即草案。
+        if _supplement_mode:
+            draft_text = merged if merged else _existing_draft_text
+        else:
+            draft_text = (minister_reply or "").strip()
+        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": ""}
+    # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
+    # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
+    target_raw = str(obj.get("目标草案") or "").strip()
+    target_id: Optional[int] = None
+    if target_raw and target_raw != "新":
+        digits = "".join(ch for ch in target_raw if ch.isdigit())
+        if digits and int(digits) in _by_id:
+            target_id = int(digits)
+    if target_raw == "新":
+        target = "新"
+    elif target_id is not None:
+        target = str(target_id)
+    elif len(_by_id) == 1:
+        target = str(next(iter(_by_id)))
     else:
-        draft_text = (minister_reply or "").strip()
-    return {
-        "draft_action": _action,
-        "draft_text": draft_text,
-    }
+        target = "含糊"
+    if target == "含糊":
+        # 多道并存、改/补目标不明：不落草案，交 session 走结构化含糊追问（对齐 AC5）。
+        return {"draft_action": _action, "draft_text": "", "target_candidate": "含糊"}
+    if target == "新":
+        draft_text = merged if merged else (minister_reply or "").strip()
+    else:
+        existing = str(_by_id[int(target)].get("text") or "")
+        # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
+        draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
+    return {"draft_action": _action, "draft_text": draft_text, "target_candidate": target}
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
@@ -1211,6 +1260,59 @@ def extract_confirmation_intent(
     obj = _loads_lenient(raw) or {}
     v = str(obj.get("确认") or "无").strip()
     return v if v in {"应允", "拒绝", "无"} else "无"
+
+
+def extract_directive_confirmation(
+    player_message: str,
+    minister_reply: str,
+    candidates: List[Dict[str, Any]],
+    llm_config: Any = None,
+) -> Dict[str, Any]:
+    """多道圣旨并存时（#502），判皇帝口头准驳**指向哪几道**（提案粒度，AC4）。
+    返回 {"decision": "应允|拒绝|无|含糊", "target_ids": [id...]}。
+    - 准驳意图明确、指名了哪道 → decision=应允/拒绝，target_ids=点名的候选 id。
+    - 准驳意图明确、但**没指明是哪道**（多道并存说「准了」）→ decision=含糊、target_ids=[]，
+      驱动大臣当场追问澄清（AC5：不静默当「不回→默认同意」）。
+    - 没在准驳这些 → decision=无。
+    抽取失败按含糊兜底（多道下宁可追问，不误提交）。"""
+    by_id = {int(c["id"]): c for c in candidates}
+    listing = "\n".join(
+        f"  [{int(c['id'])}] {str(c.get('summary') or '')[:40]}" for c in candidates
+    )
+    prompt = (
+        "你是信息抽取器，不扮演。本夜大臣名下有下列**多道各自独立**的圣旨候选待皇帝定夺。"
+        "读皇帝这句话，判断他的口头准驳**指向哪几道**：\n"
+        "  应允=准/照办这几道；拒绝=不必/作罢这几道；含糊=有准驳意思但没指明是哪道；无=没提这些。\n"
+        "只输出一个 JSON（无代码围栏、无多余字）：\n"
+        '{"决定":"应允|拒绝|无|含糊","目标编号":[方括号里的候选编号...]}。\n'
+        "指向具体某道就填其编号；说「准了/都准」但多道并存又没指明哪道=含糊、目标编号留空。语义判断，别拘字面。\n\n"
+        "【候选】\n" + listing + "\n"
+        "【皇帝】" + (player_message or "（无）") + "\n"
+        "【大臣回话】" + (minister_reply or "（无）") + "\n"
+    )
+    raw = ""
+    try:
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="directive_confirmation")
+    except Exception as exc:  # 抽取失败：多道下按含糊兜底（追问，不误提交）
+        _log(f"多道准驳指认抽取失败：{exc}")
+        return {"decision": "含糊", "target_ids": []}
+    obj = _loads_lenient(raw) or {}
+    if not isinstance(obj, dict):
+        obj = {}
+    decision = str(obj.get("决定") or "无").strip()
+    if decision not in {"应允", "拒绝", "无", "含糊"}:
+        decision = "无"
+    raw_targets = obj.get("目标编号") or []
+    target_ids: List[int] = []
+    if isinstance(raw_targets, list):
+        for t in raw_targets:
+            digits = "".join(ch for ch in str(t) if ch.isdigit())
+            if digits and int(digits) in by_id and int(digits) not in target_ids:
+                target_ids.append(int(digits))
+    # 准驳意图明确却没指到任何一道 → 含糊（AC5：不落到静默默认）。
+    if decision in {"应允", "拒绝"} and not target_ids:
+        decision = "含糊"
+    return {"decision": decision, "target_ids": target_ids}
 
 
 def _matched_prefix(message: str, prefixes) -> Optional[str]:
