@@ -1132,6 +1132,18 @@ export async function recordShipped(
   if (familyHeadAfter.length === 0) {
     throw new Error("family shipped marker must include a non-empty familyHeadAfter");
   }
+  // #1090 write-side guard: a branch name is NOT a valid PR handle. Reject any
+  // pr value that is not an http(s) URL containing /pull/<number> — fail loud
+  // at the write point so the poison is impossible regardless of caller. A
+  // branch name here would make the online review poll fail-closed on re-ship.
+  if (!/^https?:\/\/\S*\/pull\/\d+/.test(pr)) {
+    throw new Error(
+      `family shipped marker pr must be an http(s) PR URL containing ` +
+        `/pull/<number> (got "${pr}"); refusing to write a branch name or ` +
+        `non-URL as the shipped ledger pr (#1090 — would poison the online ` +
+        `review poll on idempotent re-ship)`,
+    );
+  }
   await backend.appendFamilyLedger(
     compact({
       status: "shipped",

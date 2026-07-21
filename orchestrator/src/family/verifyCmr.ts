@@ -3104,6 +3104,53 @@ async function runCorrectnessCourtLoop(input: {
 }
 
 /**
+ * #1090 — is `value` a real GitHub PR URL (http(s) + `/pull/<number>`)? A branch
+ * name is NOT a valid PR handle and must never be written to the shipped ledger
+ * row's `pr` field — it would poison the online review poll (fail-closed
+ * "non-admissible PR handle") on every idempotent re-ship.
+ *
+ * Pure so the boundary is unit-tested without gh / a container.
+ */
+export function isPrUrl(value: string): boolean {
+  return /^https?:\/\/\S*\/pull\/\d+/.test(value);
+}
+
+/**
+ * #1090 — resolve the open PR URL for `branch` via `gh pr list --head <branch>
+ * --json url`. Returns the URL when gh yields a well-formed PR URL; returns
+ * `undefined` when gh finds no PR, returns a malformed value, or throws.
+ *
+ * Sync because `shWithClock` is sync (mirrors the `ghSh` pattern in
+ * {@link runFamilyOnlineReviewLoop}). Uses `ORCHESTRATOR_REPO` when set so gh
+ * targets the right repo in a clone-from-local family run (same env convention
+ * as the online review loop).
+ */
+export function resolveFamilyShipPr(branch: string): string | undefined {
+  const repo = process.env.ORCHESTRATOR_REPO?.trim();
+  const args = [
+    "pr",
+    "list",
+    "--head",
+    branch,
+    "--json",
+    "url",
+    "--limit",
+    "1",
+  ];
+  if (repo !== undefined && repo.length > 0) {
+    args.push("--repo", repo);
+  }
+  try {
+    const out = shWithClock("gh", args, { stage: "resolve:shipPr" });
+    const parsed = JSON.parse(out) as ReadonlyArray<{ readonly url?: unknown }>;
+    const url = parsed[0]?.url;
+    return typeof url === "string" && isPrUrl(url) ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
@@ -3510,12 +3557,56 @@ export async function runVerifyCmr(
     shipResult.kind === "completed" && shipResult.output?.kind === "ship"
       ? shipResult.output
       : { kind: "ship", branch: familyBase };
-  const shipPr =
-    isFilledString(ship.pr)
-      ? ship.pr
-      : isFilledString(ship.branch)
-        ? ship.branch
-        : familyBase;
+  // #1090 root fix: never fall back to a branch name — a branch name poisons the
+  // shipped ledger row's pr field; the online review poll then fail-closed
+  // refuses ("non-admissible PR handle") on every idempotent re-ship. Accept
+  // ship.pr only when it is a real PR URL (http(s) + /pull/<number>); otherwise
+  // resolve the open PR for the family branch via `gh pr list`. If neither yields
+  // a real PR URL, fail loud at ship_failed (never write a bogus handle).
+  let shipPr: string | undefined =
+    typeof ship.pr === "string" && isPrUrl(ship.pr) ? ship.pr : undefined;
+  if (shipPr === undefined) {
+    shipPr = resolveFamilyShipPr(familyBase);
+  }
+  if (shipPr === undefined) {
+    const missingPrHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const reason =
+      `family ship worker completed without a resolvable PR URL ` +
+      `(ship.pr=${ship.pr ?? "<absent>"}; branch=${familyBase}); ` +
+      `refusing to write a branch name as the shipped ledger pr ` +
+      `(#1090 — would poison the online review poll)`;
+    const stopSummary = shipWorkerFailedStopSummary({
+      reason,
+      latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+      currentFamilyHead: missingPrHead,
+      reportedFamilyHead: cmrPassedFamilyHeadAfter,
+      shipPrState: "missing-pr-url",
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: missingPrHead,
+      phase: "final",
+      stopSummary,
+      escalationKind: "failure",
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: missingPrHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: missingPrHead,
+      stopSummary,
+    });
+    return stageGate("ship_failed");
+  }
   const exactPostShipFamilyHead =
     (await readPostCmrFamilyHead(
       familyBackend,

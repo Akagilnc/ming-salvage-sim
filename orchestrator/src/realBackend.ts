@@ -916,7 +916,6 @@ export function appendClaudeAuthMount(
  */
 export function assertClaudePanelLegAuth(input: {
   readonly reviewLegs: ReadonlyArray<{ readonly family: string }>;
-  readonly claudeToken?: string;
   readonly claudeAuthDir?: string;
 }): string | undefined {
   const hasClaudeLeg = input.reviewLegs.some((leg) => leg.family === "claude");
