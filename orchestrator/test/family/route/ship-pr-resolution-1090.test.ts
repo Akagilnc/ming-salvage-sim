@@ -57,6 +57,28 @@ describe("#1090 recordShipped rejects branch-name pr (loud)", () => {
     expect(appended).toHaveLength(1);
     expect(appended[0]!.pr).toBe("https://github.com/owner/repo/pull/123");
   });
+
+  it("rejects a non-github host that admits the old write-gate regex (#1090 P1)", async () => {
+    const appended: FamilyLedgerEntry[] = [];
+    await expect(
+      recordShipped(fakeBackend(appended), {
+        pr: "https://example.com/x/pull/123",
+        familyHeadAfter: "abc123",
+      }),
+    ).rejects.toThrow(/\/pull\//);
+    expect(appended).toEqual([]);
+  });
+
+  it("rejects a github PR URL with trailing junk after the number (#1090 P1)", async () => {
+    const appended: FamilyLedgerEntry[] = [];
+    await expect(
+      recordShipped(fakeBackend(appended), {
+        pr: "https://github.com/o/r/pull/123junk",
+        familyHeadAfter: "abc123",
+      }),
+    ).rejects.toThrow(/\/pull\//);
+    expect(appended).toEqual([]);
+  });
 });
 
 describe("#1090 isPrUrl", () => {
@@ -72,6 +94,15 @@ describe("#1090 isPrUrl", () => {
     expect(isPrUrl("main")).toBe(false);
     expect(isPrUrl("https://github.com/owner/repo/issues/123")).toBe(false);
     expect(isPrUrl("")).toBe(false);
+  });
+
+  it("rejects non-github hosts and trailing-junk lookalikes (consumer parity, #1090 P1)", async () => {
+    const { isPrUrl } = await import("../../../src/family/verifyCmr.js");
+    // Both proven counter-examples admit /^https?:\/\/\S*\/pull\/\d+/ but the
+    // online-review consumer (botPolling.parsePrRef) rejects them — the write
+    // gate must track the consumer, not a lookalike regex.
+    expect(isPrUrl("https://example.com/x/pull/123")).toBe(false);
+    expect(isPrUrl("https://github.com/o/r/pull/123junk")).toBe(false);
   });
 });
 

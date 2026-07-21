@@ -34,6 +34,7 @@ import {
   emitShipProgress,
   getProgressBroadcastConfig,
 } from "../progressBroadcast.js";
+import { parsePrRef } from "../botPolling.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -1132,11 +1133,16 @@ export async function recordShipped(
   if (familyHeadAfter.length === 0) {
     throw new Error("family shipped marker must include a non-empty familyHeadAfter");
   }
-  // #1090 write-side guard: a branch name is NOT a valid PR handle. Reject any
-  // pr value that is not an http(s) URL containing /pull/<number> — fail loud
-  // at the write point so the poison is impossible regardless of caller. A
-  // branch name here would make the online review poll fail-closed on re-ship.
-  if (!/^https?:\/\/\S*\/pull\/\d+/.test(pr)) {
+  // #1090 write-side guard + #1090 P1: defer to the online-review consumer's
+  // OWN parser (botPolling.parsePrRef) — never a hand-rolled lookalike regex.
+  // The consumer is stricter than /^https?:\/\/\S*\/pull\/\d+/: it requires
+  // host github.com AND rejects trailing junk after the number. A pr value the
+  // consumer would reject must fail loud here so the #1090 poison class is
+  // impossible regardless of caller (a branch name OR a lookalike URL that the
+  // consumer's fail-closed rejects forever on re-ship).
+  try {
+    parsePrRef(pr, "");
+  } catch {
     throw new Error(
       `family shipped marker pr must be an http(s) PR URL containing ` +
         `/pull/<number> (got "${pr}"); refusing to write a branch name or ` +

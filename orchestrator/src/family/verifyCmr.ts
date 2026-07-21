@@ -23,7 +23,11 @@
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { shWithClock } from "../externalCall.js";
 
-import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
+import {
+  isLiveGithubReviewPollEnabled,
+  parsePrRef,
+  pollPrReviewState,
+} from "../botPolling.js";
 import {
   recordLandingActionFailure,
   runLandingAction,
@@ -3109,10 +3113,22 @@ async function runCorrectnessCourtLoop(input: {
  * row's `pr` field — it would poison the online review poll (fail-closed
  * "non-admissible PR handle") on every idempotent re-ship.
  *
+ * #1090 P1: the online-review consumer (botPolling.parsePrRef) is the SOLE
+ * authority for what PR handle the shipped ledger may carry. Defer to its
+ * judgment — any hand-rolled lookalike regex drifts weaker than the consumer
+ * (host not github.com, trailing junk after the number) and re-opens the exact
+ * #1090 poison class: a write that succeeds but the consumer fail-closed
+ * rejects on every idempotent re-ship. No third validator; one shared parser.
+ *
  * Pure so the boundary is unit-tested without gh / a container.
  */
 export function isPrUrl(value: string): boolean {
-  return /^https?:\/\/\S*\/pull\/\d+/.test(value);
+  try {
+    parsePrRef(value, "");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
