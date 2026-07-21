@@ -175,6 +175,86 @@ describe("#884 bare-ping production smoke", () => {
     }
   });
 
+  it("#1089: slow-but-alive CLI that misses the first idle shot still passes within extended budget", async () => {
+    // flight19: cold grok ~80s against a 60s single-shot → false credential death.
+    // Fake: first shot at base idle times out; extended shot returns the nonce.
+    const home = tempHome();
+    const { ExternalCallTimeoutError } = await import("../../src/externalCall.js");
+    const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "60";
+    const baseMs = 60_000;
+    const timeoutsSeen: number[] = [];
+    try {
+      const backend = new BarePingBackend(home, async (call) => {
+        timeoutsSeen.push(call.timeoutMs);
+        if (call.timeoutMs <= baseMs) {
+          throw new ExternalCallTimeoutError({
+            stage: `smoke-k:${call.slug}`,
+            timeoutMs: call.timeoutMs,
+            seam: "subprocess",
+          });
+        }
+        // Extended budget: credential was alive the whole time.
+        return call.nonce;
+      });
+      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
+      expect(routeSmokeFailure(smoked)).toBeUndefined();
+      expect(Object.values(smoked.smoke).every((s) => s.state === "passed")).toBe(
+        true,
+      );
+      // At least one leg saw the base shot then the extended shot.
+      expect(timeoutsSeen.some((ms) => ms === baseMs)).toBe(true);
+      expect(timeoutsSeen.some((ms) => ms > baseMs)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      else process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
+    }
+  });
+
+  it("#1089: truly dead CLI still fails after the extended timeout budget", async () => {
+    const home = tempHome();
+    const { ExternalCallTimeoutError } = await import("../../src/externalCall.js");
+    const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+    process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "60";
+    try {
+      const backend = new BarePingBackend(home, async (call) => {
+        throw new ExternalCallTimeoutError({
+          stage: `smoke-k:${call.slug}`,
+          timeoutMs: call.timeoutMs,
+          seam: "subprocess",
+        });
+      });
+      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
+      expect(routeSmokeFailure(smoked)).toMatch(/route smoke failed/i);
+      // Extended shot must have been attempted (not a single 60s death).
+      expect(backend.pingCalls.some((c) => c.timeoutMs > 60_000)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
+      else process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
+    }
+  });
+
+  it("#1089: auth-missing fails closed with no timeout-extend retry", async () => {
+    const home = tempHome();
+    // Wipe Claude auth so assertProviderAuth fails before any bare-ping (opus leg).
+    rmSync(join(home, ".sc-claude-token"), { force: true });
+    const backend = new BarePingBackend(home, async () => {
+      throw new Error("bare-ping must not run when auth is missing");
+    });
+    const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
+    const opusEntries = routeSmokeEntries(smoked).filter((e) => e.slug === "opus");
+    expect(opusEntries.length).toBeGreaterThan(0);
+    for (const entry of opusEntries) {
+      const status = smoked.smoke[entry.key];
+      expect(status?.state).toBe("failed");
+      if (status?.state === "failed") {
+        expect(status.error).toMatch(/no .* auth|refusing to launch/i);
+      }
+    }
+    // Auth gate never reached execBarePing for those legs.
+    expect(backend.pingCalls.filter((c) => c.slug === "opus")).toHaveLength(0);
+  });
+
   it("maps ORCHESTRATOR_SMOKE_IDLE_SECONDS into bare-ping wall budget", () => {
     expect(resolveRouteSmokeIdleTimeoutSeconds("15")).toBe(15);
   });
