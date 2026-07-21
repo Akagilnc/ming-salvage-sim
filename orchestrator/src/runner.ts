@@ -6,16 +6,18 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030 / #925 / #1081 (ADR 0147): the child runner owns the visible
+ * ADR 0030 / #925 / #1081–#1082 (ADR 0147): the child runner owns the visible
  * per-slice review/fix loop with a resident judge born at dispatch:
  *
- *   S0(gate) → S1(context + open court) → S2(implement) → S3(judge resume)
+ *   S0(gate) → S1(context + open court) → S2(plan) → S3(judge plan pre-review)
+ *     continue (plan phase) → S2(construct|re-plan) → S3(post-construction)
  *     converged → dismiss court → S7(local handoff) → S8(handoff)
- *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     continue (post-construction, live findings) → S5(fix) → S6(judge)
  *     escalate  → decision-kind park (answer → 原地 resume)
  *
  * S2/S5 are coder workers. S3/S6 resume the same verify judge session created
- * at S1 open court. S4 mechanical open-count classification is dissolved into
+ * at S1 open court. #1082 plan pre-review continues resume the same S2 builder
+ * (no fresh legs). S4 mechanical open-count classification is dissolved into
  * the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
@@ -134,6 +136,7 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
+  isTerminalOnlyContinueDispositions,
   JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeStatusFromOutput,
   mintJudgeEscalate,
@@ -146,6 +149,11 @@ import {
   requireResidentJudgeResume,
   storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
+import {
+  latestPlanBodyFromLedger,
+  scanCoderPlanPhase,
+  shouldRunCoderPlanPhase,
+} from "./coderPlanPhase.js";
 import {
   rebuildBlockingFromLedger,
   reviewerRawArtifactPointers,
@@ -1195,9 +1203,14 @@ function planResume(
     throw new Error("planResume: executable ledger row must use a canonical step id");
   }
   const routeOutput = agentEntry?.output;
+  // #1082: plan-phase continue resumes S2; ledger is sole phase truth.
+  const coderPlanPhase =
+    shouldRunCoderPlanPhase() &&
+    scanCoderPlanPhase(ledger as ReadonlyArray<LedgerEntry>).planPhase;
   const decision = route({
     from: routeFrom,
     output: routeOutput,
+    ...(coderPlanPhase ? { coderPlanPhase: true } : {}),
   });
   const priorForResume = ledger as ReadonlyArray<LedgerEntry>;
   // #683: quota wait park → re-enter the parked step (not S8(failed)).
@@ -3808,7 +3821,39 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   });
                 }
               }
-              const landingPayload =
+              // #1082: plan-phase landing — transport plan body to judge and
+              // judge boundary prose / beat hint to S2 without reading content.
+              // One ledger scan for phase + beat hint (no double walk).
+              const planScan = shouldRunCoderPlanPhase()
+                ? scanCoderPlanPhase(ledger)
+                : undefined;
+              const planLanding =
+                planScan?.planPhase === true && (step === "S2" || step === "S3")
+                  ? {
+                      ...(step === "S2"
+                        ? {
+                            builderBeat: planScan.beatHint,
+                            ...(pendingFixPacketBody !== undefined
+                              ? { fixPacketBody: pendingFixPacketBody }
+                              : {}),
+                          }
+                        : {}),
+                      ...(step === "S3"
+                        ? (() => {
+                            const planBody =
+                              latestPlanBodyFromLedger(ledger) ??
+                              (lastOutput?.kind === "coder"
+                                ? lastOutput.planBody
+                                : undefined);
+                            return typeof planBody === "string" &&
+                              planBody.trim().length > 0
+                              ? { builderPlanBody: planBody }
+                              : {};
+                          })()
+                        : {}),
+                    }
+                  : undefined;
+              const fixLanding =
                 step === "S5" || step === "S6"
                   ? {
                       // ADR 0138: sole packet content path (verbatim judge body).
@@ -3834,6 +3879,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         ? { refuseRecords: refuseRecordsForReverify }
                         : {}),
                     }
+                  : undefined;
+              const landingPayload =
+                planLanding !== undefined || fixLanding !== undefined
+                  ? { ...(fixLanding ?? {}), ...(planLanding ?? {}) }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (`failed` / throw, including StructuredOutputError after
@@ -4385,30 +4434,64 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // #952: 0 live + non-empty terminal flips (suppress/refute) =
                   // terminal court closure — apply flips (above), do not S5,
                   // route like converged via judgeStatusFromOutput. True empty
-                  // (0 live AND 0 terminals) remains M6 contract drift.
+                  // (0 live AND 0 terminals) remains M6 contract drift —
+                  // **except** #1082 plan-phase pre-review continue (准/退/索证
+                  // live in fixPacketBody prose; resume same S2 builder).
+                  const inPlanPhase =
+                    shouldRunCoderPlanPhase() &&
+                    scanCoderPlanPhase(ledger).planPhase;
                   if (projected.terminalDispositions.length === 0) {
-                    // #919 M6 / family M1 isomorphic: true empty continue is
-                    // court contract drift — never empty-spin S5. Unusable
-                    // (non-judge) still routes to S5 above; route() continue→S5
-                    // stays for non-empty live sets only.
+                    if (!inPlanPhase) {
+                      // #919 M6 / family M1 isomorphic: true empty continue is
+                      // court contract drift — never empty-spin S5. Unusable
+                      // (non-judge) still routes to S5 above; route() continue→S5
+                      // stays for non-empty live sets only.
+                      const reason =
+                        `judge ${step} continue with 0 live findings ` +
+                        `(court contract drift; empty continue must not spin coder-fix)`;
+                      return await errorTermination(step, new Error(reason), {
+                        output,
+                        findingDispositions,
+                        stopSummary: contractDriftStopSummary({
+                          summary: reason,
+                          repairHint:
+                            "judge status:continue requires non-empty live identity keys " +
+                            "or terminal-only dispositions (suppress/refute); " +
+                            "re-open the same judge seat or repair the seat envelope — " +
+                            "do not empty-spin S5 coder-fix",
+                        }),
+                      });
+                    }
+                    // #1082 plan phase: keep authoredBody for S2 resume transport.
+                    pendingBlockingFindings = [];
+                    pendingBlockingFindingIdentityKeys = [];
+                    pendingBlockingFindingCount = 0;
+                    pendingFixPacketBody = authoredBody;
+                  } else if (
+                    inPlanPhase &&
+                    isTerminalOnlyContinueDispositions(output.findingDispositions)
+                  ) {
+                    // #1082 G1: plan pre-review is zero-finding; terminal-only
+                    // continue would collapse to converged→S7 with no construct
+                    // (silent early completion). Fail loud — do not swallow.
                     const reason =
-                      `judge ${step} continue with 0 live findings ` +
-                      `(court contract drift; empty continue must not spin coder-fix)`;
+                      `judge ${step} plan-phase continue with terminal-only ` +
+                      `dispositions (0 live, ≥1 refute/suppress) — plan pre-review ` +
+                      `must not silent-converge without a construct beat`;
                     return await errorTermination(step, new Error(reason), {
                       output,
                       findingDispositions,
                       stopSummary: contractDriftStopSummary({
                         summary: reason,
                         repairHint:
-                          "judge status:continue requires non-empty live identity keys " +
-                          "or terminal-only dispositions (suppress/refute); " +
-                          "re-open the same judge seat or repair the seat envelope — " +
-                          "do not empty-spin S5 coder-fix",
+                          "plan pre-review continue carries boundaries in " +
+                          "fixPacketBody only (0 findingDispositions); do not " +
+                          "emit refute/suppress rows before construction",
                       }),
                     });
                   }
-                  // Terminal-only: pending open set already 0; fall through so
-                  // ledger records flips + continue envelope, then route → S7.
+                  // Post-construction terminal-only: fall through so ledger
+                  // records flips + continue envelope, then route → S7.
                 }
               }
             } else {
@@ -4615,9 +4698,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #925 / ADR 0132: topology advances from the judge status tri-state
     // (converged|continue|escalate) and explicit escalation; receipt cargo is
     // not a fate input. Residual open-count paper is projected before route().
+    // #1082: ledger already includes this step row — plan phase is sole truth.
+    const coderPlanPhase =
+      shouldRunCoderPlanPhase() && scanCoderPlanPhase(ledger).planPhase;
     const decision = route({
       from: step,
       output: lastOutput,
+      ...(coderPlanPhase ? { coderPlanPhase: true } : {}),
     });
 
     if (decision.kind === "handoff") {
