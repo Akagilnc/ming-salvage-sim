@@ -14,6 +14,11 @@
  *
  * Behavior red lines that are NOT paper format (resource discipline) stay
  * elsewhere (e.g. no fan-out sub-agents).
+ *
+ * #1091 transport hardening (narrow exception): a single short opening line
+ * with no findings structure (e.g. grok 「我要开始审…」 then exit 0) is
+ * degraded — not successful. Multi-line / longer prose still counts as
+ * present under ADR 0141.
  */
 
 /** One review-leg transport observation (exit + raw stdout). */
@@ -23,20 +28,59 @@ export type LegTransport = {
   readonly stdout: string | null | undefined;
 };
 
+/** Max length for the #1091 opening-line degrade heuristic. */
+const OPENING_LINE_MAX_CHARS = 120;
+
+/**
+ * #1091 — opening greetings / "I'll start reviewing" commitments with no
+ * findings body. Progress narration ("Working… still scanning…") is NOT an
+ * opening line under ADR 0141.
+ *
+ * Note: do not trail CJK alternatives with `\b` — JS word boundaries are
+ * ASCII-centric and reject matches like 「我要开始审…」.
+ */
+const OPENING_LINE_RE =
+  /^(?:我要开始|开始审|好的[，,]?\s*我(?:来|要)?开始|I'll start\b|I will start\b|Let me (?:start|begin)\b|Starting (?:the )?review\b)/i;
+
+/**
+ * #1091 — true when stdout is a single short greeting / opening line with
+ * no findings-like structure (empty-success variant after grok exits early).
+ */
+export function isOpeningLineOnlyStdout(
+  stdout: string | null | undefined,
+): boolean {
+  const trimmed = (stdout ?? "").trim();
+  if (trimmed.length === 0) return false;
+  const lines = trimmed.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length !== 1) return false;
+  const line = lines[0]!;
+  if (line.length > OPENING_LINE_MAX_CHARS) return false;
+  if (!OPENING_LINE_RE.test(line)) return false;
+  // Findings / review structure → still legal paper even if short.
+  if (/findings?\s*[:\[]/i.test(line)) return false;
+  if (/^\s*[{[]/.test(line)) return false;
+  if (/\bP[0-3]\b/.test(line)) return false;
+  if (/##\s/.test(line)) return false;
+  return true;
+}
+
 /**
  * True when a review leg produced legal paper under ADR 0141.
  *
  * - exit 0 + non-empty trimmed stdout → present
  * - non-zero exit, empty, or whitespace-only stdout → absent
+ * - #1091: exit 0 + single short opening line → absent (degraded)
  *
- * Never inspects content shape (candidates, anchors, progress vs review).
+ * Never inspects multi-line content shape (candidates, anchors, progress vs review).
  */
 export function isLegalLegPaper(input: {
   readonly exitCode: number;
   readonly stdout: string | null | undefined;
 }): boolean {
   if (input.exitCode !== 0) return false;
-  return (input.stdout ?? "").trim().length > 0;
+  if ((input.stdout ?? "").trim().length === 0) return false;
+  if (isOpeningLineOnlyStdout(input.stdout)) return false;
+  return true;
 }
 
 /**

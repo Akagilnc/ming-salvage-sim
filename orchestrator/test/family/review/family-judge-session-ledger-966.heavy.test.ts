@@ -318,9 +318,12 @@ describe("#966 family judge session from ledger", () => {
       }
       protected override mountCmrAuth(): CmrAuth {
         // Grok seat preflight requires grokAuthDir (providerAuth.grok).
+        // #1091: normal route cmrReview includes claude-family panel legs —
+        // token satisfies assertClaudePanelLegAuth (panel CLI auth path).
         return {
           grokAuthDir: mkDir("966-grok-auth-"),
-          providerAuth: { claude: false, grok: true, agy: false },
+          claudeToken: "test-claude-panel-tok",
+          providerAuth: { claude: true, grok: true, agy: false },
         };
       }
       protected override agentForSpec(
