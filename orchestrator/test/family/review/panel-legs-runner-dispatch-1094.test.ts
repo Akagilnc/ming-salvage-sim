@@ -34,6 +34,11 @@ import { provisionWorkerAuth } from "../../../src/realBackend.js";
 import { successfulLegsFromTransports } from "../../../src/legPaper.js";
 import { buildJudgeReviewLegPrompt } from "../../../src/judgeStation.js";
 import { workerHostForModel } from "../../../src/dispatchWorker.js";
+import type { CmrAuth } from "../../../src/family/realFamilyBackend.js";
+import type {
+  FamilyEscalation,
+  FamilyLedgerEntry,
+} from "../../../src/family/types.js";
 import type {
   DispatchContext,
   WorkerCmrReviewLeg,
@@ -407,15 +412,10 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
 
     class SeamBackend extends RealFamilyBackend {
       public legConfig(
-        auth: {
-          codexAuthDir?: string;
-          agyDir?: string;
-          grokAuthDir?: string;
-          claudeToken?: string;
-        },
+        auth: CmrAuth,
         spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
       ) {
-        return this.panelLegSandboxConfig(auth as never, spec, {
+        return this.panelLegSandboxConfig(auth, spec, {
           familyBase: "family/1094",
         });
       }
@@ -545,16 +545,8 @@ describe("#1094 R2 F1 — judge cmrSandboxConfig mounts OWN family credential on
     } = await import("../../../src/realBackend.js");
 
     class JudgeSeam extends RealFamilyBackend {
-      public cfg(
-        auth: {
-          codexAuthDir?: string;
-          agyDir?: string;
-          grokAuthDir?: string;
-          claudeToken?: string;
-        },
-        model: string,
-      ) {
-        return this.cmrSandboxConfig(auth as never, {
+      public cfg(auth: CmrAuth, model: string) {
+        return this.cmrSandboxConfig(auth, {
           model,
           host: workerHostForModel(model),
         });
@@ -665,18 +657,9 @@ describe("#1094 R3 F1 — relayed pool mounts the executing provider credential"
     );
 
     class JudgeSeam extends RealFamilyBackend {
-      public cfg(
-        auth: {
-          codexAuthDir?: string;
-          agyDir?: string;
-          grokAuthDir?: string;
-          claudeToken?: string;
-        },
-        model: string,
-        billingPool?: string,
-      ) {
+      public cfg(auth: CmrAuth, model: string, billingPool?: string) {
         return this.cmrSandboxConfig(
-          auth as never,
+          auth,
           { model, host: workerHostForModel(model) },
           undefined,
           billingPool !== undefined ? { billingPool } : undefined,
@@ -746,8 +729,8 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
     let judgePool: string | undefined;
 
     const backend = {
-      ledger: [] as Array<Record<string, unknown>>,
-      escalations: [] as Array<{ reason: string }>,
+      ledger: [] as FamilyLedgerEntry[],
+      escalations: [] as FamilyEscalation[],
       resolveLandingLiveHooks(input: {
         prUrl: string;
         convergedHeadOid: string;
@@ -765,7 +748,7 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
       async resolveMergeConflict() {
         throw new Error("unused");
       },
-      async appendFamilyLedger(entry: Record<string, unknown>) {
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
         this.ledger.push(entry);
       },
       async readFamilyLedger() {
@@ -777,7 +760,10 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
       async runFamilyVerify() {
         return { ok: true };
       },
-      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
         if (isCmrPanelLegWorker(spec)) {
           legPools.push(ctx.billingPool);
           return (
@@ -814,7 +800,7 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
         return { kind: "failed", reason: `unexpected ${spec.kind}` };
       },
       async recordAborted() {},
-      async escalateFamily(esc: { reason: string }) {
+      async escalateFamily(esc: FamilyEscalation) {
         this.escalations.push(esc);
       },
     };
@@ -822,7 +808,7 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/1094-r3-f2",
-      familyBackend: backend as never,
+      familyBackend: backend,
       billingPool: "grok-build",
       billingPoolSlots: ["cmrCorrectness", "cmrCompleteness"],
     });
@@ -850,12 +836,8 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
 
     let judgeDispatched = 0;
     const backend = {
-      ledger: [] as Array<Record<string, unknown>>,
-      escalations: [] as Array<{
-        reason: string;
-        diagnosis: string;
-        escalationKind?: string;
-      }>,
+      ledger: [] as FamilyLedgerEntry[],
+      escalations: [] as FamilyEscalation[],
       resolveLandingLiveHooks(input: {
         prUrl: string;
         convergedHeadOid: string;
@@ -873,7 +855,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       async resolveMergeConflict() {
         throw new Error("unused");
       },
-      async appendFamilyLedger(entry: Record<string, unknown>) {
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
         this.ledger.push(entry);
       },
       async readFamilyLedger() {
@@ -885,7 +867,10 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       async runFamilyVerify() {
         return { ok: true };
       },
-      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
         if (isCmrPanelLegWorker(spec)) {
           return {
             kind: "failed",
@@ -909,11 +894,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
         return { kind: "failed", reason: `unexpected ${spec.kind}` };
       },
       async recordAborted() {},
-      async escalateFamily(esc: {
-        reason: string;
-        diagnosis: string;
-        escalationKind?: string;
-      }) {
+      async escalateFamily(esc: FamilyEscalation) {
         this.escalations.push(esc);
       },
     };
@@ -921,7 +902,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/1094-r3-f3",
-      familyBackend: backend as never,
+      familyBackend: backend,
     });
 
     expect(result.ok).toBe(false);
