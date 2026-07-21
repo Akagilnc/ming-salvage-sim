@@ -421,55 +421,62 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       }
     }
 
-    const be = new SeamBackend({
-      workingRepo: mkdtempSync(join(tmpdir(), "1094-leg-repo-")),
-      familyBase: "family/1094",
-      ledgerDir: mkdtempSync(join(tmpdir(), "1094-leg-ledger-")),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir,
-      soulsDir,
-      imageName: "img",
-    });
+    const workingRepo = mkdtempSync(join(tmpdir(), "1094-leg-repo-"));
+    const ledgerDir = mkdtempSync(join(tmpdir(), "1094-leg-ledger-"));
+    try {
+      const be = new SeamBackend({
+        workingRepo,
+        familyBase: "family/1094",
+        ledgerDir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
 
-    const auth = {
-      codexAuthDir: "/tmp/leg-codex",
-      agyDir: "/tmp/leg-agy",
-      grokAuthDir: "/tmp/leg-grok",
-      claudeToken: "tok",
-    };
+      const auth = {
+        codexAuthDir: "/tmp/leg-codex",
+        agyDir: "/tmp/leg-agy",
+        grokAuthDir: "/tmp/leg-grok",
+        claudeToken: "tok",
+      };
 
-    const codex = be.legConfig(
-      auth,
-      cmrPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }),
-    );
-    expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
-    expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
-    expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
-    expect(codex.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
-    expect(codex.env[SANDBOX_OUTCOME_PATH_ENV]).toBeUndefined();
+      const codex = be.legConfig(
+        auth,
+        cmrPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }),
+      );
+      expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+      expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+      expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+      expect(codex.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+      expect(codex.env[SANDBOX_OUTCOME_PATH_ENV]).toBeUndefined();
 
-    const agy = be.legConfig(
-      auth,
-      cmrPanelLegWorkerSpec({ family: "agy", slug: "agy" }),
-    );
-    expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(true);
-    expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+      const agy = be.legConfig(
+        auth,
+        cmrPanelLegWorkerSpec({ family: "agy", slug: "agy" }),
+      );
+      expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(true);
+      expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
 
-    const grok = be.legConfig(
-      auth,
-      cmrPanelLegWorkerSpec({ family: "grok", slug: "grok-4.5" }),
-    );
-    expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(true);
-    expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+      const grok = be.legConfig(
+        auth,
+        cmrPanelLegWorkerSpec({ family: "grok", slug: "grok-4.5" }),
+      );
+      expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(true);
+      expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
 
-    const claude = be.legConfig(
-      auth,
-      cmrPanelLegWorkerSpec({ family: "claude", slug: "opus" }),
-    );
-    expect(claude.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
-    expect(claude.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
-    expect(claude.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+      const claude = be.legConfig(
+        auth,
+        cmrPanelLegWorkerSpec({ family: "claude", slug: "opus" }),
+      );
+      expect(claude.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+      expect(claude.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+      expect(claude.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
   });
 
   it("preparePanelLegClone builds an independent detached clone (no shared checkout)", async () => {
@@ -554,35 +561,42 @@ describe("#1094 R2 F1 — judge cmrSandboxConfig mounts OWN family credential on
       }
     }
 
-    const be = new JudgeSeam({
-      workingRepo: mkdtempSync(join(tmpdir(), "1094-judge-repo-")),
-      familyBase: "family/1094",
-      ledgerDir: mkdtempSync(join(tmpdir(), "1094-judge-ledger-")),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir,
-      soulsDir,
-      imageName: "img",
-    });
-    const auth = {
-      codexAuthDir: "/tmp/judge-codex",
-      agyDir: "/tmp/judge-agy",
-      grokAuthDir: "/tmp/judge-grok",
-      claudeToken: "tok",
-    };
+    const workingRepo = mkdtempSync(join(tmpdir(), "1094-judge-repo-"));
+    const ledgerDir = mkdtempSync(join(tmpdir(), "1094-judge-ledger-"));
+    try {
+      const be = new JudgeSeam({
+        workingRepo,
+        familyBase: "family/1094",
+        ledgerDir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      const auth = {
+        codexAuthDir: "/tmp/judge-codex",
+        agyDir: "/tmp/judge-agy",
+        grokAuthDir: "/tmp/judge-grok",
+        claudeToken: "tok",
+      };
 
-    const codexJudge = cmrWorkerSpec("fresh", "completeness");
-    expect(codexJudge.model).toBe("gpt-5.6-sol");
-    const cfg = be.cfg(auth, codexJudge.model);
-    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
-    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
-    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+      const codexJudge = cmrWorkerSpec("fresh", "completeness");
+      expect(codexJudge.model).toBe("gpt-5.6-sol");
+      const cfg = be.cfg(auth, codexJudge.model);
+      expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+      expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+      expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
 
-    const opusCfg = be.cfg(auth, "opus");
-    expect(opusCfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
-      false,
-    );
-    expect(opusCfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+      const opusCfg = be.cfg(auth, "opus");
+      expect(opusCfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
+        false,
+      );
+      expect(opusCfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -593,6 +607,7 @@ describe("#1094 R2 F3 — prepareFamilyCmrPanelRound returns structured escalate
     );
     const { execFileSync } = await import("node:child_process");
     const root = mkdtempSync(join(tmpdir(), "1094-prep-"));
+    const ledgerDir = mkdtempSync(join(tmpdir(), "1094-prep-ledger-"));
     try {
       execFileSync("git", ["init"], { cwd: root });
       execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
@@ -609,7 +624,7 @@ describe("#1094 R2 F3 — prepareFamilyCmrPanelRound returns structured escalate
       const be = new PrepBackend({
         workingRepo: root,
         familyBase: "main",
-        ledgerDir: mkdtempSync(join(tmpdir(), "1094-prep-ledger-")),
+        ledgerDir,
         repo: "Akagilnc/ming-salvage-sim",
         base: "main",
         promptsDir,
@@ -626,6 +641,7 @@ describe("#1094 R2 F3 — prepareFamilyCmrPanelRound returns structured escalate
       expect("escalation" in prep && prep.escalation).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
     }
   });
 });
@@ -668,41 +684,48 @@ describe("#1094 R3 F1 — relayed pool mounts the executing provider credential"
       }
     }
 
-    const be = new JudgeSeam({
-      workingRepo: mkdtempSync(join(tmpdir(), "1094-r3-f1-repo-")),
-      familyBase: "family/1094",
-      ledgerDir: mkdtempSync(join(tmpdir(), "1094-r3-f1-ledger-")),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir,
-      soulsDir,
-      imageName: "img",
-    });
-    const auth = {
-      codexAuthDir: "/tmp/r3-f1-codex",
-      agyDir: "/tmp/r3-f1-agy",
-      grokAuthDir: "/tmp/r3-f1-grok",
-      claudeToken: "tok",
-    };
+    const workingRepo = mkdtempSync(join(tmpdir(), "1094-r3-f1-repo-"));
+    const ledgerDir = mkdtempSync(join(tmpdir(), "1094-r3-f1-ledger-"));
+    try {
+      const be = new JudgeSeam({
+        workingRepo,
+        familyBase: "family/1094",
+        ledgerDir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      const auth = {
+        codexAuthDir: "/tmp/r3-f1-codex",
+        agyDir: "/tmp/r3-f1-agy",
+        grokAuthDir: "/tmp/r3-f1-grok",
+        claudeToken: "tok",
+      };
 
-    const relayed = be.cfg(auth, "gpt-5.6-sol", "grok-build");
-    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(
-      true,
-    );
-    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
-      false,
-    );
-    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(
-      false,
-    );
+      const relayed = be.cfg(auth, "gpt-5.6-sol", "grok-build");
+      expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(
+        true,
+      );
+      expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
+        false,
+      );
+      expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(
+        false,
+      );
 
-    const opusRelayed = be.cfg(auth, "opus", "codex-5h");
-    expect(
-      resolveModelSlugForPool("opus", "codex-5h").provider,
-    ).toBe("codex");
-    expect(
-      opusRelayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR),
-    ).toBe(true);
+      const opusRelayed = be.cfg(auth, "opus", "codex-5h");
+      expect(
+        resolveModelSlugForPool("opus", "codex-5h").provider,
+      ).toBe("codex");
+      expect(
+        opusRelayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR),
+      ).toBe(true);
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1075,6 +1098,146 @@ describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () =>
       expect(capturedPrompt).toMatch(/Clause–Wire–Exercise/);
       expect(capturedPrompt).not.toMatch(/Trace–Break–Prove/);
       expect(capturedPrompt).toMatch(/CMR pass: completeness/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(ledger, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pass cmr_failed)", () => {
+  it("preparePanelLegClone reclaims legRoot when clone fails", async () => {
+    const { RealFamilyBackend } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const notARepo = mkdtempSync(join(tmpdir(), "1094-r4-fa-norepo-"));
+    const ledger = mkdtempSync(join(tmpdir(), "1094-r4-fa-ledger-"));
+    try {
+      class CloneBackend extends RealFamilyBackend {
+        public clone(slug: string, sha: string): string {
+          return this.preparePanelLegClone(slug, sha);
+        }
+      }
+      const be = new CloneBackend({
+        workingRepo: notARepo,
+        familyBase: "main",
+        ledgerDir: ledger,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      expect(() =>
+        be.clone("gpt-5.6-sol", "0000000000000000000000000000000000000000"),
+      ).toThrow();
+      expect(
+        readdirSync(ledger).filter((n) => n.startsWith("panel-leg-")),
+      ).toEqual([]);
+    } finally {
+      rmSync(notARepo, { recursive: true, force: true });
+      rmSync(ledger, { recursive: true, force: true });
+    }
+  });
+
+  it("clone/setup throw yields failed transport; sibling legs still settle", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { RealFamilyBackend, CMR_FOCUS_FILENAME } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const { panelLegCompletedResult } = await import(
+      "../../../src/family/cmrPanelLegs.js"
+    );
+    const { isLegalLegPaper } = await import("../../../src/legPaper.js");
+
+    const root = mkdtempSync(join(tmpdir(), "1094-r4-fa-setup-"));
+    const ledger = mkdtempSync(join(tmpdir(), "1094-r4-fa-setup-ledger-"));
+    try {
+      execFileSync("git", ["init"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: root });
+      writeFileSync(join(root, "a.txt"), "a\n");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: root });
+      writeFileSync(
+        join(root, CMR_FOCUS_FILENAME),
+        "# focus\n`git diff aaa...bbb`\n",
+      );
+
+      class SetupFailBackend extends RealFamilyBackend {
+        public async runLeg(
+          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          ctx: { familyBase: string },
+        ) {
+          return this.runCmrPanelLegWorker(spec, ctx as never);
+        }
+        protected mountCmrAuth() {
+          return {
+            codexAuthDir: mkdtempSync(join(tmpdir(), "r4-fa-codex-")),
+            agyDir: undefined,
+            grokAuthDir: undefined,
+            claudeToken: undefined,
+            ghToken: undefined,
+            providerAuth: { claude: false, grok: false, agy: false },
+          };
+        }
+        protected unavailableWorkerProviderAuth() {
+          return undefined;
+        }
+        protected preparePanelLegClone(): string {
+          throw new Error("git clone failed: simulated");
+        }
+        protected async runAgentSandbox(): Promise<never> {
+          throw new Error("runAgentSandbox must not run after clone failure");
+        }
+      }
+
+      const be = new SetupFailBackend({
+        workingRepo: root,
+        familyBase: "main",
+        ledgerDir: ledger,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      const failingSpec = cmrPanelLegWorkerSpec(
+        { family: "codex", slug: "gpt-5.6-sol" },
+        "correctness",
+      );
+      const failed = await be.runLeg(failingSpec, { familyBase: "main" });
+      expect(failed.kind).toBe("failed");
+      if (failed.kind === "failed") {
+        expect(failed.reason).toMatch(/panel leg gpt-5\.6-sol:.*git clone failed/i);
+      }
+      const failedTransport = legTransportFromPanelLegResult(
+        "gpt-5.6-sol",
+        failed,
+      );
+      expect(isLegalLegPaper(failedTransport)).toBe(false);
+
+      // Fan-out: one failed transport + one legal sibling — judge still opens
+      // (siblings settle; zero-success path stays R3 F3 escalate, not touched).
+      let siblingRan = false;
+      const round = await dispatchFamilyCmrPanelLegs({
+        legs: [
+          { family: "codex", slug: "gpt-5.6-sol" },
+          { family: "claude", slug: "opus" },
+        ],
+        dispatch: async (spec) => {
+          if (spec.model === "gpt-5.6-sol") return failed;
+          siblingRan = true;
+          return panelLegCompletedResult(
+            "P1: sibling panel leg still ran after peer clone failure.\n",
+          );
+        },
+      });
+      expect(siblingRan).toBe(true);
+      expect(round.transports).toHaveLength(2);
+      expect(successfulLegsFromTransports(round.transports)).toEqual(["opus"]);
+      expect(round.skippedLegs.map((s) => s.slug)).toContain("gpt-5.6-sol");
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(ledger, { recursive: true, force: true });
