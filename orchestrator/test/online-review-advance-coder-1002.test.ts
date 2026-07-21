@@ -141,7 +141,6 @@ afterEach(() => {
 
 describe("#1002 online review advanceCoder → fixer seat", () => {
   it("continue + advanceCoder=sol@med dispatches fixer as gpt-5.6-sol and audits ledger", async () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
     const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
     expect(defaultFixer).not.toBe("gpt-5.6-sol");
 
@@ -173,7 +172,6 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
   });
 
   it("unknown advanceCoder stay_put keeps original fixer and never terminals", async () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
     const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
 
     const backend = new OnlineReviewAdvanceBackend([
@@ -210,7 +208,6 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
   });
 
   it("advanced fixer seat is sticky across a later continue without advanceCoder", async () => {
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
     const backend = new OnlineReviewAdvanceBackend([
       { converged: false, advanceCoder: "sol@med" },
       { converged: false },
@@ -230,7 +227,6 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
   it("re-enter online-review rebuilds sticky fixer from latest ledger coder_advance", async () => {
     // Mirror single-slice sticky re-hold: process restart / re-entry must not
     // drop an already-audited advance (in-memory modelRoute alone is not enough).
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
     const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
     expect(defaultFixer).not.toBe("gpt-5.6-sol");
 
@@ -275,7 +271,6 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
   it("#1017 CMR coderFix advance does not sticky online-review fixer", async () => {
     // Shared family ledger: a CMR-scoped coder_advance must not re-hold the
     // online-review fixer seat (court/seat discriminator).
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
     const defaultFixer = resolveActiveModelRoute({}).slots.fixer;
     expect(defaultFixer).not.toBe("gpt-5.6-sol");
 

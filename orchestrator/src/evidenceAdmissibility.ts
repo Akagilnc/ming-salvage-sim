@@ -8,10 +8,7 @@
  * staleness, silence, and synthesis are terminal/escalate states, never green.
  */
 
-import {
-  isCanonicalGithubPrUrl,
-  isPollableGithubPrUrl,
-} from "./botPolling.js";
+import { isPollableGithubPrUrl } from "./botPolling.js";
 import type { DispatchContext } from "./types.js";
 
 /** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
@@ -38,26 +35,24 @@ export function isOfflineTestPrUrl(prUrl: string): boolean {
   return prUrl.trim().startsWith("pr://");
 }
 
-/** True when offline synthesis is explicitly allowed for a test PR handle. */
+/** True when offline synthesis is explicitly allowed (test handles only). */
 export function offlineSyntheticPollAdmissible(
   prUrl: string,
   defaultRepo: string,
 ): boolean {
   const branchCargo = prUrl.trim().startsWith("pr://slice/branch-cargo/");
-  const offlineEnabled =
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1";
-  if (!offlineEnabled && !branchCargo) {
+  if (
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1" &&
+    !branchCargo
+  ) {
     return false;
   }
-  if (isOfflineTestPrUrl(prUrl)) {
-    return !isPollableGithubPrUrl(prUrl, defaultRepo);
-  }
-  return offlineEnabled && isCanonicalGithubPrUrl(prUrl);
+  return isOfflineTestPrUrl(prUrl) && !isPollableGithubPrUrl(prUrl, defaultRepo);
 }
 
 /**
  * Review-loop skeleton synthesis is allowed only in the same explicit offline/test
- * handles as synthetic bot polling (`pr://…` or canonical PR URL + offline flag).
+ * handles as synthetic bot polling (`pr://…` + ORCHESTRATOR_OFFLINE_REVIEW_POLL).
  */
 export function offlineReviewLoopDispatchAdmissible(
   ctx: Pick<DispatchContext, "prUrl" | "repo">,

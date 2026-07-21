@@ -3134,7 +3134,8 @@ export function isPrUrl(value: string): boolean {
  * as the online review loop).
  */
 export function resolveFamilyShipPr(branch: string): string | undefined {
-  const repo = process.env.ORCHESTRATOR_REPO?.trim();
+  const repo =
+    process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
   const args = [
     "pr",
     "list",
@@ -3144,10 +3145,9 @@ export function resolveFamilyShipPr(branch: string): string | undefined {
     "url",
     "--limit",
     "1",
+    "--repo",
+    repo,
   ];
-  if (repo !== undefined && repo.length > 0) {
-    args.push("--repo", repo);
-  }
   try {
     const out = shWithClock("gh", args, { stage: "resolve:shipPr" });
     const parsed = JSON.parse(out) as ReadonlyArray<{ readonly url?: unknown }>;

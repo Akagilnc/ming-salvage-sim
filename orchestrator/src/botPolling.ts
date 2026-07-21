@@ -211,8 +211,9 @@ export function parsePrRef(
 /** True only for the canonical GitHub web PR URL written to shipped records. */
 export function isCanonicalGithubPrUrl(value: string): boolean {
   try {
-    const { repo, prNumber } = parsePrRef(value, "");
-    return value === `https://github.com/${repo}/pull/${prNumber}`;
+    const trimmed = value.trim();
+    const { repo, prNumber } = parsePrRef(trimmed, "");
+    return trimmed === `https://github.com/${repo}/pull/${prNumber}`;
   } catch {
     return false;
   }

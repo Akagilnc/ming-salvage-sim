@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 import {
   cmrWorkerSpec,
@@ -167,7 +168,8 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return skeletonReviewLoopWorkerResult(spec.kind) ??
+      legacyDispatchFamilyWorker(this, spec, ctx);
   }
 }
 
