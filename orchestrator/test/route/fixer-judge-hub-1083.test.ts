@@ -17,11 +17,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  isBuilderBeatStep,
-  route,
-  routeBuilderBeatToResidentJudge,
-} from "../../src/route.js";
+import { route } from "../../src/route.js";
 import { isJudgeSeat } from "../../src/judgeStation.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
@@ -187,25 +183,6 @@ async function runReal<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 describe("#1083 pure: builder beat → resident judge hub", () => {
-  it("routeBuilderBeatToResidentJudge maps S2→S3 and S5→S6", () => {
-    expect(routeBuilderBeatToResidentJudge("S2")).toEqual({
-      kind: "next",
-      step: "S3",
-    });
-    expect(routeBuilderBeatToResidentJudge("S5")).toEqual({
-      kind: "next",
-      step: "S6",
-    });
-  });
-
-  it("isBuilderBeatStep admits only S2/S5", () => {
-    expect(isBuilderBeatStep("S2")).toBe(true);
-    expect(isBuilderBeatStep("S5")).toBe(true);
-    expect(isBuilderBeatStep("S3")).toBe(false);
-    expect(isBuilderBeatStep("S6")).toBe(false);
-    expect(isBuilderBeatStep("S9")).toBe(false);
-  });
-
   it("route(S5) is unconditional — plan / construction / refuse / empty all → S6", () => {
     const envelopes: Array<StepOutput | undefined> = [
       undefined,
@@ -245,7 +222,11 @@ describe("#1083 pure: builder beat → resident judge hub", () => {
 
   it("negative: builder beat next step is always a judge seat, never a bare reviewer step id", () => {
     for (const from of ["S2", "S5"] as const) {
-      const decision = routeBuilderBeatToResidentJudge(from);
+      // Real entry: route() — not the helper in isolation.
+      const decision = route({
+        from,
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      });
       expect(decision.kind).toBe("next");
       if (decision.kind !== "next") continue;
       // Hub seats only.
