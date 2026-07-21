@@ -464,6 +464,86 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
+  it("open-court escalate resume: same session + answer; success clears stale escalate", async () => {
+    await runReal(async () => {
+      const COURT = OPEN_COURT_SESSION;
+      const priorLedger: PersistentLedgerEntry[] = [
+        {
+          step: "S0",
+          sessionId: "run-uuid",
+          prompt_hash: "h0",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:00.000Z",
+        },
+        {
+          step: "S1",
+          sessionId: COURT,
+          output: judgeEscalate(
+            "slice authority fork",
+            "owner must choose between AC and ADR before construction",
+          ),
+          prompt_hash: "h1",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:01.000Z",
+        },
+        {
+          step: "S8",
+          sessionId: "run-uuid",
+          prompt_hash: "h8",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:02.000Z",
+          handoffStatus: "parked",
+          escalationKind: "decision",
+        },
+        {
+          step: "S1",
+          event: "escalation_answered",
+          forStep: "S1",
+          answer: "proceed under ADR 0147 as sole authority",
+          source: "human",
+          sessionId: "run-uuid",
+          prompt_hash: "ha",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:03.000Z",
+        },
+      ];
+      // Resume re-open succeeds (converged ack) — must NOT re-park on stale escalate.
+      const backend = new LifecycleBackend(
+        [completedJudge(judgeConverged(), COURT)],
+        {
+          kind: "completed",
+          output: judgeConverged(),
+          sessionId: COURT,
+        },
+        {
+          resumeState: {
+            worktree: WORKTREE,
+            stateDir: "/resident/worktrees/.ledger-1081-esc",
+            ledger: priorLedger,
+          },
+        },
+      );
+      const result = await runOrchestrator({ issueNumber: 10817, backend });
+      expect(result.status).toBe("completed");
+      // Open court resumed the escalated session with the human answer.
+      const openSpec = backend.specs.find((s) => isJudgeOpenCourtSpec(s));
+      expect(openSpec).toBeDefined();
+      expect(openSpec!.session).toBe("resume");
+      const openCtx = backend.ctxs[backend.specs.indexOf(openSpec!)];
+      expect(openCtx?.resumeSessionId).toBe(COURT);
+      expect(openCtx?.escalationAnswer).toMatchObject({
+        event: "escalation_answered",
+        forStep: "S1",
+        answer: "proceed under ADR 0147 as sole authority",
+      });
+      // Court opened; S2 ran — not stuck re-parking on the original escalate.
+      expect(result.stepLedger.some((e) => e.event === "court_opened")).toBe(
+        true,
+      );
+      expect(backend.specs.some((s) => s.id === "S2")).toBe(true);
+    });
+  });
+
   it("open-court without session id fails loud when stub is off (negative)", async () => {
     await runReal(async () => {
       const backend = new LifecycleBackend(undefined, {

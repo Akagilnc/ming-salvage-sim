@@ -2006,16 +2006,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    // advanced — hold sticky repair seat; retire prior coder session (S5 model
-    // changed); billing pool follows the repair seat.
+    // advanced — hold sticky repair seat; billing pool follows the repair seat.
     modelRoute = effect.route;
     stickyJudgeAdvanceCoderSlug = effect.toSlug;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Candidate already smoked — skip the next ensureRouteSmoke gate.
     routeSmokeChecked = true;
-    // New repair seat: fresh session (cannot resume across model change).
-    coderSessionId = undefined;
-    coderSessionModel = undefined;
+    // Retire the shared coder session only when the next builder is the repair
+    // seat (S5). #1082 plan-phase continue re-enters S2 under the coder slot
+    // (advanceCoder rewrites coderFix only) — clearing here would force a
+    // fresh plan/construct beat and discard the cheap-resume continuity the
+    // plan-phase loop was built for.
+    const planPhaseOpen =
+      shouldRunCoderPlanPhase() && scanCoderPlanPhase(ledger).planPhase;
+    if (!planPhaseOpen) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
     currentBillingPool = billingPoolFromQuotaPool(
       poolForModelRef(modelRoute.slots.coderFix),
     );
@@ -3376,9 +3383,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const openModel = stepSpecs.S3.model;
           const openPool = relayBillingPoolForDispatch("S3");
           const openResumeCapable = resumeCapableForSlug(openModel, openPool);
+          // Resume after open-court escalate park: re-enter the same judge
+          // session with the human answer (mirror S2/S3/S5/S6 resumeFor +
+          // escalationAnswerForStep). Never mint a silent orphan fresh court
+          // when planResume already recorded the escalated session id.
+          let openResumeSessionId: string | undefined;
+          if (
+            resumeFor !== undefined &&
+            resumeFor.step === "S1" &&
+            typeof resumeFor.sessionId === "string"
+          ) {
+            const sessionModel = resumeFor.sessionModel;
+            const identityOk =
+              sessionModel === undefined || sessionModel === openModel;
+            if (identityOk && openResumeCapable) {
+              openResumeSessionId = resumeFor.sessionId;
+            } else {
+              const lostReason = !openResumeCapable
+                ? `provider_incapable (seat=${openModel})`
+                : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${openModel})`;
+              console.warn(
+                `[orchestrator] open-court resume continuity lost: ${lostReason}; ` +
+                  `dropping sessionId=${resumeFor.sessionId} (fresh open court; answer still delivered)`,
+              );
+            }
+            resumeFor = undefined;
+          }
+          const openEscalationAnswer =
+            resumedEscalationAnswer !== undefined &&
+            resumedEscalationAnswer.forStep === "S1"
+              ? resumedEscalationAnswer
+              : undefined;
+          if (openEscalationAnswer !== undefined) {
+            resumedEscalationAnswer = undefined;
+          }
+          const openSessionMode =
+            typeof openResumeSessionId === "string" ? "resume" : "fresh";
           const openHost = stepSpecToWorkerSpec(
             stepSpecs.S3,
-            "fresh",
+            openSessionMode,
             openPool,
           ).host;
           const openSpec = {
@@ -3386,7 +3429,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             kind: "verify" as const,
             role: "verify" as const,
             host: openHost,
-            session: "fresh" as const,
+            session: openSessionMode as "fresh" | "resume",
             contextRetention: "clean" as const,
             promptFile: JUDGE_OPEN_COURT_PROMPT_FILE,
             maxIter: 1 as const,
@@ -3407,6 +3450,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stateDir,
                 modelRoute,
                 ...(openPool !== undefined ? { billingPool: openPool } : {}),
+                ...(typeof openResumeSessionId === "string"
+                  ? { resumeSessionId: openResumeSessionId }
+                  : {}),
+                ...(openEscalationAnswer !== undefined
+                  ? { escalationAnswer: openEscalationAnswer }
+                  : {}),
               },
             );
             openResult = dispatched.result;
@@ -3484,6 +3533,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
           judgeSessionId = openGate.sessionId;
           judgeSessionModel = openModel;
+          // Success path MUST clear any stale escalate lastOutput seeded by
+          // planResume after an S1 park. Leaving the prior escalate object would
+          // re-park with the old reason regardless of this successful re-open.
+          output = undefined;
+          lastOutput = undefined;
+          promptFile = JUDGE_OPEN_COURT_PROMPT_FILE;
+          stepSessionId = openGate.sessionId;
           const openTs = new Date().toISOString();
           const openEntry = {
             step: "S1" as const,
