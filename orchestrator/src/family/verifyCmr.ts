@@ -2384,15 +2384,54 @@ async function runIntegratedCmrPass(input: {
     // #1094: runner dispatches panel legs as first-class workers BEFORE the
     // pure judge court. Judge never spawns nested model CLIs.
     const frozenLegs = spec.cmrReviewLegs ?? [];
-    // #1094 F2: checkout + focus write ONCE before fan-out; legs only clone.
+    // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     if (
       frozenLegs.length > 0 &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
     ) {
-      await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
+      const prep = await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
+      if (
+        prep !== undefined &&
+        typeof prep === "object" &&
+        "kind" in prep &&
+        prep.kind === "escalate"
+      ) {
+        const reason = prep.reason;
+        const diagnosis = prep.diagnosis;
+        reviewRoundResult = {
+          kind: "escalated",
+          escalation: prep.escalation,
+        };
+        const stopSummary = stageFailureStopSummary({
+          status: "cmr_failed",
+          summary: `${reason} — ${diagnosis}`,
+          repairHint:
+            "repair the integrated CMR worker startup/configuration failure, then re-feed the family run",
+        });
+        await persistFinalReviewRound("accepted", async () => {
+          await recordDurableAbort(familyBackend, {
+            phase: ledgerPhase,
+            cmrPass: pass,
+            reason,
+            stopSummary,
+          });
+          await familyBackend.escalateFamily?.({
+            reason,
+            diagnosis,
+            stopSummary,
+            escalationKind: "failure",
+          });
+        });
+        return {
+          result: stageGate("cmr_failed"),
+          familyHeadAfter: resolvedFamilyHeadAfter,
+          resolvedRoute: activeRoute,
+        };
+      }
     }
     const panelRound = await dispatchFamilyCmrPanelLegs({
       legs: frozenLegs,
+      cmrPass: pass,
       dispatch: (legSpec) =>
         dispatchOrAbort(familyBackend, legSpec, dispatchCtx, undefined, {
           onMonitorHandle: (handle) => {

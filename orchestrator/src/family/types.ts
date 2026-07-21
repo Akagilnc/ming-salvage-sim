@@ -617,11 +617,29 @@ export interface FamilyBackend {
   ): Promise<WorkerResult>;
   /**
    * #1094 — once before panel-leg fan-out: checkout familyBase + write CMR focus
-   * on the shared workingRepo. Legs then only clone (no concurrent checkout).
+   * + shared-repo exclude on the workingRepo. Legs then only clone (no concurrent
+   * checkout / exclude rewrite). Missing cut-SHA returns structured escalate
+   * (never a bare throw across runIntegratedCmrPass).
    */
   prepareFamilyCmrPanelRound?(
     ctx: DispatchContext,
-  ): { readonly headSha: string } | Promise<{ readonly headSha: string }>;
+  ):
+    | { readonly headSha: string }
+    | {
+        readonly kind: "escalate";
+        readonly reason: string;
+        readonly diagnosis: string;
+        readonly escalation: Escalation;
+      }
+    | Promise<
+        | { readonly headSha: string }
+        | {
+            readonly kind: "escalate";
+            readonly reason: string;
+            readonly diagnosis: string;
+            readonly escalation: Escalation;
+          }
+      >;
   /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.

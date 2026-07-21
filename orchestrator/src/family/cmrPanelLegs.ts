@@ -15,9 +15,12 @@
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
   isLegalLegPaper,
-  successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
+import {
+  modelFamilyForCmrReviewLeg,
+  providerForModelSlug,
+} from "../modelRegistry.js";
 import type {
   CmrSkippedLeg,
   ReviewerOutput,
@@ -25,15 +28,41 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
+import type { IntegratedCmrPass } from "./types.js";
 
-/** Thin versioned prompt for one panel-leg review pass. */
-export const CMR_PANEL_LEG_PROMPT_FILE = "cmr_panel_leg.md";
+/** Completeness-pass panel-leg prompt (Clause–Wire–Exercise). */
+export const CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE =
+  "cmr_panel_leg_completeness.md";
+/** Correctness-pass panel-leg prompt (Trace–Break–Prove). */
+export const CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE =
+  "cmr_panel_leg_correctness.md";
+
+/**
+ * One authoritative prompt source per CMR pass lens — no shared duplicate body.
+ */
+export function cmrPanelLegPromptFile(pass: IntegratedCmrPass): string {
+  return pass === "completeness"
+    ? CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
+    : CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE;
+}
+
+/** True when promptFile is one of the pass-keyed panel-leg lens sources. */
+export function isCmrPanelLegPromptFile(promptFile: string): boolean {
+  return (
+    promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE ||
+    promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
+  );
+}
 
 /**
  * Declarative WorkerSpec for one route-selected CMR panel leg.
  * Fresh / clean / READ-ONLY — never resume a prior leg session.
+ * Prompt is keyed by {@link IntegratedCmrPass} (pass-distinct lenses).
  */
-export function cmrPanelLegWorkerSpec(leg: WorkerCmrReviewLeg): WorkerSpec {
+export function cmrPanelLegWorkerSpec(
+  leg: WorkerCmrReviewLeg,
+  pass: IntegratedCmrPass = "correctness",
+): WorkerSpec {
   const model = leg.slug;
   return {
     // Seat remains the family CMR court (S3); per-leg job/log uniqueness is the
@@ -44,8 +73,7 @@ export function cmrPanelLegWorkerSpec(leg: WorkerCmrReviewLeg): WorkerSpec {
     host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "clean",
-    skill: "/code-review",
-    promptFile: CMR_PANEL_LEG_PROMPT_FILE,
+    promptFile: cmrPanelLegPromptFile(pass),
     maxIter: 1,
     model,
     soul: "READ-ONLY",
@@ -146,9 +174,37 @@ export function panelLegCompletedResult(stdout: string): WorkerResult {
   };
 }
 
+/**
+ * #1094 R2 F7 — CMR-leg-only / unknown slugs must degrade loudly, never throw
+ * through the family court (workerHostForModel / agentForSpec would crash).
+ */
+export function degradedTransportForNonRunnablePanelLeg(
+  slug: string,
+): LegTransport | undefined {
+  if (providerForModelSlug(slug) !== undefined) {
+    return undefined;
+  }
+  try {
+    const family = modelFamilyForCmrReviewLeg(slug);
+    return {
+      slug,
+      exitCode: 1,
+      stdout:
+        `panel leg ${slug} is CMR-leg-only (family ${family}, not a live worker ` +
+        `slug) — degraded; restore a MODEL_SLUG_REGISTRY worker slug or drop the leg`,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      slug,
+      exitCode: 1,
+      stdout: `panel leg ${slug} unknown / unresolvable — degraded: ${detail}`,
+    };
+  }
+}
+
 export type PanelLegsRoundResult = {
   readonly transports: ReadonlyArray<LegTransport>;
-  readonly successfulLegs: ReadonlyArray<string>;
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
 };
 
@@ -159,19 +215,25 @@ export type PanelLegsRoundResult = {
  */
 export async function dispatchFamilyCmrPanelLegs(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
+  readonly cmrPass?: IntegratedCmrPass;
   readonly dispatch: (
     spec: WorkerSpec,
   ) => Promise<WorkerResult>;
 }): Promise<PanelLegsRoundResult> {
   const legs = input.legs;
+  const pass = input.cmrPass ?? "correctness";
   if (legs.length === 0) {
-    return { transports: [], successfulLegs: [], skippedLegs: [] };
+    return { transports: [], skippedLegs: [] };
   }
   // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
   // park/relay throw. Settle every leg first, then rethrow one rejection.
   const settled = await Promise.allSettled(
     legs.map(async (leg) => {
-      const spec = cmrPanelLegWorkerSpec(leg);
+      const degraded = degradedTransportForNonRunnablePanelLeg(leg.slug);
+      if (degraded !== undefined) {
+        return degraded;
+      }
+      const spec = cmrPanelLegWorkerSpec(leg, pass);
       const result = await input.dispatch(spec);
       return legTransportFromPanelLegResult(leg.slug, result);
     }),
@@ -190,7 +252,6 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   });
   return {
     transports: results,
-    successfulLegs: successfulLegsFromTransports(results),
     skippedLegs: skippedLegsFromTransports(legs, results),
   };
 }
