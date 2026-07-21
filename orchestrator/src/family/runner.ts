@@ -38,6 +38,7 @@ import {
   admitRouteFromEnv,
   admitRelayBaton,
   admissionRouteFailureDiagnosis,
+  isGithubAuthFailure,
 } from "../admissionPreflight.js";
 import {
   CoderRecError,
@@ -1888,8 +1889,98 @@ export async function runFamily(
   // (decision 4 不信缓存; else a stale cycle re-escalates, agy R2). Absent ⇒ the
   // passed `epic` is used unchanged (a fresh run). The commander then schedules
   // off the live graph below.
-  const epic =
-    input.refetchEpic !== undefined ? await input.refetchEpic() : input.epic;
+  //
+  // #1088: exhausted admission refetch must land the same structured terminal as
+  // INITIAL readFamilyEpic in familyDriver (infra_failure + issue_metadata_unavailable
+  // + emitExitProgress) — never a bare throw that kills the launcher process.
+  let epic = input.epic;
+  if (input.refetchEpic !== undefined) {
+    try {
+      epic = await input.refetchEpic();
+    } catch (err) {
+      const diagnosis = err instanceof Error ? err.message : String(err);
+      const children = input.epic.children.map((child) => ({
+        issue: child.issue,
+        status: "skipped" as const,
+      }));
+      // Mirror familyDriver INITIAL: root open blocked_by → decision-gate park.
+      // Detect by name to avoid a familyDriver↔runner import cycle.
+      if (err instanceof Error && err.name === "FamilyRootBlockerError") {
+        const stopSummary = decisionGateParkStopSummary({
+          summary: diagnosis,
+          repairHint:
+            "close or unblock the root epic blocked_by dependencies, then re-feed",
+        });
+        emitExitProgress({
+          epic: input.epic.issue,
+          status: "parked",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return {
+          status: "parked",
+          familyBase: input.familyBase,
+          escalation: { reason: diagnosis, diagnosis },
+          stopSummary,
+          children,
+          ...(input.epic.admissionSkipped !== undefined &&
+          input.epic.admissionSkipped.length > 0
+            ? { admissionSkipped: input.epic.admissionSkipped }
+            : {}),
+        };
+      }
+      // Mirror familyDriver INITIAL admission catch: auth → decision-gate park.
+      if (isGithubAuthFailure(err)) {
+        const stopSummary = decisionGateParkStopSummary({
+          summary: `GitHub authentication required: ${diagnosis}`,
+          repairHint:
+            "run `gh auth login` (or restore GH_TOKEN) on the host, then re-feed",
+        });
+        emitExitProgress({
+          epic: input.epic.issue,
+          status: "parked",
+          stopReason: stopSummary.reason,
+          gateSummary: stopSummary.summary,
+        });
+        return {
+          status: "parked",
+          familyBase: input.familyBase,
+          escalation: {
+            reason: "GitHub authentication required",
+            diagnosis,
+          },
+          stopSummary,
+          children,
+          ...(input.epic.admissionSkipped !== undefined &&
+          input.epic.admissionSkipped.length > 0
+            ? { admissionSkipped: input.epic.admissionSkipped }
+            : {}),
+        };
+      }
+      // #1088 / #942 / #934 ID-001: exhausted retries + other metadata failures.
+      const metaStop = infraFailureStopSummary({
+        summary: diagnosis,
+        repairHint: "repair GitHub metadata access and rerun",
+      });
+      emitExitProgress({
+        epic: input.epic.issue,
+        status: "failed",
+        stopReason: metaStop.reason,
+        gateSummary: metaStop.summary,
+      });
+      return failedFamilyResult({
+        cause: "issue_metadata_unavailable",
+        familyBase: input.familyBase,
+        escalation: { reason: "issue metadata unavailable", diagnosis },
+        stopSummary: metaStop,
+        children,
+        ...(input.epic.admissionSkipped !== undefined &&
+        input.epic.admissionSkipped.length > 0
+          ? { admissionSkipped: input.epic.admissionSkipped }
+          : {}),
+      });
+    }
+  }
   // ID-009: no startup whole-family cycle guard (residual probe is at empty-wave).
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // ── #604 slice 5: child decision-escalation re-entry ────────────────────────

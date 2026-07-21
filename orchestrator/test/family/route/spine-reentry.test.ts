@@ -19,6 +19,9 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
+import { readFamilyEpic } from "../../../src/familyDriver.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
+import { familyDriverExitCode } from "../../../src/publicResult.js";
 import type {
   Backend,
   IssueMeta,
@@ -35,6 +38,15 @@ import type {
   MergeRequest,
 } from "../../../src/family/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+
+/** #1088 — raw gh free-text transport blip (wifi/sleep), same surface as flight18. */
+function rawGhTransportBlip(phrase: string): Error {
+  const line = `Get "https://api.github.com/repos/o/r/issues/291/dependencies/blocked_by": ${phrase}`;
+  return Object.assign(new Error(`Command failed: gh api …\n${line}\n`), {
+    status: 1,
+    stderr: `${line}\n`,
+  });
+}
 
 class ChildBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -104,6 +116,34 @@ class FakeFamilyBackend implements FamilyBackend {
 }
 
 describe("spine re-entry — refetch the dependency graph from live GitHub (decision 4)", () => {
+  it("#1088: exhausted admission refetch lands failed/infra_failure, never throws", async () => {
+    // Production always wires refetchEpic → readFamilyEpic. After the shared
+    // 15s×5 budget burns, readFamilyEpic throws; that throw must land as a
+    // structured family result (same as INITIAL admission), not kill the launcher.
+    let ghAttempts = 0;
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }] },
+      familyBackend: new FakeFamilyBackend(),
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+      refetchEpic: async () =>
+        readFamilyEpic(291, "Akagilnc/ming-salvage-sim", () => {
+          ghAttempts += 1;
+          throw rawGhTransportBlip("EOF");
+        }),
+    });
+
+    expect(ghAttempts).toBeGreaterThanOrEqual(MAX_DISPATCH_ATTEMPTS);
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") throw new Error("expected failed");
+    expect(result.cause).toBe("issue_metadata_unavailable");
+    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.stopSummary?.summary).toMatch(/issue metadata unavailable/i);
+    expect(result.escalation?.diagnosis).toMatch(/EOF|issue metadata unavailable/i);
+    expect(familyDriverExitCode(result)).toBe(1);
+  });
+
   it("an unanswered family decision escalation stays paused even when refetchEpic is available", async () => {
     const staleEpic: FamilyEpic = {
       issue: 291,
