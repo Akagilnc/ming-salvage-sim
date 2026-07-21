@@ -62,8 +62,16 @@ import {
 import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
+  isBuilderBeatStep,
+  isJudgeBeatStep,
+  projectCompletedBeats,
+  shouldForcePlanBeatStamp,
+  stampBuilderBeatOnOutput,
+} from "./builderJudgeBeat.js";
+import {
   clearProgressBroadcastConfig,
   configureProgressBroadcast,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   getProgressBroadcastConfig,
@@ -4347,13 +4355,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // #1007 AC1: always echo typed judge tri-state (including escalate) so
         // latest verdict/counts are on the feed. Park/terminal alone do not fill
         // AC1. Open-set projection stays gated on !carriesEscalate below.
+        // #1086: rotation index = completed beats so far + this judge beat.
         if (isJudgeSeat({ step }) && output?.kind === "judge") {
           const judgeRound =
             ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
+          const rotation =
+            projectCompletedBeats(ledger).length + 1;
           emitJudgeProgress({
             issue: issueNumber,
             step,
             round: judgeRound,
+            rotation,
             verdict: output.status,
             findingDispositions: output.findingDispositions,
             findings: output.findings,
@@ -4587,6 +4599,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // includes terminal-only continue that routes like converged. Only when
     // court was opened at dispatch (court_opened row) — late S3 establish
     // without birth has no hanging court to dismiss.
+    //
+    // #1086 / ADR 0147 S6: stamp typed builder 拍别 onto coder cargo so each
+    // product beat row carries 拍别 (plan|construct) without prose; judge rows
+    // already carry 判词终态 via output.status.
+    let durableOutput = output;
+    if (
+      isBuilderBeatStep(step) &&
+      durableOutput !== undefined &&
+      durableOutput.kind === "coder"
+    ) {
+      durableOutput = stampBuilderBeatOnOutput(step, durableOutput, {
+        forcePlan:
+          step === "S2" &&
+          shouldRunCoderPlanPhase() &&
+          shouldForcePlanBeatStamp(ledger),
+      });
+      // Keep in-flight lastOutput aligned with durable stamp for route consumers.
+      if (lastOutput?.kind === "coder") lastOutput = durableOutput;
+      output = durableOutput;
+    }
     const inMemoryModelSlug = isWorkerStep(step)
       ? stepSpecs[step].model
       : undefined;
@@ -4629,6 +4661,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         : {}),
     });
+    // #1086: progress line for every product beat (builder + judge). Fail-open
+    // feed; durable ledger write below remains fail-loud (AC4).
+    if (
+      (isBuilderBeatStep(step) || isJudgeBeatStep(step)) &&
+      output !== undefined
+    ) {
+      const beats = projectCompletedBeats(ledger);
+      const justLanded = beats[beats.length - 1];
+      if (justLanded !== undefined) {
+        emitBeatProgress({
+          issue: issueNumber,
+          role: justLanded.role,
+          step: justLanded.step,
+          rotation: justLanded.rotation,
+          beatKind: justLanded.beatKind ?? null,
+          verdict: justLanded.verdict ?? null,
+        });
+      }
+    }
     // #6: a writeLedger failure here is a backend-call exception → it must
     // converge to S8(failed) with an error package, NOT raw-reject out of
     // runOrchestrator (PRD route table: any backend call throwing → S8(failed)).

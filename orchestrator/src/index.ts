@@ -40,6 +40,7 @@ export {
   configureProgressBroadcast,
   countJudgeDispositions,
   countSeverityFromFindings,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   emitLandingProgress,
@@ -68,6 +69,25 @@ export type {
   ProgressSeverityCounts,
   NotifySpawn,
 } from "./progressBroadcast.js";
+// ── #1086 / ADR 0147 S6 — builder↔judge beat ledger + progress ──────────────
+export {
+  isBuilderBeatStep,
+  isCompletedBeatRerun,
+  isJudgeBeatStep,
+  latestCompletedBeat,
+  projectCompletedBeats,
+  projectBeatFromEntry,
+  shouldForcePlanBeatStamp,
+  stampBuilderBeatOnOutput,
+} from "./builderJudgeBeat.js";
+export type {
+  BeatLedgerEntry,
+  BeatLedgerRow,
+  BeatProductStepId,
+  BeatRole,
+  BuilderBeatStepId,
+  JudgeBeatStepId,
+} from "./builderJudgeBeat.js";
 
 // ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
 export {
