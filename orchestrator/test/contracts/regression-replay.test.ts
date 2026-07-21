@@ -551,9 +551,11 @@ describe("#451 dogfood replay fixture", () => {
         seam: "family_verify_cmr_provider_worker_failure",
         failedLeg: "agy",
         status: "aborted",
-        dispatches: Array.from(
-          { length: MAX_DISPATCH_ATTEMPTS },
-          () => "cmr:completeness",
+        dispatches: expect.arrayContaining(
+          Array.from(
+            { length: MAX_DISPATCH_ATTEMPTS },
+            () => "cmr:completeness",
+          ),
         ),
       }),
     });

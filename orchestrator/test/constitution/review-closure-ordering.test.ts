@@ -30,6 +30,7 @@ import type {
 } from "../../src/types.js";
 import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
 
 
 const CMR_EVIDENCE = {
@@ -87,6 +88,8 @@ class ClosureOrderingBackend implements FamilyBackend {
     spec: WorkerSpec,
     _ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const panelLeg = completeCmrPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // #919 CR N3: live kind:judge continue (not residual kind:cmr).
       return {

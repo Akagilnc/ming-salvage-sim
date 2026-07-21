@@ -61,6 +61,7 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+import { panelLegCompletedResult } from "../../../src/family/cmrPanelLegs.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const familyPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -210,6 +211,11 @@ class E2EFamilyBackend extends RealFamilyBackend {
   readonly verifyCalls: FamilyVerifyRequest[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly shipCalls: string[] = [];
+  protected override async runCmrPanelLegWorker(
+    spec: WorkerSpec,
+  ): Promise<WorkerResult> {
+    return panelLegCompletedResult(`e2e panel leg ${spec.model}`);
+  }
   protected override async runVerifyCommands(req: FamilyVerifyRequest): Promise<void> {
     this.verifyCalls.push(req); // green: no throw, no real npx.
   }
@@ -408,6 +414,11 @@ class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
     });
   }
 
+  protected override async runCmrPanelLegWorker(
+    spec: WorkerSpec,
+  ): Promise<WorkerResult> {
+    return panelLegCompletedResult(`e2e panel leg ${spec.model}`);
+  }
   readonly shipCalls: string[] = [];
   protected override async installDeps(): Promise<void> {
     // Legal empty skips before install; operational errors fail before install.

@@ -53,6 +53,7 @@ import {
 } from "../gitInfoExclude.js";
 import {
   appendFileSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -93,6 +94,7 @@ import {
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
 import {
+  buildJudgeReviewLegPrompt,
   judgeResultFromVerdict,
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
@@ -101,6 +103,7 @@ import {
   successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
+import { panelLegCompletedResult } from "./cmrPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -130,8 +133,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
-  appendClaudeAuthMount,
-  assertClaudePanelLegAuth,
   provisionFamilyWorkerAuth,
   providerAuthFromCore,
   type FamilyWorkerAuthCore,
@@ -1070,7 +1071,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1465,6 +1466,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
+    // #1094: family CMR panel legs are first-class reviewer workers (not nested
+    // CLIs inside the judge sandbox).
+    if (spec.kind === "reviewer") {
+      return this.runCmrPanelLegWorker(spec, ctx, landing);
+    }
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
@@ -1669,6 +1675,214 @@ export class RealFamilyBackend implements FamilyBackend {
    * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
    * and accounting around that verdict.
    */
+  /**
+   * #1094 — one runner-dispatched CMR panel-leg worker (fresh READ-ONLY reviewer).
+   * Top-level sandcastle agent for the leg's model (credential injection = same
+   * as single-slice fresh reviewer). Independent clone at PRE_HEAD; prose stdout
+   * is the legal paper (ADR 0141).
+   */
+  protected async runCmrPanelLegWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (ctx.familyBase === undefined) {
+      throw new Error(
+        "dispatchWorker(reviewer panel leg): requires ctx.familyBase",
+      );
+    }
+    const auth = this.mountCmrAuth();
+    let legClone: string | undefined;
+    try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "failed",
+          reason: `no ${missingProvider} auth — panel leg ${spec.model} cannot start`,
+        };
+      }
+      if (
+        modelFamilyForSlug(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
+        return {
+          kind: "failed",
+          reason:
+            "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — panel leg cannot start",
+        };
+      }
+      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      if (ctx.waveVerifyFailure === undefined) {
+        this.writeCmrFocusFile(ctx);
+      }
+      const headSha = this.sh(
+        "git",
+        ["rev-parse", "HEAD"],
+        this.opts.workingRepo,
+      ).trim();
+      legClone = this.preparePanelLegClone(spec.model, headSha);
+      // Focus file lives on the family base worktree; copy into the independent clone.
+      const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+      try {
+        copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
+      } catch {
+        // Focus optional for degraded fixtures; leg still reviews the clone HEAD.
+      }
+      const reviewerSoul = readFileSync(
+        join(this.opts.soulsDir, "reviewer.md"),
+        "utf8",
+      );
+      const taskBody =
+        `Panel leg slug: ${spec.model}.\n` +
+        `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
+        `(or the assigned clone scope) and emit prose review on stdout.`;
+      const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
+      const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
+      writeFileSync(promptPath, promptBody, "utf8");
+      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
+      try {
+        const result = await this.runAgentSandbox({
+          name: `family-cmr-panel-${spec.model}`,
+          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+          cwd: legClone,
+          sandbox: this.panelLegSandbox(auth, spec, ctx, outcomeLanding),
+          agent: this.agentForSpec(spec, ctx),
+          maxIterations: 1,
+          branchStrategy: { type: "head" },
+          promptFile: promptPath,
+        });
+        const stdout =
+          typeof (result as { stdout?: unknown }).stdout === "string"
+            ? (result as { stdout: string }).stdout
+            : "";
+        return panelLegCompletedResult(stdout);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return { kind: "failed", reason: `panel leg ${spec.model}: ${reason}` };
+      } finally {
+        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
+      }
+    } finally {
+      this.cleanupTempAuthDirs([
+        auth.codexAuthDir,
+        auth.agyDir,
+        auth.grokAuthDir,
+      ]);
+      if (legClone !== undefined) {
+        rmSync(legClone, { recursive: true, force: true });
+      }
+    }
+  }
+
+  /**
+   * Independent writable clone for one panel leg (#1094 / ak-cross-m-review
+   * clone semantics): no linked worktree, no shared object store.
+   */
+  protected preparePanelLegClone(slug: string, headSha: string): string {
+    const safe = slug.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const legRoot = mkdtempSync(
+      join(this.opts.ledgerDir, `panel-leg-${safe}-`),
+    );
+    this.sh("git", [
+      "clone",
+      "--origin",
+      "origin",
+      "--no-local",
+      "--no-checkout",
+      this.opts.workingRepo,
+      legRoot,
+    ]);
+    this.sh("git", ["checkout", "--detach", headSha], legRoot);
+    try {
+      this.sh("git", ["remote", "remove", "origin"], legRoot);
+    } catch {
+      // already remote-free
+    }
+    return legRoot;
+  }
+
+  protected panelLegSandbox(
+    auth: CmrAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): sc.SandboxProvider {
+    return docker(this.panelLegSandboxConfig(auth, spec, ctx, outcomeLanding));
+  }
+
+  protected panelLegSandboxConfig(
+    auth: CmrAuth,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    outcomeLanding?: { path: string; sandboxPath: string },
+  ): {
+    imageName: string;
+    env: Record<string, string>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
+  } {
+    const soul = soulForStep({
+      id: spec.id,
+      role: spec.role,
+      soul: spec.soul,
+    });
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: soul,
+      [SANDBOX_REPO_ENV]: this.opts.repo,
+    };
+    if (outcomeLanding !== undefined) {
+      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
+    }
+    if (ctx.familyIssue !== undefined) {
+      const issue = String(ctx.familyIssue);
+      env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
+      env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (auth.claudeToken !== undefined) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    }
+    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
+    if (outcomeLanding !== undefined) {
+      mounts.push({
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      });
+    }
+    // Mount only THIS leg's provider credentials (top-level agent — no nested CLI).
+    const family = modelFamilyForSlug(spec.model);
+    if (family === "codex" && auth.codexAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
+    }
+    if (family === "agy" && auth.agyDir !== undefined) {
+      appendAgyAuthMount(mounts, auth.agyDir);
+    }
+    if (
+      (family === "other" || spec.host === "grok") &&
+      auth.grokAuthDir !== undefined
+    ) {
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
+    }
+    mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
+    return { imageName: this.opts.imageName, env, mounts };
+  }
+
   protected async runCmrWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -1768,24 +1982,6 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      // #1091: claude-family panel legs need token env and/or credentials mount.
-      const claudePanelAuthGap = assertClaudePanelLegAuth({
-        reviewLegs: frozenReviewLegs,
-        ...(auth.claudeAuthDir !== undefined
-          ? { claudeAuthDir: auth.claudeAuthDir }
-          : {}),
-      });
-      if (claudePanelAuthGap !== undefined) {
-        return {
-          kind: "escalate",
-          reason: "no Claude panel-leg auth for cmrReview claude-family leg",
-          diagnosis: claudePanelAuthGap,
-          escalation: runnerSynthesizedFailureEscalation({
-            reason: "no Claude panel-leg auth for cmrReview claude-family leg",
-            diagnosis: claudePanelAuthGap,
-          }),
-        };
-      }
       // Check out the family base so the in-container ak-cross-m-review reviews the
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
@@ -1810,13 +2006,19 @@ export class RealFamilyBackend implements FamilyBackend {
       // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
       // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
       // Trigger on ctx keys OR landing refuseRecords OR priorJudgeVerdicts.
+      // #1094: also land when runner-dispatched panel-leg transports are present
+      // so the pure judge court can read prose evidence.
       const needsFixFindingsLanding =
         (landing?.refuseRecords !== undefined &&
           landing.refuseRecords.length > 0) ||
+        (landing?.panelLegTransports !== undefined &&
+          landing.panelLegTransports.length > 0) ||
         (ctx.refusedFindingIdentityKeys !== undefined &&
           ctx.refusedFindingIdentityKeys.length > 0) ||
         (ctx.priorJudgeVerdicts !== undefined &&
-          ctx.priorJudgeVerdicts.length > 0);
+          ctx.priorJudgeVerdicts.length > 0) ||
+        (ctx.panelLegTransports !== undefined &&
+          ctx.panelLegTransports.length > 0);
       const fixFindingsLanding = needsFixFindingsLanding
         ? this.writeFamilyFixFindingsFile(ctx, landing)
         : undefined;
@@ -1885,9 +2087,13 @@ export class RealFamilyBackend implements FamilyBackend {
           (result as { readonly output?: unknown }).output,
           "family CMR",
         );
-        // #1005 / ADR 0141: when the sandbox/result lands per-leg transports,
-        // host rebuilds successfulLegs transport-only (production panel path).
-        const legTransports = legTransportsFromCmrSandboxResult(result);
+        // #1005 / ADR 0141 / #1094: host-observed panel-leg transports from
+        // runner-dispatched first-class workers win over nested sandbox cargo.
+        const hostTransports = normalizePanelLegTransports(
+          ctx.panelLegTransports ?? landing?.panelLegTransports,
+        );
+        const legTransports =
+          hostTransports ?? legTransportsFromCmrSandboxResult(result);
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
@@ -1905,7 +2111,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -2042,7 +2248,7 @@ export class RealFamilyBackend implements FamilyBackend {
         });
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2109,6 +2315,15 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(ctx.priorJudgeVerdicts !== undefined &&
           ctx.priorJudgeVerdicts.length > 0
             ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
+            : {}),
+          // #1094: runner-dispatched panel-leg prose for the pure judge court.
+          ...((landing?.panelLegTransports ?? ctx.panelLegTransports) !==
+            undefined &&
+          (landing?.panelLegTransports ?? ctx.panelLegTransports)!.length > 0
+            ? {
+                panelLegTransports:
+                  landing?.panelLegTransports ?? ctx.panelLegTransports,
+              }
             : {}),
         },
         null,
@@ -2342,7 +2557,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2455,10 +2670,6 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
-    // #1091: mount claude credentials file for panel-leg `claude` CLIs, same as
-    // cmrSandboxConfig. Without it claude-family panel legs fail to authenticate
-    // (claude-family judge workers scrub CLAUDE_CODE_OAUTH_TOKEN from children).
-    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2828,7 +3039,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
-    // #1091: claude panel legs get credentials file mount + token env (above).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2836,7 +3046,6 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3019,7 +3228,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -3616,6 +3825,23 @@ function softParseLegTransports(
  *   2. typed-output soft cargo `result.output.legTransports` (SO passthrough)
  * Absent → undefined; cargo soft path may still rebuild from payload.
  */
+function normalizePanelLegTransports(
+  raw:
+    | ReadonlyArray<{
+        readonly slug: string;
+        readonly exitCode: number;
+        readonly stdout: string | null | undefined;
+      }>
+    | undefined,
+): ReadonlyArray<LegTransport> | undefined {
+  if (raw === undefined || raw.length === 0) return undefined;
+  return raw.map((t) => ({
+    slug: t.slug,
+    exitCode: t.exitCode,
+    stdout: t.stdout,
+  }));
+}
+
 function legTransportsFromCmrSandboxResult(
   result: unknown,
 ): ReadonlyArray<LegTransport> | undefined {

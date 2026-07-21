@@ -73,6 +73,7 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
+import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2380,11 +2381,35 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
+    // #1094: runner dispatches panel legs as first-class workers BEFORE the
+    // pure judge court. Judge never spawns nested model CLIs.
+    const frozenLegs = spec.cmrReviewLegs ?? [];
+    const panelRound = await dispatchFamilyCmrPanelLegs({
+      legs: frozenLegs,
+      dispatch: (legSpec) =>
+        dispatchOrAbort(familyBackend, legSpec, dispatchCtx, undefined, {
+          onMonitorHandle: (handle) => {
+            reviewerMonitorHandle = handle;
+          },
+        }),
+    });
+    const panelLanding: WorkerLandingPayload = {
+      ...(refuseReopenLanding ?? {}),
+      panelLegTransports: panelRound.transports.map((t) => ({
+        slug: t.slug,
+        exitCode: t.exitCode,
+        stdout: t.stdout,
+      })),
+    };
+    const judgeDispatchCtx: DispatchContext = {
+      ...dispatchCtx,
+      panelLegTransports: panelLanding.panelLegTransports,
+    };
     const cmrResult = await dispatchOrAbort(
       familyBackend,
       spec,
-      dispatchCtx,
-      refuseReopenLanding,
+      judgeDispatchCtx,
+      panelLanding,
       {
       onMonitorHandle: (handle) => {
         reviewerMonitorHandle = handle;
