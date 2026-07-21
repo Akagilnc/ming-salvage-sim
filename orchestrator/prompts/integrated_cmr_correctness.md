@@ -133,3 +133,9 @@ Rules:
   the last typed `<judge>` tag is the one that counts.
 
 This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.
+
+## 腿运行契约(2026-07-21 钉,#1091 实证)
+
+panel 腿一律**前台**运行(阻塞等待或原地循环轮询),判词交出前**不得停手**。
+停手=散场:本 run 立即结束、沙箱容器销毁(后台进程与 /tmp 全灭),resume 只带回对话记忆、不带回现场。
+禁用「后台 nohup + 停下等唤醒」模式——那是宿主常驻会话的习惯,不适用于你的处境。
