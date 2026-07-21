@@ -284,6 +284,57 @@ def _settle_or_pending(
     }
 
 
+def trail_extraction_after_reply(
+    *,
+    db: Any,
+    minister_name: str,
+    minister_reply: str,
+    chat_turn_id: int,
+    llm_config: Any,
+    write_gate: threading.Lock,
+    extractor_agent: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """#501：回话 done 后尾随叙事抽取落账——Web / CLI 共用单一入口。
+
+    非召对夜轮（night_id<=0）不入故事账。`run_extraction_for_turn` 契约上**从不抛**；
+    本函数亦**从不抛**：chat_turns 查询等意外故障 → 标待补 + 返回 None，不回滚回话
+    （ADR 0005 / 0036）。调用方（Web 后台线程 / CLI 同步）只负责在回话已持久化后调用。
+    """
+    try:
+        reply = str(minister_reply or "")
+        if not chat_turn_id or not hasattr(db, "conn"):
+            return None
+        row = db.conn.execute(
+            "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
+            (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        night_id = int(row["night_id"] or 0)
+        if night_id <= 0:
+            return None
+        return run_extraction_for_turn(
+            db=db,
+            minister_name=minister_name,
+            reply=reply,
+            chat_turn_id=int(chat_turn_id),
+            night_id=night_id,
+            source_night_seq=int(row["night_seq"] or 0),
+            llm_config=llm_config,
+            write_gate=write_gate,
+            extractor_agent=extractor_agent,
+        )
+    except Exception:
+        # run_extraction_for_turn 契约从不抛；到此=查询等意外。不静默：标待补候补跑。
+        try:
+            with write_gate:
+                if hasattr(db, "mark_story_extraction_pending"):
+                    db.mark_story_extraction_pending(int(chat_turn_id))
+        except Exception:
+            pass
+        return None
+
+
 def catch_up_pending_extractions(
     *,
     db: Any,

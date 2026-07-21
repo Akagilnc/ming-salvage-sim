@@ -74,7 +74,7 @@ from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
     drain_pending_before_open_night_close,
-    run_extraction_for_turn,
+    trail_extraction_after_reply,
 )
 from ming_sim.token_stats import tlog
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -2091,45 +2091,18 @@ class WebGame:
     ) -> Optional[Dict[str, Any]]:
         """#501：回话 done 后尾随叙事抽取落账（与读心并行——二者皆只依赖已完成回话，P5）。
 
-        非召对夜轮（night_id<=0）不入故事账。`run_extraction_for_turn` 契约上**从不抛**：垃圾
-        shape / 模型失败 / 落账失败 → 写响亮错误包 + 标待补、不回滚回话；成功（含空白回话）→
-        标 done。空白回话不短路跳过——与 run 入口一致交给它标 done（不占永久待补）。写库走
-        runtime write_gate（与读心/月末并发 extractor 同一把）。调用方持 pending ownership；
-        owns_pending=True 时本函数 finally 里 complete。
+        核在 `audience_extraction.trail_extraction_after_reply`（Web/CLI 共用）；本方法只
+        包 runtime write_gate + pending ownership。owns_pending=True 时 finally complete。
         """
         try:
-            reply = str(minister_reply or "")
-            if not chat_turn_id or not hasattr(self.db, "conn"):
-                return None
-            row = self.db.conn.execute(
-                "SELECT night_id, night_seq FROM chat_turns WHERE id = ?",
-                (int(chat_turn_id),),
-            ).fetchone()
-            if row is None:
-                return None
-            night_id = int(row["night_id"] or 0)
-            if night_id <= 0:
-                return None
-            return run_extraction_for_turn(
+            return trail_extraction_after_reply(
                 db=self.db,
                 minister_name=minister_name,
-                reply=reply,
+                minister_reply=minister_reply,
                 chat_turn_id=int(chat_turn_id),
-                night_id=night_id,
-                source_night_seq=int(row["night_seq"] or 0),
                 llm_config=getattr(self.session, "llm_config", None),
                 write_gate=self._runtime_write_gate(),
             )
-        except Exception as exc:
-            # run_extraction_for_turn 契约从不抛；到此=chat_turns 查询等意外故障。**不静默**：
-            # 留痕 + 标待补（下轮 catch_up / 收夜前 drain 会重试），不回滚回话（ADR 0005）。
-            tlog(f"[audience-extraction] 尾随意外故障 chat_turn_id={chat_turn_id}：{exc}；标待补")
-            try:
-                with self._runtime_write_gate():
-                    self.db.mark_story_extraction_pending(int(chat_turn_id))
-            except Exception as exc2:
-                tlog(f"[audience-extraction] 标待补亦失败 chat_turn_id={chat_turn_id}：{exc2}")
-            return None
         finally:
             if owns_pending:
                 self._complete_pending_write()

@@ -373,6 +373,8 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
             db.record_chat_turn_rollback_diffs(
                 chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
             )
+        # #501：重试回话成功后与正常回话同路径尾随抽取。
+        _trail_extraction_after_reply_cli(session, minister_name, answer, chat_turn_id)
         print(f"\n{minister_name}：{wrap(answer)}\n")
     except Exception as exc:
         # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
@@ -388,6 +390,50 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
         print(f"重试回话失败：{exc}\n")
 
 
+def _cli_write_gate(session: GameSession):
+    """CLI 写锁：优先 session 已有 gate，否则进程内轻量锁（单线程 CLI 足够）。"""
+    import threading
+    gate = getattr(session, "_write_gate", None)
+    if gate is not None:
+        return gate
+    # 懒挂一份，避免每调用新建一把让并发语义发散
+    gate = getattr(session, "_cli_extract_write_gate", None)
+    if gate is None:
+        gate = threading.Lock()
+        try:
+            session._cli_extract_write_gate = gate  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    return gate
+
+
+def _trail_extraction_after_reply_cli(
+    session: GameSession,
+    minister_name: str,
+    minister_reply: str,
+    chat_turn_id: int,
+) -> None:
+    """#501：CLI 回话落库后自动尾随抽取（与 Web `_trail_extraction_after_reply` 同核）。
+
+    同步调用——CLI 无后台线程池；失败标待补、不抛、不回滚回话。
+    """
+    if not chat_turn_id:
+        return
+    try:
+        from ming_sim.audience_extraction import trail_extraction_after_reply
+        trail_extraction_after_reply(
+            db=session.db,
+            minister_name=minister_name,
+            minister_reply=str(minister_reply or ""),
+            chat_turn_id=int(chat_turn_id),
+            llm_config=getattr(session, "llm_config", None),
+            write_gate=_cli_write_gate(session),
+        )
+    except Exception as exc:
+        # 共享核从不抛；到此=import 等外围故障——不锁档、不打断对话。
+        print(f"【账本抽取】尾随异常（已忽略、可稍后「重试补写」）：{exc}\n")
+
+
 def _retry_story_extraction_cli(session: GameSession) -> None:
     """#501 CLI：原地重试补跑叙事抽取。"""
     try:
@@ -399,7 +445,7 @@ def _retry_story_extraction_cli(session: GameSession) -> None:
         catch_up_pending_extractions(
             db=db,
             llm_config=getattr(session, "llm_config", None),
-            write_gate=getattr(session, "_write_gate", None) or __import__("threading").Lock(),
+            write_gate=_cli_write_gate(session),
             night_id=nid,
         )
         remaining = []
@@ -498,6 +544,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
+                    )
+                    # #501：回话入档后自动尾随抽取（与 Web 同核；失败标待补不抛）。
+                    _trail_extraction_after_reply_cli(
+                        session, character.name, result.answer, chat_turn_id,
                     )
         except BaseException as original_error:
             try:
