@@ -24,8 +24,8 @@ import type { FamilyModuleContext } from "./moduleDeclaration.js";
 import { shWithClock } from "../externalCall.js";
 
 import {
+  isCanonicalGithubPrUrl,
   isLiveGithubReviewPollEnabled,
-  parsePrRef,
   pollPrReviewState,
 } from "../botPolling.js";
 import {
@@ -3108,27 +3108,19 @@ async function runCorrectnessCourtLoop(input: {
 }
 
 /**
- * #1090 — is `value` a real GitHub PR URL (http(s) + `/pull/<number>`)? A branch
+ * #1090 — is `value` a canonical GitHub PR URL (https + `/pull/<number>`)? A branch
  * name is NOT a valid PR handle and must never be written to the shipped ledger
  * row's `pr` field — it would poison the online review poll (fail-closed
  * "non-admissible PR handle") on every idempotent re-ship.
  *
- * #1090 P1: the online-review consumer (botPolling.parsePrRef) is the SOLE
- * authority for what PR handle the shipped ledger may carry. Defer to its
- * judgment — any hand-rolled lookalike regex drifts weaker than the consumer
- * (host not github.com, trailing junk after the number) and re-opens the exact
- * #1090 poison class: a write that succeeds but the consumer fail-closed
- * rejects on every idempotent re-ship. No third validator; one shared parser.
+ * #1090 P1: botPolling.isCanonicalGithubPrUrl is the sole predicate for what PR
+ * handle the shipped ledger may carry. No local lookalike validator may drift
+ * from that exact https GitHub web form.
  *
  * Pure so the boundary is unit-tested without gh / a container.
  */
 export function isPrUrl(value: string): boolean {
-  try {
-    parsePrRef(value, "");
-    return true;
-  } catch {
-    return false;
-  }
+  return isCanonicalGithubPrUrl(value);
 }
 
 /**
@@ -3164,6 +3156,16 @@ export function resolveFamilyShipPr(branch: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Keep canonical ship output; resolve every other handle from the family branch. */
+export function resolveShippedPrUrl(
+  shipPr: string | undefined,
+  familyBranch: string,
+): string | undefined {
+  return shipPr !== undefined && isPrUrl(shipPr)
+    ? shipPr
+    : resolveFamilyShipPr(familyBranch);
 }
 
 /**
@@ -3576,14 +3578,10 @@ export async function runVerifyCmr(
   // #1090 root fix: never fall back to a branch name — a branch name poisons the
   // shipped ledger row's pr field; the online review poll then fail-closed
   // refuses ("non-admissible PR handle") on every idempotent re-ship. Accept
-  // ship.pr only when it is a real PR URL (http(s) + /pull/<number>); otherwise
+  // ship.pr only when it is the canonical https GitHub PR URL; otherwise
   // resolve the open PR for the family branch via `gh pr list`. If neither yields
   // a real PR URL, fail loud at ship_failed (never write a bogus handle).
-  let shipPr: string | undefined =
-    typeof ship.pr === "string" && isPrUrl(ship.pr) ? ship.pr : undefined;
-  if (shipPr === undefined) {
-    shipPr = resolveFamilyShipPr(familyBase);
-  }
+  const shipPr = resolveShippedPrUrl(ship.pr, familyBase);
   if (shipPr === undefined) {
     const missingPrHead = await readPostCmrFamilyHead(
       familyBackend,

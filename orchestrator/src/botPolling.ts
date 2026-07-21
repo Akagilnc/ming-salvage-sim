@@ -156,7 +156,7 @@ export interface PollPrReviewInput {
  * Parse `owner/repo` and PR number from a GitHub PR URL.
  * Accepts `https://github.com/o/r/pull/123` and `o/r#123` style handles.
  */
-/** True when `prUrl` names a live GitHub PR the host can poll via `gh api`. */
+/** True when `prUrl` names any supported PR reference the host can poll. */
 export function isPollableGithubPrUrl(prUrl: string, defaultRepo: string): boolean {
   try {
     parsePrRef(prUrl, defaultRepo);
@@ -206,6 +206,16 @@ export function parsePrRef(
     return { repo: defaultRepo, prNumber: Number(numOnly[1]) };
   }
   throw new Error(`botPolling: cannot parse PR reference from "${prUrl}"`);
+}
+
+/** True only for the canonical GitHub web PR URL written to shipped records. */
+export function isCanonicalGithubPrUrl(value: string): boolean {
+  try {
+    const { repo, prNumber } = parsePrRef(value, "");
+    return value === `https://github.com/${repo}/pull/${prNumber}`;
+  } catch {
+    return false;
+  }
 }
 
 /** Paginate a GitHub REST collection (`gh api` returns a JSON array). */
