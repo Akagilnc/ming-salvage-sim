@@ -165,6 +165,14 @@ function writeFixFindingsLandingFile(
       ? ctx.priorJudgeVerdicts
       : undefined;
   const judgeSeat = isJudgeSeat({ id: spec.id });
+  // #1082: plan-phase landings use the same fix-findings file seam so the
+  // runner can dumb-transport plan prose / beat hints without a second channel.
+  const planPhaseLanding =
+    landing?.builderPlanBody !== undefined ||
+    landing?.builderBeat !== undefined ||
+    (spec.id === "S2" &&
+      spec.kind === "coder" &&
+      landing?.fixPacketBody !== undefined);
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
     // #925 / #919 S2: S6 judge seat still needs fix-findings landing for
@@ -173,7 +181,8 @@ function writeFixFindingsLandingFile(
     ctx.escalationAnswer !== undefined ||
     // #925 F1: prior judge verdict rows must reach the worker via the same
     // fix-findings landing seam (session-loss / fresh-after-dead-session).
-    (judgeSeat && priorJudgeVerdicts !== undefined);
+    (judgeSeat && priorJudgeVerdicts !== undefined) ||
+    planPhaseLanding;
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -251,6 +260,13 @@ function writeFixFindingsLandingFile(
         // synthesises a narrative trajectory summary.
         ...(priorJudgeVerdicts !== undefined
           ? { priorJudgeVerdicts }
+          : {}),
+        // #1082 / ADR 0147: opaque plan-phase transport (runner never interprets).
+        ...(landing?.builderPlanBody !== undefined
+          ? { builderPlanBody: landing.builderPlanBody }
+          : {}),
+        ...(landing?.builderBeat !== undefined
+          ? { builderBeat: landing.builderBeat }
           : {}),
       },
       null,

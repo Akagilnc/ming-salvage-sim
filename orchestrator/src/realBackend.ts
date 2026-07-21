@@ -1441,18 +1441,29 @@ export function stripJsonFence(s: string): string {
 }
 
 /**
- * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
- * values default to the no-commit report — never invent escalate from cargo,
- * never schema-reject ordinary cargo (#899 / ADR 0131).
+ * Tolerant coder cargo fields (committed / commitsAdded / beat / planBody).
+ * Missing or off-shape values default to the no-commit report — never invent
+ * escalate from cargo, never schema-reject ordinary cargo (#899 / ADR 0131).
+ * #1082 beat/planBody are optional opaque siblings for plan-phase transport.
  */
 export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly beat?: "plan" | "construct";
+  readonly planBody?: string;
 } {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return { committed: false, commitsAdded: 0 };
   }
   const receipt = body as Record<string, unknown>;
+  const beat =
+    receipt.beat === "plan" || receipt.beat === "construct"
+      ? receipt.beat
+      : undefined;
+  const planBody =
+    typeof receipt.planBody === "string" && receipt.planBody.trim().length > 0
+      ? receipt.planBody
+      : undefined;
   return {
     committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
     commitsAdded:
@@ -1461,6 +1472,8 @@ export function coderCargoFields(body: unknown): {
       receipt.commitsAdded >= 0
         ? receipt.commitsAdded
         : 0,
+    ...(beat !== undefined ? { beat } : {}),
+    ...(planBody !== undefined ? { planBody } : {}),
   };
 }
 
@@ -1513,6 +1526,14 @@ export function projectCoderStationReceipt(
   if (!envelope.ok) {
     throw new Error(`illegal coder station receipt: ${envelope.reason}`);
   }
+  const beatCargo =
+    fields.beat !== undefined || fields.planBody !== undefined
+      ? {
+          ...(fields.beat !== undefined ? { beat: fields.beat } : {}),
+          ...(fields.planBody !== undefined ? { planBody: fields.planBody } : {}),
+        }
+      : {};
+
   if (envelope.value.status === "escalate") {
     // Escalate is orthogonal to commit cargo; refuse traffic is a different
     // status — do not smuggle refusedFindingIdentityKeys onto a bell.
@@ -1520,6 +1541,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       escalate: {
         reason: envelope.value.reason,
         diagnosis: envelope.value.diagnosis,
@@ -1532,6 +1554,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
       ...refuseRecordsExtra,
     };
@@ -1541,6 +1564,7 @@ export function projectCoderStationReceipt(
     kind: "coder",
     committed: fields.committed,
     commitsAdded: fields.commitsAdded,
+    ...beatCargo,
   };
 }
 
