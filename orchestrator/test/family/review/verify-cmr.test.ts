@@ -31,7 +31,7 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { runnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
-import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -197,8 +197,7 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return skeletonReviewLoopWorkerResult(spec.kind) ??
-      legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -209,6 +208,26 @@ class CapableFamilyBackend implements FamilyBackend {
     this.escalations.push(esc);
   }
 }
+
+describe("test fake review-loop admission parity", () => {
+  it("does not synthesize verify success for an inadmissible GitHub handle", async () => {
+    const backend = new CapableFamilyBackend();
+    const result = await legacyDispatchFamilyWorker(
+      backend,
+      { kind: "verify" } as WorkerSpec,
+      {
+        familyBase: "family/291-base",
+        prUrl: "https://github.com/test/repo/pull/291",
+        repo: "test/repo",
+      } as DispatchContext,
+    );
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+    }
+  });
+});
 
 function currentRouteFingerprint(): string {
   return modelRouteFingerprint(activeModelRoute());

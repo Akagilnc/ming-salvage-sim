@@ -210,6 +210,18 @@ export function parsePrRef(
 
 /** True only for the canonical GitHub web PR URL written to shipped records. */
 export function isCanonicalGithubPrUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  if (url.hostname !== "github.com") return false;
+  if (url.search !== "" || url.hash !== "") return false;
+  // pathname must be exactly /<owner>/<repo>/pull/<digits> — no embedded ?#
+  // inside segments, no trailing junk after the number (#1090 P1).
+  if (!/^\/[^/]+\/[^/]+\/pull\/\d+$/.test(url.pathname)) return false;
   try {
     const trimmed = value.trim();
     const { repo, prNumber } = parsePrRef(trimmed, "");

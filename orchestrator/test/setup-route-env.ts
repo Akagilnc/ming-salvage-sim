@@ -20,7 +20,16 @@ vi.mock("../src/externalCall.js", async (importOriginal) => {
       if (file === "gh" && opts?.stage === "dispatch:gh") {
         const endpoint = args[1] ?? "";
         if (/^repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(endpoint)) {
-          return '{"head":{"sha":"fixture-pr-head"},"html_url":"https://github.com/test/repo/pull/1"}';
+          const m = endpoint.match(
+            /^repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)$/,
+          );
+          const owner = m?.[1] ?? "test";
+          const repoName = m?.[2] ?? "repo";
+          const prNum = m?.[3] ?? "1";
+          return JSON.stringify({
+            head: { sha: "fixture-pr-head" },
+            html_url: `https://github.com/${owner}/${repoName}/pull/${prNum}`,
+          });
         }
         if (args[0] === "api" && args[1] === "graphql") {
           return '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"endCursor":null,"hasNextPage":false},"nodes":[]}}}}}';

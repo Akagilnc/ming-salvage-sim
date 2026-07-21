@@ -26,14 +26,13 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
 import {
   completedJudge,
   judgeToolchain,
   legacyCmrScriptToWorkerOutput,
 } from "../../helpers/judge-fixtures.js";
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 import type {
   Backend,
   DispatchContext,
@@ -174,8 +173,7 @@ class AbortingFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return skeletonReviewLoopWorkerResult(spec.kind) ??
-      legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

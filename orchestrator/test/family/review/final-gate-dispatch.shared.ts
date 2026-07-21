@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
-import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 import {
   cmrWorkerSpec,
@@ -11,6 +10,8 @@ import {
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "../../../src/family/dispatchFamilyWorker.js";
+
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 
 import { mkdtempSync, rmSync } from "node:fs";
 
@@ -168,8 +169,7 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return skeletonReviewLoopWorkerResult(spec.kind) ??
-      legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
 }
 

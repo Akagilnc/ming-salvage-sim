@@ -6,7 +6,6 @@ import {
 } from "../../../src/family/ledger.js";
 
 import { runFamily } from "../../../src/family/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 
@@ -15,6 +14,8 @@ import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoute
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 
@@ -213,8 +214,7 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return skeletonReviewLoopWorkerResult(spec.kind) ??
-      legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
   reconcileGit() {
     return {
