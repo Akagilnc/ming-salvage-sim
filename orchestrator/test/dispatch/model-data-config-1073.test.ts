@@ -254,6 +254,21 @@ describe("#1073 loadModelData fail-closed (path + reason)", () => {
     vi.stubEnv(MODEL_DATA_PATH_ENV, path);
     expect(() => loadModelData()).toThrow(/defaultCoderRecOrder/);
   });
+
+  it("defaultCoderRecOrder unknown roster id → loud error (fail-closed referential integrity)", () => {
+    const path = writeModelDataFile(
+      validDoc({
+        defaultCoderRecOrder: ["grok-4.5", "not-a-roster-id"],
+      }),
+    );
+    vi.stubEnv(MODEL_DATA_PATH_ENV, path);
+    expect(() => loadModelData()).toThrow(
+      /defaultCoderRecOrder references unknown roster id "not-a-roster-id"/,
+    );
+    expect(() => loadModelData()).toThrow(
+      new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+  });
 });
 
 // Dual-track residual closed: S2 (#1074) put roster on the loader; S3 (#1075)

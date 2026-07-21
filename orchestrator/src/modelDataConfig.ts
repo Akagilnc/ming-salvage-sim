@@ -229,6 +229,21 @@ function parseModelDataDocument(parsed: unknown, path: string): ModelDataConfig 
     }
     return id.trim();
   });
+  // Fail-closed referential integrity: every defaultCoderRecOrder entry must
+  // resolve to a roster id. Downstream resolveCoderRecOrder → entriesForTokens
+  // silently skips unknown tokens; a typo here would shrink (or empty) the
+  // default dispatch order without a load-time error — contradicting this
+  // loader's never-silent-fallback contract and the sibling rule for
+  // user-supplied Coder-Rec tokens (coderRoster resolveCoderRecOrder).
+  const rosterIds = new Set(roster.map((entry) => entry.id));
+  for (const id of defaultCoderRecOrder) {
+    if (!rosterIds.has(id)) {
+      fail(
+        path,
+        `defaultCoderRecOrder references unknown roster id "${id}"`,
+      );
+    }
+  }
 
   if (
     typeof root.registry !== "object" ||
