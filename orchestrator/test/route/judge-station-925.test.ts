@@ -1054,13 +1054,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       const result = await runOrchestrator({ issueNumber: 9254, backend });
       expect(result.status).toBe("failed");
       expect(resumeFailCount).toBeGreaterThanOrEqual(1);
-      // Negative: must not open a silent fresh judge after dead resume.
+      // Load-bearing negative: must not open a silent fresh judge after dead resume.
+      // (L6: no vacuous free-prose regex on error text.)
       expect(s6FreshOpenings).toBe(0);
-      const failText =
-        result.errorPackage?.reason ??
-        result.stopSummary?.summary ??
-        (result.status === "failed" ? "failed" : "");
-      expect(failText).toMatch(/resume|session|not found|exhausted|failed|threw/i);
     } finally {
       vi.unstubAllEnvs();
     }

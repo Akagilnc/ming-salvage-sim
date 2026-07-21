@@ -53,6 +53,11 @@ class LifecycleBackend implements Backend {
       completedJudge(judgeConverged(), OPEN_COURT_SESSION),
     ],
     private readonly openCourtResult?: WorkerResult,
+    private readonly opts?: {
+      readonly resumeState?: import("../../src/types.js").ResumeState;
+      /** Open-court dispatch throws instead of returning (L5 throw arm). */
+      readonly openCourtThrow?: Error;
+    },
   ) {}
 
   async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
@@ -60,7 +65,7 @@ class LifecycleBackend implements Backend {
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   async findResumeState() {
-    return undefined;
+    return this.opts?.resumeState;
   }
   async runStep(): Promise<never> {
     throw new Error("runStep called directly — use dispatchWorker");
@@ -78,7 +83,7 @@ class LifecycleBackend implements Backend {
     };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
-    return WORKTREE;
+    return this.opts?.resumeState?.worktree ?? WORKTREE;
   }
   async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
     this.ledgerWrites.push(entry);
@@ -92,6 +97,9 @@ class LifecycleBackend implements Backend {
     this.ctxs.push(ctx);
 
     if (isJudgeOpenCourtSpec(spec)) {
+      if (this.opts?.openCourtThrow !== undefined) {
+        throw this.opts.openCourtThrow;
+      }
       if (this.openCourtResult !== undefined) return this.openCourtResult;
       return openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION)!;
     }
@@ -169,8 +177,9 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
     ).toEqual({ status: "dismissed" });
   });
 
-  it("rebuild: empty ledger is absent; continuity_lost clears (negative)", () => {
+  it("rebuild: empty ledger is absent; judge continuity_lost clears (negative)", () => {
     expect(rebuildResidentJudgeFromLedger([])).toEqual({ status: "absent" });
+    // Judge-seat continuity_lost orphans the court (pre-#1081 migration / loss).
     expect(
       rebuildResidentJudgeFromLedger([
         {
@@ -178,12 +187,41 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
           sessionId: "j1",
           modelSlug: "gpt-5.4",
         },
-        { event: "session_continuity_lost", sessionId: "j1" },
+        {
+          event: "session_continuity_lost",
+          step: "S3",
+          sessionId: "j1",
+        },
       ]),
     ).toEqual({ status: "absent" });
   });
 
-  it("require resume: open→resume; absent/model-move/incapable→establish; dismissed fail", () => {
+  it("rebuild: coder-seat continuity_lost does NOT orphan open court (L1 negative)", () => {
+    // Post-#1081 only coder seats write session_continuity_lost; a coder row
+    // above court_opened must leave the resident judge open (no silent fresh).
+    expect(
+      rebuildResidentJudgeFromLedger([
+        {
+          event: "court_opened",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+        },
+        {
+          step: "S3",
+          sessionId: "j1",
+          modelSlug: "gpt-5.4",
+          output: { kind: "judge" },
+        },
+        {
+          event: "session_continuity_lost",
+          step: "S5",
+          sessionId: "coder-sess",
+        },
+      ]),
+    ).toEqual({ status: "open", sessionId: "j1", modelSlug: "gpt-5.4" });
+  });
+
+  it("require resume: open→resume; absent/model-move→establish; incapable/dismissed fail", () => {
     const ok = requireResidentJudgeResume({
       lifecycle: {
         status: "open",
@@ -215,7 +253,7 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         seatResumeCapable: true,
       }),
     ).toEqual({ kind: "establish" });
-    // Provider not resume-capable = re-establish (do not hand a dead id).
+    // Open + same model + not resume-capable = fail loud (AC#3; L2).
     expect(
       requireResidentJudgeResume({
         lifecycle: {
@@ -225,8 +263,8 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         },
         seatModel: "gpt-5.4",
         seatResumeCapable: false,
-      }),
-    ).toEqual({ kind: "establish" });
+      }).kind,
+    ).toBe("fail");
     // Dismissed never reopens.
     expect(
       requireResidentJudgeResume({
@@ -340,8 +378,9 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         // no sessionId
       });
       const result = await runOrchestrator({ issueNumber: 10811, backend });
+      // Behavioral guards only (L6: no free-prose regex on error text).
       expect(result.status).toBe("failed");
-      expect(result.errorPackage?.reason ?? "").toMatch(/session id|open court/i);
+      expect(result.errorPackage).toBeDefined();
       // Negative: must not reach S2 without a resident judge.
       expect(backend.specs.some((s) => s.id === "S2")).toBe(false);
     });
@@ -354,11 +393,84 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         reason: "sandbox boom",
       });
       const result = await runOrchestrator({ issueNumber: 10812, backend });
+      // Behavioral guards only (L6: no free-prose regex).
       expect(result.status).toBe("failed");
-      expect(result.errorPackage?.reason ?? "").toMatch(
-        /open court|resident judge|failed/i,
-      );
+      expect(result.errorPackage).toBeDefined();
       expect(backend.specs.some((s) => s.id === "S2")).toBe(false);
+    });
+  });
+
+  it("open-court dispatch throw fails loud — no S2 (L5 throw arm)", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend(undefined, undefined, {
+        openCourtThrow: new Error("sandbox boom on open court"),
+      });
+      const result = await runOrchestrator({ issueNumber: 10814, backend });
+      expect(result.status).toBe("failed");
+      expect(result.errorPackage).toBeDefined();
+      expect(backend.specs.some((s) => s.id === "S2")).toBe(false);
+    });
+  });
+
+  it("crash-resume with court_opened does not re-open court; S3 resumes same id (L5)", async () => {
+    await runReal(async () => {
+      const COURT = OPEN_COURT_SESSION;
+      const priorLedger: PersistentLedgerEntry[] = [
+        {
+          step: "S0",
+          sessionId: "run-uuid",
+          prompt_hash: "h0",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:00.000Z",
+        },
+        {
+          step: "S1",
+          event: "court_opened",
+          sessionId: COURT,
+          modelSlug: "gpt-5.6-sol",
+          reason: "resident judge court opened at slice dispatch (#1081)",
+          prompt_hash: "h-open",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:01.000Z",
+        },
+        {
+          step: "S1",
+          sessionId: "run-uuid",
+          prompt_hash: "h1",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:02.000Z",
+        },
+        {
+          step: "S2",
+          sessionId: "sess-coder",
+          modelSlug: "gpt-5.6-terra",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+          prompt_hash: "h2",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:03.000Z",
+        },
+      ];
+      const backend = new LifecycleBackend(
+        [completedJudge(judgeConverged(), COURT)],
+        undefined,
+        {
+          resumeState: {
+            worktree: WORKTREE,
+            stateDir: "/resident/worktrees/.ledger-1081",
+            ledger: priorLedger,
+          },
+        },
+      );
+      const result = await runOrchestrator({ issueNumber: 10815, backend });
+      expect(result.status).toBe("completed");
+      // No second open-court birth on resume.
+      expect(
+        backend.specs.filter((s) => isJudgeOpenCourtSpec(s)),
+      ).toHaveLength(0);
+      const s3 = backend.specs.find((s) => s.id === "S3");
+      expect(s3?.session).toBe("resume");
+      const s3Ctx = backend.ctxs[backend.specs.indexOf(s3!)];
+      expect(s3Ctx?.resumeSessionId).toBe(COURT);
     });
   });
 
