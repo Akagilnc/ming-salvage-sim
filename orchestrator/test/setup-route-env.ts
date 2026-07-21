@@ -73,6 +73,8 @@ const ROUTE_ENV_KEYS = [
   "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
   // #916: custom presets path must not leak across suites.
   "ORCHESTRATOR_ROUTE_PRESETS_PATH",
+  // #1073: custom model-data path must not leak across suites.
+  "ORCHESTRATOR_MODEL_DATA_PATH",
 ] as const;
 
 process.env.ORCHESTRATOR_ROUTE = "normal";
