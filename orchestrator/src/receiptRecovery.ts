@@ -459,11 +459,16 @@ export function logAndRethrowReceiptFailure(error: unknown, worker: string): nev
 function isOnlineReviewOutputDefinition(
   output: sc.OutputDefinition | undefined,
 ): output is sc.OutputDefinition & { readonly tag: string } {
+  if (output === undefined || typeof output !== "object") return false;
+  // #1091 finding 3: later logic dereferences `._tag` and `.schema`; verify
+  // both at the guard so non-conforming outputs take the safe (throw) path
+  // rather than reaching schema access with an unexpected shape.
+  const o = output as { tag?: unknown; _tag?: unknown; schema?: unknown };
   return (
-    output !== undefined &&
-    typeof output === "object" &&
-    "tag" in output &&
-    (output as { tag?: unknown }).tag === "onlineReview"
+    o.tag === "onlineReview" &&
+    o._tag === "object" &&
+    o.schema !== undefined &&
+    typeof o.schema === "object"
   );
 }
 
