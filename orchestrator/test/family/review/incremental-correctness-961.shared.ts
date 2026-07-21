@@ -15,6 +15,8 @@ import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
+
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
@@ -206,13 +208,13 @@ class CapableFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: request.familyBase,
-          pr: `pr://${request.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
           status: "pr_opened",
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
   reconcileGit() {
     return {

@@ -156,7 +156,7 @@ export interface PollPrReviewInput {
  * Parse `owner/repo` and PR number from a GitHub PR URL.
  * Accepts `https://github.com/o/r/pull/123` and `o/r#123` style handles.
  */
-/** True when `prUrl` names a live GitHub PR the host can poll via `gh api`. */
+/** True when `prUrl` names any supported PR reference the host can poll. */
 export function isPollableGithubPrUrl(prUrl: string, defaultRepo: string): boolean {
   try {
     parsePrRef(prUrl, defaultRepo);
@@ -206,6 +206,29 @@ export function parsePrRef(
     return { repo: defaultRepo, prNumber: Number(numOnly[1]) };
   }
   throw new Error(`botPolling: cannot parse PR reference from "${prUrl}"`);
+}
+
+/** True only for the canonical GitHub web PR URL written to shipped records. */
+export function isCanonicalGithubPrUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  if (url.hostname !== "github.com") return false;
+  if (url.search !== "" || url.hash !== "") return false;
+  // pathname must be exactly /<owner>/<repo>/pull/<digits> — no embedded ?#
+  // inside segments, no trailing junk after the number (#1090 P1).
+  if (!/^\/[^/]+\/[^/]+\/pull\/\d+$/.test(url.pathname)) return false;
+  try {
+    const trimmed = value.trim();
+    const { repo, prNumber } = parsePrRef(trimmed, "");
+    return trimmed === `https://github.com/${repo}/pull/${prNumber}`;
+  } catch {
+    return false;
+  }
 }
 
 /** Paginate a GitHub REST collection (`gh api` returns a JSON array). */

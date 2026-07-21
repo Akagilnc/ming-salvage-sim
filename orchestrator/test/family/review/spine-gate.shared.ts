@@ -24,6 +24,8 @@ import {
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
+
 import type {
   Backend,
   DispatchContext,
@@ -206,13 +208,13 @@ class CapableFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: familyBase,
-          pr: `pr://${familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           ...(this.liveHead !== undefined ? { prHead: this.liveHead } : {}),
           status: "pr_opened",
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
   resolveFamilyWorkingRepo(): string | undefined {
     return this.workingRepo;

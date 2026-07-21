@@ -705,7 +705,7 @@ describe("#330 spine — shipped resume continues after the delivery checkpoint"
         status: "shipped",
         event: "shipped",
         phase: "final",
-        pr: "pr://previous",
+        pr: "https://github.com/test/repo/pull/990",
         familyHeadAfter: "ship-head",
       },
     );
@@ -723,6 +723,43 @@ describe("#330 spine — shipped resume continues after the delivery checkpoint"
     expect(backend.prCalls).toEqual([]);
     expect(backend.ledger.filter((entry) => entry.status === "shipped")).toHaveLength(1);
     expect(backend.ledger.some((entry) => entry.status === "review_loop_converged")).toBe(true);
+    expect(result.status).toBe("completed");
+  });
+
+  it("treats a legacy branch-name shipped row as unshipped and self-heals it", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+    });
+    backend.ledger.push(
+      { childIssue: 294, status: "merged" },
+      { childIssue: 295, status: "merged" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "family/497",
+        familyHeadAfter: "ship-head",
+      },
+    );
+    backend.liveHead = "ship-head";
+
+    const result = await runFamily({
+      epic: epicWith(294, 295),
+      familyBackend: backend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.ledger.filter((entry) => entry.status === "shipped")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pr: "https://github.com/test/repo/pull/1090",
+          familyHeadAfter: "ship-head",
+        }),
+      ]),
+    );
     expect(result.status).toBe("completed");
   });
 });

@@ -1087,7 +1087,7 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
     } as FamilyBackend;
 
     await recordShipped(backend, {
-      pr: "https://gh.test/pr/1007",
+      pr: "https://github.com/test/repo/pull/1007",
       familyHeadAfter: "ship-head-1",
     });
 
@@ -1096,7 +1096,7 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
     expect(ships[0]).toMatchObject({
       kind: "ship",
       epic: 1007,
-      pr: "https://gh.test/pr/1007",
+      pr: "https://github.com/test/repo/pull/1007",
       familyHead: "ship-head-1",
     });
     expect(appended).toHaveLength(1);
@@ -1260,7 +1260,7 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/941-landing",
+        pr: "https://github.com/test/repo/pull/941",
         familyHeadAfter: "family-base-941",
       },
     ];
@@ -1270,7 +1270,7 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
         return {
           fetchState: () => ({
             prNumber: 941,
-            prUrl: "pr://family/941-landing",
+            prUrl: "https://github.com/test/repo/pull/941",
             state: "OPEN",
             headOid: "family-base-941",
             headRefName: "family/epic-941",
@@ -1282,7 +1282,7 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
           pollSnapshot: async () => ({
             repo: "o/r",
             prNumber: 941,
-            prUrl: "pr://family/941-landing",
+            prUrl: "https://github.com/test/repo/pull/941",
             headOid: "family-base-941",
             pollCount: 1,
             bots: {
@@ -1926,7 +1926,7 @@ describe("#1007 CR R3: shared exit helpers + familyDriver early parks dual-write
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/291-base",
+        pr: "https://github.com/test/repo/pull/291",
         familyHeadAfter: "family-base-0",
       },
     ];
@@ -2282,7 +2282,7 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
               kind: "ship" as const,
               branch: ctx.familyBase ?? "family/909-base",
               status: "pr_opened" as const,
-              pr: "pr://family/909-base",
+              pr: "https://github.com/test/repo/pull/909",
               prHead: head,
             },
           };

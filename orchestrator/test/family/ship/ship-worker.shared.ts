@@ -108,7 +108,7 @@ class FixturedShipBackend extends RealFamilyBackend {
     kind: "shipped",
     branch: FAMILY_BASE,
     status: "pr_opened",
-    pr: "https://gh/pr/9",
+    pr: "https://github.com/test/repo/pull/9",
   };
   protected override async runShipWorker(
     spec: WorkerSpec,

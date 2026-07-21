@@ -220,7 +220,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
           output: {
             kind: "ship",
             branch: "feat/330",
-            pr: "pr://feat/330",
+            pr: "https://github.com/test/repo/pull/330",
             prHead: "head-1",
             status: "pr_opened",
           },
@@ -366,12 +366,12 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       familyBase: "feat/330",
       familyBackend: be,
     });
-    // Off-contract ship payload still synthesizes a PR handle and continues into
-    // online review, which then dies as online_review_failed (#922 stage token).
+    // #1090: off-contract / missing ship.pr no longer falls back to a branch
+    // name — resolveFamilyShipPr yields nothing in unit tests → ship_failed.
     expect(res).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "online_review_failed",
+      failedStatus: "ship_failed",
     });
   });
 });
@@ -457,20 +457,21 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     });
   }
 
-  it("a completed ship with status 'pushed' (not pr_opened) ⇒ online_review_failed gate", async () => {
+  it("a completed ship with status 'pushed' (not pr_opened) ⇒ ship_failed gate (#1090)", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pushed" },
     });
-    // Host still synthesizes a PR handle from branch; death is later online-review.
+    // #1090: status pushed + no PR URL → no resolvable PR → ship_failed (no
+    // branch-name synthesis into the shipped ledger).
     expect(res).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "online_review_failed",
+      failedStatus: "ship_failed",
     });
   });
 
-  it("a completed ship missing its pr URL ⇒ online_review_failed gate", async () => {
+  it("a completed ship missing its pr URL ⇒ ship_failed gate (#1090)", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
@@ -478,11 +479,11 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "online_review_failed",
+      failedStatus: "ship_failed",
     });
   });
 
-  it("a completed ship with a blank pr URL ⇒ online_review_failed gate", async () => {
+  it("a completed ship with a blank pr URL ⇒ ship_failed gate (#1090)", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
@@ -490,7 +491,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "online_review_failed",
+      failedStatus: "ship_failed",
     });
   });
 
@@ -501,7 +502,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "worker-reported-wrong-branch",
         status: "pr_opened",
-        pr: "pr://feat/330",
+        pr: "https://github.com/test/repo/pull/330",
         prHead: "worker-reported-stale-head",
       },
     });
@@ -515,7 +516,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "pr://feat/330",
+        pr: "https://github.com/test/repo/pull/330",
       },
     });
     expect(res).toEqual({ ok: true, ran: true });
@@ -528,7 +529,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "pr://feat/330",
+        pr: "https://github.com/test/repo/pull/330",
         prHead: "   ",
       },
     });
@@ -542,7 +543,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "pr://feat/330",
+        pr: "https://github.com/test/repo/pull/330",
         prHead: "head-1",
       },
     });
@@ -556,7 +557,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         kind: "ship",
         branch: "feat/330",
         status: "pr_opened",
-        pr: "pr://feat/330",
+        pr: "https://github.com/test/repo/pull/330",
         prHead: "stale-head",
       },
     });
@@ -710,7 +711,7 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
             kind: "ship",
             branch: "feat/445",
             status: "pr_opened",
-            pr: "pr://feat/445",
+            pr: "https://github.com/test/repo/pull/445",
             prHead: "stale-pr-head",
           },
         };
@@ -827,7 +828,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       }
       return {
         kind: "completed",
-        output: { kind: "ship", branch: "fb", pr: "u", status: "pr_opened" },
+        output: { kind: "ship", branch: "fb", pr: "https://github.com/test/repo/pull/1090", status: "pr_opened" },
       };
     }
   }
