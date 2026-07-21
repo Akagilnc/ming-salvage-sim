@@ -7,6 +7,7 @@
  *   2. family CMR round — dispatches N leg workers, then judge with their prose
  *   3. leg failure/degradation — surfaces as degraded evidence, not silent success
  *   4. demolition — nested-CLI claude mount/assert plumbing is gone
+ *   5. R2 — judge identity mount, leg-only slug degrade, pass-distinct lenses
  */
 import {
   existsSync,
@@ -22,7 +23,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  cmrPanelLegPromptFile,
   cmrPanelLegWorkerSpec,
+  dispatchFamilyCmrPanelLegs,
   legTransportFromPanelLegResult,
   skippedLegsFromTransports,
 } from "../../../src/family/cmrPanelLegs.js";
@@ -35,6 +38,7 @@ import type { WorkerCmrReviewLeg, WorkerResult } from "../../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const soulsDir = join(here, "..", "..", "..", "image", "souls");
+const promptsDir = join(here, "..", "..", "..", "prompts");
 const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
 
 describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", () => {
@@ -50,7 +54,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       "grok-4.5": "grok",
     };
     for (const leg of legs) {
-      const spec = cmrPanelLegWorkerSpec(leg);
+      const spec = cmrPanelLegWorkerSpec(leg, "correctness");
       expect(spec.kind).toBe("reviewer");
       expect(spec.role).toBe("reviewer");
       expect(spec.soul).toBe("READ-ONLY");
@@ -60,9 +64,12 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       expect(spec.host).toBe(workerHostForModel(leg.slug));
       expect(spec.host).toBe(expectedHost[leg.slug]);
       expect(spec.maxIter).toBe(1);
+      expect(spec.skill).toBeUndefined();
+      expect(spec.promptFile).toBe(cmrPanelLegPromptFile("correctness"));
     }
-    // Cross-vendor legs resolve to distinct CLI hosts (not nested judge scripts).
-    const hosts = new Set(legs.map((leg) => cmrPanelLegWorkerSpec(leg).host));
+    const hosts = new Set(
+      legs.map((leg) => cmrPanelLegWorkerSpec(leg, "correctness").host),
+    );
     expect(hosts.size).toBe(legs.length);
   });
 
@@ -132,9 +139,6 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
 
 describe("#1094 family CMR round dispatches N leg workers then the judge", () => {
   it("dispatchFamilyCmrPanelLegs fans out one worker per declared leg", async () => {
-    const { dispatchFamilyCmrPanelLegs } = await import(
-      "../../../src/family/cmrPanelLegs.js"
-    );
     const dispatched: string[] = [];
     const legs: WorkerCmrReviewLeg[] = [
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -143,6 +147,7 @@ describe("#1094 family CMR round dispatches N leg workers then the judge", () =>
     ];
     const round = await dispatchFamilyCmrPanelLegs({
       legs,
+      cmrPass: "correctness",
       dispatch: async (spec) => {
         dispatched.push(`${spec.kind}:${spec.model}:${spec.soul}`);
         if (spec.model === "opus") {
@@ -166,15 +171,16 @@ describe("#1094 family CMR round dispatches N leg workers then the judge", () =>
         "reviewer:opus:READ-ONLY",
       ].sort(),
     );
-    expect([...round.successfulLegs].sort()).toEqual(["agy", "gpt-5.6-sol"].sort());
+    expect(
+      [...successfulLegsFromTransports(round.transports)].sort(),
+    ).toEqual(["agy", "gpt-5.6-sol"].sort());
     expect(round.skippedLegs).toEqual([
       {
         slug: "opus",
         reason: expect.stringMatching(/opus.*quota exhausted/i),
       },
     ]);
-    // Degraded leg is evidence for the judge — not silent success.
-    expect(round.successfulLegs).not.toContain("opus");
+    expect(successfulLegsFromTransports(round.transports)).not.toContain("opus");
   });
 });
 
@@ -209,18 +215,23 @@ describe("#1094 demolition — nested-CLI claude mount plumbing is gone", () => 
     }
   });
 
-  it("judge cmrWorkerSpec no longer carries nested review-leg spawn duty as its sole job", () => {
-    // Judge remains a cmr/verify seat; panel legs are separate reviewer specs.
+  it("judge cmrWorkerSpec pins pass via promptFile; skill is omitted (write-only dead metadata)", () => {
     const judge = cmrWorkerSpec("fresh", "completeness");
     expect(judge.kind).toBe("cmr");
     expect(judge.soul).toBe("verify");
     expect(judge.role).toBe("verify");
-    // #1094 F7: named lens wrapper, not nested-panel engine.
-    expect(judge.skill).toBe("ak-cmr-completeness");
-    expect(cmrWorkerSpec("fresh", "correctness").skill).toBe("ak-cmr-correctness");
-    const leg = cmrPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" });
+    expect(judge.skill).toBeUndefined();
+    expect(judge.promptFile).toBe("integrated_cmr_completeness.md");
+    expect(cmrWorkerSpec("fresh", "correctness").promptFile).toBe(
+      "integrated_cmr_correctness.md",
+    );
+    const leg = cmrPanelLegWorkerSpec(
+      { family: "codex", slug: "gpt-5.6-sol" },
+      "completeness",
+    );
     expect(leg.kind).not.toBe(judge.kind);
     expect(leg.soul).not.toBe(judge.soul);
+    expect(leg.skill).toBeUndefined();
   });
 });
 
@@ -271,9 +282,6 @@ describe("#1094 F1 — concurrent panel legs get unique monitor job/log paths", 
 
 describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
   it("Promise.allSettled awaits every leg before rethrowing the first park error", async () => {
-    const { dispatchFamilyCmrPanelLegs } = await import(
-      "../../../src/family/cmrPanelLegs.js"
-    );
     const { AdoptionPersistFailedError } = await import(
       "../../../src/dispatchRetry.js"
     );
@@ -297,22 +305,85 @@ describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
   });
 });
 
-describe("#1094 F5 — cmr_panel_leg.md is the authoritative prompt source", () => {
-  it("versioned panel-leg prompt is loaded and prepends reviewer soul", () => {
-    const promptPath = join(here, "..", "..", "..", "prompts", "cmr_panel_leg.md");
-    expect(existsSync(promptPath)).toBe(true);
-    const md = readFileSync(promptPath, "utf8");
-    expect(md).toMatch(/Fresh eyes only/i);
-    expect(md).toMatch(/Do not call another model/i);
-    expect(md).toMatch(/Do not repair, commit, or push/i);
-    expect(md).toMatch(/ADR 0141/i);
-    const composed = buildJudgeReviewLegPrompt(
-      reviewerSoul,
-      `${md.trim()}\n\nPanel leg slug: gpt-5.6-sol.\n`,
+describe("#1094 R2 F8 — pass-distinct lens prompts", () => {
+  it("completeness and correctness legs key distinct authoritative prompt sources", () => {
+    const completeness = cmrPanelLegWorkerSpec(
+      { family: "codex", slug: "gpt-5.6-sol" },
+      "completeness",
     );
-    expect(composed.startsWith(reviewerSoul.trim())).toBe(true);
-    expect(composed).toContain("Fresh eyes only");
-    expect(composed).toContain("Panel leg slug: gpt-5.6-sol");
+    const correctness = cmrPanelLegWorkerSpec(
+      { family: "codex", slug: "gpt-5.6-sol" },
+      "correctness",
+    );
+    expect(completeness.promptFile).toBe("cmr_panel_leg_completeness.md");
+    expect(correctness.promptFile).toBe("cmr_panel_leg_correctness.md");
+    expect(completeness.promptFile).not.toBe(correctness.promptFile);
+
+    const cBody = readFileSync(
+      join(promptsDir, completeness.promptFile),
+      "utf8",
+    );
+    const kBody = readFileSync(
+      join(promptsDir, correctness.promptFile),
+      "utf8",
+    );
+    expect(cBody).toMatch(/Clause–Wire–Exercise/);
+    expect(cBody).not.toMatch(/Trace–Break–Prove/);
+    expect(kBody).toMatch(/Trace–Break–Prove/);
+    expect(kBody).not.toMatch(/Clause–Wire–Exercise/);
+  });
+});
+
+describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the family run)", () => {
+  it("historical gpt-5.5 leg degrades as skipped evidence without throwing", async () => {
+    let dispatched = 0;
+    const round = await dispatchFamilyCmrPanelLegs({
+      legs: [
+        { family: "codex", slug: "gpt-5.5" },
+        { family: "claude", slug: "opus" },
+      ],
+      cmrPass: "correctness",
+      dispatch: async (spec) => {
+        dispatched += 1;
+        expect(spec.model).not.toBe("gpt-5.5");
+        return {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findingsCount: 0,
+            findings: [],
+            rawStdout: `ok from ${spec.model}\n`,
+          },
+        };
+      },
+    });
+    expect(dispatched).toBe(1);
+    expect(successfulLegsFromTransports(round.transports)).toEqual(["opus"]);
+    expect(round.skippedLegs.map((s) => s.slug)).toContain("gpt-5.5");
+    expect(round.skippedLegs.find((s) => s.slug === "gpt-5.5")!.reason).toMatch(
+      /CMR-leg-only|not a live worker/i,
+    );
+  });
+});
+
+describe("#1094 F5 — pass-keyed panel-leg prompts are the authoritative sources", () => {
+  it("versioned panel-leg prompts load and prepend reviewer soul", () => {
+    for (const pass of ["completeness", "correctness"] as const) {
+      const promptPath = join(promptsDir, cmrPanelLegPromptFile(pass));
+      expect(existsSync(promptPath)).toBe(true);
+      const md = readFileSync(promptPath, "utf8");
+      expect(md).toMatch(/Fresh eyes only/i);
+      expect(md).toMatch(/Do not call another model/i);
+      expect(md).toMatch(/Do not repair, commit, or push/i);
+      expect(md).toMatch(/ADR 0141/i);
+      const composed = buildJudgeReviewLegPrompt(
+        reviewerSoul,
+        `${md.trim()}\n\nPanel leg slug: gpt-5.6-sol.\n`,
+      );
+      expect(composed.startsWith(reviewerSoul.trim())).toBe(true);
+      expect(composed).toContain("Fresh eyes only");
+      expect(composed).toContain("Panel leg slug: gpt-5.6-sol");
+    }
   });
 });
 
@@ -326,6 +397,7 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       SANDBOX_AGY_DIR,
       SANDBOX_GROK_DIR,
       SANDBOX_SOUL_ENV,
+      SANDBOX_OUTCOME_PATH_ENV,
     } = await import("../../../src/realBackend.js");
 
     class SeamBackend extends RealFamilyBackend {
@@ -344,7 +416,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       }
     }
 
-    const promptsDir = join(here, "..", "..", "..", "prompts");
     const be = new SeamBackend({
       workingRepo: mkdtempSync(join(tmpdir(), "1094-leg-repo-")),
       familyBase: "family/1094",
@@ -371,6 +442,7 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
     expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
     expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
     expect(codex.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
+    expect(codex.env[SANDBOX_OUTCOME_PATH_ENV]).toBeUndefined();
 
     const agy = be.legConfig(
       auth,
@@ -425,7 +497,7 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
         ledgerDir: ledger,
         repo: "Akagilnc/ming-salvage-sim",
         base: "main",
-        promptsDir: join(here, "..", "..", "..", "prompts"),
+        promptsDir,
         soulsDir,
         imageName: "img",
       });
@@ -438,7 +510,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
         encoding: "utf8",
       }).trim();
       expect(headA).toBe(head);
-      // Independent: deleting one clone must not touch the other or source.
       rmSync(cloneA, { recursive: true, force: true });
       expect(existsSync(cloneB)).toBe(true);
       expect(existsSync(join(root, "a.txt"))).toBe(true);
@@ -446,6 +517,110 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(ledger, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#1094 R2 F1 — judge cmrSandboxConfig mounts OWN family credential only", () => {
+  it("codex judge mounts ~/.codex; does not mount agy/grok nested armament", async () => {
+    const { RealFamilyBackend } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const {
+      SANDBOX_CODEX_DIR,
+      SANDBOX_AGY_DIR,
+      SANDBOX_GROK_DIR,
+    } = await import("../../../src/realBackend.js");
+
+    class JudgeSeam extends RealFamilyBackend {
+      public cfg(
+        auth: {
+          codexAuthDir?: string;
+          agyDir?: string;
+          grokAuthDir?: string;
+          claudeToken?: string;
+        },
+        model: string,
+      ) {
+        return this.cmrSandboxConfig(auth as never, {
+          model,
+          host: workerHostForModel(model),
+        });
+      }
+    }
+
+    const be = new JudgeSeam({
+      workingRepo: mkdtempSync(join(tmpdir(), "1094-judge-repo-")),
+      familyBase: "family/1094",
+      ledgerDir: mkdtempSync(join(tmpdir(), "1094-judge-ledger-")),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir,
+      soulsDir,
+      imageName: "img",
+    });
+    const auth = {
+      codexAuthDir: "/tmp/judge-codex",
+      agyDir: "/tmp/judge-agy",
+      grokAuthDir: "/tmp/judge-grok",
+      claudeToken: "tok",
+    };
+
+    const codexJudge = cmrWorkerSpec("fresh", "completeness");
+    expect(codexJudge.model).toBe("gpt-5.6-sol");
+    const cfg = be.cfg(auth, codexJudge.model);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+
+    const opusCfg = be.cfg(auth, "opus");
+    expect(opusCfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
+      false,
+    );
+    expect(opusCfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
+  });
+});
+
+describe("#1094 R2 F3 — prepareFamilyCmrPanelRound returns structured escalate on missing cut-SHA", () => {
+  it("does not throw a bare Error across the prepare seam", async () => {
+    const { RealFamilyBackend } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const { execFileSync } = await import("node:child_process");
+    const root = mkdtempSync(join(tmpdir(), "1094-prep-"));
+    try {
+      execFileSync("git", ["init"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: root });
+      writeFileSync(join(root, "a.txt"), "a\n");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+
+      class PrepBackend extends RealFamilyBackend {
+        public prep(ctx: { familyBase: string }) {
+          return this.prepareFamilyCmrPanelRound(ctx);
+        }
+      }
+      const be = new PrepBackend({
+        workingRepo: root,
+        familyBase: "main",
+        ledgerDir: mkdtempSync(join(tmpdir(), "1094-prep-ledger-")),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+        // no familyBaseStartHead
+      });
+      const prep = be.prep({ familyBase: "main" });
+      expect(prep).toMatchObject({
+        kind: "escalate",
+        reason: expect.stringMatching(/familyBaseStartHead|cut SHA/i),
+        diagnosis: expect.stringMatching(/exact|scope|stale/i),
+      });
+      expect("escalation" in prep && prep.escalation).toBeTruthy();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

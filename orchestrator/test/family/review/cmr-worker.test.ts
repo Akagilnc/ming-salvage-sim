@@ -681,7 +681,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
-    expect(spec.skill).toBe("ak-cmr-correctness");
+    expect(spec.skill).toBeUndefined();
+    expect(spec.promptFile).toBe("integrated_cmr_correctness.md");
     // FRESH session = a new pass-worker session, not a crash/escalate resume.
     expect(spec.session).toBe("fresh");
     // The pass worker is a clean reviewer boundary; blocking findings return to the
@@ -905,7 +906,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
 // ═══════════════════ 4. cmrSandboxConfig — agy auth runtime-mount + codex + claude ═══════════════════
 
-describe("#1094 cmrSandboxConfig — pure court (no nested-panel armament)", () => {
+describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-panel armament)", () => {
   /** Expose the protected pure config seam + a canned-auth path. */
   class ConfigBackend extends RealFamilyBackend {
   resolveLandingLiveHooks(input: {
@@ -922,14 +923,16 @@ describe("#1094 cmrSandboxConfig — pure court (no nested-panel armament)", () 
 
     public config(
       auth: CmrAuth,
-      _spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+      spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      void _spec;
-      return this.cmrSandboxConfig(auth);
+      return this.cmrSandboxConfig(auth, {
+        model: spec.model,
+        host: spec.host,
+      });
     }
   }
 
@@ -960,11 +963,23 @@ describe("#1094 cmrSandboxConfig — pure court (no nested-panel armament)", () 
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
-  it("does NOT mount nested-panel provider auth dirs (codex/agy/grok)", () => {
+  it("mounts ONLY the judge's own family credential (codex for default gpt-5.6-sol)", () => {
     const cfg = cfgBackend().config(auth);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+  });
+
+  it("opus judge does not mount codex/agy/grok — Claude uses env token only", () => {
+    const cfg = cfgBackend().config(auth, {
+      ...cmrWorkerSpec(),
+      model: "opus",
+      host: "claude",
+    });
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+    expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
   });
 
   it("does NOT export ORCHESTRATOR_CMR_REVIEW_LEGS or CMR_CODEX_* nested-panel env", () => {

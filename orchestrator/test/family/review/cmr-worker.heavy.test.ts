@@ -1348,12 +1348,11 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
 
     protected override cmrSandbox(
       auth: CmrAuth,
-      reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+      spec: Pick<WorkerSpec, "model" | "host">,
       outcomeLanding?: { path: string; sandboxPath: string },
       ctx?: Pick<DispatchContext, "billingPool">,
     ): sc.SandboxProvider {
-      void reviewLegs;
-      this.config = this.cmrSandboxConfig(auth, outcomeLanding, ctx);
+      this.config = this.cmrSandboxConfig(auth, spec, outcomeLanding, ctx);
       return docker(this.config);
     }
 

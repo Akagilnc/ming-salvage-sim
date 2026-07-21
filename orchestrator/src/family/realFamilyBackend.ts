@@ -104,9 +104,10 @@ import {
   type LegTransport,
 } from "../legPaper.js";
 import {
-  CMR_PANEL_LEG_PROMPT_FILE,
+  cmrPanelLegPromptFile,
   panelLegCompletedResult,
 } from "./cmrPanelLegs.js";
+import type { IntegratedCmrPass } from "./types.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -121,6 +122,7 @@ import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
+  modelFamilyForCmrReviewLeg,
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
@@ -386,8 +388,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
-    // #1094: panel-leg reviewer prompt (runner-dispatched first-class workers).
-    "cmr_panel_leg.md",
+    // #1094: pass-distinct panel-leg prompts (one authoritative source per lens).
+    "cmr_panel_leg_completeness.md",
+    "cmr_panel_leg_correctness.md",
     // #1068 added a thin wave-verify triage judge promptFile
     // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
     // construction-time inventory the same as the integrated CMR prompts.
@@ -1666,14 +1669,44 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /**
    * #1094 — once-per-round repo prep BEFORE panel-leg fan-out.
-   * Checkout familyBase + write focus on workingRepo exactly once; legs then
-   * only clone (never concurrent checkout / exclude rewrite on the shared repo).
+   * Checkout familyBase + write focus + shared-repo outcome exclude on
+   * workingRepo exactly once; legs then only clone (never concurrent checkout /
+   * exclude rewrite on the shared repo). Missing cut-SHA returns structured
+   * escalate (same reason/diagnosis as runCmrWorker) — never a bare throw.
    */
-  prepareFamilyCmrPanelRound(ctx: DispatchContext): { readonly headSha: string } {
+  prepareFamilyCmrPanelRound(ctx: DispatchContext):
+    | { readonly headSha: string }
+    | {
+        readonly kind: "escalate";
+        readonly reason: string;
+        readonly diagnosis: string;
+        readonly escalation: ReturnType<typeof runnerSynthesizedFailureEscalation>;
+      } {
     if (ctx.familyBase === undefined) {
       throw new Error(
         "prepareFamilyCmrPanelRound: requires ctx.familyBase",
       );
+    }
+    // Shared-repo exclude once before fan-out (#1094 R2 F4) — legs must not
+    // concurrently rewrite `.git/info/exclude`.
+    ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
+    if (
+      this.opts.familyBaseStartHead === undefined &&
+      ctx.waveVerifyFailure === undefined
+    ) {
+      const reason =
+        "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope";
+      const diagnosis =
+        "the integrated cmr focus file must pin the EXACT git diff <cut SHA>...<familyBase> " +
+        "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
+        "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
+        "RealFamilyBackendOptions.familyBaseStartHead.";
+      return {
+        kind: "escalate",
+        reason,
+        diagnosis,
+        escalation: runnerSynthesizedFailureEscalation({ reason, diagnosis }),
+      };
     }
     this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
     if (ctx.waveVerifyFailure === undefined) {
@@ -1695,6 +1728,7 @@ export class RealFamilyBackend implements FamilyBackend {
    *
    * Does NOT checkout or rewrite focus on workingRepo — that is
    * {@link prepareFamilyCmrPanelRound}'s job (once before fan-out).
+   * Does NOT provision an outcome sidecar — legs are prose-only (ADR 0141).
    */
   protected async runCmrPanelLegWorker(
     spec: WorkerSpec,
@@ -1724,7 +1758,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       if (
-        modelFamilyForSlug(spec.model) === "claude" &&
+        modelFamilyForCmrReviewLeg(spec.model) === "claude" &&
         auth.claudeToken === undefined
       ) {
         return {
@@ -1755,27 +1789,30 @@ export class RealFamilyBackend implements FamilyBackend {
         join(this.opts.soulsDir, "reviewer.md"),
         "utf8",
       );
-      // #1094 F5: one authoritative prompt source — versioned cmr_panel_leg.md
-      // (not a second inline rules copy). Runtime slug line is not a rule duplicate.
+      // #1094 R2 F8: pass-keyed lens prompt (completeness vs correctness).
+      const pass: IntegratedCmrPass =
+        ctx.cmrPass === "completeness" || ctx.cmrPass === "correctness"
+          ? ctx.cmrPass
+          : "correctness";
       const promptTemplate = readFileSync(
-        join(this.opts.promptsDir, CMR_PANEL_LEG_PROMPT_FILE),
+        join(this.opts.promptsDir, cmrPanelLegPromptFile(pass)),
         "utf8",
       );
       const taskBody =
         `${promptTemplate.trim()}\n\n` +
         `Panel leg slug: ${spec.model}.\n` +
+        `CMR pass: ${pass}.\n` +
         `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
         `(or the assigned clone scope) and emit prose review on stdout.`;
       const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
       const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
       writeFileSync(promptPath, promptBody, "utf8");
-      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
         const result = await this.runAgentSandbox({
           name: `family-cmr-panel-${spec.model}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: legClone,
-          sandbox: this.panelLegSandbox(auth, spec, ctx, outcomeLanding),
+          sandbox: this.panelLegSandbox(auth, spec, ctx),
           agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           branchStrategy: { type: "head" },
@@ -1789,8 +1826,6 @@ export class RealFamilyBackend implements FamilyBackend {
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         return { kind: "failed", reason: `panel leg ${spec.model}: ${reason}` };
-      } finally {
-        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
       this.cleanupTempAuthDirs([
@@ -1836,16 +1871,14 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     spec: WorkerSpec,
     ctx: DispatchContext,
-    outcomeLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    return docker(this.panelLegSandboxConfig(auth, spec, ctx, outcomeLanding));
+    return docker(this.panelLegSandboxConfig(auth, spec, ctx));
   }
 
   protected panelLegSandboxConfig(
     auth: CmrAuth,
     spec: WorkerSpec,
     ctx: DispatchContext,
-    outcomeLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -1865,9 +1898,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    if (outcomeLanding !== undefined) {
-      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
-    }
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -1882,14 +1912,9 @@ export class RealFamilyBackend implements FamilyBackend {
       sandboxPath: string;
       readonly?: boolean;
     }[] = [];
-    if (outcomeLanding !== undefined) {
-      mounts.push({
-        hostPath: outcomeLanding.path,
-        sandboxPath: outcomeLanding.sandboxPath,
-      });
-    }
     // Mount only THIS leg's provider credentials (top-level agent — no nested CLI).
-    const family = modelFamilyForSlug(spec.model);
+    // CMR-leg-aware family resolution (#1094 R2 F7).
+    const family = modelFamilyForCmrReviewLeg(spec.model);
     if (family === "codex" && auth.codexAuthDir !== undefined) {
       mounts.push({
         hostPath: auth.codexAuthDir,
@@ -2076,7 +2101,7 @@ export class RealFamilyBackend implements FamilyBackend {
             cwd: this.opts.workingRepo,
             sandbox: this.cmrSandbox(
               auth,
-              frozenReviewLegs,
+              spec,
               outcomeLanding,
               ctx,
               fixFindingsLanding,
@@ -2898,6 +2923,8 @@ export class RealFamilyBackend implements FamilyBackend {
     const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
+    // Shared-repo exclude is written once in prepareFamilyCmrPanelRound
+    // (#1094 R2 F4). Judge-only path (no panel prep) still needs it here.
     ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
   }
@@ -2919,20 +2946,20 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
-   * double-mount. The route legs are also explicit so the container env cannot
-   * drift from the already-resolved worker spec.
+   * double-mount. Judge identity credential is keyed by {@link WorkerSpec.model}
+   * family — isomorphic to {@link panelLegSandboxConfig} (#1094 R2 F1).
    */
   protected cmrSandbox(
     auth: CmrAuth,
-    _reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+    spec: Pick<WorkerSpec, "model" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    void _reviewLegs;
     return docker(
       this.cmrSandboxConfig(
         auth,
+        spec,
         outcomeLanding,
         ctx,
         fixFindingsLanding,
@@ -2996,13 +3023,15 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Pure config for the cmr sandbox — #1094 F7 pure court.
-   * Judge gets soul + own Claude/gh env + outcome landing; nested-panel
-   * armament (review-legs env, CMR_* model env, multi-provider auth mounts)
-   * is deleted — panel legs are runner-dispatched first-class workers.
+   * Pure config for the cmr sandbox — #1094 F7 pure court + R2 F1 judge identity.
+   * Mounts ONLY the judge's own model-family credential (isomorphic to
+   * {@link panelLegSandboxConfig}). Nested-panel armament (review-legs env,
+   * CMR_* model env, multi-provider auth mounts) stays deleted — panel legs are
+   * runner-dispatched first-class workers.
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
+    spec: Pick<WorkerSpec, "model" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -3032,6 +3061,26 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: outcomeLanding.path,
         sandboxPath: outcomeLanding.sandboxPath,
+      });
+    }
+    // Judge's OWN identity credential only (#1094 R2 F1) — not multi-provider armament.
+    const family = modelFamilyForSlug(spec.model);
+    if (family === "codex" && auth.codexAuthDir !== undefined) {
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
+    }
+    if (family === "agy" && auth.agyDir !== undefined) {
+      appendAgyAuthMount(mounts, auth.agyDir);
+    }
+    if (
+      (family === "other" || spec.host === "grok") &&
+      auth.grokAuthDir !== undefined
+    ) {
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
       });
     }
     mounts.push(soulsMount(this.opts.soulsDir));

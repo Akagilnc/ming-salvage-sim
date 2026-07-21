@@ -1,5 +1,5 @@
 import {
-  CMR_PANEL_LEG_PROMPT_FILE,
+  isCmrPanelLegPromptFile,
   panelLegCompletedResult,
 } from "../../src/family/cmrPanelLegs.js";
 import type { WorkerResult, WorkerSpec } from "../../src/types.js";
@@ -12,7 +12,7 @@ export function isCmrPanelLegWorker(spec: WorkerSpec): boolean {
   return (
     spec.kind === "reviewer" &&
     spec.role === "reviewer" &&
-    spec.promptFile === CMR_PANEL_LEG_PROMPT_FILE
+    isCmrPanelLegPromptFile(spec.promptFile)
   );
 }
 
