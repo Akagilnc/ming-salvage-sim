@@ -9,7 +9,7 @@
  *    single open-count projection (F3), escalate answer resume (S1)
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,6 +62,8 @@ import {
   judgeContinue,
   judgeEscalate,
   judgeToolchain,
+  openCourtWorkerResultIfMatch,
+  OPEN_COURT_SESSION,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
 import {
@@ -83,7 +85,8 @@ const WORKTREE: WorktreeHandle = {
   path: "/resident/worktrees/issue-925",
 };
 
-const S3_SESSION = "sess-judge-s3-925";
+/** #1081: resident court session is born at open court, resumed on S3/S6. */
+const S3_SESSION = OPEN_COURT_SESSION;
 
 class JudgeBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -143,6 +146,10 @@ class JudgeBackend implements Backend {
     if (typeof ctx.resumeSessionId === "string") {
       this.resumeSessionCalls.push([spec.id, ctx.resumeSessionId]);
     }
+
+    // #1081: open-court birth — do not consume S3/S6 judge scripts.
+    const openCourt = openCourtWorkerResultIfMatch(spec, S3_SESSION);
+    if (openCourt !== undefined) return openCourt;
 
     if (spec.kind === "coder") {
       const sessionId =
@@ -603,31 +610,45 @@ describe("#925 S3/S6 maxIterations=1 + seat identity", () => {
 });
 
 describe("#925 runOrchestrator: resume shape + routing", () => {
-  it("S3 is fresh single-iter; S6 resumes the same judge session", async () => {
-    const backend = new JudgeBackend([
-      {
-        kind: "continue",
-        findings: [sampleFinding()],
-        advanceCoder: "gpt-5.6-sol",
-      },
-      { kind: "converged" },
-    ]);
-    const result = await runOrchestrator({ issueNumber: 925, backend });
-    expect(result.status).toBe("completed");
+  it("S3/S6 both resume the resident court opened at dispatch (#1081)", async () => {
+    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
+    try {
+      const backend = new JudgeBackend([
+        {
+          kind: "continue",
+          findings: [sampleFinding()],
+          advanceCoder: "gpt-5.6-sol",
+        },
+        { kind: "converged" },
+      ]);
+      const result = await runOrchestrator({ issueNumber: 925, backend });
+      expect(result.status).toBe("completed");
 
-    const s3 = backend.specs.find((s) => s.id === "S3");
-    const s6 = backend.specs.find((s) => s.id === "S6");
-    expect(s3).toBeDefined();
-    expect(s6).toBeDefined();
-    expect(s3!.maxIter).toBe(1);
-    expect(s6!.maxIter).toBe(1);
-    expect(s3!.session).toBe("fresh");
-    expect(s6!.session).toBe("resume");
-    expect(backend.resumeSessionCalls).toContainEqual(["S6", S3_SESSION]);
+      // Open court is fresh at S1; judging seats resume the same session.
+      const openCourt = backend.specs.find(
+        (s) => s.promptFile === "judge_open_court.md",
+      );
+      expect(openCourt).toBeDefined();
+      expect(openCourt!.session).toBe("fresh");
+      expect(openCourt!.id).toBe("S1");
 
-    // Negative: must not multi-iter the judge seat.
-    expect(s3!.maxIter).not.toBeGreaterThan(1);
-    expect(s6!.maxIter).not.toBeGreaterThan(1);
+      const s3 = backend.specs.find((s) => s.id === "S3");
+      const s6 = backend.specs.find((s) => s.id === "S6");
+      expect(s3).toBeDefined();
+      expect(s6).toBeDefined();
+      expect(s3!.maxIter).toBe(1);
+      expect(s6!.maxIter).toBe(1);
+      expect(s3!.session).toBe("resume");
+      expect(s6!.session).toBe("resume");
+      expect(backend.resumeSessionCalls).toContainEqual(["S3", S3_SESSION]);
+      expect(backend.resumeSessionCalls).toContainEqual(["S6", S3_SESSION]);
+
+      // Negative: must not multi-iter the judge seat.
+      expect(s3!.maxIter).not.toBeGreaterThan(1);
+      expect(s6!.maxIter).not.toBeGreaterThan(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("continue with live findings dispatches S5; dead keys stay out (negative)", async () => {
@@ -684,6 +705,46 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     }> = [];
     let s6Round = 0;
 
+    const COURT = "judge-1023";
+    async function packetRunStep(
+      spec: StepSpec,
+      _worktree: WorktreeHandle,
+      options?: AgentStepRunOptions,
+    ): Promise<StepOutput | StepResult> {
+      // #1081 open court at S1.
+      if (spec.promptFile === "judge_open_court.md") {
+        return { output: judgeConverged(), sessionId: COURT };
+      }
+      if (spec.id === "S2" || spec.id === "S5") {
+        if (spec.id === "S5") {
+          const landingPath = options?.fixFindingsLanding?.path;
+          expect(landingPath).toBeDefined();
+          observedLandings.push(
+            JSON.parse(
+              readFileSync(landingPath!, "utf8"),
+            ) as (typeof observedLandings)[number],
+          );
+        }
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      if (spec.id === "S3") {
+        return {
+          output: judgeContinue([finding], { fixPacketBody }),
+          sessionId: COURT,
+        };
+      }
+      if (spec.id === "S6") {
+        s6Round += 1;
+        return {
+          output:
+            s6Round === 1
+              ? judgeContinue([finding], { fixPacketBody })
+              : judgeConverged(),
+          sessionId: COURT,
+        };
+      }
+      throw new Error(`unexpected runStep ${spec.id}`);
+    }
     const backend: Backend = {
       async smokeModelRoute(route) {
         const { smokeRouteModels } = await import("../../src/modelRoutes.js");
@@ -692,8 +753,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       async findResumeState() {
         return undefined;
       },
-      async resumeSession() {
-        throw new Error("resumeSession not expected in #1023 packet tracer");
+      // #1081: S3/S6 resume the resident court; reuse the same step body.
+      async resumeSession(spec, worktree, _sessionId, options) {
+        return packetRunStep(spec, worktree, options);
       },
       async fetchIssueMeta(issueNumber) {
         return {
@@ -713,33 +775,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         };
       },
       async writeLedger() {},
-      async runStep(spec, _worktree, options) {
-        if (spec.id === "S2" || spec.id === "S5") {
-          if (spec.id === "S5") {
-            const landingPath = options?.fixFindingsLanding?.path;
-            expect(landingPath).toBeDefined();
-            observedLandings.push(
-              JSON.parse(
-                readFileSync(landingPath!, "utf8"),
-              ) as (typeof observedLandings)[number],
-            );
-          }
-          return { kind: "coder", committed: true, commitsAdded: 1 };
-        }
-        if (spec.id === "S3") {
-          return {
-            output: judgeContinue([finding], { fixPacketBody }),
-            sessionId: "judge-1023",
-          };
-        }
-        if (spec.id === "S6") {
-          s6Round += 1;
-          return s6Round === 1
-            ? judgeContinue([finding], { fixPacketBody })
-            : judgeConverged();
-        }
-        throw new Error(`unexpected runStep ${spec.id}`);
-      },
+      runStep: packetRunStep,
     };
 
     const result = await runOrchestrator({ issueNumber: 1023, backend });
@@ -754,7 +790,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         step: "S3",
         status: "continue",
         findingDispositions: [{ identityKey: findingKey, action: "live" }],
-        sessionId: "judge-1023",
+        sessionId: COURT,
       },
     ]);
     expect(observedLandings[1]?.blockingFindingIdentityKeys).toEqual([
@@ -766,12 +802,13 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         step: "S3",
         status: "continue",
         findingDispositions: [{ identityKey: findingKey, action: "live" }],
-        sessionId: "judge-1023",
+        sessionId: COURT,
       },
       {
         step: "S6",
         status: "continue",
         findingDispositions: [{ identityKey: findingKey, action: "live" }],
+        sessionId: COURT,
       },
     ]);
   });
@@ -938,11 +975,10 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 
-  it("dead resume → fresh S6 consumes prior continue via fix-findings landing", async () => {
-    // Real session-loss behaviour (not ctx-only shape): resume fails once →
-    // mechanical redispatch opens fresh S6; prior verdict rows land in
-    // fix-findings.json; the seat converges only when that landing carries the
-    // expected prior status (消费此前走势).
+  it("dead S6 resume fails loud — no silent fresh resident judge (#1081)", async () => {
+    // #1081 AC: resume failure is a loud error package abort, never silent
+    // degrade to a per-round fresh judge.
+    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
     const parent = mkdtempSync(join(tmpdir(), "judge-session-loss-"));
     const worktreePath = join(parent, "wt-9254");
     mkdirSync(worktreePath, { recursive: true });
@@ -951,31 +987,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
       base: "main",
       path: worktreePath,
     };
-    const DEAD_SESSION = "sess-judge-s3-dead-925";
-    const FRESH_AFTER_DEAD = "sess-judge-s6-fresh-after-dead";
+    const COURT_SESSION = "sess-judge-court-open-9254";
     let resumeFailCount = 0;
     let s6FreshOpenings = 0;
-    let observedLanding: {
-      priorJudgeVerdicts?: Array<{
-        status?: string;
-        step?: string;
-        sessionId?: string;
-      }>;
-      trajectorySummary?: string;
-    } | undefined;
-    let s6ConsumedPriorContinue = false;
-
-    const readLanding = (
-      options?: AgentStepRunOptions,
-    ): typeof observedLanding => {
-      const landingPath = options?.fixFindingsLanding?.path;
-      if (landingPath === undefined || !existsSync(landingPath)) {
-        return undefined;
-      }
-      return JSON.parse(readFileSync(landingPath, "utf8")) as NonNullable<
-        typeof observedLanding
-      >;
-    };
 
     const backend: Backend = {
       async smokeModelRoute(route) {
@@ -998,75 +1012,54 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         return worktree;
       },
       async writeLedger() {},
-      async resumeSession(spec, _wt, sessionId, options) {
+      async resumeSession(spec, _wt, sessionId) {
+        if (spec.id === "S3") {
+          return {
+            output: judgeContinue([sampleFinding("r1", "r1.ts:1")]),
+            sessionId,
+          };
+        }
         if (spec.id === "S6") {
           resumeFailCount += 1;
-          // Landing is written before resumeSession (legacyDispatchWorker).
-          observedLanding = readLanding(options);
           throw new Error(
             `Session resume failed: session ${sessionId} not found`,
           );
         }
         throw new Error(`unexpected resume of ${spec.id}`);
       },
-      async runStep(spec, _wt, options): Promise<StepOutput | StepResult> {
+      async runStep(spec): Promise<StepOutput | StepResult> {
+        // #1081 open court at S1.
+        if (spec.promptFile === "judge_open_court.md") {
+          return {
+            output: judgeConverged(),
+            sessionId: COURT_SESSION,
+          };
+        }
         if (spec.id === "S2" || spec.id === "S5") {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        if (spec.id === "S3") {
-          return {
-            output: judgeContinue([sampleFinding("r1", "r1.ts:1")]),
-            sessionId: DEAD_SESSION,
-          };
-        }
-        if (spec.id === "S6") {
+        if (spec.id === "S3" || spec.id === "S6") {
+          // Fresh S3/S6 would be illegal under #1081 — count if it ever happens.
           s6FreshOpenings += 1;
-          // Fresh seat after dead resume — must read structured prior rows from
-          // the fix-findings landing (not a runner-synthesised narrative).
-          observedLanding = readLanding(options);
-          const priors = observedLanding?.priorJudgeVerdicts;
-          const sawContinue = (priors ?? []).some(
-            (r) => r.status === "continue",
-          );
-          if (!sawContinue) {
-            return {
-              output: judgeEscalate(
-                "no_prior_trajectory",
-                "landing missing prior continue status",
-              ),
-              sessionId: FRESH_AFTER_DEAD,
-            };
-          }
-          s6ConsumedPriorContinue = true;
           return {
             output: judgeConverged(),
-            sessionId: FRESH_AFTER_DEAD,
+            sessionId: "sess-illegal-fresh",
           };
         }
-        throw new Error(`unexpected runStep of ${spec.id}`);
+        throw new Error(`unexpected runStep of ${spec.id}:${spec.promptFile}`);
       },
     };
 
-    const result = await runOrchestrator({ issueNumber: 9254, backend });
-    expect(result.status).toBe("completed");
-    // Dead resume once, then fresh S6 (no second resume).
-    expect(resumeFailCount).toBe(1);
-    expect(s6FreshOpenings).toBe(1);
-    expect(s6ConsumedPriorContinue).toBe(true);
-    expect(observedLanding?.priorJudgeVerdicts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          step: "S3",
-          status: "continue",
-          sessionId: DEAD_SESSION,
-        }),
-      ]),
-    );
-    // Negative: no runner-authored narrative field in the landing file.
-    expect(observedLanding?.trajectorySummary).toBeUndefined();
-    // Fresh after dead keeps a new session id on the S6 ledger row.
-    const s6Row = result.stepLedger.find((e) => e.step === "S6");
-    expect(s6Row?.sessionId).toBe(FRESH_AFTER_DEAD);
+    try {
+      const result = await runOrchestrator({ issueNumber: 9254, backend });
+      expect(result.status).toBe("failed");
+      expect(resumeFailCount).toBeGreaterThanOrEqual(1);
+      // Load-bearing negative: must not open a silent fresh judge after dead resume.
+      // (L6: no vacuous free-prose regex on error text.)
+      expect(s6FreshOpenings).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("no S4 open-count step appears on a clean judge path", async () => {
