@@ -44,6 +44,7 @@ import type {
 } from "../../../src/family/types.js";
 
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -130,6 +131,8 @@ class CapableFamilyBackend implements FamilyBackend {
         };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const panelLeg = completeCmrPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // #919 CR N2/N3: production residual is unusableResidualOpenCountPaper
       // (kind:reviewer). Test-fake maps IntegratedCmrResult script intent to

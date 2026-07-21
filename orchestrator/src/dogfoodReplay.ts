@@ -27,6 +27,10 @@ import {
   smokeRouteModels,
   type ModelRouteEnv,
 } from "./modelRoutes.js";
+import {
+  CMR_PANEL_LEG_PROMPT_FILE,
+  panelLegCompletedResult,
+} from "./family/cmrPanelLegs.js";
 import { runOrchestrator } from "./runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
@@ -52,6 +56,17 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "./types.js";
+
+function completeDogfoodCmrPanelLeg(spec: WorkerSpec): WorkerResult | undefined {
+  if (
+    spec.kind === "reviewer" &&
+    spec.role === "reviewer" &&
+    spec.promptFile === CMR_PANEL_LEG_PROMPT_FILE
+  ) {
+    return panelLegCompletedResult("dogfood panel leg review prose (ADR 0141)");
+  }
+  return undefined;
+}
 
 /**
  * Replay-scenario outcome label.
@@ -623,6 +638,13 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     ctx: DispatchContext,
     _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
+    const panelLeg = completeDogfoodCmrPanelLeg(spec);
+    if (panelLeg !== undefined) {
+      this.dispatches.push(
+        `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
+      );
+      return panelLeg;
+    }
     this.dispatches.push(
       `${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`,
     );
