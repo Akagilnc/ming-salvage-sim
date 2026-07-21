@@ -943,9 +943,9 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
       class FocusFailBackend extends RealFamilyBackend {
         public async runLeg(
           spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
-          ctx: { familyBase: string },
+          ctx: DispatchContext,
         ) {
-          return this.runCmrPanelLegWorker(spec, ctx as never);
+          return this.runCmrPanelLegWorker(spec, ctx);
         }
         protected mountCmrAuth() {
           return {
@@ -1020,9 +1020,9 @@ describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () =>
       class LensBackend extends RealFamilyBackend {
         public async runLeg(
           spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
-          ctx: { familyBase: string; cmrPass?: string },
+          ctx: DispatchContext,
         ) {
-          return this.runCmrPanelLegWorker(spec, ctx as never);
+          return this.runCmrPanelLegWorker(spec, ctx);
         }
         protected mountCmrAuth() {
           return {
@@ -1149,9 +1149,9 @@ describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pas
       class SetupFailBackend extends RealFamilyBackend {
         public async runLeg(
           spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
-          ctx: { familyBase: string },
+          ctx: DispatchContext,
         ) {
-          return this.runCmrPanelLegWorker(spec, ctx as never);
+          return this.runCmrPanelLegWorker(spec, ctx);
         }
         protected mountCmrAuth() {
           return {
