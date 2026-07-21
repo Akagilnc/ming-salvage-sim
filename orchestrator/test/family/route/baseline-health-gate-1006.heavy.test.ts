@@ -191,7 +191,7 @@ class ControlledFamilyBackend extends RealFamilyBackend {
       kind: "shipped",
       branch: ctx.familyBase!,
       status: "pr_opened",
-      pr: "pr://family/1006-base",
+      pr: "https://github.com/test/repo/pull/1006",
     };
   }
 }

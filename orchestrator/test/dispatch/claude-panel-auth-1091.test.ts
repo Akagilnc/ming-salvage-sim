@@ -93,11 +93,12 @@ describe("#1091 claude panel-leg auth", () => {
 
   it("assertClaudePanelLegAuth requires credentials-dir for claude legs (token alone insufficient)", () => {
     // Token-only no longer passes: claude-family judge workers scrub
-    // CLAUDE_CODE_OAUTH_TOKEN from child processes (#1091 fix).
+    // CLAUDE_CODE_OAUTH_TOKEN from child processes (#1091 fix); the token
+    // parameter itself was removed (#1090 cleanup), so absence of a
+    // credentials dir is the only remaining gap condition.
     expect(
       assertClaudePanelLegAuth({
         reviewLegs: [{ family: "claude" }],
-        claudeToken: "tok",
       }),
     ).toMatch(/credentials/i);
     // Credentials dir is the valid auth path for claude panel legs.
@@ -131,10 +132,38 @@ describe("#1091 claude panel-leg auth", () => {
     mkdirSync(soulsDir, { recursive: true });
 
     // Bypass constructor validation — only the pure config method is under test.
+    // Typed narrow interface so we never reach for `as any` — the repo's tests
+    // exercise protected members via a typed cast on the minimal shape needed.
+    type ExposedFamilyBackend = {
+      opts: {
+        workingRepo: string;
+        familyBase: string;
+        ledgerDir: string;
+        repo: string;
+        base: string;
+        promptsDir: string;
+        soulsDir: string;
+        imageName: string;
+        homeEnvFile: string;
+      };
+      familyReviewLoopSandboxConfig(
+        auth: unknown,
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): {
+        imageName: string;
+        env: Record<string, string>;
+        mounts: ReadonlyArray<{
+          hostPath: string;
+          sandboxPath: string;
+          readonly?: boolean;
+        }>;
+      };
+    };
     const backend = Object.create(
       RealFamilyBackend.prototype,
-    ) as RealFamilyBackend;
-    (backend as any).opts = {
+    ) as unknown as ExposedFamilyBackend;
+    backend.opts = {
       workingRepo: join(home, "repo"),
       familyBase: "family-base",
       ledgerDir: join(home, "ledger"),
@@ -149,7 +178,7 @@ describe("#1091 claude panel-leg auth", () => {
     const auth = {
       claudeAuthDir,
       claudeToken: "oauth-tok",
-    } as any;
+    };
 
     const spec = {
       id: "S9",
@@ -167,11 +196,7 @@ describe("#1091 claude panel-leg auth", () => {
 
     const ctx = { familyBase: "family-base" } as unknown as DispatchContext;
 
-    const config = (backend as any).familyReviewLoopSandboxConfig(
-      auth,
-      spec,
-      ctx,
-    );
+    const config = backend.familyReviewLoopSandboxConfig(auth, spec, ctx);
 
     expect(config.mounts).toContainEqual({
       hostPath: join(claudeAuthDir, CLAUDE_CREDENTIALS_FILENAME),

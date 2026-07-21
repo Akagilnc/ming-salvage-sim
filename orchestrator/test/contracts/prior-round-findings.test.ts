@@ -239,14 +239,14 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     kind: "ship" as const,
     branch: "family/epic-711",
     status: "pr_opened",
-    pr: "pr://family/711-stage",
+    pr: "https://github.com/test/repo/pull/711",
     prHead: "head-1",
   };
 
   const baseSnapshot: PrReviewSnapshot = {
     repo: "o/r",
     prNumber: 711,
-    prUrl: "pr://family/711-stage",
+    prUrl: "https://github.com/test/repo/pull/711",
     headOid: "head-1",
     pollCount: 1,
     bots: {

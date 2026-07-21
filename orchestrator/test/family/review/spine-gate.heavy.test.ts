@@ -705,7 +705,7 @@ describe("#330 spine — shipped resume continues after the delivery checkpoint"
         status: "shipped",
         event: "shipped",
         phase: "final",
-        pr: "pr://previous",
+        pr: "https://github.com/test/repo/pull/990",
         familyHeadAfter: "ship-head",
       },
     );

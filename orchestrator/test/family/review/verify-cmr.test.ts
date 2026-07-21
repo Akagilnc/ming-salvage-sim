@@ -183,7 +183,7 @@ class CapableFamilyBackend implements FamilyBackend {
       const request = { familyBase: ctx.familyBase! };
       this.prCalls.push(request);
       const shipped = this.script.pr?.(request) ?? {
-        url: `pr://${request.familyBase}`,
+        url: `https://github.com/test/repo/pull/291`,
         prHead: this.currentFamilyHead,
       };
       return {
@@ -674,7 +674,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: "pr://family/291-base",
+      pr: "https://github.com/test/repo/pull/291",
       familyHeadAfter: "head-1",
       stopSummary: expect.objectContaining({
         reason: "success",
@@ -698,7 +698,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
-      pr: () => ({ url: "pr://fake-locator", prHead: "head-1" }),
+      pr: () => ({ url: "https://github.com/test/repo/pull/291", prHead: "head-1" }),
     });
 
     const result = await runVerifyCmr({
@@ -909,7 +909,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
-      pr: (req) => ({ url: `pr://${req.familyBase}`, prHead: "stale-pr-head" }),
+      pr: (req) => ({ url: `https://github.com/test/repo/pull/291`, prHead: "stale-pr-head" }),
     });
     backend.currentFamilyHead = "current-family-head";
 
@@ -1157,7 +1157,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: "pr://family/291-base",
+      pr: "https://github.com/test/repo/pull/291",
       familyHeadAfter: "head-1",
     }));
   });
@@ -1291,7 +1291,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             output: {
               kind: "ship",
               branch: ctx.familyBase ?? "family/291-base",
-              pr: "pr://family/291-base",
+              pr: "https://github.com/test/repo/pull/291",
               prHead: backend.currentFamilyHead,
               status: "pr_opened",
             },
@@ -1411,7 +1411,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             kind: "ship",
             branch: ctx.familyBase ?? "",
             status: "pr_opened",
-            pr: `pr://${ctx.familyBase}`,
+            pr: `https://github.com/test/repo/pull/291`,
           },
         };
       }
