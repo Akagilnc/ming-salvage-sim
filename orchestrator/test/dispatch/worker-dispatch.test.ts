@@ -20,7 +20,7 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
   familyShipWorkerSpec,
-  CODER_ROSTER,
+  getCoderRoster,
   QuotaWaitForResetError,
   resolveRouteModels,
   routeSmokeEntries,
@@ -999,7 +999,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "opus");
     vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
     vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus,agy");
-    for (const entry of CODER_ROSTER) {
+    for (const entry of getCoderRoster()) {
       const backend = new CoderRecDispatchBackend(`Coder-Rec: ${entry.id}`);
       const result = await runOrchestrator({ issueNumber: 796, backend });
       const coder = backend.specs.find((spec) => spec.id === "S2");
