@@ -1341,7 +1341,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
             status: "review_loop_converged",
             event: "review_loop_converged",
             phase: "final",
-            pr: "pr://family/x",
+            pr: "https://github.com/test/repo/pull/600",
             familyHeadAfter: shipHead,
           },
         ],
@@ -1355,7 +1355,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
             status: "review_loop_converged",
             event: "review_loop_converged",
             phase: "final",
-            pr: "pr://family/x",
+            pr: "https://github.com/test/repo/pull/600",
             familyHeadAfter: shipHead,
           },
         ],
@@ -1374,7 +1374,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
             status: "review_loop_converged",
             event: "review_loop_converged",
             phase: "final",
-            pr: "pr://family/x",
+            pr: "https://github.com/test/repo/pull/600",
             familyHeadAfter: postFixHead,
           },
         ],
@@ -1388,7 +1388,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
             status: "review_loop_converged",
             event: "review_loop_converged",
             phase: "final",
-            pr: "pr://family/x",
+            pr: "https://github.com/test/repo/pull/600",
             familyHeadAfter: postFixHead,
           },
         ],
@@ -2350,7 +2350,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     const fixSha = "fixsha1111111111111111111111111111111111";
     const fixTs = "2026-07-08T12:30:00.000Z";
     const retriggerTs = "2026-07-08T13:00:00.000Z";
-    const pr = "https://gh/pr/352";
+    const pr = "https://github.com/test/repo/pull/352";
     const fixCommittedOnly: FamilyLedgerEntry = {
       status: "online_review_fix_committed",
       event: "online_review_fix_committed",
@@ -2508,14 +2508,14 @@ describe("#600 r26 runner-owned isRecheck", () => {
         kind: "ship",
         branch: "feat/x",
         status: "pr_opened",
-        pr: "pr://x",
+        pr: "https://github.com/test/repo/pull/601",
         prHead: "head-1",
       },
       {
         poll: async () => ({
           repo: "o/r",
           prNumber: 1,
-          prUrl: "pr://x",
+          prUrl: "https://github.com/test/repo/pull/601",
           headOid: "head-1",
           pollCount: 2,
           bots: {
@@ -2573,14 +2573,14 @@ describe("#600 r26 runner-owned isRecheck", () => {
         kind: "ship",
         branch: "feat/x",
         status: "pr_opened",
-        pr: "pr://x",
+        pr: "https://github.com/test/repo/pull/601",
         prHead: "head-1",
       },
       {
         poll: async () => ({
           repo: "o/r",
           prNumber: 1,
-          prUrl: "pr://x",
+          prUrl: "https://github.com/test/repo/pull/601",
           headOid: "head-1",
           pollCount: 2,
           bots: {
@@ -2637,13 +2637,13 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     kind: "ship" as const,
     branch: "family/epic-600",
     status: "pr_opened",
-    pr: "pr://family/stage-test",
+    pr: "https://github.com/test/repo/pull/602",
     prHead: "head-1",
   };
   const baseSnapshot: PrReviewSnapshot = {
     repo: "o/r",
     prNumber: 42,
-    prUrl: "pr://family/stage-test",
+    prUrl: "https://github.com/test/repo/pull/602",
     headOid: "head-1",
     pollCount: 1,
     bots: {
@@ -3383,7 +3383,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   const offlineShip = {
     kind: "ship" as const,
     branch: "family/r7",
-    pr: "pr://family/r7-cleanup-landing",
+    pr: "https://github.com/test/repo/pull/607",
     prHead: "head-r7",
     status: "pr_opened" as const,
   };

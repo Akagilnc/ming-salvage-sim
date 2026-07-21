@@ -194,7 +194,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         familyHeadAfter: "family-base-0",
       },
     );
@@ -222,7 +222,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(prMerged).toHaveLength(1);
     expect(prMerged[0]).toMatchObject({
       event: "pr_merged",
-      pr: "pr://family/293-base",
+      pr: "https://github.com/test/repo/pull/293",
       familyHeadAfter: "family-base-0",
     });
   });
@@ -236,7 +236,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         status: "shipped",
         event: "shipped",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         familyHeadAfter: "family-base-0",
       },
     );
@@ -310,14 +310,14 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         familyHeadAfter: "family-base-0",
       },
       {
         status: "pr_merged",
         event: "pr_merged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         prNumber: 293,
         remoteBranchName: "family/293-base",
         mergedHeadOid: "family-base-0",
@@ -362,14 +362,14 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         familyHeadAfter: "family-base-0",
       },
       {
         status: "pr_merged",
         event: "pr_merged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         prNumber: 293,
         remoteBranchName: "family/293-base",
         mergedHeadOid: "family-base-0",
@@ -406,14 +406,14 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         familyHeadAfter: "family-base-0",
       },
       {
         status: "pr_merged",
         event: "pr_merged",
         phase: "final",
-        pr: "pr://family/293-base",
+        pr: "https://github.com/test/repo/pull/293",
         prNumber: 293,
         remoteBranchName: "family/293-base",
         mergedHeadOid: "family-base-0",
@@ -476,7 +476,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
             kind: "ship",
             branch: "family/293-base",
             status: "pr_opened",
-            pr: "pr://family/293-base-fresh",
+            pr: "https://github.com/test/repo/pull/2931",
             prHead,
           },
         };

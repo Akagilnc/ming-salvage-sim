@@ -46,14 +46,14 @@ const STAGE_SHIP: ShipResult = {
   kind: "ship",
   branch: "family/epic-940",
   status: "pr_opened",
-  pr: "pr://family/940-typed-judge",
+  pr: "https://github.com/test/repo/pull/940",
   prHead: "head-940",
 };
 
 const BASE_SNAPSHOT: PrReviewSnapshot = {
   repo: "o/r",
   prNumber: 940,
-  prUrl: "pr://family/940-typed-judge",
+  prUrl: "https://github.com/test/repo/pull/940",
   headOid: "head-940",
   pollCount: 1,
   bots: {
@@ -103,7 +103,7 @@ function completedShip(): WorkerResult {
       kind: "ship",
       branch: "family/epic-940",
       status: "pr_opened",
-      pr: "pr://family/940-ship",
+      pr: "https://github.com/test/repo/pull/9410",
       prHead: "ship-head",
     },
   };

@@ -258,7 +258,7 @@ describe("#825 Group A family roles", () => {
         }
         if (spec.kind === "ship") {
           this.shipCalls += 1;
-          return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
+          return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "https://github.com/test/repo/pull/825", prHead: "head" } };
         }
         // #940: offline skeleton / explicit role cargo — do not return ship
         // envelopes for verify/fixer (would hang the uncapped continue loop).
@@ -286,7 +286,7 @@ describe("#825 Group A family roles", () => {
     let verifyCalls = 0;
     let fixerCalls = 0;
     const snapshot: PrReviewSnapshot = {
-      repo: "o/r", prNumber: 825, prUrl: "pr://825", headOid: "head", pollCount: 1,
+      repo: "o/r", prNumber: 825, prUrl: "https://github.com/test/repo/pull/825", headOid: "head", pollCount: 1,
       totalFindingCount: 1, quiescent: true,
       bots: {
         coderabbit: { state: "complete", findingCount: 1 }, sourcery: { state: "complete", findingCount: 0 },
@@ -295,7 +295,7 @@ describe("#825 Group A family roles", () => {
       checkRunsEmptyMeans: "converged",
     };
     const result = await runOnlineReviewLoopStage(
-      { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "pr://825" },
+      { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "https://github.com/test/repo/pull/825" },
       {
         poll: async () => snapshot,
         dispatchVerify: async () => (++verifyCalls === 1
@@ -316,10 +316,10 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
     // This is the missing assertion angle on the merged e2e in online-review-loop-600.test.ts.
     let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage(
-      { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "pr://825" },
+      { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "https://github.com/test/repo/pull/825" },
       {
         poll: async () => ({
-          repo: "o/r", prNumber: 825, prUrl: "pr://825", headOid: "head", pollCount: 1,
+          repo: "o/r", prNumber: 825, prUrl: "https://github.com/test/repo/pull/825", headOid: "head", pollCount: 1,
           totalFindingCount: 1, quiescent: true,
           bots: { coderabbit: { state: "complete", findingCount: 1 }, sourcery: { state: "complete", findingCount: 0 }, codex: { state: "complete", findingCount: 0 }, gemini: { state: "complete", findingCount: 0 } },
           threads: [], checkRuns: [], roundTriggerUsed: buildRoundTrigger("head"),

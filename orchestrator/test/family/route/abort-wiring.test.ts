@@ -167,7 +167,7 @@ class AbortingFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: ctx.familyBase!,
-          pr: `pr://${ctx.familyBase!}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
           status: "pr_opened",
         },

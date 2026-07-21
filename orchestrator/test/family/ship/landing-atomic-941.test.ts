@@ -87,14 +87,14 @@ const STAGE_SHIP: ShipResult = {
   kind: "ship",
   branch: "family/epic-941",
   status: "pr_opened",
-  pr: "pr://family/941-landing",
+  pr: "https://github.com/test/repo/pull/941",
   prHead: "head-941",
 };
 
 const BASE_SNAPSHOT: PrReviewSnapshot = {
   repo: "o/r",
   prNumber: 941,
-  prUrl: "pr://family/941-landing",
+  prUrl: "https://github.com/test/repo/pull/941",
   headOid: "head-941",
   pollCount: 1,
   bots: {
@@ -1581,7 +1581,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
       status: "review_loop_converged",
       event: "review_loop_converged",
       phase: "final",
-      pr: "pr://family/941-landing",
+      pr: "https://github.com/test/repo/pull/941",
       familyHeadAfter: "head-941",
     };
     const parkStop = decisionGateParkStopSummary({
@@ -1692,7 +1692,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
         return {
           fetchState: () => ({
             prNumber: 941,
-            prUrl: "pr://family/941-landing",
+            prUrl: "https://github.com/test/repo/pull/941",
             state: "OPEN",
             headOid: "family-base-941",
             headRefName: "family/epic-941",
@@ -1747,7 +1747,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/941-landing",
+        pr: "https://github.com/test/repo/pull/941",
         familyHeadAfter: "family-base-941",
       },
     );
@@ -1790,7 +1790,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
         return {
           fetchState: () => ({
             prNumber: 941,
-            prUrl: "pr://family/941-landing",
+            prUrl: "https://github.com/test/repo/pull/941",
             state: "OPEN",
             headOid: "family-base-941",
             headRefName: "family/epic-941",
@@ -1837,7 +1837,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
               kind: "ship",
               branch: "family/epic-941",
               status: "pr_opened",
-              pr: "pr://family/941-landing",
+              pr: "https://github.com/test/repo/pull/941",
               prHead: this.head,
             },
           };
@@ -2176,7 +2176,7 @@ describe("#941 public runFamily driver re-enters landing (ID-013)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/941-landing",
+        pr: "https://github.com/test/repo/pull/941",
         familyHeadAfter: "family-base-941",
       },
     );
@@ -2336,7 +2336,7 @@ describe("#941 public runFamily driver re-enters landing (ID-013)", () => {
         status: "review_loop_converged",
         event: "review_loop_converged",
         phase: "final",
-        pr: "pr://family/941-landing",
+        pr: "https://github.com/test/repo/pull/941",
         familyHeadAfter: "family-base-941",
       },
     );

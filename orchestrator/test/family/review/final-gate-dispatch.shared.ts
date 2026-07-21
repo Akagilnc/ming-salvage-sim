@@ -161,7 +161,7 @@ class CapableFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: familyBase,
-          pr: `pr://${familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: "head-1",
           status: "pr_opened",
         },

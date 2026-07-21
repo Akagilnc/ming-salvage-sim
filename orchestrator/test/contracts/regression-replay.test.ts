@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { issue451DogfoodReplay } from "../../src/dogfoodReplay.js";
 
 describe("#451 dogfood replay fixture", () => {
+  // dogfoodReplay src fixtures still emit pr:// ship handles; #1090 rejects those
+  // as ship.pr and resolves via gh. Unit harness returns this fixture URL instead
+  // of spawning real gh (see test/setup-route-env.ts).
+  beforeEach(() => {
+    process.env.ORCHESTRATOR_TEST_RESOLVE_SHIP_PR =
+      "https://github.com/test/repo/pull/451";
+  });
+  afterEach(() => {
+    delete process.env.ORCHESTRATOR_TEST_RESOLVE_SHIP_PR;
+  });
+
   it("summarizes the historical orchestrator regressions through the runner/family seams", async () => {
     const replay = await issue451DogfoodReplay();
 

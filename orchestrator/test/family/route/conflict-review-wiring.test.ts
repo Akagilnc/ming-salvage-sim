@@ -178,7 +178,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: familyBase,
-          pr: `pr://${familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.head,
           status: "pr_opened",
         },

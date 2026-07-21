@@ -26,7 +26,7 @@ import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 const OFFLINE_SHIP: ShipResult = {
   kind: "ship",
   branch: "family/1002",
-  pr: "pr://family/1002-advance-fixer",
+  pr: "https://github.com/test/repo/pull/1002",
   prHead: "head-1002",
   status: "pr_opened",
 };
