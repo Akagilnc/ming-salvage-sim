@@ -127,13 +127,13 @@ describe("family-ledger.recordAdmissionSkipped", () => {
 describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r3, codex P1)", () => {
   it("recordShipped appends the terminal marker with the shipped family HEAD", async () => {
     const backend = new FakeFamilyBackend();
-    await recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "head-1" });
+    await recordShipped(backend, { pr: "https://github.com/test/repo/pull/352", familyHeadAfter: "head-1" });
     expect(backend.appended).toMatchObject([
       {
         status: "shipped",
         event: "shipped",
         phase: "final",
-        pr: "https://gh/pr/352",
+        pr: "https://github.com/test/repo/pull/352",
         familyHeadAfter: "head-1",
         stopSummary: { reason: "success" },
       },
@@ -148,7 +148,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
       recordShipped(backend, { pr: "   ", familyHeadAfter: "head-1" }),
     ).rejects.toThrow("family shipped marker must include a non-empty PR URL");
     await expect(
-      recordShipped(backend, { pr: "https://gh/pr/352", familyHeadAfter: "   " }),
+      recordShipped(backend, { pr: "https://github.com/test/repo/pull/352", familyHeadAfter: "   " }),
     ).rejects.toThrow("family shipped marker must include a non-empty familyHeadAfter");
 
     expect(backend.appended).toEqual([]);
@@ -162,7 +162,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
           status: "shipped",
           event: "shipped",
           phase: "final",
-          pr: "https://gh/pr/352",
+          pr: "https://github.com/test/repo/pull/352",
           familyHeadAfter: "head-1",
         },
       ], "head-1"),
@@ -173,7 +173,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
           status: "shipped",
           event: "shipped",
           phase: "final",
-          pr: "https://gh/pr/352",
+          pr: "https://github.com/test/repo/pull/352",
           familyHeadAfter: "head-1",
         },
       ], "head-2"),
@@ -197,7 +197,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
   it("pin r28: familyShippedRecordForReviewLoopResume crash-point matrix (family)", () => {
     const shipHead = "head-ship";
     const postFixHead = "head-postfix";
-    const pr = "https://gh/pr/352";
+    const pr = "https://github.com/test/repo/pull/352";
     const shipped = {
       status: "shipped" as const,
       event: "shipped" as const,
@@ -262,7 +262,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
   it("familyShippedRecordForReviewLoopResume accepts ancestor shipped + in-loop markers (#600 r28)", () => {
     const shipHead = "head-ship";
     const postFixHead = "head-postfix";
-    const pr = "https://gh/pr/352";
+    const pr = "https://github.com/test/repo/pull/352";
     const ledger: FamilyLedgerEntry[] = [
       { childIssue: 1, status: "merged" },
       {
@@ -323,9 +323,9 @@ describe("familyOpenShippedForOnlineReview (correctness N1 / F1 residual)", () =
   });
 
   it("returns open shipped only when familyHeadAfter matches the current barrier head", () => {
-    const ledger = [shipped("https://gh/pr/1", "head-old")];
+    const ledger = [shipped("https://github.com/test/repo/pull/1", "head-old")];
     expect(familyOpenShippedForOnlineReview(ledger, "head-old")).toEqual({
-      pr: "https://gh/pr/1",
+      pr: "https://github.com/test/repo/pull/1",
       familyHeadAfter: "head-old",
     });
     // Wrong / advanced head must NOT short-circuit final verify/CMR/ship.
@@ -335,7 +335,7 @@ describe("familyOpenShippedForOnlineReview (correctness N1 / F1 residual)", () =
   });
 
   it("historical review_loop_converged on same PR does not wipe a later ship at a new head", () => {
-    const pr = "https://gh/pr/1";
+    const pr = "https://github.com/test/repo/pull/1";
     const ledger = [
       shipped(pr, "head-a"),
       converged(pr, "head-a"),
@@ -351,7 +351,7 @@ describe("familyOpenShippedForOnlineReview (correctness N1 / F1 residual)", () =
   });
 
   it("skips when this barrier head already has review_loop_converged for the same PR", () => {
-    const pr = "https://gh/pr/9";
+    const pr = "https://github.com/test/repo/pull/9";
     const ledger = [shipped(pr, "head-x"), converged(pr, "head-x")];
     expect(familyOpenShippedForOnlineReview(ledger, "head-x")).toBeUndefined();
   });

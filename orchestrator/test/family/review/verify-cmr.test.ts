@@ -31,7 +31,7 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { runnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
-import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -183,7 +183,7 @@ class CapableFamilyBackend implements FamilyBackend {
       const request = { familyBase: ctx.familyBase! };
       this.prCalls.push(request);
       const shipped = this.script.pr?.(request) ?? {
-        url: `pr://${request.familyBase}`,
+        url: `https://github.com/test/repo/pull/291`,
         prHead: this.currentFamilyHead,
       };
       return {
@@ -197,7 +197,7 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -208,6 +208,26 @@ class CapableFamilyBackend implements FamilyBackend {
     this.escalations.push(esc);
   }
 }
+
+describe("test fake review-loop admission parity", () => {
+  it("does not synthesize verify success for an inadmissible GitHub handle", async () => {
+    const backend = new CapableFamilyBackend();
+    const result = await legacyDispatchFamilyWorker(
+      backend,
+      { kind: "verify" } as WorkerSpec,
+      {
+        familyBase: "family/291-base",
+        prUrl: "https://github.com/test/repo/pull/291",
+        repo: "test/repo",
+      } as DispatchContext,
+    );
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+    }
+  });
+});
 
 function currentRouteFingerprint(): string {
   return modelRouteFingerprint(activeModelRoute());
@@ -674,7 +694,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: "pr://family/291-base",
+      pr: "https://github.com/test/repo/pull/291",
       familyHeadAfter: "head-1",
       stopSummary: expect.objectContaining({
         reason: "success",
@@ -698,7 +718,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
-      pr: () => ({ url: "pr://fake-locator", prHead: "head-1" }),
+      pr: () => ({ url: "https://github.com/test/repo/pull/291", prHead: "head-1" }),
     });
 
     const result = await runVerifyCmr({
@@ -909,7 +929,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
-      pr: (req) => ({ url: `pr://${req.familyBase}`, prHead: "stale-pr-head" }),
+      pr: (req) => ({ url: `https://github.com/test/repo/pull/291`, prHead: "stale-pr-head" }),
     });
     backend.currentFamilyHead = "current-family-head";
 
@@ -1157,7 +1177,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "shipped",
       event: "shipped",
       phase: "final",
-      pr: "pr://family/291-base",
+      pr: "https://github.com/test/repo/pull/291",
       familyHeadAfter: "head-1",
     }));
   });
@@ -1291,7 +1311,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             output: {
               kind: "ship",
               branch: ctx.familyBase ?? "family/291-base",
-              pr: "pr://family/291-base",
+              pr: "https://github.com/test/repo/pull/291",
               prHead: backend.currentFamilyHead,
               status: "pr_opened",
             },
@@ -1411,7 +1431,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             kind: "ship",
             branch: ctx.familyBase ?? "",
             status: "pr_opened",
-            pr: `pr://${ctx.familyBase}`,
+            pr: `https://github.com/test/repo/pull/291`,
           },
         };
       }

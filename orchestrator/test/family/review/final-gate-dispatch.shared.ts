@@ -11,6 +11,8 @@ import {
   legacyDispatchFamilyWorker,
 } from "../../../src/family/dispatchFamilyWorker.js";
 
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
+
 import { mkdtempSync, rmSync } from "node:fs";
 
 import { tmpdir } from "node:os";
@@ -161,13 +163,13 @@ class CapableFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: familyBase,
-          pr: `pr://${familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: "head-1",
           status: "pr_opened",
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
 }
 
