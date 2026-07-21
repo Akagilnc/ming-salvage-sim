@@ -340,6 +340,17 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
+   * #1082 / ADR 0147 — builder beat cargo (`plan` | `construct`).
+   * Runner uses this (with structural first-beat rules) to end plan phase;
+   * never reads plan prose for routing.
+   */
+  readonly beat?: "plan" | "construct";
+  /**
+   * #1082 — opaque plan / proposed-cut prose for resident-judge pre-review.
+   * Runner transports verbatim into the judge landing file; never interprets.
+   */
+  readonly planBody?: string;
+  /**
    * #677 / #927 legal refuse: identity keys the coder-fix worker declined
    * (envelope traffic). Runner threads these to S6 judge re-adjudicate —
    * not escalate/park; never burns multi-iter waiting for a completion signal.
@@ -941,8 +952,21 @@ export interface WorkerLandingPayload {
    * ADR 0138 / #978: sole coder-fix packet body — judge continue
    * `fixPacketBody` transported verbatim. Missing/empty is fail-loud at the
    * continue edge; runner never synthesises this from bare finding rows.
+   *
+   * #1082: also carries plan-phase judge boundary prose back to S2 resume
+   * (same verbatim transport; runner does not interpret content).
    */
   readonly fixPacketBody?: string;
+  /**
+   * #1082 / ADR 0147 — opaque coder plan prose for resident-judge pre-review.
+   * Runner copies from coder cargo without reading; judge owns interpretation.
+   */
+  readonly builderPlanBody?: string;
+  /**
+   * #1082 — structural beat hint for the next S2 dispatch (`plan` first beat;
+   * `after_plan_verdict` after judge continue while still in plan phase).
+   */
+  readonly builderBeat?: "plan" | "after_plan_verdict";
   /**
    * @deprecated ADR 0138 — bare finding packing path deleted. Residual
    * fixtures may still set this; production coder-fix landing does not
