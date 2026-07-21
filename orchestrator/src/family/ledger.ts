@@ -162,8 +162,8 @@ export interface CmrPassedRecord {
   readonly stopSummary?: StopSummary;
   /** #930 — family judge session id for resume / prior-verdict rows. */
   readonly sessionId?: string;
-  /** #930 — T2 judge status (converged on green pass). */
-  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /** #930 — T2 judge status (converged on green pass; toolchain #1027 S1). */
+  readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
   /**
    * #930 / #952 — disposition table (usually empty on green pass). Includes
    * schema `action: "suppress"` when the judge parks a finding (queryable).
@@ -190,8 +190,8 @@ export interface CmrReviewedRecord {
   readonly stopSummary?: StopSummary;
   /** #930 — family judge session id for resume / prior-verdict rows. */
   readonly sessionId?: string;
-  /** #930 — T2 judge status (continue / escalate / unusable-re-furnace). */
-  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /** #930 — T2 judge status (continue / escalate / toolchain / unusable-re-furnace). */
+  readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
   /**
    * #930 / #952 — disposition table for session-loss prior rows. Schema actions
    * (`refute` / `suppress` / `live`) — suppress is queryable here as

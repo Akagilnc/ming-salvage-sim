@@ -68,11 +68,19 @@ import type { ResolvedModelRoute } from "./modelRoutes.js";
 import {
   RealBackend,
   type RealBackendOptions,
-  parseBlockedBy,
+  readBlockedByDualChannel,
   type GhBlockedBy,
   clonePathFor,
   repoSlug,
 } from "./realBackend.js";
+import {
+  graphqlSubIssuesArgs,
+  graphqlSubIssuesToNodeShape,
+  logMetadataChannel,
+  readGithubMetadataDualChannel,
+  restSubIssuesArgs,
+  type MetadataChannel,
+} from "./githubMetadataChannel.js";
 import {
   FAMILY_LEDGER_FILENAME,
   RealFamilyBackend,
@@ -546,13 +554,22 @@ export function readFamilyEpic(
   repo: string,
   sh: Sh,
   issueBodies: Map<number, string> = new Map(),
+  recordChannel: (resource: string, issue: number, channel: MetadataChannel) => void =
+    logMetadataChannel,
 ): FamilyEpic {
+  // #1063: `sh` is the RAW host seam. The dual-channel reads (sub_issues /
+  // blocked_by) own their REST retry budget internally and keep GraphQL to a
+  // single fallback round; the non-dual body reads keep the #936 retry via
+  // this local wrapper.
+  const metadataSh: Sh = (file, args) => readMetadataWithRetry(() => sh(file, args));
   // #934 ID-002/003: live metadata errors aggregate — sub-issues throw must not
   // abort before independently readable root blocked_by (and reachable child deps).
   const errors: string[] = [];
   let admission: SubIssueAdmission = { admitted: [], skipped: [] };
   try {
-    admission = readSubIssueAdmission(epicIssue, repo, sh);
+    admission = readSubIssueAdmission(epicIssue, repo, sh, (c) =>
+      recordChannel("sub_issues", epicIssue, c),
+    );
   } catch (err) {
     errors.push(
       `sub_issues #${epicIssue}: ${err instanceof Error ? err.message : String(err)}`,
@@ -566,11 +583,9 @@ export function readFamilyEpic(
   // the complete inventory (root blocker fact + sibling diagnostics).
   let openRootBlockers: ReadonlyArray<number> | undefined;
   try {
-    const rootRaw = sh("gh", [
-      "api",
-      `repos/${repo}/issues/${epicIssue}/dependencies/blocked_by`,
-    ]);
-    const rootBlockedBy = parseBlockedBy(JSON.parse(rootRaw));
+    const rootBlockedBy = readBlockedByDualChannel(sh, repo, epicIssue, (c) =>
+      recordChannel("blocked_by", epicIssue, c),
+    );
     const openRoot = rootBlockedBy
       .filter((b) => b.state !== "closed")
       .map((b) => b.number);
@@ -585,11 +600,12 @@ export function readFamilyEpic(
 
   for (const child of childNumbers) {
     try {
-      const depRaw = sh("gh", [
-        "api",
-        `repos/${repo}/issues/${child}/dependencies/blocked_by`,
-      ]);
-      blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
+      blockedByByChild.set(
+        child,
+        readBlockedByDualChannel(sh, repo, child, (c) =>
+          recordChannel("blocked_by", child, c),
+        ),
+      );
     } catch (err) {
       errors.push(`child #${child} blocked_by: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -609,7 +625,7 @@ export function readFamilyEpic(
       epicIssue,
       runnableChildren,
       repo,
-      sh,
+      metadataSh,
       issueBodies,
     );
   } catch (err) {
@@ -766,17 +782,34 @@ function readFamilyModuleDeclarations(
  * families whose children are all non-runnable still fail closed; only the
  * absence of native sub-issues selects the degenerate one-child family.
  */
-function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssueAdmission {
-  const allSubIssueNodes: unknown[] = [];
-  for (let page = 1; ; page += 1) {
-    const subRaw = sh("gh", [
-      "api",
-      `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
-    ]);
-    const nodes = decodeSubIssueNodes(JSON.parse(subRaw));
-    allSubIssueNodes.push(...nodes);
-    if (nodes.length < 100) break;
-  }
+function readSubIssueAdmission(
+  epicIssue: number,
+  repo: string,
+  sh: Sh,
+  onChannel: (channel: MetadataChannel) => void = (c) =>
+    logMetadataChannel("sub_issues", epicIssue, c),
+): SubIssueAdmission {
+  // #1063: REST-primary (paginated, each page owns the retry budget) with a
+  // single GraphQL-round fallback; both channels normalize through the one
+  // `decodeSubIssueNodes` shape source before `parseSubIssueAdmission`.
+  const allSubIssueNodes = readGithubMetadataDualChannel<unknown[]>({
+    rest: () => {
+      const nodes: unknown[] = [];
+      for (let page = 1; ; page += 1) {
+        const subRaw = readMetadataWithRetry(() =>
+          sh("gh", restSubIssuesArgs(repo, epicIssue, page)),
+        );
+        const pageNodes = decodeSubIssueNodes(JSON.parse(subRaw));
+        nodes.push(...pageNodes);
+        if (pageNodes.length < 100) break;
+      }
+      return nodes;
+    },
+    graphql: () =>
+      decodeSubIssueNodes(graphqlSubIssuesToNodeShape(sh("gh", graphqlSubIssuesArgs(repo, epicIssue)))),
+    decode: (nodes) => nodes as unknown[],
+    onChannel,
+  });
   const admission = parseSubIssueAdmission(allSubIssueNodes);
   for (const skipped of admission.skipped) {
     console.warn(skipped.message);
@@ -1235,6 +1268,8 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
+  // #1063: raw `sh` feeds readFamilyEpic (its dual-channel reads own retry);
+  // metadataSh keeps the #936 retry for the non-dual body reads below.
   const metadataSh: Sh = (file, args) =>
     readMetadataWithRetry(() => sh(file, args));
   const codexFast = resolveCodexFast(options);
@@ -1342,7 +1377,7 @@ export async function runFamilyDriver(
   let epic: FamilyEpic;
   const issueBodies = new Map<number, string>();
   try {
-    epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh, issueBodies);
+    epic = readFamilyEpic(options.epicIssue, options.repo, sh, issueBodies);
   } catch (err) {
     if (err instanceof FamilyRootBlockerError) {
       const diagnosis =
@@ -1720,7 +1755,7 @@ export async function runFamilyDriver(
     // dependency graph from LIVE GitHub, not the cached epic.
     refetchEpic: async () => {
       logDriverStage("admission", `refetch epic #${options.epicIssue}`);
-      return readFamilyEpic(options.epicIssue, options.repo, metadataSh);
+      return readFamilyEpic(options.epicIssue, options.repo, sh);
     },
   };
   return runFamily(input);

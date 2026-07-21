@@ -72,6 +72,7 @@ import {
   mergerReceiptOutput,
   onlineReviewReceiptOutput,
   requireTypedTrafficSignal,
+  runSandcastleWithOnlineReviewSoGuard,
   shipReceiptOutput,
   workerReceiptOutput,
 } from "../receiptRecovery.js";
@@ -129,6 +130,8 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
+  appendClaudeAuthMount,
+  assertClaudePanelLegAuth,
   provisionFamilyWorkerAuth,
   providerAuthFromCore,
   type FamilyWorkerAuthCore,
@@ -381,6 +384,10 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
+    // #1068 added a thin wave-verify triage judge promptFile
+    // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
+    // construction-time inventory the same as the integrated CMR prompts.
+    "wave_verify_judge.md",
     "coder_fix.md",
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
@@ -1063,7 +1070,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
     }
   }
 
@@ -1569,6 +1576,16 @@ export class RealFamilyBackend implements FamilyBackend {
                 reason: outcome.reason ?? "family judge escalate",
                 diagnosis: outcome.diagnosis ?? "judge declared escalate",
               }
+            : outcome.status === "toolchain"
+              ? {
+                  // #1027 S1 / ADR 0145: toolchain terminal (→ verify_failed).
+                  station: "judge",
+                  status: "toolchain",
+                  reason: outcome.reason ?? "family judge toolchain",
+                  diagnosis:
+                    outcome.diagnosis ??
+                    "judge declared toolchain/environment red",
+                }
             : (() => {
                 // ADR 0138 / #978 CR S2: never invent an empty packet body when
                 // missing — fail at projection (schema already requires body on
@@ -1665,7 +1682,13 @@ export class RealFamilyBackend implements FamilyBackend {
     // predicate refuses (this file ~877-895). So escalate (verifyCmr routes it as
     // not-passed续跑) rather than checking out the base + spinning the container only
     // to review the wrong scope.
-    if (this.opts.familyBaseStartHead === undefined) {
+    // #1027 S2 / ADR 0145: the wave-verify triage judge presides over the verify
+    // FAILURE, not a diff — there is no cut-SHA scope to pin, so this guard does
+    // not apply to it (its focus is ctx.waveVerifyFailure, written below).
+    if (
+      this.opts.familyBaseStartHead === undefined &&
+      ctx.waveVerifyFailure === undefined
+    ) {
       return {
         kind: "escalate",
         reason:
@@ -1745,6 +1768,27 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
+      // #1091: claude-family panel legs need token env and/or credentials mount.
+      const claudePanelAuthGap = assertClaudePanelLegAuth({
+        reviewLegs: frozenReviewLegs,
+        ...(auth.claudeToken !== undefined
+          ? { claudeToken: auth.claudeToken }
+          : {}),
+        ...(auth.claudeAuthDir !== undefined
+          ? { claudeAuthDir: auth.claudeAuthDir }
+          : {}),
+      });
+      if (claudePanelAuthGap !== undefined) {
+        return {
+          kind: "escalate",
+          reason: "no Claude panel-leg auth for cmrReview claude-family leg",
+          diagnosis: claudePanelAuthGap,
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "no Claude panel-leg auth for cmrReview claude-family leg",
+            diagnosis: claudePanelAuthGap,
+          }),
+        };
+      }
       // Check out the family base so the in-container ak-cross-m-review reviews the
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
@@ -1757,7 +1801,14 @@ export class RealFamilyBackend implements FamilyBackend {
       // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
-      this.writeCmrFocusFile(ctx);
+      // #1027 S2 / ADR 0145: the wave-verify triage judge focuses on the verify
+      // FAILURE (a cross-slice-seam red), not a diff scope. Same judge decode +
+      // review-leg machinery; only the focus content differs.
+      if (ctx.waveVerifyFailure !== undefined) {
+        this.writeWaveVerifyFocusFile(ctx);
+      } else {
+        this.writeCmrFocusFile(ctx);
+      }
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
       // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
       // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
@@ -1857,7 +1908,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir, auth.claudeAuthDir]);
     }
   }
 
@@ -1872,7 +1923,11 @@ export class RealFamilyBackend implements FamilyBackend {
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     // #899 / #928 / #919 F2: shared wrap — same helper as RealBackend.
-    return await sc.run(withSandcastleInvokeDefaults(options));
+    // #1092: onlineReview seats get one schema-rich SO resume before #598.
+    return await runSandcastleWithOnlineReviewSoGuard(
+      (opts) => sc.run(withSandcastleInvokeDefaults(opts)),
+      options,
+    );
   }
 
   /**
@@ -1990,7 +2045,7 @@ export class RealFamilyBackend implements FamilyBackend {
         });
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
@@ -2290,7 +2345,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
@@ -2531,6 +2586,40 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(target, body, "utf8");
   }
 
+  /**
+   * #1027 S2 / ADR 0145 — write the wave-verify triage judge focus file.
+   *
+   * The wave-verify judge presides over a red family wave verify (child slices
+   * green in isolation, red only once merged onto the family base). Its material
+   * is the verify FAILURE, pinned verbatim here (the runner carries it on
+   * {@link DispatchContext.waveVerifyFailure}; method for triage lives in the
+   * versioned wave-verify judge prompt/soul — #1068). Shares CMR_FOCUS_FILENAME
+   * so the same in-container judge seat reads one focus path.
+   */
+  protected writeWaveVerifyFocusFile(ctx: DispatchContext): void {
+    const failure = ctx.waveVerifyFailure ?? "";
+    const answerBlock =
+      ctx.escalationAnswer !== undefined
+        ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
+            ctx.escalationAnswer,
+            null,
+            2,
+          )}\n\`\`\`\n\nRetry the previously paused wave-verify triage with this answer in force.`
+        : "";
+    const body =
+      `# Wave-verify triage — the red family verify to classify (machine-generated; #1027 S2)\n\n` +
+      `The family base full verify (typecheck + tests) went RED after merging the\n` +
+      `child slices. Classify this red and return the shared typed judge verdict:\n` +
+      `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
+      `cross-slice-seam regression) or \`toolchain\` (an environment/toolchain red\n` +
+      `the runner falls back to verify_failed on). Convergence is the deterministic\n` +
+      `green re-verify receipt — never your word alone.\n\n` +
+      `## Verify failure output\n\n\`\`\`\n${failure}\n\`\`\`${answerBlock}\n`;
+    const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+    this.excludeFromGit(CMR_FOCUS_FILENAME);
+    writeFileSync(target, body, "utf8");
+  }
+
   /** Write the route-selected CMR review legs for the in-container worker. */
   protected writeCmrRouteFile(
     ctxOrPass: DispatchContext | DispatchContext["cmrPass"],
@@ -2738,6 +2827,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
+    // #1091: claude panel legs get credentials file mount + token env (above).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2745,6 +2835,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendClaudeAuthMount(mounts, auth.claudeAuthDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2927,7 +3018,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir, auth.claudeAuthDir]);
     }
   }
 
@@ -3250,7 +3341,7 @@ export class RealFamilyBackend implements FamilyBackend {
 export type CmrWorkerOutcome =
   | {
       readonly kind: "judge";
-      readonly status: "converged" | "continue" | "escalate";
+      readonly status: "converged" | "continue" | "escalate" | "toolchain";
       readonly findingDispositions?: ReadonlyArray<
         import("../types.js").JudgeFindingDisposition
       >;
@@ -3761,6 +3852,16 @@ function classifyCmrOutcomePayload(
       return {
         kind: "judge",
         status: "escalate",
+        reason: v.reason,
+        diagnosis: v.diagnosis,
+        ...cargo,
+      };
+    }
+    if (v.status === "toolchain") {
+      // #1027 S1 / ADR 0145: toolchain terminal (runner → verify_failed).
+      return {
+        kind: "judge",
+        status: "toolchain",
         reason: v.reason,
         diagnosis: v.diagnosis,
         ...cargo,

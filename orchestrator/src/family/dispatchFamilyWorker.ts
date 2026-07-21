@@ -118,6 +118,45 @@ export function cmrWorkerSpec(
 }
 
 /**
+ * #1027 S2 / ADR 0145 — the wave-verify triage judge seat.
+ *
+ * A red family wave verify (child slices each green, red only once merged onto
+ * the family base) is handed UNIFORMLY to the judge (owner FINAL 2026-07-20:
+ * runner does zero verify-kind classification). This spec is the same shared
+ * judge decode contract as {@link cmrWorkerSpec} (`kind:"cmr"` → JudgeVerdict →
+ * {@link import("../judgeStation.js").closeFamilyCourtFromJudgeOutput}), but the
+ * material it presides over is the verify FAILURE (carried in
+ * {@link DispatchContext.waveVerifyFailure} → a wave-verify focus file), not a
+ * git diff. The judge returns the typed verdict: `continue` (authored repair
+ * packet → coder-fix → deterministic re-verify) or `toolchain` (→ the runner's
+ * unchanged `verify_failed` terminal). Seat id stays `S3` (it IS the family
+ * judge seat); wave rounds are distinguished on the ledger by their workerStep
+ * tag, not a new step id.
+ */
+export function waveVerifyJudgeWorkerSpec(
+  route?: ResolvedModelRoute,
+  session: WorkerSessionMode = "fresh",
+): WorkerSpec {
+  const model = route?.slots.cmrCorrectness ?? modelForSlot("cmrCorrectness");
+  return {
+    id: "S3",
+    kind: "cmr",
+    role: "verify",
+    host: workerHostForModel(model),
+    session,
+    contextRetention: "clean",
+    skill: "ak-cross-m-review",
+    // #1068 authors the wave-verify judge prompt; this spec only pins the file.
+    promptFile: "wave_verify_judge.md",
+    maxIter: 1,
+    model,
+    cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
+    soul: "verify",
+    toolchain: [],
+  };
+}
+
+/**
  * Family-level coder-fix worker for blocking CMR findings (#550).
  *
  * #979: `session` is `"resume"` only when the runner threads a real

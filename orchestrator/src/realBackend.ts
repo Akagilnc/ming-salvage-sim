@@ -69,6 +69,7 @@ import {
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
+  runSandcastleWithOnlineReviewSoGuard,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -130,6 +131,15 @@ import {
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
 import { readMetadataWithRetry } from "./admissionPreflight.js";
+import {
+  graphqlBlockedByArgs,
+  graphqlBlockedByToRestShape,
+  logMetadataChannel,
+  readGithubMetadataDualChannel,
+  restBlockedByArgs,
+  type MetadataChannel,
+  type ShLike,
+} from "./githubMetadataChannel.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -507,6 +517,31 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
 }
 
 /**
+ * #1063 — read a native blocked_by list REST-first with a GraphQL fallback.
+ * REST owns the #1062/#936 retry budget; only a transient (5xx/network) REST
+ * exhaustion crosses to a single GraphQL round, and both channels funnel into
+ * the one `parseBlockedBy` decoder. Shared by family admission (root + each
+ * child) and single-slice S0 so the two call sites cannot drift.
+ */
+export function readBlockedByDualChannel(
+  sh: ShLike,
+  repo: string,
+  issue: number,
+  onChannel: (channel: MetadataChannel) => void = (c) =>
+    logMetadataChannel("blocked_by", issue, c),
+): GhBlockedBy[] {
+  return readGithubMetadataDualChannel<GhBlockedBy[]>({
+    rest: () =>
+      JSON.parse(
+        readMetadataWithRetry(() => sh("gh", restBlockedByArgs(repo, issue))),
+      ),
+    graphql: () => graphqlBlockedByToRestShape(sh("gh", graphqlBlockedByArgs(repo, issue))),
+    decode: parseBlockedBy,
+    onChannel,
+  });
+}
+
+/**
  * Git ref to cut a fresh worktree from (integ-cmr 256 r3 + #936 / #934 ID-009).
  *
  * - `localOnly` (family base): always the bare local ref.
@@ -657,6 +692,23 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
  * symlink into this tree) so the bind-mount does not hide PATH.
  */
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
+/**
+ * #1091 — file mount for Claude panel-leg credentials inside the container.
+ * Mount ONLY `.credentials.json` (not the whole `~/.claude` tree) so the
+ * baked `/home/agent/.claude/skills` tree is never shadowed. Worker-plane
+ * Claude processes still authenticate via `CLAUDE_CODE_OAUTH_TOKEN`; this
+ * file mount covers panel-leg `claude` CLI subprocesses that look for the
+ * on-disk credentials file.
+ *
+ * Limitation: when host Claude auth is keychain-bound and neither
+ * `~/.sc-claude-token` nor a readable `~/.claude/.credentials.json` exists,
+ * routes whose `cmrReview` contains a claude-family leg fail closed at CMR
+ * dispatch (see {@link assertClaudePanelLegAuth}).
+ */
+export const SANDBOX_CLAUDE_CREDENTIALS_FILE =
+  "/home/agent/.claude/.credentials.json";
+/** Filename inside a per-run claudeAuthDir. */
+export const CLAUDE_CREDENTIALS_FILENAME = ".credentials.json";
 /**
  * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
  * runtime config INSIDE the worker container (#335 / #905). Host file
@@ -838,6 +890,49 @@ export function appendAgyAuthMount(
 }
 
 /**
+ * #1091 — mount host-mirrored Claude credentials for panel-leg `claude` CLIs.
+ * File mount only (never the whole `.claude` tree — skills stay baked).
+ */
+export function appendClaudeAuthMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  claudeAuthDir: string | undefined,
+): void {
+  if (claudeAuthDir === undefined) return;
+  const hostPath = join(claudeAuthDir, CLAUDE_CREDENTIALS_FILENAME);
+  ensureRegularFileForBindMount(hostPath);
+  mounts.push({
+    hostPath,
+    sandboxPath: SANDBOX_CLAUDE_CREDENTIALS_FILE,
+    readonly: true,
+  });
+}
+
+/**
+ * #1091 — fail-closed when `cmrReview` includes a claude-family leg but neither
+ * `CLAUDE_CODE_OAUTH_TOKEN` (via claudeToken) nor a mounted credentials file
+ * is available. Panel-leg `claude` CLI cannot authenticate in that case.
+ *
+ * Returns an error message when auth is missing; undefined when OK.
+ */
+export function assertClaudePanelLegAuth(input: {
+  readonly reviewLegs: ReadonlyArray<{ readonly family: string }>;
+  readonly claudeToken?: string;
+  readonly claudeAuthDir?: string;
+}): string | undefined {
+  const hasClaudeLeg = input.reviewLegs.some((leg) => leg.family === "claude");
+  if (!hasClaudeLeg) return undefined;
+  if (input.claudeToken !== undefined) return undefined;
+  if (input.claudeAuthDir !== undefined) return undefined;
+  return (
+    "cmrReview includes a claude-family panel leg but no Claude auth path is " +
+    "available (need ~/.sc-claude-token for CLAUDE_CODE_OAUTH_TOKEN and/or a " +
+    "readable ~/.claude/.credentials.json to mount). Keychain-only host " +
+    "Claude login cannot be exported into the sandbox — pick a non-claude " +
+    "cmrReview leg or materialize file/token credentials."
+  );
+}
+
+/**
  * #913 — core credential set shared by family merger / cmr / ship mount*Auth.
  * Each field is BEST-EFFORT: missing host source ⇒ undefined (caller degrades
  * or fail-closes per worker policy).
@@ -849,6 +944,11 @@ export interface FamilyWorkerAuthCore {
   readonly grokAuthDir?: string;
   /** Per-run agy OAuth dir, or undefined if absent. */
   readonly agyDir?: string;
+  /**
+   * #1091 — per-run dir holding a copy of host `~/.claude/.credentials.json`
+   * for panel-leg mounts, or undefined if absent/unreadable.
+   */
+  readonly claudeAuthDir?: string;
   /** Claude OAuth token body, or undefined if absent/blank. */
   readonly claudeToken?: string;
 }
@@ -934,6 +1034,30 @@ export function provisionWorkerAuth(input: {
       : `slice-agy-${pathPolicy.issueNumber}-`;
   const agyDir = provisionAgyAuthDir(home, root, agyPrefix);
 
+  // #1091 finding 1: only the family/cmr flow consumes and cleans the claude
+  // credentials temp dir. The slice path's mountAuth never returns claudeAuthDir
+  // and never reclaims it — provisioning it there leaked credential copies into
+  // undeleted temp dirs. Skip on slice; codex/grok/agy behavior unchanged.
+  let claudeAuthDir: string | undefined;
+  if (pathPolicy.kind === "family") {
+    let tempClaudeDir: string | undefined;
+    try {
+      tempClaudeDir = mkdtempSync(
+        join(root, `${pathPolicy.rolePrefix}-claude-auth-`),
+      );
+      chmodSync(tempClaudeDir, 0o700);
+      const srcCreds = join(home, ".claude", CLAUDE_CREDENTIALS_FILENAME);
+      const destCreds = join(tempClaudeDir, CLAUDE_CREDENTIALS_FILENAME);
+      copyFileSync(srcCreds, destCreds);
+      chmodSync(destCreds, 0o600);
+      claudeAuthDir = tempClaudeDir;
+    } catch {
+      if (claudeAuthDir === undefined && tempClaudeDir !== undefined) {
+        rmSync(tempClaudeDir, { recursive: true, force: true });
+      }
+    }
+  }
+
   let claudeToken: string | undefined;
   try {
     const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -943,7 +1067,7 @@ export function provisionWorkerAuth(input: {
     claudeToken = undefined;
   }
 
-  return { codexAuthDir, grokAuthDir, agyDir, claudeToken };
+  return { codexAuthDir, grokAuthDir, agyDir, claudeAuthDir, claudeToken };
 }
 
 /**
@@ -2502,13 +2626,13 @@ export class RealBackend implements Backend {
    * base missing upstream changes. Only a confirmed empty array is no-deps.
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
-    return this.phase(step, "fetchBlockedBy", () => {
-      const raw = readMetadataWithRetry(() => this.sh("gh", [
-        "api",
-        `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]));
-      return parseBlockedBy(JSON.parse(raw));
-    });
+    return this.phase(step, "fetchBlockedBy", () =>
+      readBlockedByDualChannel(
+        (file, args) => this.sh(file, args),
+        this.opts.repo,
+        issueNumber,
+      ),
+    );
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
@@ -3345,7 +3469,11 @@ export class RealBackend implements Backend {
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     // #899 / #928 / #919 F2: shared wrap — completionSignal:[] + monitor heartbeat.
-    return await sc.run(withSandcastleInvokeDefaults(options));
+    // #1092: onlineReview seats get one schema-rich SO resume before #598.
+    return await runSandcastleWithOnlineReviewSoGuard(
+      (opts) => sc.run(withSandcastleInvokeDefaults(opts)),
+      options,
+    );
   }
 
   /**

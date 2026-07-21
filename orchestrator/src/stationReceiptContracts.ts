@@ -382,13 +382,23 @@ const findingDispositionSchema: z.ZodType<JudgeFindingDisposition> = z
     return result.value;
   });
 
-// ─── Judge verdict (three states) ────────────────────────────────────────────
+// ─── Judge verdict (four states) ─────────────────────────────────────────────
 
 /**
  * Judge verdict status tokens — the sole convergence signal after #919
  * (replaces open-count mechanical closure).
+ *
+ * `toolchain` is the fourth terminal (#1027 FINAL / ADR 0145): a red wave-verify
+ * the judge classifies as a toolchain/environment failure rather than a real
+ * regression. The runner hands it back as `verify_failed` (no fixer loop, no
+ * decision-gate park). Single-slice S3/S6 courts have no wave-verify triage
+ * scenario — they treat it as loud-unexpected.
  */
-export type JudgeVerdictStatus = "converged" | "continue" | "escalate";
+export type JudgeVerdictStatus =
+  | "converged"
+  | "continue"
+  | "escalate"
+  | "toolchain";
 
 interface JudgeEnvelopeBase {
   readonly station: "judge";
@@ -428,10 +438,24 @@ export interface JudgeVerdictEscalate extends JudgeEnvelopeBase {
   readonly diagnosis: string;
 }
 
+/**
+ * Fourth terminal (#1027 FINAL / ADR 0145): the judge classifies a red
+ * wave-verify as a toolchain/environment failure, so the runner falls back to
+ * the existing `verify_failed` terminal (no fixer loop, no decision-gate park).
+ * `reason` + `diagnosis` are the doorbell cargo (same shape as escalate) but the
+ * fate is a mechanical verify terminal, not a human park.
+ */
+export interface JudgeVerdictToolchain extends JudgeEnvelopeBase {
+  readonly status: "toolchain";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
 export type JudgeVerdict =
   | JudgeVerdictConverged
   | JudgeVerdictContinue
-  | JudgeVerdictEscalate;
+  | JudgeVerdictEscalate
+  | JudgeVerdictToolchain;
 
 /**
  * Single field vocabulary for judge envelopes. Decode uses `.strict()`;
@@ -464,6 +488,14 @@ const judgeEscalateFields = {
   cargoPointer: cargoPointerSchema,
 } as const;
 
+const judgeToolchainFields = {
+  station: z.literal("judge"),
+  status: z.literal("toolchain"),
+  reason: nonEmptyString,
+  diagnosis: nonEmptyString,
+  cargoPointer: cargoPointerSchema,
+} as const;
+
 function judgeDecodeObject<T extends z.ZodRawShape>(shape: T) {
   return z.object(shape).strict();
 }
@@ -480,11 +512,13 @@ function judgeSoObject<T extends z.ZodRawShape>(shape: T) {
 const judgeConvergedSchema = judgeDecodeObject(judgeConvergedFields);
 const judgeContinueSchema = judgeDecodeObject(judgeContinueFields);
 const judgeEscalateSchema = judgeDecodeObject(judgeEscalateFields);
+const judgeToolchainSchema = judgeDecodeObject(judgeToolchainFields);
 
 const judgeVerdictSchema = z.discriminatedUnion("status", [
   judgeConvergedSchema,
   judgeContinueSchema,
   judgeEscalateSchema,
+  judgeToolchainSchema,
 ]);
 
 /** Traffic keys for T2 judge envelopes — cargo siblings stay off strict decode. */
@@ -499,6 +533,9 @@ const JUDGE_CONTINUE_TRAFFIC_KEYS = [
   "advanceCoder",
 ] as const;
 const JUDGE_ESCALATE_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
+// Toolchain shares the escalate doorbell vocabulary (reason + diagnosis); the
+// difference is fate (verify_failed terminal), not traffic shape.
+const JUDGE_TOOLCHAIN_TRAFFIC_KEYS = ["reason", "diagnosis"] as const;
 
 /** Encode a validated judge verdict into its canonical JSON shape. */
 export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
@@ -516,7 +553,9 @@ export function decodeJudgeVerdict(raw: unknown): ContractResult<JudgeVerdict> {
       ? JUDGE_CONTINUE_TRAFFIC_KEYS
       : record.value.status === "escalate"
         ? JUDGE_ESCALATE_TRAFFIC_KEYS
-        : [];
+        : record.value.status === "toolchain"
+          ? JUDGE_TOOLCHAIN_TRAFFIC_KEYS
+          : [];
   const keys =
     record.value.status === "continue"
       ? [...JUDGE_BASE_TRAFFIC_KEYS, ...statusKeys]
@@ -557,6 +596,7 @@ export function judgeStationReceiptSchema(): z.ZodType {
     judgeSoObject(judgeConvergedFields),
     judgeSoObject(judgeContinueFields),
     judgeSoObject(judgeEscalateFields),
+    judgeSoObject(judgeToolchainFields),
   ]);
 }
 

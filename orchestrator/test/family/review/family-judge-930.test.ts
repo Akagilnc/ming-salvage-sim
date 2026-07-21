@@ -42,6 +42,7 @@ import {
   judgeConverged,
   judgeContinue,
   judgeEscalate,
+  judgeToolchain,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
@@ -341,6 +342,25 @@ describe("#930 pure family judge closure", () => {
     });
   });
 
+  it("toolchain → dedicated toolchain action with reason/diagnosis (#1027 S1)", () => {
+    expect(
+      closeFamilyCourtFromJudgeOutput(
+        judgeToolchain("MODULE_NOT_FOUND", "missing dep after merge"),
+      ),
+    ).toEqual({
+      action: "toolchain",
+      reason: "MODULE_NOT_FOUND",
+      diagnosis: "missing dep after merge",
+    });
+  });
+
+  it("negative: toolchain must not collapse into pass/continue", () => {
+    const closure = closeFamilyCourtFromJudgeOutput(judgeToolchain());
+    expect(closure.action).not.toBe("pass");
+    expect(closure.action).not.toBe("continue");
+    expect(closure.action).toBe("toolchain");
+  });
+
   it("negative: residual kind:cmr+findingsCount is unusable (not a closer)", () => {
     const closure = closeFamilyCourtFromJudgeOutput({
       kind: "cmr",
@@ -575,6 +595,32 @@ describe("#930 runVerifyCmr family judge courts", () => {
       diagnosis: "need owner decision",
     });
     expect(backend.prCalls).toEqual([]);
+  });
+
+  it("judge toolchain → verify_failed terminal (no coder-fix, no park) (#1027 S1)", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: () =>
+        completedJudge(
+          judgeToolchain(
+            "MODULE_NOT_FOUND after merge",
+            "missing dependency; not a cross-slice regression",
+          ),
+          "j-toolchain",
+        ),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    // Runner falls back to the existing verify_failed terminal (ADR 0145).
+    expect(result.ok).toBe(false);
+    expect(result.failedStatus).toBe("verify_failed");
+    // Negatives: not a decision-gate park, not coder-fix, not cmr_failed, not
+    // silent {ok:true}.
+    expect(backend.escalations).toHaveLength(0);
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    expect(result.failedStatus).not.toBe("cmr_failed");
   });
 
   it("persistent judge: after fix, same pass resumes session (resume shape)", async () => {
