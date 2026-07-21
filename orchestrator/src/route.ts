@@ -28,6 +28,10 @@
 
 import type { SliceStepId, StepOutput } from "./types.js";
 import { judgeStatusFromOutput } from "./judgeStation.js";
+import {
+  afterBuilderBeatNext,
+  routeResidentJudgeHub,
+} from "./residentJudgeHub.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -63,25 +67,31 @@ export interface RouteContext {
 export type BuilderBeatStep = "S2" | "S5";
 
 /**
- * #1083 / ADR 0147 — single seam: every builder beat routes to the resident
- * judge. No envelope classification (committed / plan-only / refuse cargo
- * never forks this edge). Fresh reviewer is never the next step from a
+ * #1083 / #1085 / ADR 0147 — single seam: every builder beat routes to the
+ * resident judge. No envelope classification (committed / plan-only / refuse
+ * cargo never forks this edge). Fresh reviewer is never the next step from a
  * builder beat — judge receives first, then may dispatch fresh legs.
  *
  * Consumers (audit):
  * - route() S2 / S5 cases
+ * - family/verifyCmr.ts wave + CMR fixer (via {@link afterBuilderBeatNext})
  */
 export function routeBuilderBeatToResidentJudge(
   from: BuilderBeatStep,
 ): RouteDecision {
+  // Shared hub constant — rings must not invent a second "after builder" table.
+  if (afterBuilderBeatNext() !== "resident_judge") {
+    throw new Error("route: afterBuilderBeatNext must be resident_judge");
+  }
   if (from === "S2") return { kind: "next", step: "S3" };
   return { kind: "next", step: "S6" };
 }
 
 /**
- * S3 / S6 / residual-S4 status → edge table (single copy).
- * Unusable and continue both go to S5 (never silent clean / S7) — except
- * #1082 plan phase, where continue resumes S2.
+ * S3 / S6 / residual-S4 status → edge table via the shared #1085 hub
+ * ({@link routeResidentJudgeHub}). Unusable and continue both go to S5
+ * (never silent clean / S7) — except #1082 plan phase, where continue
+ * resumes S2.
  *
  * Status collapse itself is {@link judgeStatusFromOutput} in judgeStation
  * (#919 S1 — shared with runner normalize; no parallel predicate here).
@@ -90,17 +100,18 @@ function routeEdgesFromJudgeStatus(
   status: "converged" | "continue" | "escalate" | "unusable",
   coderPlanPhase?: boolean,
 ): RouteDecision {
-  if (status === "converged") return { kind: "next", step: "S7" };
-  if (status === "continue") {
-    // #1082: plan pre-review continue → same S2 builder (not fixer).
+  const hub = routeResidentJudgeHub(status, "per_slice");
+  if (hub === "exit_loop") return { kind: "next", step: "S7" };
+  if (hub === "park") return { kind: "handoff", status: "parked" };
+  // resume_builder (continue / unusable). toolchain never reaches per-slice
+  // collapse (judgeStatusFromOutput maps it to unusable → resume_builder).
+  if (hub === "resume_builder" || hub === "toolchain" || hub === "fail_loud") {
+    // #1082: plan pre-review continue/unusable → same S2 builder (not fixer).
     if (coderPlanPhase === true) return { kind: "next", step: "S2" };
     return { kind: "next", step: "S5" };
   }
-  if (status === "escalate") return { kind: "handoff", status: "parked" };
-  // Unusable envelope → fixer path (never silent clean / S7).
-  // Plan-phase unusable still goes to S2 so the builder can re-plan, not S5.
-  if (coderPlanPhase === true) return { kind: "next", step: "S2" };
-  return { kind: "next", step: "S5" };
+  const _never: never = hub;
+  throw new Error(`route: unhandled hub next ${String(_never)}`);
 }
 
 /**

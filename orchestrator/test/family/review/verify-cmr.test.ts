@@ -373,11 +373,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     output: { kind: "coder", committed: true, commitsAdded: 1 },
   });
 
-  it("AC1 tracer: red → judge continue → coder-fix → deterministic re-verify green → converge", async () => {
+  it("AC1 tracer: red → judge continue → coder-fix → resume judge → green hard-pre → converge (#1085 hub)", async () => {
     let verifyCalls = 0;
+    let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
-      // #1 initial wave verify (red) → court; #2 re-verify after fix (green).
+      // #1 initial wave verify (red) → court; #2 re-verify after fix (green,
+      // observed for next judge); #3 re-verify after judge exit_loop (green hard-pre).
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 2
@@ -386,8 +388,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       },
       worker: (spec) => {
         if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          // #1085: after builder beat the hub resumes judge — second call
+          // must exit_loop (converged); green alone never skips the hub.
           return completedJudge(
-            judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
+            judgeCalls === 1
+              ? judgeContinue([sampleFinding("seam regression", "a.ts:9")])
+              : { kind: "judge", status: "converged" },
           );
         }
         if (spec.kind === "coder") {
@@ -405,10 +412,11 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       familyHeadAfter: "head-1",
     });
 
-    // Green mechanical re-verify is the SOLE convergence authority → ok.
+    // ADR 0145 green hard-pre on exit_loop + ADR 0147 builder→judge hub.
     expect(result).toEqual({ ok: true, ran: true });
-    // One judge triage, one coder-fix, one re-verify (2 verify calls total).
-    expect(verifyCalls).toBe(2);
+    // Initial red + post-fix green observe + post-exit green hard-pre.
+    expect(verifyCalls).toBe(3);
+    expect(judgeCalls).toBe(2);
     expect(coderDispatches).toHaveLength(1);
     expect(coderDispatches[0]?.kind).toBe("coder");
     // Ledger records the wave triage + fix rounds (与 CMR 庭同构).
@@ -425,7 +433,8 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
       // #1 initial red; #2 still red (after the converged verdict — must NOT
-      // close); #3 green (after the forced-continue fixer round).
+      // close); #3 green after fix (observe); #4 green hard-pre after final
+      // exit_loop.
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 3
@@ -437,12 +446,17 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           judgeCalls += 1;
           // Round 1: judge says converged — but the re-verify is still red, so
           // the court must FORCE another round (not close on the judge's word).
-          // Round 2: a real continue drives the coder-fix that finally converges.
-          return completedJudge(
-            judgeCalls === 1
-              ? { kind: "judge", status: "converged" }
-              : judgeContinue([sampleFinding("seam regression", "b.ts:3")]),
-          );
+          // Round 2: continue drives the coder-fix.
+          // Round 3: after builder beat hub resumes judge → exit_loop.
+          if (judgeCalls === 1) {
+            return completedJudge({ kind: "judge", status: "converged" });
+          }
+          if (judgeCalls === 2) {
+            return completedJudge(
+              judgeContinue([sampleFinding("seam regression", "b.ts:3")]),
+            );
+          }
+          return completedJudge({ kind: "judge", status: "converged" });
         }
         if (spec.kind === "coder") {
           coderDispatches.push(spec);
@@ -460,12 +474,12 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    // Round 1 converged verdict did NOT converge (re-verify #2 red) → forced
-    // continue: the coder-fix only spins in round 2 (converged skips the fixer).
-    expect(judgeCalls).toBe(2);
+    // Round 1 converged did NOT exit (re-verify red) → round 2 continue → fix
+    // → round 3 exit_loop + green hard-pre.
+    expect(judgeCalls).toBe(3);
     expect(coderDispatches).toHaveLength(1);
-    // 3 verify calls: initial red + red-after-converged + green-after-fix.
-    expect(verifyCalls).toBe(3);
+    // initial + red-after-exit + green-after-fix + green-after-final-exit
+    expect(verifyCalls).toBe(4);
     expect(backend.aborted).toEqual([]);
   });
 });
