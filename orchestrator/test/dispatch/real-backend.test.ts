@@ -745,6 +745,8 @@ describe("realBackend promptsDirError (F4)", () => {
         "coder_implement.md",
         "coder_fix.md",
         "judge_station.md",
+        // #1081: resident judge open-court birth (not a topology WORKER step).
+        "judge_open_court.md",
       ]),
     );
     // No duplicates.
