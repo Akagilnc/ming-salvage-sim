@@ -4,67 +4,6 @@ import "../src/sandcastleCancelSeam.js";
 import { resetRoutePresetsCacheForTests } from "../src/modelRoutes.js";
 
 /**
- * #1090 — ship ledger / isPrUrl require real http(s) `.../pull/<n>` URLs, but the
- * production offline synthetic gate still only admits `pr://…`. Fixture PRs under
- * `https://github.com/test/repo/pull/<n>` are the test-only bridge: keep offline
- * poll + skeleton dispatch deterministic without live `gh`, while intentional
- * offline-gate tests continue to use `pr://…` / `https://github.com/o/r/pull/1`.
- */
-vi.mock("../src/evidenceAdmissibility.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../src/evidenceAdmissibility.js")>();
-
-  function isFixtureShipPrUrl(prUrl: string): boolean {
-    return /^https?:\/\/github\.com\/test\/repo\/pull\/\d+(?:\/?(?:[?#].*)?)?$/i.test(
-      prUrl.trim(),
-    );
-  }
-
-  function offlineSyntheticPollAdmissible(
-    prUrl: string,
-    defaultRepo: string,
-  ): boolean {
-    if (actual.offlineSyntheticPollAdmissible(prUrl, defaultRepo)) {
-      return true;
-    }
-    return (
-      process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1" &&
-      isFixtureShipPrUrl(prUrl)
-    );
-  }
-
-  function assertOfflineSyntheticPollAdmissible(
-    prUrl: string,
-    defaultRepo: string,
-  ): void {
-    if (offlineSyntheticPollAdmissible(prUrl, defaultRepo)) {
-      return;
-    }
-    actual.assertOfflineSyntheticPollAdmissible(prUrl, defaultRepo);
-  }
-
-  function offlineReviewLoopDispatchAdmissible(
-    ctx: { readonly prUrl?: string; readonly repo?: string },
-    defaultRepo?: string,
-  ): boolean {
-    const repo =
-      ctx.repo?.trim() ??
-      defaultRepo?.trim() ??
-      process.env.ORCHESTRATOR_REPO?.trim() ??
-      "Akagilnc/ming-salvage-sim";
-    const prUrl = ctx.prUrl?.trim() ?? "";
-    return offlineSyntheticPollAdmissible(prUrl, repo);
-  }
-
-  return {
-    ...actual,
-    offlineSyntheticPollAdmissible,
-    assertOfflineSyntheticPollAdmissible,
-    offlineReviewLoopDispatchAdmissible,
-  };
-});
-
-/**
  * #1090 — never let unit tests shell out to a real `gh pr list` for ship-PR
  * resolution. Suites that intentionally exercise resolveFamilyShipPr mock
  * `shWithClock` themselves (see ship-pr-resolution-1090.test.ts).

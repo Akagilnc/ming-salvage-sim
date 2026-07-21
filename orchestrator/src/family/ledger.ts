@@ -34,7 +34,7 @@ import {
   emitShipProgress,
   getProgressBroadcastConfig,
 } from "../progressBroadcast.js";
-import { parsePrRef } from "../botPolling.js";
+import { isCanonicalGithubPrUrl } from "../botPolling.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -1133,18 +1133,11 @@ export async function recordShipped(
   if (familyHeadAfter.length === 0) {
     throw new Error("family shipped marker must include a non-empty familyHeadAfter");
   }
-  // #1090 write-side guard + #1090 P1: defer to the online-review consumer's
-  // OWN parser (botPolling.parsePrRef) — never a hand-rolled lookalike regex.
-  // The consumer is stricter than /^https?:\/\/\S*\/pull\/\d+/: it requires
-  // host github.com AND rejects trailing junk after the number. A pr value the
-  // consumer would reject must fail loud here so the #1090 poison class is
-  // impossible regardless of caller (a branch name OR a lookalike URL that the
-  // consumer's fail-closed rejects forever on re-ship).
-  try {
-    parsePrRef(pr, "");
-  } catch {
+  // #1090 write-side guard: share the canonical URL predicate with every
+  // shipped-PR consumer so permissive parser forms can never poison the ledger.
+  if (!isCanonicalGithubPrUrl(pr)) {
     throw new Error(
-      `family shipped marker pr must be an http(s) PR URL containing ` +
+      `family shipped marker pr must be a canonical https GitHub PR URL containing ` +
         `/pull/<number> (got "${pr}"); refusing to write a branch name or ` +
         `non-URL as the shipped ledger pr (#1090 — would poison the online ` +
         `review poll on idempotent re-ship)`,

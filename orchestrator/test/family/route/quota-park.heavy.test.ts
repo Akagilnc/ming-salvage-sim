@@ -454,10 +454,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("B4: open-shipped online-review failure preserves stopSummary + escalated", async () => {
-    // Valid isPrUrl shape (recordShipped write-side) but non-fixture / non-pr://
-    // handle → offline poll inadmissible → online-review fails with structured
-    // stopSummary. Open-shipped re-entry must surface escalated + that summary,
-    // not collapse to bare finalize verify_failed.
+    // A canonical PR outside explicit offline mode must use live review. With no
+    // live review worker here, re-entry fails with a structured stopSummary.
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -468,6 +466,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyHeadAfter: "family-base-0",
     });
 
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
     const { recordShipped } = await import("../../../src/family/ledger.js");
     const result = await runFamily({
       epic: epicWith(10),
@@ -479,9 +478,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       verifyCmr: async (input) => {
         if (input.phase !== "final") return { ok: true, ran: true };
         await recordShipped(familyBackend, {
-          // Parses for the consumer (write gate passes) but sits OUTSIDE the
-          // offline test fixture namespace, so the synthetic poll refuses it —
-          // the post-#1090-P1 way to stage an open-shipped online-review fail.
           pr: "https://github.com/other/repo/pull/909",
           familyHeadAfter: "family-base-0",
         });

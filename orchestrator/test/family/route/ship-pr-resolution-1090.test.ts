@@ -1,6 +1,6 @@
 /**
  * #1090 — ship PR URL resolution: never write a branch name as the shipped
- * ledger `pr`; validate ship.pr as a real PR URL (http(s) + /pull/<number>) and
+ * ledger `pr`; validate ship.pr as the canonical https GitHub PR URL and
  * otherwise resolve the open PR for the family branch via `gh pr list`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,6 +48,19 @@ describe("#1090 recordShipped rejects branch-name pr (loud)", () => {
     expect(appended).toEqual([]);
   });
 
+  it("rejects parseable non-canonical PR references", async () => {
+    for (const pr of ["1090", "Akagilnc/ming-salvage-sim#1090"]) {
+      const appended: FamilyLedgerEntry[] = [];
+      await expect(
+        recordShipped(fakeBackend(appended), {
+          pr,
+          familyHeadAfter: "abc123",
+        }),
+      ).rejects.toThrow(/\/pull\//);
+      expect(appended).toEqual([]);
+    }
+  });
+
   it("accepts a valid https PR URL", async () => {
     const appended: FamilyLedgerEntry[] = [];
     await recordShipped(fakeBackend(appended), {
@@ -82,10 +95,17 @@ describe("#1090 recordShipped rejects branch-name pr (loud)", () => {
 });
 
 describe("#1090 isPrUrl", () => {
-  it("accepts http(s) PR URLs with a numeric pull id", async () => {
+  it("accepts only the exact canonical GitHub PR URL form", async () => {
     const { isPrUrl } = await import("../../../src/family/verifyCmr.js");
     expect(isPrUrl("https://github.com/owner/repo/pull/123")).toBe(true);
-    expect(isPrUrl("http://github.com/owner/repo/pull/1")).toBe(true);
+    expect(isPrUrl("http://github.com/owner/repo/pull/1")).toBe(false);
+    expect(isPrUrl("1090")).toBe(false);
+    expect(isPrUrl("Akagilnc/ming-salvage-sim#1090")).toBe(false);
+    expect(isPrUrl("https://github.com/owner/repo/pull/123/")).toBe(false);
+    expect(isPrUrl("https://github.com/owner/repo/pull/123?x=1")).toBe(false);
+    expect(isPrUrl("https://github.com/owner/repo/pull/123#discussion")).toBe(
+      false,
+    );
   });
 
   it("rejects branch names, issue URLs, and bare paths", async () => {
@@ -135,6 +155,24 @@ describe("#1090 resolveFamilyShipPr", () => {
       ],
       { stage: "resolve:shipPr" },
     );
+  });
+
+  it("routes bare and short ship.pr values through gh and adopts its canonical URL", async () => {
+    const canonical = "https://github.com/owner/repo/pull/42";
+    vi.mocked(shWithClock).mockReturnValue(JSON.stringify([{ url: canonical }]));
+    const { resolveShippedPrUrl } = await import(
+      "../../../src/family/verifyCmr.js"
+    );
+
+    for (const shipPr of ["1090", "Akagilnc/ming-salvage-sim#1090"]) {
+      vi.mocked(shWithClock).mockClear();
+      expect(resolveShippedPrUrl(shipPr, "family/1090-base")).toBe(canonical);
+      expect(shWithClock).toHaveBeenCalledWith(
+        "gh",
+        expect.arrayContaining(["pr", "list", "--head", "family/1090-base"]),
+        { stage: "resolve:shipPr" },
+      );
+    }
   });
 
   it("appends --repo when ORCHESTRATOR_REPO is set", async () => {

@@ -2116,15 +2116,16 @@ describe("#600 r4 central evidence admissibility gate", () => {
   it("pin offline gate: default-deny synthetic snapshots outside admissible handles", () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     try {
+      process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
       expect(
         offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
-      ).toBe(false);
+      ).toBe(true);
       expect(() =>
         assertOfflineSyntheticPollAdmissible(
           "https://github.com/o/r/pull/1",
           "o/r",
         ),
-      ).toThrow(/refused for live GitHub PR/);
+      ).not.toThrow();
       expect(() =>
         offlinePrReviewSnapshot({
           repo: "o/r",
@@ -2132,9 +2133,12 @@ describe("#600 r4 central evidence admissibility gate", () => {
           headOid: "abc",
           pollCount: 1,
         }),
-      ).toThrow(/refused for live GitHub PR/);
+      ).not.toThrow();
 
       delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      expect(
+        offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
+      ).toBe(false);
       expect(() =>
         assertOfflineSyntheticPollAdmissible(
           "https://github.com/o/r/pull/1",
@@ -3294,11 +3298,21 @@ describe("#600 r5 legacy skeleton gate — family", () => {
   };
 
   it("pin family legacy path: unavailable primary on live PR → failed, not skeleton-green", async () => {
-    const spec = verifyWorkerSpec();
-    const result = await legacyDispatchFamilyWorker({} as never, spec, liveCtx);
-    expect(result.kind).toBe("failed");
-    if (result.kind === "failed") {
-      expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    try {
+      const spec = verifyWorkerSpec();
+      const result = await legacyDispatchFamilyWorker({} as never, spec, liveCtx);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.reason).toContain("offline skeleton synthesis inadmissible");
+      }
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
     }
   });
 
