@@ -166,8 +166,10 @@ import {
 } from "../rawReviewerArtifacts.js";
 import {
   ONLINE_REVIEW_LANDING_FILE,
+  OnlineReviewLoopTerminal,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
 } from "./onlineReviewLoop.js";
+import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import {
   PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
@@ -1771,54 +1773,60 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      // Resolve familyBase SHA without checkout (prep already did that once).
-      const headSha = this.sh(
-        "git",
-        ["rev-parse", ctx.familyBase],
-        this.opts.workingRepo,
-      ).trim();
-      legClone = this.preparePanelLegClone(spec.model, headSha);
-      // Focus file was written once on workingRepo; copy into the independent clone.
-      // #1094 R3 F4: failed copy is a degraded transport (fail-loud), never a
-      // present leg reviewing invent-your-own scope.
-      const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+      // #1094 R4 F-A: setup infra (clone / soul / prompt / sandbox) throws degrade
+      // THIS leg to {kind:"failed"} — same transport shape as R3 F4 focus-copy —
+      // so allSettled siblings keep running and the pure court still opens.
+      // Park/relay / OnlineReviewLoopTerminal escalate throws must rethrow so
+      // fan-out can drain peers then surface the typed terminal (never collapse
+      // into leg-kill failed, never whole-pass cmr_failed via bare Error).
       try {
-        copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        return {
-          kind: "failed",
-          reason:
-            `panel leg ${spec.model}: failed to stage ${CMR_FOCUS_FILENAME} ` +
-            `(pinned review scope) — ${detail}`,
-        };
-      }
-      const reviewerSoul = readFileSync(
-        join(this.opts.soulsDir, "reviewer.md"),
-        "utf8",
-      );
-      // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
-      // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
-      const promptTemplate = readFileSync(
-        join(this.opts.promptsDir, spec.promptFile),
-        "utf8",
-      );
-      const passLabel =
-        spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
-          ? "completeness"
-          : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
-            ? "correctness"
-            : spec.promptFile;
-      const taskBody =
-        `${promptTemplate.trim()}\n\n` +
-        `Panel leg slug: ${spec.model}.\n` +
-        `CMR pass: ${passLabel}.\n` +
-        `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
-        `(or the assigned clone scope) and emit prose review on stdout.`;
-      const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
-      const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
-      writeFileSync(promptPath, promptBody, "utf8");
-      try {
+        // Resolve familyBase SHA without checkout (prep already did that once).
+        const headSha = this.sh(
+          "git",
+          ["rev-parse", ctx.familyBase],
+          this.opts.workingRepo,
+        ).trim();
+        legClone = this.preparePanelLegClone(spec.model, headSha);
+        // Focus file was written once on workingRepo; copy into the independent clone.
+        // #1094 R3 F4: failed copy is a degraded transport (fail-loud), never a
+        // present leg reviewing invent-your-own scope.
+        const focusSrc = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
+        try {
+          copyFileSync(focusSrc, join(legClone, CMR_FOCUS_FILENAME));
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          return {
+            kind: "failed",
+            reason:
+              `panel leg ${spec.model}: failed to stage ${CMR_FOCUS_FILENAME} ` +
+              `(pinned review scope) — ${detail}`,
+          };
+        }
+        const reviewerSoul = readFileSync(
+          join(this.opts.soulsDir, "reviewer.md"),
+          "utf8",
+        );
+        // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
+        // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
+        const promptTemplate = readFileSync(
+          join(this.opts.promptsDir, spec.promptFile),
+          "utf8",
+        );
+        const passLabel =
+          spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
+            ? "completeness"
+            : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
+              ? "correctness"
+              : spec.promptFile;
+        const taskBody =
+          `${promptTemplate.trim()}\n\n` +
+          `Panel leg slug: ${spec.model}.\n` +
+          `CMR pass: ${passLabel}.\n` +
+          `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
+          `(or the assigned clone scope) and emit prose review on stdout.`;
+        const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
+        const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
+        writeFileSync(promptPath, promptBody, "utf8");
         const result = await this.runAgentSandbox({
           name: `family-cmr-panel-${spec.model}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1835,6 +1843,8 @@ export class RealFamilyBackend implements FamilyBackend {
             : "";
         return panelLegCompletedResult(stdout);
       } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) throw err;
+        if (isQuotaWaitForResetError(err)) throw err;
         const reason = err instanceof Error ? err.message : String(err);
         return { kind: "failed", reason: `panel leg ${spec.model}: ${reason}` };
       }
@@ -1860,16 +1870,23 @@ export class RealFamilyBackend implements FamilyBackend {
     const legRoot = mkdtempSync(
       join(this.opts.ledgerDir, `panel-leg-${safe}-`),
     );
-    this.sh("git", [
-      "clone",
-      "--origin",
-      "origin",
-      "--no-local",
-      "--no-checkout",
-      this.opts.workingRepo,
-      legRoot,
-    ]);
-    this.sh("git", ["checkout", "--detach", headSha], legRoot);
+    try {
+      this.sh("git", [
+        "clone",
+        "--origin",
+        "origin",
+        "--no-local",
+        "--no-checkout",
+        this.opts.workingRepo,
+        legRoot,
+      ]);
+      this.sh("git", ["checkout", "--detach", headSha], legRoot);
+    } catch (err) {
+      // #1094 R4 F-A: mkdtempSync already created legRoot — reclaim on
+      // clone/checkout failure so ledgerDir does not leak half-built clones.
+      rmSync(legRoot, { recursive: true, force: true });
+      throw err;
+    }
     try {
       this.sh("git", ["remote", "remove", "origin"], legRoot);
     } catch {
