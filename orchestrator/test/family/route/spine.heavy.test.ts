@@ -39,6 +39,7 @@ import { resolveActiveModelRoute } from "../../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { StopSummary } from "../../../src/stopSummary.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
@@ -467,6 +468,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       evidencePaths: [],
     };
     familyBackend.dispatchWorker = async (spec: any, _ctx?: any): Promise<any> => {
+      const panelLeg = completeCmrPanelLegWorker(spec);
+      if (panelLeg !== undefined) return panelLeg;
       if (spec.kind === "cmr") {
         return { kind: "completed", output: cmrOutput };
       }

@@ -20,12 +20,18 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import { completeCmrPanelLegWorker } from "./cmr-panel-leg-dispatch.js";
 
 export async function dispatchReviewLoopThroughAdmission(
   familyBackend: FamilyBackend,
   spec: WorkerSpec,
   ctx: DispatchContext,
 ): Promise<WorkerResult> {
+  // #1094: panel legs are first-class reviewer workers — test fakes auto-complete
+  // legal ADR 0141 prose (never fall through to unsupported-kind throws).
+  const panelLeg = completeCmrPanelLegWorker(spec);
+  if (panelLeg !== undefined) return panelLeg;
+
   if (
     spec.kind !== "verify" &&
     spec.kind !== "fixer" &&

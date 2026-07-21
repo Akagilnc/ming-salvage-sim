@@ -2223,6 +2223,9 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
     const { skeletonReviewLoopWorkerResult } = await import(
       "../../src/reviewLoopOutcome.js"
     );
+    const { completeCmrPanelLegWorker } = await import(
+      "../helpers/cmr-panel-leg-dispatch.js"
+    );
     const ledgerDir = tempLedger("progress-1007-fam-cmr-judge-");
     configureProgressBroadcast({ ledgerDir, epic: 909 });
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -2263,6 +2266,8 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
         return head;
       },
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+        const panelLeg = completeCmrPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
             kind: "completed" as const,

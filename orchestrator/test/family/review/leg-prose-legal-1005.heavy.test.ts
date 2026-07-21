@@ -56,6 +56,7 @@ import type {
 } from "../../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -286,7 +287,7 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
   }
 
   protected override mountCmrAuth(): CmrAuth {
-    return { claudeToken: "tok", claudeAuthDir: mkDir("1005-claude-auth-") };
+    return { claudeToken: "tok" };
   }
 
   /**
@@ -350,6 +351,8 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const panelLeg = completeCmrPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // Production consumer: runCmrWorker extracts transports + overlays.
       return super.dispatchWorker(spec, ctx);

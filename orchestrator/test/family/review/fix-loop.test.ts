@@ -36,6 +36,7 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import { judgeContinue, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 
@@ -86,6 +87,8 @@ describe("review-round persistence immunity", () => {
     }
 
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
       if (spec.kind !== "cmr") throw new Error(`unexpected worker kind ${spec.kind}`);
       // terminal-record: live judge green so durable cmr_passed is attempted.
       // helper-record: fail earlier on HEAD/ledger; residual unusable is not needed.
@@ -252,6 +255,8 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -414,6 +419,8 @@ class ReviewFixRereviewBackend implements FamilyBackend {
     this.escalations.push(esc);
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -542,6 +549,8 @@ class CountChannelFixBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -639,6 +648,8 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -765,6 +776,8 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
     this.aborted.push(event);
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -881,6 +894,8 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -1032,6 +1047,8 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -1184,6 +1201,8 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -1331,6 +1350,8 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
     this.escalations.push(esc);
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -1414,6 +1435,8 @@ class ReviewerMutatesHeadBeforeFindingBackend extends ReviewFixRereviewBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     const result = await super.dispatchWorker(spec, ctx);
     if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
       this.currentFamilyHead = this.mutatedHead;
@@ -1429,6 +1452,8 @@ class ReviewerLeavesTrackedDirtyBeforeFindingBackend extends ReviewFixRereviewBa
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     const result = await super.dispatchWorker(spec, ctx);
     if (spec.kind === "cmr" && ctx.cmrPass === "completeness") {
       this.reviewerLeftTrackedChanges = true;
@@ -1454,6 +1479,8 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
     this.dispatches.push({
       kind: spec.kind,
@@ -1499,6 +1526,8 @@ class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
     this.dispatches.push({
       kind: spec.kind,
@@ -1551,6 +1580,8 @@ class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBacke
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
     this.dispatches.push({
       kind: spec.kind,
@@ -1591,6 +1622,8 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
     this.dispatches.push({
       kind: spec.kind,
@@ -1632,6 +1665,8 @@ class AlwaysHeadStuckCoderBackend extends ReviewFixRereviewBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
     this.dispatches.push({
       kind: spec.kind,
@@ -1697,6 +1732,8 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    const autoPanelLeg = completeCmrPanelLegWorker(spec);
+    if (autoPanelLeg !== undefined) return autoPanelLeg;
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,

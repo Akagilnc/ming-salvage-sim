@@ -35,11 +35,14 @@ import type {
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "../../../src/types.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import type { FamilyStageFailureStatus } from "../../../src/family/familyTerminal.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 
 
 class ChildBackend implements Backend {
@@ -298,7 +301,16 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       async runFamilyVerify(): Promise<{ ok: boolean }> {
     return { ok: true };
   }
-      // No dispatchWorker / runIntegratedCmr.
+      // #1094 F3: complete panel legs so missing CMR fails as cmr_failed
+      // (not zero-successful-transport escalate).
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        const panelLeg = completeCmrPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
+        return {
+          kind: "failed",
+          reason: "backend has no integrated CMR / family worker capability",
+        };
+      }
     }
     const backend = new VerifyOnlyBackend();
     const result = await runFamily({

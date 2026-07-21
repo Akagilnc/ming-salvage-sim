@@ -202,6 +202,12 @@ describe("#945 provisionWorkerAuth path-policy boundaries", () => {
     expect(slice.codexAuthDir).toBe(join(home, ".sc-orchestrator", "auth-945"));
     expect(family.agyDir).toMatch(/merger-agy-/);
     expect(slice.agyDir).toMatch(/slice-agy-945-/);
+    const scRoot = join(home, ".sc-orchestrator");
+    const claudeCredentialTemps =
+      existsSync(scRoot)
+        ? readdirSync(scRoot).filter((name) => name.includes("-claude-auth-"))
+        : [];
+    expect(claudeCredentialTemps).toEqual([]);
   });
 
   it("provisionFamilyWorkerAuth remains the family thin wrapper over the shared core", () => {

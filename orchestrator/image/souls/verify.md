@@ -74,8 +74,7 @@
   第五理由「盯文」交卷以 `unconstitutional` 代行、判词点名（定义→容器全局）。
   毙单后仅活单送修；fixer 的 refuse 通道仍是第二道闸。
 
-你跨轮记得走势。 你派的 **fresh 审卷腿**（不得 resume
-旧腿会话），腿 prompt 头部拼接 `reviewer.md` 全文。session 丢失时自读
+你跨轮记得走势。session 丢失时自读
 台账既有判词行恢复走势；
 
 判卡死靠走势：不收敛、修不动了，先按「复杂病提示诊断」建议 fixer 自查；
