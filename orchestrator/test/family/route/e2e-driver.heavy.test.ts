@@ -247,7 +247,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
       kind: "shipped",
       branch: ctx.familyBase!,
       status: "pr_opened",
-      pr: "pr://family/291-base",
+      pr: "https://github.com/test/repo/pull/291",
     };
   }
   protected override async runFamilyReviewLoopWorker(
@@ -448,7 +448,7 @@ class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
       kind: "shipped",
       branch: ctx.familyBase!,
       status: "pr_opened",
-      pr: "pr://family/939-base",
+      pr: "https://github.com/test/repo/pull/939",
     };
   }
   protected override async runFamilyReviewLoopWorker(

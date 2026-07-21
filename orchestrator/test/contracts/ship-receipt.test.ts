@@ -239,7 +239,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
       JSON.stringify({
         status: "already_open",
         branch: "feat/freeform",
-        pr: "https://gh/pr/99",
+        pr: "https://github.com/test/repo/pull/99",
         extra: "kept-out-of-fate",
       }),
       "utf8",
@@ -255,7 +255,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
       kind: "shipped",
       status: "already_open",
       branch: "feat/freeform",
-      pr: "https://gh/pr/99",
+      pr: "https://github.com/test/repo/pull/99",
     });
   });
 
@@ -265,7 +265,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
-      JSON.stringify({ branch: "feat/branch-only", pr: "https://gh/pr/1" }),
+      JSON.stringify({ branch: "feat/branch-only", pr: "https://github.com/test/repo/pull/1" }),
       "utf8",
     );
 
@@ -278,7 +278,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
     ).toEqual({
       kind: "shipped",
       branch: "feat/branch-only",
-      pr: "https://gh/pr/1",
+      pr: "https://github.com/test/repo/pull/1",
     });
   });
 
@@ -323,7 +323,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
       JSON.stringify({
         status: "pr_opened",
         branch: "feat/x",
-        pr: "https://gh/pr/1",
+        pr: "https://github.com/test/repo/pull/1",
       }) + "\n",
       "utf8",
     );
@@ -336,7 +336,7 @@ describe("#820 / #919 shipOutcomeFromResult — T2 envelope + machine sidecar", 
       kind: "shipped",
       status: "pr_opened",
       branch: "feat/x",
-      pr: "https://gh/pr/1",
+      pr: "https://github.com/test/repo/pull/1",
     });
   });
 

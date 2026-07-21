@@ -198,7 +198,7 @@ class FamilyTelemetryBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: ctx.familyBase ?? "family/809-sidecar",
-          pr: "pr://family/809-sidecar",
+          pr: "https://github.com/test/repo/pull/809",
           prHead: FAMILY_HEAD,
           status: "pr_opened",
         },

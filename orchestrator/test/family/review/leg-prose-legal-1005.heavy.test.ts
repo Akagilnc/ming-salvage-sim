@@ -361,7 +361,7 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
           kind: "ship",
           branch: ctx.familyBase ?? "fb",
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase ?? "fb"}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };

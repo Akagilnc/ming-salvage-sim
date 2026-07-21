@@ -133,7 +133,7 @@ class ScriptedCmrBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase ?? "family/875",
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase ?? "family/875"}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
