@@ -34,6 +34,7 @@ import {
   emitShipProgress,
   getProgressBroadcastConfig,
 } from "../progressBroadcast.js";
+import { isCanonicalGithubPrUrl } from "../botPolling.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -838,6 +839,7 @@ function isValidFamilyShipped(
     entry.phase === "final" &&
     typeof entry.pr === "string" &&
     entry.pr.trim().length > 0 &&
+    isCanonicalGithubPrUrl(entry.pr) &&
     typeof entry.familyHeadAfter === "string" &&
     entry.familyHeadAfter.trim().length > 0
   );
@@ -1131,6 +1133,16 @@ export async function recordShipped(
   }
   if (familyHeadAfter.length === 0) {
     throw new Error("family shipped marker must include a non-empty familyHeadAfter");
+  }
+  // #1090 write-side guard: share the canonical URL predicate with every
+  // shipped-PR consumer so permissive parser forms can never poison the ledger.
+  if (!isCanonicalGithubPrUrl(pr)) {
+    throw new Error(
+      `family shipped marker pr must be a canonical https GitHub PR URL containing ` +
+        `/pull/<number> (got "${pr}"); refusing to write a branch name or ` +
+        `non-URL as the shipped ledger pr (#1090 — would poison the online ` +
+        `review poll on idempotent re-ship)`,
+    );
   }
   await backend.appendFamilyLedger(
     compact({

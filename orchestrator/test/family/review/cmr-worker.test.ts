@@ -648,7 +648,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ctx: DispatchContext,
     ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
       this.runShipCalls.push({ spec, ctx });
-      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
+      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://github.com/test/repo/pull/9" };
     }
     protected override async runFamilyCoderFixWorker(
       spec: WorkerSpec,

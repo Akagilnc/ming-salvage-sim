@@ -428,7 +428,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         verifyCmrEntries += 1;
         shipDispatches += 1;
         await recordShipped(familyBackend, {
-          pr: "pr://family/909-base",
+          pr: "https://github.com/test/repo/pull/909",
           familyHeadAfter: "family-base-0",
         });
         // Simulate online-review quota wall after ship checkpoint.
@@ -454,9 +454,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("B4: open-shipped online-review failure preserves stopSummary + escalated", async () => {
-    // Non-test PR handle → offline poll inadmissible → online-review fails with
-    // structured stopSummary. Open-shipped re-entry must surface escalated + that
-    // summary, not collapse to bare finalize verify_failed.
+    // A canonical PR outside explicit offline mode must use live review. With no
+    // live review worker here, re-entry fails with a structured stopSummary.
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -467,6 +466,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyHeadAfter: "family-base-0",
     });
 
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
     const { recordShipped } = await import("../../../src/family/ledger.js");
     const result = await runFamily({
       epic: epicWith(10),
@@ -478,7 +478,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       verifyCmr: async (input) => {
         if (input.phase !== "final") return { ok: true, ran: true };
         await recordShipped(familyBackend, {
-          pr: "https://example.com/not-a-test-pr-handle",
+          pr: "https://github.com/other/repo/pull/909",
           familyHeadAfter: "family-base-0",
         });
         throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
@@ -534,7 +534,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         verifyDispatches += 1;
         if (verifyDispatches === 1) {
           await recordShipped(familyBackend, {
-            pr: "pr://family/c1-s9",
+            pr: "https://github.com/test/repo/pull/109",
             familyHeadAfter: "family-base-0",
           });
           // First final entry ships then online-review wall with S9.

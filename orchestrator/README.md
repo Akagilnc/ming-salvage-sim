@@ -313,12 +313,23 @@ Staffing is resolved before worksite creation:
 config file preset (sole table: config/route-presets.json, selected by
 ORCHESTRATOR_ROUTE; ORCHESTRATOR_ROUTE_PRESETS_PATH may select another table)
   → owner-authored issue Coder-Rec for coder/coderFix
+    (roster ids + registry data rows from config/model-data.json;
+     ORCHESTRATOR_MODEL_DATA_PATH may select another file — read-at-use)
   → startup host bare-ping smoke validates the FINAL lineup (unique models)
 ```
 
-Pure model swaps: edit `config/route-presets.json` (or point
-`ORCHESTRATOR_ROUTE_PRESETS_PATH` at another file). Registry code only changes
-when adding a new model/CLI row.
+Two config files, both env-overridable like each other:
+
+- **Route slots / lineup** — edit `config/route-presets.json` (or point
+  `ORCHESTRATOR_ROUTE_PRESETS_PATH` at another file).
+- **Coder roster + model registry data rows** — edit
+  `config/model-data.json` (or point `ORCHESTRATOR_MODEL_DATA_PATH`).
+  Every load re-reads the file (no process cache); missing or bad shape
+  fail-closes. See `docs/CODER_ROSTER.md` (pointer) and ADR 0146.
+
+Provider factory wiring and the quota pool table stay in code. Code changes
+only when adding a new provider/CLI seam or pool semantics — not when adding
+a roster id or registry data row.
 
 Presets (factory content of `config/route-presets.json`):
 

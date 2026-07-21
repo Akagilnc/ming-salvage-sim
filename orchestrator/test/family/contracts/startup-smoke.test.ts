@@ -157,7 +157,7 @@ describe("family worker smoke route envelope (#685)", () => {
         received = ctx;
         return {
           kind: "completed",
-          output: { kind: "ship", pr: "pr://family", branch: "family/685", status: "opened" },
+          output: { kind: "ship", pr: "https://github.com/test/repo/pull/685", branch: "family/685", status: "opened" },
         };
       },
     };

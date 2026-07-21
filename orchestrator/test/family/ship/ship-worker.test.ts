@@ -85,12 +85,12 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it("a shipped outcome ⇒ WorkerResult.completed with a ShipResult payload", async () => {
     const be = fixtured();
-    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "https://github.com/test/repo/pull/1090" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("completed");
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.branch).toBe(FAMILY_BASE);
-      expect(res.output.pr).toBe("u");
+      expect(res.output.pr).toBe("https://github.com/test/repo/pull/1090");
       expect(res.output.prHead).toBeUndefined();
       expect(res.output.status).toBe("pr_opened");
     } else {
@@ -133,17 +133,17 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it("a shipped outcome whose branch differs from familyBase remains a worker outcome", async () => {
     const be = fixtured();
-    be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
+    be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "https://github.com/test/repo/pull/1090" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res).toMatchObject({
       kind: "completed",
-      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "https://github.com/test/repo/pull/1090" },
     });
   });
 
   it("a shipped pr_opened on the correct family base ⇒ completed (identity holds)", async () => {
     const be = fixtured();
-    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
+    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "https://github.com/test/repo/pull/1090" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("completed");
   });
