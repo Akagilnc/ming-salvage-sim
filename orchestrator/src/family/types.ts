@@ -538,6 +538,19 @@ export interface ReconcilePlan {
 // ─────────────────────────── family backend seam ───────────────────────────
 
 /**
+ * Result of {@link FamilyBackend.prepareFamilyCmrPanelRound}: either the pinned
+ * cut head SHA for panel-leg fan-out, or a structured escalate (missing cut-SHA).
+ */
+export type FamilyCmrPanelRoundPrep =
+  | { readonly headSha: string }
+  | {
+      readonly kind: "escalate";
+      readonly reason: string;
+      readonly diagnosis: string;
+      readonly escalation: Escalation;
+    };
+
+/**
  * THE family seam (parallel to the single-slice {@link Backend}): the family
  * spine reaches the outside world (git merge into the family base, the verify
  * hook) only through this injected interface, so the whole spine is verifiable
@@ -623,23 +636,7 @@ export interface FamilyBackend {
    */
   prepareFamilyCmrPanelRound?(
     ctx: DispatchContext,
-  ):
-    | { readonly headSha: string }
-    | {
-        readonly kind: "escalate";
-        readonly reason: string;
-        readonly diagnosis: string;
-        readonly escalation: Escalation;
-      }
-    | Promise<
-        | { readonly headSha: string }
-        | {
-            readonly kind: "escalate";
-            readonly reason: string;
-            readonly diagnosis: string;
-            readonly escalation: Escalation;
-          }
-      >;
+  ): FamilyCmrPanelRoundPrep | Promise<FamilyCmrPanelRoundPrep>;
   /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.
