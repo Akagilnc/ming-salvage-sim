@@ -1771,9 +1771,6 @@ export class RealFamilyBackend implements FamilyBackend {
       // #1091: claude-family panel legs need token env and/or credentials mount.
       const claudePanelAuthGap = assertClaudePanelLegAuth({
         reviewLegs: frozenReviewLegs,
-        ...(auth.claudeToken !== undefined
-          ? { claudeToken: auth.claudeToken }
-          : {}),
         ...(auth.claudeAuthDir !== undefined
           ? { claudeAuthDir: auth.claudeAuthDir }
           : {}),
