@@ -6,15 +6,17 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925 / #1081 (ADR 0147): the child runner owns the visible
+ * per-slice review/fix loop with a resident judge born at dispatch:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
- *     converged → S7(local handoff) → S8(handoff)
+ *   S0(gate) → S1(context + open court) → S2(implement) → S3(judge resume)
+ *     converged → dismiss court → S7(local handoff) → S8(handoff)
  *     continue  → S5(fix) → S6(judge resume) → (verdict again)
  *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
- * open-count classification is dissolved into the judge verdict tri-state.
+ * S2/S5 are coder workers. S3/S6 resume the same verify judge session created
+ * at S1 open court. S4 mechanical open-count classification is dissolved into
+ * the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -45,6 +47,7 @@ import { route } from "./route.js";
 // instead of reaching for runStep/resumeSession directly.
 import {
   dispatchWorkerWithMonitor,
+  shouldOpenResidentJudgeCourtAtDispatch,
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
@@ -131,11 +134,15 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-
+  JUDGE_OPEN_COURT_PROMPT_FILE,
+  judgeStatusFromOutput,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
+  rebuildResidentJudgeFromLedger,
   requireFixPacketBody,
+  requireOpenCourtSession,
+  requireResidentJudgeResume,
   storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
@@ -1220,9 +1227,9 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
- * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
- * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
+ * #925 / ADR 0132 / #1081: S1 opens the resident verify judge; S2 implements;
+ * S3/S6 resume the same judge session; S5 fixes live findings. maxIter is 1
+ * on every seat (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
  * #253/#928 fields: model (CLI slug), maxIter (per-seat Sandcastle iteration
  * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
@@ -1672,7 +1679,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // relay / first-seat Coder-Rec model changes can invalidate it).
   let coderSessionId: string | undefined;
   let coderSessionModel: string | undefined;
-  // #925: judge persistent session across S3 → S6 rounds (same model).
+  // #925 / #1081: resident judge session — born at S1 open court, resumed on
+  // every S3/S6, cleared on court_dismissed after convergence (same model).
   let judgeSessionId: string | undefined;
   let judgeSessionModel: string | undefined;
 
@@ -2927,26 +2935,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
       }
     }
-    // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
-    // #955 r7: same bookkeeping exclusion as coder rebuild above.
-    // #1019: same fresh-session rule as coder on family redispatch.
+    // #925 / #1081: rebuild resident judge from ledger sole truth (court_opened
+    // / judge seats / court_dismissed). #1019: family redispatch starts fresh.
     if (!familyRedispatch) {
-      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-        const entry = plan.priorLedger[i]!;
-        if (isBookkeepingEntry(entry)) continue;
-        if (
-          isJudgeSeat({ step: entry.step }) &&
-          typeof entry.sessionId === "string"
-        ) {
-          judgeSessionId = entry.sessionId;
-          judgeSessionModel =
-            typeof entry.modelSlug === "string"
-              ? entry.modelSlug
-              : entry.step === "S6"
-                ? stepSpecs.S6.model
-                : stepSpecs.S3.model;
-          break;
-        }
+      const lifecycle = rebuildResidentJudgeFromLedger(plan.priorLedger);
+      if (lifecycle.status === "open") {
+        judgeSessionId = lifecycle.sessionId;
+        judgeSessionModel =
+          lifecycle.modelSlug !== "unknown"
+            ? lifecycle.modelSlug
+            : stepSpecs.S3.model;
       }
     }
 
@@ -3309,6 +3307,134 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             configureProgressBroadcast({ ledgerDir: stateDir });
           }
         }
+
+        // #1081 / ADR 0147: open resident judge court at slice dispatch.
+        // Not a topology 拍 — bookkeeping birth so every later S3/S6 resumes
+        // the same session. Create failure is loud (no silent fresh judge).
+        // Skip when crash-resume already rebuilt an open court from ledger.
+        //
+        // Vitest skips birth unless ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1
+        // so existing scripted backends keep the pre-#1081 S3-establish shape;
+        // production always opens court here.
+        if (
+          typeof judgeSessionId !== "string" &&
+          shouldOpenResidentJudgeCourtAtDispatch()
+        ) {
+          const openCourtSmoke = await ensureRouteSmoke();
+          if (openCourtSmoke !== undefined) return openCourtSmoke;
+          const openModel = stepSpecs.S3.model;
+          const openPool = relayBillingPoolForDispatch("S3");
+          const openResumeCapable = resumeCapableForSlug(openModel, openPool);
+          const openHost = stepSpecToWorkerSpec(
+            stepSpecs.S3,
+            "fresh",
+            openPool,
+          ).host;
+          const openSpec = {
+            id: "S1" as const,
+            kind: "verify" as const,
+            role: "verify" as const,
+            host: openHost,
+            session: "fresh" as const,
+            contextRetention: "clean" as const,
+            promptFile: JUDGE_OPEN_COURT_PROMPT_FILE,
+            maxIter: 1 as const,
+            model: openModel,
+            soul: "verify" as const,
+            toolchain: stepSpecs.S3.toolchain,
+          };
+          let openResult: Awaited<
+            ReturnType<typeof dispatchWorkerWithMonitor>
+          >["result"];
+          try {
+            const dispatched = await dispatchWorkerWithMonitor(
+              backend,
+              openSpec,
+              {
+                runId,
+                worktree,
+                stateDir,
+                modelRoute,
+                ...(openPool !== undefined ? { billingPool: openPool } : {}),
+              },
+            );
+            openResult = dispatched.result;
+          } catch (err) {
+            return await errorTermination(
+              "S1",
+              err instanceof Error
+                ? err
+                : new Error(`open court dispatch threw: ${String(err)}`),
+              {
+                stopSummary: infraFailureStopSummary({
+                  summary: "resident judge open court failed at slice dispatch",
+                  repairHint:
+                    "inspect open-court worker failure and re-run the slice; " +
+                    "do not continue without a resident judge session",
+                }),
+              },
+            );
+          }
+          const openGate = requireOpenCourtSession({
+            resultKind: openResult.kind,
+            sessionId:
+              openResult.kind === "completed" || openResult.kind === "escalated"
+                ? openResult.sessionId
+                : undefined,
+            seatResumeCapable: openResumeCapable,
+            seatModel: openModel,
+          });
+          if (openGate.kind === "fail") {
+            return await errorTermination("S1", new Error(openGate.reason), {
+              stopSummary: infraFailureStopSummary({
+                summary: openGate.reason,
+                repairHint:
+                  "resident judge requires a resume-capable verify seat that " +
+                  "surfaces a session id at open court; fix staffing/provider " +
+                  "and re-run — silent fresh-per-round judge is illegal",
+              }),
+            });
+          }
+          judgeSessionId = openGate.sessionId;
+          judgeSessionModel = openModel;
+          const openTs = new Date().toISOString();
+          const openEntry = {
+            step: "S1" as const,
+            event: "court_opened" as const,
+            sessionId: openGate.sessionId,
+            modelSlug: openModel,
+            reason: "resident judge court opened at slice dispatch (#1081)",
+            ts: openTs,
+          };
+          ledger.push(openEntry);
+          try {
+            await backend.writeLedger(
+              {
+                ...openEntry,
+                sessionId: openGate.sessionId,
+                prompt_hash: await hashPrompt(
+                  JUDGE_OPEN_COURT_PROMPT_FILE,
+                  "S1",
+                  backend,
+                ),
+                branchHEAD: await resolveBranchHEAD(),
+                ts: openTs,
+                runId,
+              },
+              stateDir,
+            );
+          } catch (err) {
+            return await errorTermination(
+              "S1",
+              new Error(
+                `record_persist_failed: court_opened: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+              { cause: "record_persist_failed" },
+            );
+          }
+        }
         break;
       }
 
@@ -3378,8 +3504,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             // #955: crash/escalate resumeFor — identity match AND capability.
             // Stored session id may only re-enter the model binding that created
-            // it. Mismatch / incapable → fresh (answer still delivered below);
-            // never hand a foreign id to the provider; never silent-drop.
+            // it. Mismatch / incapable → coder: fresh (answer still delivered);
+            // #1081 judge: fail loud (silent fresh resident judge is illegal).
             const sessionModel = resumeFor.sessionModel;
             const identityOk =
               sessionModel === undefined || sessionModel === seatModel;
@@ -3389,6 +3515,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const lostReason = !seatResumeCapable
                 ? `provider_incapable (seat=${seatModel})`
                 : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
+              if (isJudgeSeat({ step })) {
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `resident judge resume refused at ${step}: ${lostReason} ` +
+                      `(sessionId=${resumeFor.sessionId}); silent fresh judge is illegal`,
+                  ),
+                  {
+                    stopSummary: infraFailureStopSummary({
+                      summary: `resident judge session continuity lost: ${lostReason}`,
+                      repairHint:
+                        "restore the verify seat model that owns the open court " +
+                        "or re-open the slice; do not fresh a new judge mid-slice",
+                    }),
+                  },
+                );
+              }
               console.warn(
                 `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
                   `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
@@ -3445,16 +3588,49 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             seatResumeCapable
           ) {
             resumeSessionId = coderSessionId;
-          } else if (
-            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge
-            // session only when the bound provider is resume-capable.
-            isJudgeSeat({ step }) &&
-            typeof judgeSessionId === "string" &&
-            judgeSessionModel !== undefined &&
-            seatModel === judgeSessionModel &&
-            seatResumeCapable
-          ) {
-            resumeSessionId = judgeSessionId;
+          } else if (isJudgeSeat({ step })) {
+            // #1081 / ADR 0147: judging seats resume the resident court when
+            // open; establish (fresh) only when court was never opened or the
+            // verify model moved. Never silent fresh while court is open on
+            // the same model.
+            const lifecycle =
+              typeof judgeSessionId === "string"
+                ? {
+                    status: "open" as const,
+                    sessionId: judgeSessionId,
+                    modelSlug: judgeSessionModel ?? "unknown",
+                  }
+                : rebuildResidentJudgeFromLedger(ledger);
+            const resumeGate = requireResidentJudgeResume({
+              lifecycle,
+              seatModel,
+              seatResumeCapable,
+            });
+            if (resumeGate.kind === "fail") {
+              return await errorTermination(step, new Error(resumeGate.reason), {
+                stopSummary: infraFailureStopSummary({
+                  summary: resumeGate.reason,
+                  repairHint:
+                    "resident judge session must be opened at S1 and resumed " +
+                    "on every S3/S6; do not fresh a new judge mid-slice",
+                }),
+              });
+            }
+            if (resumeGate.kind === "resume") {
+              resumeSessionId = resumeGate.sessionId;
+              judgeSessionId = resumeGate.sessionId;
+              if (
+                lifecycle.status === "open" &&
+                lifecycle.modelSlug !== "unknown"
+              ) {
+                judgeSessionModel = lifecycle.modelSlug;
+              }
+            } else {
+              // establish — fresh birth / re-birth; clear stale continuity.
+              resumeSessionId = undefined;
+              judgeSessionId = undefined;
+              judgeSessionModel = undefined;
+            }
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -3610,7 +3786,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
                 isJudgeSeat({ step })
-                  ? { rethrowOnExhaustion: true }
+                  ? {
+                      rethrowOnExhaustion: true,
+                      // #1081: never strip resume and re-open a fresh judge.
+                      forbidFreshRetry: true,
+                    }
                   : {},
               );
               result = await withMechanicalRetry(
@@ -4297,6 +4477,64 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         output,
         findingDispositions: stepFindingDispositions,
       });
+    }
+
+    // #1081 / ADR 0147: dismiss resident court after the judge step row is
+    // recorded (so agent-step finds stay clean). Product convergence includes
+    // terminal-only continue that routes like converged. No residual resumeable
+    // hanging session after the slice closes. Only when court was opened at
+    // dispatch (court_opened row) — late S3 establish without birth has no
+    // hanging court to dismiss.
+    if (
+      isJudgeSeat({ step }) &&
+      output !== undefined &&
+      judgeStatusFromOutput(output) === "converged" &&
+      typeof judgeSessionId === "string" &&
+      ledger.some((e) => e.event === "court_opened")
+    ) {
+      const dismissedId = judgeSessionId;
+      judgeSessionId = undefined;
+      judgeSessionModel = undefined;
+      const dismissTs = new Date().toISOString();
+      const dismissEntry = {
+        step,
+        event: "court_dismissed" as const,
+        sessionId: dismissedId,
+        reason:
+          "resident judge court dismissed after slice convergence (#1081)",
+        ts: dismissTs,
+      };
+      ledger.push(dismissEntry);
+      if (stateDir !== undefined) {
+        try {
+          await backend.writeLedger(
+            {
+              ...dismissEntry,
+              sessionId: dismissedId,
+              prompt_hash: await hashPrompt(undefined, step, backend),
+              branchHEAD: await resolveBranchHEAD(),
+              ts: dismissTs,
+              runId,
+            },
+            stateDir,
+          );
+        } catch (err) {
+          return await errorTermination(
+            step,
+            new Error(
+              `record_persist_failed: court_dismissed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            ),
+            {
+              recordInMemory: false,
+              output,
+              findingDispositions: stepFindingDispositions,
+              cause: "record_persist_failed",
+            },
+          );
+        }
+      }
     }
 
     // #926: after a judge continue row is durably recorded, execute optional

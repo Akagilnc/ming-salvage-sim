@@ -1,11 +1,12 @@
 /**
- * #925 test fixtures — build legal judge StepOutputs / WorkerResults without
- * hand-copying disposition tables in every fake backend.
+ * #925 / #1081 test fixtures — build legal judge StepOutputs / WorkerResults
+ * without hand-copying disposition tables in every fake backend.
  */
 
 import type { IntegratedCmrResult } from "../../src/family/types.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import {
+  isJudgeOpenCourtSpec,
   liveDispositionsForFindings,
   liveDispositionsForOpenCount,
   unusableResidualOpenCountPaper,
@@ -16,7 +17,27 @@ import type {
   JudgeResult,
   ReviewerOutput,
   WorkerResult,
+  WorkerSpec,
 } from "../../src/types.js";
+
+/** Default session id for #1081 open-court birth in scripted backends. */
+export const OPEN_COURT_SESSION = "sess-judge-court-open";
+
+/**
+ * #1081: open-court birth dispatch — return court-ready ack without consuming
+ * S3/S6 judge scripts. Callers check this before scripted judge queues.
+ */
+export function openCourtWorkerResultIfMatch(
+  spec: Pick<WorkerSpec, "promptFile">,
+  sessionId: string = OPEN_COURT_SESSION,
+): WorkerResult | undefined {
+  if (!isJudgeOpenCourtSpec(spec)) return undefined;
+  return {
+    kind: "completed",
+    output: { kind: "judge", status: "converged" },
+    sessionId,
+  };
+}
 
 /** Authored residual body for fixtures that exercise residual open-count transport. */
 export const FIXTURE_RESIDUAL_FIX_PACKET_BODY =

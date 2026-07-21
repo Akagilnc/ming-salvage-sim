@@ -157,14 +157,16 @@ describe("#955 persistent seat resume capability gate", () => {
     expect(resumeCapableForSlug("grok-4.5")).toBe(true);
   });
 
-  it("same slug but resume-incapable provider opens S5/S6 fresh — no resumeSessionId", async () => {
+  it("same slug but resume-incapable provider: coder S5 fresh; judge does not silent-fresh (AC#3)", async () => {
     // #936: seat via Coder-Rec. Spy capability gate — no permanent incapable roster slug.
+    // Coder soft-degrades to fresh. Resident judge with an established session +
+    // incapable provider fails loud (#1081 AC#3 / L2 — no per-round fresh judge).
     const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
     const mod = await import("../../src/modelRegistry.js");
     const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
     try {
       const result = await runOrchestrator({ issueNumber: 95501, backend });
-      expect(result.status).toBe("completed");
+      expect(result.status).toBe("failed");
       const byId = (id: string) => {
         const i = backend.specs.findIndex((s) => s.id === id);
         expect(i).toBeGreaterThanOrEqual(0);
@@ -174,9 +176,10 @@ describe("#955 persistent seat resume capability gate", () => {
       const s5 = byId("S5");
       expect(s5.spec.session).toBe("fresh");
       expect(s5.ctx.resumeSessionId).toBeUndefined();
-      const s6 = byId("S6");
-      expect(s6.spec.session).toBe("fresh");
-      expect(s6.ctx.resumeSessionId).toBeUndefined();
+      // Negative: no silent-fresh S6 resident judge after open same-model court.
+      expect(
+        backend.specs.some((s) => s.id === "S6" && s.session === "fresh"),
+      ).toBe(false);
     } finally {
       spy.mockRestore();
     }
