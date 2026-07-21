@@ -140,4 +140,26 @@ describe("#1063 gh HTTP status enrichment (the root of the false-green)", () => 
     expect(withGithubHttpStatus(errno)).toBe(errno);
     expect(classifyExternalCallFailure(errno)).toBe("transient");
   });
+
+  it("#1088: raw gh EOF/TLS text enriches to transient (retry budget can fire)", () => {
+    const eof = Object.assign(
+      new Error(
+        `Command failed: gh api …\nGet "https://api.github.com/repos/o/r/issues/1/dependencies/blocked_by": EOF\n`,
+      ),
+      {
+        status: 1,
+        stderr:
+          `Get "https://api.github.com/repos/o/r/issues/1/dependencies/blocked_by": EOF\n`,
+      },
+    );
+    expect(classifyExternalCallFailure(eof)).toBe("durable");
+    expect(classifyExternalCallFailure(withGithubHttpStatus(eof))).toBe("transient");
+
+    const tls = Object.assign(
+      new Error("Command failed: gh api …\nnet/http: TLS handshake timeout\n"),
+      { status: 1, stderr: "net/http: TLS handshake timeout\n" },
+    );
+    expect(classifyExternalCallFailure(tls)).toBe("durable");
+    expect(classifyExternalCallFailure(withGithubHttpStatus(tls))).toBe("transient");
+  });
 });

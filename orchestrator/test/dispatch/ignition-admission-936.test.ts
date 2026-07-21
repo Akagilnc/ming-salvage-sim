@@ -544,6 +544,84 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(authAttempts).toBe(1);
     expect(sleeps).toEqual([]);
   });
+
+  /**
+   * #1088 — real gh surface for a wifi/sleep blip: exit 1 + free-text EOF/TLS,
+   * no errno `code`. Without boundary enrichment these classify durable and
+   * kill admission on the first shot (flight18 / flight25).
+   */
+  function rawGhTransportBlip(phrase: string): Error {
+    const line = `Get "https://api.github.com/repos/o/r/issues/1/dependencies/blocked_by": ${phrase}`;
+    return Object.assign(new Error(`Command failed: gh api …\n${line}\n`), {
+      status: 1,
+      stderr: `${line}\n`,
+    });
+  }
+
+  it("#1088: admission read survives one injected gh EOF then succeeds", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    const out = readMetadataWithRetry(
+      () => {
+        attempts += 1;
+        if (attempts === 1) throw rawGhTransportBlip("EOF");
+        return { ok: true, attempts };
+      },
+      (ms) => sleeps.push(ms),
+    );
+    expect(out).toEqual({ ok: true, attempts: 2 });
+    expect(attempts).toBe(2);
+    expect(sleeps).toEqual([DISPATCH_RETRY_BACKOFF_MS[0]]);
+  });
+
+  it("#1088: admission read survives one injected TLS handshake timeout then succeeds", () => {
+    let attempts = 0;
+    const out = readMetadataWithRetry(
+      () => {
+        attempts += 1;
+        if (attempts === 1) throw rawGhTransportBlip("net/http: TLS handshake timeout");
+        return "recovered";
+      },
+      () => {},
+    );
+    expect(out).toBe("recovered");
+    expect(attempts).toBe(2);
+  });
+
+  it("#1088: N consecutive gh EOF failures still fail loud after shared budget", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    expect(() =>
+      readMetadataWithRetry(
+        () => {
+          attempts += 1;
+          throw rawGhTransportBlip("EOF");
+        },
+        (ms) => sleeps.push(ms),
+      ),
+    ).toThrow(/EOF/);
+    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(sleeps).toEqual([...DISPATCH_RETRY_BACKOFF_MS]);
+  });
+
+  it("#1088: genuine 4xx auth/permission stays fail-fast (no retry)", () => {
+    const sleeps: number[] = [];
+    let attempts = 0;
+    expect(() =>
+      readMetadataWithRetry(
+        () => {
+          attempts += 1;
+          throw Object.assign(
+            new Error("gh: Not Found (HTTP 404)\n"),
+            { status: 1, stderr: "gh: Not Found (HTTP 404)\n" },
+          );
+        },
+        (ms) => sleeps.push(ms),
+      ),
+    ).toThrow(/Not Found/);
+    expect(attempts).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
 });
 
 describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
