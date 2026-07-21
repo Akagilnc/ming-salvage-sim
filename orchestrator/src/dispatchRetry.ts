@@ -23,6 +23,7 @@ import type { ChildProcess } from "node:child_process";
 
 import { isEisdirClassHostFsError } from "./fsErrors.js";
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
+import { isStructuredOutputParseFailure } from "./receiptRecovery.js";
 import { capacityRelayErrorFrom } from "./relayDispatch.js";
 import {
   isSandcastleAgentError,
@@ -251,6 +252,11 @@ export async function withMechanicalRetry(
   let last: WorkerResult | undefined;
   let lastError: unknown;
   let lastAttemptThrew = false;
+  // #1092: SO parse failure on a resumed session is deterministic (YAML habit /
+  // missing schema on hot resume). After the first such failure, allow exactly
+  // one fresh attempt then stop — do not burn the remaining process-root budget
+  // on six identical resume retries.
+  let resumeSoParseFailed = false;
   for (
     let attempt = attemptsAlreadyUsed + 1;
     attempt <= MAX_DISPATCH_ATTEMPTS;
@@ -259,6 +265,7 @@ export async function withMechanicalRetry(
     const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
     const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
     const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
+    const attemptHadResume = typeof useCtx.resumeSessionId === "string";
     // #934 ID-004/006 / #937: process-root redispatch preserves the current
     // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
     // Sleep binds to absolute attempt index (not first-in-this-process): a
@@ -298,6 +305,17 @@ export async function withMechanicalRetry(
       };
       await opts?.onAttempt?.(attempt);
       await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
+      if (
+        attemptHadResume &&
+        isStructuredOutputParseFailure(err)
+      ) {
+        resumeSoParseFailed = true;
+        continue;
+      }
+      if (resumeSoParseFailed && !attemptHadResume) {
+        // One fresh attempt after resume SO parse-fail already ran — stop.
+        break;
+      }
       continue;
     }
     const capacityError =
@@ -314,6 +332,9 @@ export async function withMechanicalRetry(
     last = result;
     await opts?.onAttempt?.(attempt);
     await opts?.onFailure?.({ result }, attempt);
+    if (resumeSoParseFailed && !attemptHadResume) {
+      break;
+    }
   }
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.

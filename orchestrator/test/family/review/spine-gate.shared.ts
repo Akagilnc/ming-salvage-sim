@@ -16,7 +16,13 @@ import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 
 import { runFamily } from "../../../src/family/runner.js";
 
-import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import {
+  completedJudge,
+  judgeContinue,
+  judgeToolchain,
+  legacyCmrScriptToWorkerOutput,
+  sampleFinding,
+} from "../../helpers/judge-fixtures.js";
 
 import type {
   Backend,
@@ -118,6 +124,14 @@ class CapableFamilyBackend implements FamilyBackend {
     private readonly script: {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
+      // Partial dispatch override (#1069): script the wave-verify triage judge /
+      // coder-fix seats through the spine. Returning `undefined` falls through to
+      // the default routing below (final cmr / ship / legacy) — so a tracer only
+      // scripts the wave court and lets the final barrier use the green defaults.
+      worker?: (
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ) => WorkerResult | undefined | Promise<WorkerResult | undefined>;
     } = {},
     workingRepo?: string,
   ) {
@@ -159,6 +173,18 @@ class CapableFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (this.script.worker !== undefined) {
+      const scripted = await this.script.worker(spec, ctx);
+      if (scripted !== undefined) return scripted;
+    }
+    // #1027 S2: a red wave verify is triaged by the judge; default this shared
+    // fake to a toolchain terminal (→ the runner's unchanged verify_failed
+    // abort). Tests exercising the fixer path script the judge explicitly.
+    if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+      return completedJudge(
+        judgeToolchain(ctx.waveVerifyFailure, "wave-verify env red"),
+      );
+    }
     if (spec.kind === "cmr") {
       const cmr = await this.runIntegratedCmr({
         familyBase: ctx.familyBase!,
@@ -248,6 +274,10 @@ export {
   recordFamilyEscalated,
   runFamily,
   legacyCmrScriptToWorkerOutput,
+  completedJudge,
+  judgeContinue,
+  judgeToolchain,
+  sampleFinding,
   Backend,
   DispatchContext,
   Finding,

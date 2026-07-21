@@ -180,13 +180,93 @@ export function mergerReceiptOutput(
  * #919 CR T2 — family online-review-loop gate station receipt Output.object.
  * Schema lives in {@link onlineReviewStationReceiptSchema}
  * (T2 / stationReceiptContracts). Shared by verify/fixer/cleanup/landing.
+ *
+ * #1092: when `resumeCapable`, Sandcastle's built-in maxRetries resume prompt
+ * omits the JSON schema (workers remember the tag name and emit YAML). Callers
+ * that resume must feed {@link structuredOutputResumeInstruction} on the
+ * resume/retry turn; {@link withMechanicalRetry} short-circuits after the first
+ * resume-session SO parse failure + one fresh attempt.
  */
 export function onlineReviewReceiptOutput(
   schema: z.ZodType,
   tag: string = "onlineReview",
   resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema, resumeCapable);
+  // #1092: Sandcastle's built-in SO maxRetries resume prompt omits the JSON
+  // schema (YAML habit on hot resume). Keep the typed tag+schema attach, but
+  // force maxRetries 0 so {@link runSandcastleWithOnlineReviewSoGuard} owns
+  // exactly one schema-rich resume before the process-root fresh short-circuit.
+  void resumeCapable;
+  return workerReceiptOutput(tag, schema, false);
+}
+
+/**
+ * #1092 — onlineReview station-receipt schema text restated on resume/retry.
+ * Same strength as the fresh `prompts/*.md` envelope tables.
+ */
+export const ONLINE_REVIEW_RECEIPT_SCHEMA_TEXT = [
+  'station: literal "onlineReview"',
+  'status: "completed" | "escalate"',
+  "cargoPointer: optional non-empty path/URI",
+  'when status is "escalate": reason and diagnosis are required non-empty strings',
+].join("\n");
+
+/** #1092 — one minimal valid completed envelope (JSON, not YAML). */
+export const ONLINE_REVIEW_RECEIPT_EXAMPLE_JSON =
+  '{"station":"onlineReview","status":"completed"}';
+
+/**
+ * #1092 — resume/retry SO instruction that restates the full JSON schema plus
+ * one minimal valid JSON example. Sandcastle's built-in retry feedback only
+ * says "Emit only a corrected &lt;tag&gt; block" — that is what produced the
+ * YAML-prose receipt habit on hot resume.
+ */
+export function structuredOutputResumeInstruction(input: {
+  readonly tag: string;
+  readonly schemaText: string;
+  readonly exampleJson: string;
+  readonly errorMessage?: string;
+  readonly rawMatched?: string;
+  readonly retriesRemaining?: number;
+}): string {
+  const problem =
+    input.errorMessage ??
+    `Structured output tag <${input.tag}> contains invalid JSON`;
+  const previous =
+    input.rawMatched === undefined
+      ? "(no matching tag was emitted)"
+      : input.rawMatched;
+  const retries =
+    input.retriesRemaining === undefined
+      ? ""
+      : `\nRetries remaining after this attempt: ${input.retriesRemaining}.\n`;
+  return `Your previous response did not produce valid structured output.
+${retries}
+Problem:
+${problem}
+
+Previous matched output:
+${previous}
+
+Required JSON schema for <${input.tag}> (emit JSON only — never YAML or prose):
+${input.schemaText}
+
+Minimal valid JSON example (copy this shape; do not wrap in markdown fences):
+<${input.tag}>${input.exampleJson}</${input.tag}>
+
+Emit only a corrected <${input.tag}> JSON block. Do not change files or run commands.`;
+}
+
+/** True when an error is a structured-output JSON/schema parse failure (#1092). */
+export function isStructuredOutputParseFailure(error: unknown): boolean {
+  const soe = nestedStructuredOutputError(error);
+  if (soe === undefined) return false;
+  const msg = soe.message;
+  return (
+    /contains invalid JSON/i.test(msg) ||
+    /failed schema validation/i.test(msg) ||
+    /not found in agent output/i.test(msg)
+  );
 }
 
 /**
@@ -374,4 +454,91 @@ export function logAndRethrowReceiptFailure(error: unknown, worker: string): nev
     );
   }
   throw error;
+}
+
+function isOnlineReviewOutputDefinition(
+  output: sc.OutputDefinition | undefined,
+): output is sc.OutputDefinition & { readonly tag: string } {
+  if (output === undefined || typeof output !== "object") return false;
+  // #1091 finding 3: later logic dereferences `._tag` and `.schema`; verify
+  // both at the guard so non-conforming outputs take the safe (throw) path
+  // rather than reaching schema access with an unexpected shape.
+  const o = output as { tag?: unknown; _tag?: unknown; schema?: unknown };
+  return (
+    o.tag === "onlineReview" &&
+    o._tag === "object" &&
+    o.schema !== undefined &&
+    typeof o.schema === "object"
+  );
+}
+
+/**
+ * #1092 — wrap `sc.run` for onlineReview seats:
+ * 1. Orchestrator-level resume turns get a schema-rich SO instruction (same
+ *    strength as fresh promptFile tables) before the agent speaks.
+ * 2. On the first SO parse failure with a resumable sessionId, resume once with
+ *    {@link structuredOutputResumeInstruction}. Further failures propagate for
+ *    {@link withMechanicalRetry}'s one-fresh short-circuit.
+ */
+export async function runSandcastleWithOnlineReviewSoGuard(
+  run: (options: Parameters<typeof sc.run>[0]) => Promise<Awaited<ReturnType<typeof sc.run>>>,
+  options: Parameters<typeof sc.run>[0],
+): Promise<Awaited<ReturnType<typeof sc.run>>> {
+  const prepared = enrichOnlineReviewResumeTurn(options);
+  try {
+    return await run(prepared);
+  } catch (err) {
+    if (!isOnlineReviewOutputDefinition(prepared.output)) throw err;
+    if (!isStructuredOutputParseFailure(err)) throw err;
+    const soe = nestedStructuredOutputError(err);
+    if (soe?.sessionId === undefined) throw err;
+    const tag =
+      typeof prepared.output.tag === "string" ? prepared.output.tag : "onlineReview";
+    const schema =
+      prepared.output._tag === "object" ? prepared.output.schema : undefined;
+    if (schema === undefined) throw err;
+    const resumePrompt = structuredOutputResumeInstruction({
+      tag,
+      schemaText: ONLINE_REVIEW_RECEIPT_SCHEMA_TEXT,
+      exampleJson: ONLINE_REVIEW_RECEIPT_EXAMPLE_JSON,
+      errorMessage: soe.message,
+      ...(soe.rawMatched !== undefined ? { rawMatched: soe.rawMatched } : {}),
+      retriesRemaining: 0,
+    });
+    return await run({
+      ...prepared,
+      prompt: resumePrompt,
+      promptFile: undefined,
+      promptArgs: undefined,
+      resumeSession: soe.sessionId,
+      output: onlineReviewReceiptOutput(schema as z.ZodType, tag, false),
+    });
+  }
+}
+
+/** When the caller already resumes an onlineReview seat, restate SO schema. */
+function enrichOnlineReviewResumeTurn(
+  options: Parameters<typeof sc.run>[0],
+): Parameters<typeof sc.run>[0] {
+  if (typeof options.resumeSession !== "string") return options;
+  if (!isOnlineReviewOutputDefinition(options.output)) return options;
+  const tag =
+    typeof options.output.tag === "string" ? options.output.tag : "onlineReview";
+  const schemaInstruction = structuredOutputResumeInstruction({
+    tag,
+    schemaText: ONLINE_REVIEW_RECEIPT_SCHEMA_TEXT,
+    exampleJson: ONLINE_REVIEW_RECEIPT_EXAMPLE_JSON,
+    errorMessage:
+      "Resume turn: emit the station receipt as JSON matching the schema below (not YAML or prose).",
+  });
+  // Prefer an inline schema-rich prompt on resume. Session memory already holds
+  // the station work; the missing piece on hot resume is the JSON body genre.
+  return {
+    ...options,
+    prompt:
+      `${schemaInstruction}\n\n` +
+      "Continue the in-progress station work from this session, then emit the receipt.",
+    promptFile: undefined,
+    promptArgs: undefined,
+  };
 }

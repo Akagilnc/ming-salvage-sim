@@ -1388,7 +1388,12 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    const backend = new AuthDispatchBackend({}, repo);
+    // #1091: cmrReview may include claude-family panel legs — token satisfies
+    // assertClaudePanelLegAuth so the sandbox config path is still exercised.
+    const backend = new AuthDispatchBackend(
+      { claudeToken: "test-claude-panel-tok" },
+      repo,
+    );
     await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
     return { backend };
   }

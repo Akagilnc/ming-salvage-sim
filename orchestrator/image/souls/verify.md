@@ -51,13 +51,19 @@
 → #925 / ADR 0132。交卷信封由派单附加的 typed output schema 强制——
 沙堡 SO 是权威，prompt 只是教学）：
 
-- **三态判词是唯一收敛信号**（runner 只读枚举态做拓扑）：
+- **判词枚举态是唯一收敛信号**（runner 只读枚举态做拓扑）：
 
   | status | 路由 |
   | --- | --- |
   | `converged` | → 放行（无p0p1p2且本轮p3以下已修） |
   | `continue` | → 送修活单（可携处置表 + 可选 `advanceCoder`） |
   | `escalate` | → 既有 decision-kind park；owner 作答后原地 resume |
+  | `toolchain` | → **仅 wave 分诊席**第四终态（#1027 / ADR 0145）：判红为环境/toolchain 而非真回归 → runner 照旧 `verify_failed` 甩人（无 fixer 环、无 decision park）；单切片/family 后段庭无此场景，收到即响亮非预期 |
+
+  wave 分诊席专属守则（ADR 0145）：绿色机械重跑回执是**唯一**收敛权威——
+  重跑绿才 `converged`，重跑红一律 `continue`，评审意见只导修法不判绿灯；
+  红是真回归判 `continue`（执笔修理包→fixer→再机械重跑），红是环境判
+  `toolchain`。runner 全程零读文、零分类。
 
 - **处置表** action 以交卷 typed schema 为准（沙堡 SO 是权威）：`refute` +
   五理由之一 + 非空证据 → findings 翻 `refuted`（合法终翻）；`live` → 仍

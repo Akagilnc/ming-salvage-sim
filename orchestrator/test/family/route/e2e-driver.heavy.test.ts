@@ -418,6 +418,20 @@ class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
     _spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<CmrWorkerOutcome> {
+    // #1027 S2: a red wave verify is triaged by the judge. The #939 driver cases
+    // feed a real OPERATIONAL red (malformed package.json / invalid scripts), so
+    // the triage judge classifies it as a toolchain terminal (→ the runner's
+    // unchanged verify_failed abort — no coder-fix spin). Without this, an
+    // always-converged stub would make the wave court re-verify the same
+    // operational red forever. Mirrors spine-gate.shared.ts / abort-wiring.
+    if (ctx.waveVerifyFailure !== undefined) {
+      return {
+        kind: "judge",
+        status: "toolchain",
+        reason: ctx.waveVerifyFailure,
+        diagnosis: "wave-verify env/operational red (e2e default)",
+      };
+    }
     return {
       kind: "judge",
       status: "converged",
@@ -466,6 +480,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     writeFileSync(join(verifyCwd, "package.json"), "{not-valid-json");
     const familyBase = "family/939-err-base";
     const sh = makeSh();
+    let backend: ProductionVerifyE2EFamilyBackend | undefined;
 
     const result = await runFamilyDriver({
       epicIssue: 939,
@@ -482,8 +497,8 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
       sh,
       verifyCwd,
       singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
-      familyBackendFactory: (clone, startHead) =>
-        new ProductionVerifyE2EFamilyBackend({
+      familyBackendFactory: (clone, startHead) => {
+        backend = new ProductionVerifyE2EFamilyBackend({
           workingRepo: clone,
           familyBase,
           ledgerDir,
@@ -494,7 +509,9 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
           imageName: "img",
           familyBaseStartHead: startHead,
           verifyCwd,
-        }),
+        });
+        return backend;
+      },
     });
 
     expect(result.status).toBe("failed");
@@ -502,6 +519,12 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /parse package\.json|failed to parse/i,
     );
+    // #1069: the operational red terminates as a typed toolchain verdict — it
+    // never opened a wave-verify fixer round (no wave-verify-fix on the durable
+    // ledger). This is the zero-spin pin, not the operation-identity assertion
+    // above (which stays: the #939 fail-closed identity is untouched).
+    const errSteps = (await backend!.readFamilyLedger()).map((e) => e.workerStep);
+    expect(errSteps).not.toContain("wave-verify-fix");
   }, E2E_DRIVER_TEST_TIMEOUT_MS);
 
   it("invalid scripts shape at verifyCwd → status verify_failed (not legal empty skip)", async () => {
@@ -514,6 +537,7 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
       JSON.stringify({ name: "bad-scripts", version: "0.0.0", scripts: 42 }),
     );
     const familyBase = "family/939-shape-base";
+    let backend: ProductionVerifyE2EFamilyBackend | undefined;
     const result = await runFamilyDriver({
       epicIssue: 939,
       sourceRepo: source,
@@ -529,8 +553,8 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
       sh: makeSh(),
       verifyCwd,
       singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
-      familyBackendFactory: (clone, startHead) =>
-        new ProductionVerifyE2EFamilyBackend({
+      familyBackendFactory: (clone, startHead) => {
+        backend = new ProductionVerifyE2EFamilyBackend({
           workingRepo: clone,
           familyBase,
           ledgerDir,
@@ -541,12 +565,18 @@ describe("#939 family verify operational error vs legal empty (public driver)", 
           imageName: "img",
           familyBaseStartHead: startHead,
           verifyCwd,
-        }),
+        });
+        return backend;
+      },
     });
     expect(result.status).toBe("failed");
     expect(result.stopSummary?.summary ?? result.stopSummary?.reason ?? "").toMatch(
       /scripts.*must be an object/i,
     );
+    // #1069: same zero-spin pin — the invalid-scripts operational red terminated
+    // as a typed toolchain verdict, never opening a wave-verify fixer round.
+    const shapeSteps = (await backend!.readFamilyLedger()).map((e) => e.workerStep);
+    expect(shapeSteps).not.toContain("wave-verify-fix");
   }, E2E_DRIVER_TEST_TIMEOUT_MS);
 
   it("successful empty verifiable scripts → legal skip; driver can complete", async () => {

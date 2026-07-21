@@ -580,6 +580,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
       new Set([
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
+        "wave_verify_judge.md",
         "coder_fix.md",
         "family_ship.md",
         "merger_resolve_conflict.md",
@@ -587,6 +588,18 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "fixer.md",
         "landing.md",
       ]),
+    );
+  });
+
+  it("construction throws when the family prompt inventory is incomplete", () => {
+    // #1068 regression net: a promptsDir holding every inventory entry EXCEPT
+    // wave_verify_judge.md must fail closed at construction, not fail open and
+    // surface only at the first red-wave triage dispatch.
+    const dir = promptsDirWith(
+      REFERENCED_FAMILY_PROMPT_FILES.filter((f) => f !== "wave_verify_judge.md"),
+    );
+    expect(() => new RealFamilyBackend(opts("/clone/root", { promptsDir: dir }))).toThrow(
+      /wave_verify_judge\.md/,
     );
   });
 
