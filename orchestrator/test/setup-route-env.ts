@@ -17,18 +17,30 @@ vi.mock("../src/externalCall.js", async (importOriginal) => {
       args: readonly string[],
       opts?: { readonly stage?: string },
     ) {
+      if (file === "gh" && opts?.stage === "dispatch:gh") {
+        const endpoint = args[1] ?? "";
+        if (/^repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(endpoint)) {
+          return '{"head":{"sha":"fixture-pr-head"},"html_url":"https://github.com/test/repo/pull/1"}';
+        }
+        if (args[0] === "api" && args[1] === "graphql") {
+          return '{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"endCursor":null,"hasNextPage":false},"nodes":[]}}}}}';
+        }
+        if (endpoint.includes("/check-runs?")) {
+          return '{"check_runs":[{"id":1,"name":"fixture-ci","head_sha":"fixture-pr-head","status":"completed","conclusion":"success"}]}';
+        }
+        if (endpoint.includes("/reactions?")) {
+          const reaction = (login: string) => ({ user: { login }, content: "+1", created_at: "2099-01-01T00:00:00.000Z" });
+          return JSON.stringify(["coderabbitai[bot]", "sourcery-ai[bot]", "chatgpt-codex-connector[bot]", "gemini-code-assist[bot]"].map(reaction));
+        }
+        if (endpoint.includes("?per_page=")) return "[]";
+        return "{}";
+      }
       if (
         file === "gh" &&
         args[0] === "pr" &&
         args[1] === "list" &&
         opts?.stage === "resolve:shipPr"
       ) {
-        // Opt-in for suites whose src fixtures still emit non-URL ship.pr
-        // (e.g. dogfoodReplay) — resolve to a fixture PR instead of live gh.
-        const fixture = process.env.ORCHESTRATOR_TEST_RESOLVE_SHIP_PR?.trim();
-        if (fixture && /^https?:\/\/\S*\/pull\/\d+/.test(fixture)) {
-          return JSON.stringify([{ url: fixture }]);
-        }
         return "[]";
       }
       return actual.shWithClock(file, args, opts);
@@ -55,7 +67,7 @@ const ROUTE_ENV_KEYS = [
 ] as const;
 
 process.env.ORCHESTRATOR_ROUTE = "normal";
-process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+process.env.ORCHESTRATOR_REPO = "test/repo";
 for (const key of ROUTE_ENV_KEYS) {
   delete process.env[key];
 }
@@ -63,7 +75,7 @@ for (const key of ROUTE_ENV_KEYS) {
 beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-  vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+  vi.stubEnv("ORCHESTRATOR_REPO", "test/repo");
   for (const key of ROUTE_ENV_KEYS) {
     delete process.env[key];
   }

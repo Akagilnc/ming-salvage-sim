@@ -6,6 +6,7 @@ import {
 } from "../../../src/family/ledger.js";
 
 import { runFamily } from "../../../src/family/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 
@@ -212,7 +213,8 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return skeletonReviewLoopWorkerResult(spec.kind) ??
+      legacyDispatchFamilyWorker(this, spec, ctx);
   }
   reconcileGit() {
     return {

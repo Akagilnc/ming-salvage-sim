@@ -15,6 +15,7 @@ import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWo
 import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 
 import { runFamily } from "../../../src/family/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 import {
   completedJudge,
@@ -212,7 +213,8 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return skeletonReviewLoopWorkerResult(spec.kind) ??
+      legacyDispatchFamilyWorker(this, spec, ctx);
   }
   resolveFamilyWorkingRepo(): string | undefined {
     return this.workingRepo;

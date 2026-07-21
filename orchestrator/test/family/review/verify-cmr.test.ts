@@ -197,7 +197,8 @@ class CapableFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return skeletonReviewLoopWorkerResult(spec.kind) ??
+      legacyDispatchFamilyWorker(this, spec, ctx);
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──

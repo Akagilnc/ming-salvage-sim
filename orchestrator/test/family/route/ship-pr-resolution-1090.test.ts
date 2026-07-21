@@ -152,6 +152,8 @@ describe("#1090 resolveFamilyShipPr", () => {
         "url",
         "--limit",
         "1",
+        "--repo",
+        "Akagilnc/ming-salvage-sim",
       ],
       { stage: "resolve:shipPr" },
     );
@@ -173,6 +175,20 @@ describe("#1090 resolveFamilyShipPr", () => {
         { stage: "resolve:shipPr" },
       );
     }
+  });
+
+  it("accepts a canonical ship.pr with trailing whitespace without calling gh", async () => {
+    const { resolveShippedPrUrl } = await import(
+      "../../../src/family/verifyCmr.js"
+    );
+
+    expect(
+      resolveShippedPrUrl(
+        "https://github.com/owner/repo/pull/42\n",
+        "family/1090-base",
+      ),
+    ).toBe("https://github.com/owner/repo/pull/42\n");
+    expect(shWithClock).not.toHaveBeenCalled();
   });
 
   it("appends --repo when ORCHESTRATOR_REPO is set", async () => {

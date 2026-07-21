@@ -26,6 +26,7 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
 import {
@@ -173,7 +174,8 @@ class AbortingFamilyBackend implements FamilyBackend {
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return skeletonReviewLoopWorkerResult(spec.kind) ??
+      legacyDispatchFamilyWorker(this, spec, ctx);
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

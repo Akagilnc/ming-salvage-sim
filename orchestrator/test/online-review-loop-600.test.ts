@@ -2116,16 +2116,15 @@ describe("#600 r4 central evidence admissibility gate", () => {
   it("pin offline gate: default-deny synthetic snapshots outside admissible handles", () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     try {
-      process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
       expect(
         offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
-      ).toBe(true);
+      ).toBe(false);
       expect(() =>
         assertOfflineSyntheticPollAdmissible(
           "https://github.com/o/r/pull/1",
           "o/r",
         ),
-      ).not.toThrow();
+      ).toThrow(/refused for live GitHub PR/);
       expect(() =>
         offlinePrReviewSnapshot({
           repo: "o/r",
@@ -2133,12 +2132,9 @@ describe("#600 r4 central evidence admissibility gate", () => {
           headOid: "abc",
           pollCount: 1,
         }),
-      ).not.toThrow();
+      ).toThrow(/refused for live GitHub PR/);
 
       delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
-      expect(
-        offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
-      ).toBe(false);
       expect(() =>
         assertOfflineSyntheticPollAdmissible(
           "https://github.com/o/r/pull/1",
@@ -3397,7 +3393,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   const offlineShip = {
     kind: "ship" as const,
     branch: "family/r7",
-    pr: "https://github.com/test/repo/pull/607",
+    pr: "pr://family/r7",
     prHead: "head-r7",
     status: "pr_opened" as const,
   };
