@@ -236,6 +236,73 @@ def test_no_generator_keeps_deterministic_fallback(game):
     assert close_body == "退朝，今夜召对到此。"
 
 
+def test_production_generator_varies_enter_body_by_identity(game):
+    """#503 生产生成器：不同身份者入殿正文非空且不同（AC1，不做文案质量断言）。"""
+    db, state, content = game
+    a = _active_minister(db, content)
+    b = _active_minister(db, content, exclude={a})
+    _nid, _cid = an.attach_chat_turn_to_night(
+        db, state, a, agno_session_id="sa", agno_runs_before=0,
+        time_of_day="戌时", location="乾清宫", summon_method=an.METHOD_XUANRU,
+        beat_generator=bo.production_beat_generator,
+    )
+    night = an.get_open_night(db)
+    an.attach_chat_turn_to_night(
+        db, state, b, agno_session_id="sb", agno_runs_before=0,
+        summon_method=an.METHOD_YUECI, beat_generator=bo.production_beat_generator,
+    )
+    body_a = _enter_body(db, night["id"], a)
+    body_b = _enter_body(db, night["id"], b)
+    assert body_a and body_b
+    assert body_a != body_b
+    assert a in body_a and b in body_b
+    assert an.METHOD_XUANRU in body_a and an.METHOD_YUECI in body_b
+    # 时地取自夜容器（cmr R7）
+    assert "戌时" in body_a and "乾清宫" in body_a
+    # 开夜账亦经生产生成器（非 #498 一行兜底独占）
+    open_body = _ledger_body(db, night["id"], an.TAG_OPEN_NIGHT)
+    assert open_body and "乾清宫" in open_body and "戌时" in open_body
+
+
+@pytest.fixture
+def web_game(tmp_path, monkeypatch):
+    """真实 WebGame（离线 LLM）——验证生产 _start_chat_turn 接线。"""
+    import ming_sim.session as session_mod
+    import web_app
+
+    monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
+    game = web_app.WebGame(fresh=False)
+    yield game
+    try:
+        game.session.close()
+    except Exception:
+        pass
+
+
+def test_web_start_chat_turn_wires_production_beat_generator(web_game):
+    """生产 WebGame._start_chat_turn 接通 beat 编排缝：入殿账非 #498 一行空壳。"""
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    ctid, _snap = game._start_chat_turn(minister)
+    assert ctid
+    row = game.db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
+    ).fetchone()
+    night_id = int(row["night_id"])
+    enter = _enter_body(game.db, night_id, minister)
+    open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
+    assert enter and minister in enter
+    # 生产生成器带「初入殿」标记；#498 兜底是「{method}{name}入殿。」无此字样。
+    assert "初入殿" in enter
+    assert open_body and "召对夜启" in open_body
+
+
 # ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────
 
 

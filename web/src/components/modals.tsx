@@ -513,9 +513,13 @@ export function ChatModal({
   busy,
   error,
   secretOrders,
+  replyRetry,
+  extractionPendingCount,
   onInput,
   onSend,
   onRetryFailure,
+  onRetryReply,
+  onRetryExtraction,
   onUndo,
   onHint,
   onFavorite,
@@ -537,9 +541,15 @@ export function ChatModal({
   busy: string;
   error: string;
   secretOrders: SecretOrder[];
+  /** #505：系统层回话重试（崩溃后问话保留）。 */
+  replyRetry?: { chat_turn_id: number; question: string } | null;
+  /** #501：本夜待补叙事抽取条数。 */
+  extractionPendingCount?: number;
   onInput: (value: string) => void;
   onSend: (text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
+  onRetryReply?: () => void;
+  onRetryExtraction?: () => void;
   onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
@@ -589,7 +599,7 @@ export function ChatModal({
     if (node) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error]);
+  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
 
   const handleSend = () => {
     onSend(input);
@@ -673,6 +683,24 @@ export function ChatModal({
             </div>
           )}
           {chatNotice && <div className="chat-system-note">{chatNotice}</div>}
+          {/* #505：系统层恢复——崩溃后问话保留，给重试（非给皇帝的内容选项按钮）。 */}
+          {replyRetry && onRetryReply && (
+            <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
+              <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
+              <button type="button" onClick={onRetryReply} disabled={!!busy}>
+                重新生成回话
+              </button>
+            </div>
+          )}
+          {/* #501：待补叙事抽取——显眼提示 + 原地重试（不锁档）。 */}
+          {!!extractionPendingCount && extractionPendingCount > 0 && onRetryExtraction && (
+            <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="extraction-pending">
+              <span>本夜有 {extractionPendingCount} 段召对账待补写，可原地重试。</span>
+              <button type="button" onClick={onRetryExtraction} disabled={!!busy}>
+                重试补写
+              </button>
+            </div>
+          )}
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
               <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>

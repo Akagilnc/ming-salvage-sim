@@ -211,6 +211,63 @@ def _run_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) 
     return str(beat_generator(inputs) or "").strip()
 
 
+def _identity_snippet(characterization: str) -> str:
+    """从 ADR 0033 特征化串取身份短句（生产日记用；不锁文案质量）。"""
+    raw = str(characterization or "").strip()
+    if not raw:
+        return ""
+    # minister_dossier 形如「身份：…；脾性：…」——只取身份段作入殿气象种子。
+    if raw.startswith("身份："):
+        raw = raw[3:]
+    return raw.split("；", 1)[0].strip()
+
+
+def production_beat_generator(inputs: BeatInputs) -> str:
+    """#503 生产默认生成器：把编排层路由后的 BeatInputs 落成日记式账正文。
+
+    内容质量/声音形态仍归 #472/#478（日后可换 LLM 实现同一 seam）；本生成器保证
+    Web/CLI/收夜生产路径**接通**编排缝，使入殿账随身份/召法/时地输入不同而不同
+    （AC1，不做文案质量断言），不再永久塌成 #498 一行兜底。
+
+    只读 BeatInputs（零形式约束、无裸数值），失败/空输入返回 "" 让 #498 兜底接手。
+    """
+    tod = str(inputs.time_of_day or "").strip()
+    loc = str(inputs.location or "").strip()
+    place_time = "·".join(p for p in (loc, tod) if p)
+    tension = str(inputs.court_tension or "").strip()
+
+    if inputs.beat_kind == BEAT_OPEN:
+        head = f"{place_time}，召对夜启。" if place_time else "召对夜启。"
+        if tension:
+            return f"{head}{tension}"
+        return head
+
+    if inputs.beat_kind == BEAT_ENTER:
+        method = str(inputs.summon_method or METHOD_XUANRU).strip() or METHOD_XUANRU
+        name = str(inputs.person_name or "").strip()
+        if not name:
+            return ""
+        identity = _identity_snippet(inputs.characterization)
+        # 二次入殿与首次不同（US5 输入面已含 prior；生产正文用「再入/初入」区分）。
+        visit = "再入" if inputs.prior_appearances else "初入"
+        head = f"{place_time}，" if place_time else ""
+        who = f"{method}{name}"
+        if identity:
+            who = f"{who}（{identity}）"
+        body = f"{head}{who}{visit}殿。"
+        if tension:
+            body = f"{body}{tension}"
+        return body
+
+    if inputs.beat_kind == BEAT_CLOSE:
+        head = f"{place_time}，退朝，今夜召对到此。" if place_time else "退朝，今夜召对到此。"
+        if tension:
+            return f"{head}{tension}"
+        return head
+
+    return ""
+
+
 def generate_open_beat_body(
     db: Any,
     state: Any,

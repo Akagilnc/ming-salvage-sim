@@ -1409,12 +1409,16 @@ class WebGame:
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import attach_chat_turn_to_night
+            from ming_sim.beat_orchestration import production_beat_generator
+            # #503：生产路径接通 beat 编排缝（入殿/开夜正文随身份·召法·时地不同）；
+            # 内容质量日后由 #472/#478 换 LLM 实现同一 seam。
             _night_id, chat_turn_id = attach_chat_turn_to_night(
                 self.db,
                 self.state,
                 minister_name,
                 agno_session_id=agno_session_id,
                 agno_runs_before=runs_before,
+                beat_generator=production_beat_generator,
             )
         else:
             chat_turn_id = self.db.create_chat_turn(

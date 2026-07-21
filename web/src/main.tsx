@@ -18,7 +18,7 @@ import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDeci
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatUndoResponse, ClosedIssue, Directive, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -57,6 +57,8 @@ export function App() {
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
   const [chatNotice, setChatNotice] = React.useState("");
   const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
+  const [replyRetry, setReplyRetry] = React.useState<ReplyRetry | null>(null);
+  const [extractionPendingCount, setExtractionPendingCount] = React.useState(0);
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -139,6 +141,8 @@ export function App() {
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
+    // #505：崩溃遗留的中断轮 → 系统层重试入口。
+    setReplyRetry(data.reply_retry ?? null);
     if (options?.mergeFailures) {
       const responseFailures = data.pending_action_failures || [];
       setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
@@ -146,6 +150,26 @@ export function App() {
       setChatFailures(data.pending_action_failures || []);
     }
   }, [state, loadHistoryProjection]);
+
+  const refreshExtractionPending = React.useCallback(async () => {
+    // #501：本开夜待补叙事抽取——显眼提示取数；失败静默（不挡召对）。
+    try {
+      const data = await api<ExtractionPendingStatus>("/api/audience/extraction/pending");
+      setExtractionPendingCount(Number(data?.count || 0));
+    } catch {
+      /* 取数失败不锁面板 */
+    }
+  }, []);
+
+  // 召对面板打开时拉一次待补状态，并在打开期间低频刷新（补跑/回话完成后可自愈）。
+  React.useEffect(() => {
+    if (activeModal !== "chat") return;
+    void refreshExtractionPending();
+    const id = window.setInterval(() => {
+      void refreshExtractionPending();
+    }, 8000);
+    return () => window.clearInterval(id);
+  }, [activeModal, refreshExtractionPending, selectedMinister]);
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -446,6 +470,8 @@ export function App() {
     setError("");
     setComposerHint("");
     setChatNotice("");
+    // 新一轮发出即清中断重试条（本轮 supersedes 崩溃遗留的系统重试入口）。
+    setReplyRetry(null);
     if (fromComposer) {
       setInput("");
     }
@@ -476,10 +502,13 @@ export function App() {
           setSuggestions([]);
           setCanUndoLastChat(false);
           setChatFailures([]);
+          setReplyRetry(null);
           setSelectedMinister(data.next_minister);
           setActiveModal("chat");
           setChatNotice(`已传${data.next_minister}入殿。`);
         }
+        // 正常回话完成后刷新待补抽取状态（可能有新的失败待补）。
+        void refreshExtractionPending();
         if (data.court_action === "dismiss") {
           clearPendingText();
           setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
@@ -531,6 +560,50 @@ export function App() {
         setCanUndoLastChat(!!data.can_undo_last_chat);
         setChatFailures(data.pending_action_failures || []);
         setChatNotice("已撤回最近一轮召对。");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const retryInterruptedReply = async () => {
+    // #505：系统层重试——复用已持久问话，不造重复句。
+    if (busy || !activeMinister || !replyRetry) return;
+    const targetMinisterName = activeMinister.name;
+    setBusy("重新生成回话");
+    setError("");
+    setChatNotice("");
+    try {
+      await api(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+        method: "POST",
+      });
+      if (selectedMinisterRef.current !== targetMinisterName) return;
+      setReplyRetry(null);
+      setChatNotice("已重新生成回话。");
+      await loadMinisterChat(targetMinisterName, { mergeFailures: true });
+      void refreshDurableProjection({ secretOrders: true });
+      void refreshExtractionPending();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const retryStoryExtraction = async () => {
+    // #501：原地重试补跑叙事抽取。
+    if (busy) return;
+    setBusy("重试补写账本");
+    setError("");
+    try {
+      const data = await api<ExtractionPendingStatus>("/api/audience/extraction/retry", {
+        method: "POST",
+      });
+      setExtractionPendingCount(Number(data?.count || 0));
+      if ((data?.count || 0) === 0) {
+        setChatNotice("待补账本已补写完毕。");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1141,9 +1214,13 @@ export function App() {
             busy={busy}
             error={error}
             secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
+            replyRetry={replyRetry}
+            extractionPendingCount={extractionPendingCount}
             onInput={setInput}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}
+            onRetryReply={retryInterruptedReply}
+            onRetryExtraction={retryStoryExtraction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}

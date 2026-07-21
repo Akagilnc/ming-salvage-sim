@@ -303,15 +303,136 @@ def _confirm_pending_directive(session: GameSession, draft, minister_name: str) 
         print("未识别。请输 可/准 入档，或 驳/不准 驳回。\n")
 
 
+def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
+    """#505：CLI 系统层恢复提示——崩溃后问话保留，可输入「重试回话」重新生成。"""
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
+        return
+    retries = db.get_interrupted_reply_retries(minister_name) or []
+    if not retries:
+        return
+    last = retries[-1]
+    question = str(last.get("question") or "").strip()
+    print(
+        f"【回话中断】上回问话未得回话"
+        f"{f'（「{question}」）' if question else ''}。"
+        f"输入「重试回话」重新生成回话（系统层恢复，不重复记问话）。\n"
+    )
+
+
+def _print_extraction_pending_hint(session: GameSession) -> None:
+    """#501：CLI 待补叙事抽取显眼提示——可输入「重试补写」原地重试。"""
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "list_unextracted_replies"):
+        return
+    try:
+        from ming_sim.audience_night import get_open_night
+        open_n = get_open_night(db) if hasattr(db, "conn") else None
+        nid = int(open_n["id"]) if open_n else None
+        rows = db.list_unextracted_replies(night_id=nid) or []
+    except Exception:
+        return
+    if not rows:
+        return
+    print(
+        f"【账本待补】本夜有 {len(rows)} 段召对账待补写。"
+        f"输入「重试补写」原地重试（不锁档，收夜前须清空）。\n"
+    )
+
+
+def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> None:
+    """#505 CLI：复用已持久问话重新生成回话（与 web retry 同核语义：不重记问话）。"""
+    db = getattr(session, "db", None)
+    if db is None or not hasattr(db, "get_interrupted_reply_retries"):
+        print("当前会话不支持回话重试。\n")
+        return
+    retries = db.get_interrupted_reply_retries(minister_name) or []
+    if not retries:
+        print(f"{minister_name}没有待重试的中断回话。\n")
+        return
+    target = retries[-1]
+    chat_turn_id = int(target["chat_turn_id"])
+    question = str(target["question"])
+    accepted_turn = int(target.get("turn") or session.state.turn)
+    before_snapshot = (
+        db.capture_chat_rollback_snapshot()
+        if hasattr(db, "capture_chat_rollback_snapshot") else {}
+    )
+    if not db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+        print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
+        return
+    try:
+        result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
+        answer = str(getattr(result, "answer", "") or "")
+        if hasattr(db, "persist_minister_reply"):
+            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
+        else:
+            mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
+            db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
+        if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
+            db.record_chat_turn_rollback_diffs(
+                chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
+            )
+        print(f"\n{minister_name}：{wrap(answer)}\n")
+    except Exception as exc:
+        # 失败翻回 interrupted 保持可再重试（与 web restore_interrupted_after_failed_retry 同语义）。
+        try:
+            if hasattr(db, "record_chat_turn_rollback_diffs") and before_snapshot is not None:
+                db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, before_snapshot, db.capture_chat_rollback_snapshot(),
+                )
+            if hasattr(db, "restore_interrupted_after_failed_retry"):
+                db.restore_interrupted_after_failed_retry(chat_turn_id)
+        except Exception:
+            pass
+        print(f"重试回话失败：{exc}\n")
+
+
+def _retry_story_extraction_cli(session: GameSession) -> None:
+    """#501 CLI：原地重试补跑叙事抽取。"""
+    try:
+        from ming_sim.audience_extraction import catch_up_pending_extractions
+        from ming_sim.audience_night import get_open_night
+        db = session.db
+        open_n = get_open_night(db) if hasattr(db, "conn") else None
+        nid = int(open_n["id"]) if open_n else None
+        catch_up_pending_extractions(
+            db=db,
+            llm_config=getattr(session, "llm_config", None),
+            write_gate=getattr(session, "_write_gate", None) or __import__("threading").Lock(),
+            night_id=nid,
+        )
+        remaining = []
+        if hasattr(db, "list_unextracted_replies"):
+            remaining = db.list_unextracted_replies(night_id=nid) or []
+        if remaining:
+            print(f"补写后仍有 {len(remaining)} 段待补，可稍后再试。\n")
+        else:
+            print("待补账本已补写完毕。\n")
+    except Exception as exc:
+        print(f"重试补写失败：{exc}\n")
+
+
 def minister_chat(session: GameSession, character: Character) -> str:
     """与一位大臣对话。返回 'dismiss' | 'court_break' | 'summon:<name>'。"""
     other = next((n for n in session.content.characters if n != character.name), character.name)
     print(f"\n{character.name}入殿。可持续问话；done/退下 退下，“传{other}来”换人，quit 退朝审阅诏书，exit 退出游戏。")
     print(f"提示：陛下示意采纳后（如“准奏”），大臣会拟旨呈陛下核定。\n")
+    # #505 / #501：入殿时显眼提示系统层恢复入口（与 web ChatModal 同语义）。
+    _print_interrupted_reply_retry_hint(session, character.name)
+    _print_extraction_pending_hint(session)
     while True:
         question = input("朕问：").strip()
         if not question:
             print("可继续问话；若要让其退下，请输入 done。")
+            continue
+        # #505 / #501 系统层恢复命令（非皇帝内容选项）。
+        low_q = question.lower().strip()
+        if low_q in {"重试回话", "retry reply", "retry_reply"}:
+            _retry_interrupted_reply_cli(session, character.name)
+            continue
+        if low_q in {"重试补写", "retry extraction", "retry_extraction"}:
+            _retry_story_extraction_cli(session)
             continue
         cmd = _handle_court_command(session, question, character)
         if cmd == "handled":
@@ -344,13 +465,16 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
+                    # #503：生产路径接通 beat 编排缝（与 web _start_chat_turn 同 generator）
                     from ming_sim.audience_night import attach_chat_turn_to_night
+                    from ming_sim.beat_orchestration import production_beat_generator
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
                         character.name,
                         agno_session_id=f"cli:{character.name}",
                         agno_runs_before=0,
+                        beat_generator=production_beat_generator,
                     )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,

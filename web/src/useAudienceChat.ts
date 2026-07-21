@@ -1,7 +1,7 @@
 import React from "react";
 import { api, pollMindreadingUntilReady, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatMessage, ChatResponse, PendingActionFailure, Minister, ServerChatMessage, Suggestion } from "./types";
+import type { ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
 
 /**
  * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流、历史加载、读心轮询、
@@ -27,6 +27,8 @@ export type AudienceHistoryData = {
   mindreading_pending?: boolean;
   /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
   pending_turn_ids?: number[];
+  /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
+  reply_retry?: ReplyRetry | null;
 };
 
 export type SendChatCallbacks = {
