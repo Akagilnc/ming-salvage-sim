@@ -334,6 +334,38 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
     });
   });
 
+  it("plan-phase continue + advanceCoder still resumes same S2 session", async () => {
+    // advanceCoder rewrites coderFix only; during plan phase route re-enters S2
+    // (coder slot). Clearing the shared coderSessionId would force a fresh S2
+    // and discard plan-phase builder continuity (#1082 cheap-resume).
+    await runPlanPhase(async () => {
+      const backend = new PlanPhaseBackend({
+        judgeResults: [
+          completedJudge({
+            ...judgePlanContinue("准：可施工；repair seat → sol@med"),
+            advanceCoder: "sol@med",
+          }),
+          completedJudge(judgeConverged()),
+        ],
+      });
+      const result = await runOrchestrator({ issueNumber: 10824, backend });
+      expect(result.status).toBe("completed");
+      const s2 = backend.specs.filter((s) => s.id === "S2");
+      expect(s2.length).toBe(2);
+      expect(s2[0]!.session).toBe("fresh");
+      // Second S2 must resume the plan-phase builder — not a silent fresh mint.
+      expect(s2[1]!.session).toBe("resume");
+      const constructCtx = backend.ctxs[backend.specs.indexOf(s2[1]!)];
+      expect(constructCtx?.resumeSessionId).toBe("sess-coder-plan");
+      // advanceCoder audit still lands (coderFix rewrite is independent).
+      expect(
+        result.stepLedger.some((e) => e.event === "coder_advance"),
+      ).toBe(true);
+      // Negative: no fixer during plan pre-review.
+      expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+    });
+  });
+
   it("negative: first-beat construct cargo lie still routes plan→S2 not S5/S7", async () => {
     await runPlanPhase(async () => {
       const backend = new PlanPhaseBackend({
