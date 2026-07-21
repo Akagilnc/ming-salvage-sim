@@ -102,7 +102,9 @@ export function cmrWorkerSpec(
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",
-    skill: "ak-cross-m-review",
+    // #1094 F7: pure court — named lens wrapper, never the nested-panel engine.
+    skill:
+      pass === "completeness" ? "ak-cmr-completeness" : "ak-cmr-correctness",
     promptFile:
       pass === "completeness"
         ? "integrated_cmr_completeness.md"
@@ -145,7 +147,8 @@ export function waveVerifyJudgeWorkerSpec(
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",
-    skill: "ak-cross-m-review",
+    // #1094 F7: pure court — no nested-panel engine skill.
+    skill: "ak-cmr-correctness",
     // #1068 authors the wave-verify judge prompt; this spec only pins the file.
     promptFile: "wave_verify_judge.md",
     maxIter: 1,

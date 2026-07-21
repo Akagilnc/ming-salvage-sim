@@ -36,6 +36,8 @@ export const CMR_PANEL_LEG_PROMPT_FILE = "cmr_panel_leg.md";
 export function cmrPanelLegWorkerSpec(leg: WorkerCmrReviewLeg): WorkerSpec {
   const model = leg.slug;
   return {
+    // Seat remains the family CMR court (S3); per-leg job/log uniqueness is the
+    // monitor dispatchId substrate (#1094 F1) — not a new StepId.
     id: "S3",
     kind: "reviewer",
     role: "reviewer",
@@ -165,13 +167,27 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   if (legs.length === 0) {
     return { transports: [], successfulLegs: [], skippedLegs: [] };
   }
-  const results = await Promise.all(
+  // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
+  // park/relay throw. Settle every leg first, then rethrow one rejection.
+  const settled = await Promise.allSettled(
     legs.map(async (leg) => {
       const spec = cmrPanelLegWorkerSpec(leg);
       const result = await input.dispatch(spec);
       return legTransportFromPanelLegResult(leg.slug, result);
     }),
   );
+  const rejection = settled.find(
+    (row): row is PromiseRejectedResult => row.status === "rejected",
+  );
+  if (rejection !== undefined) {
+    throw rejection.reason;
+  }
+  const results = settled.map((row) => {
+    if (row.status !== "fulfilled") {
+      throw new Error("dispatchFamilyCmrPanelLegs: unreachable rejected after gate");
+    }
+    return row.value;
+  });
   return {
     transports: results,
     successfulLegs: successfulLegsFromTransports(results),

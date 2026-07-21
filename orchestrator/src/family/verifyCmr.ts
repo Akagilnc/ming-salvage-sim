@@ -2384,6 +2384,13 @@ async function runIntegratedCmrPass(input: {
     // #1094: runner dispatches panel legs as first-class workers BEFORE the
     // pure judge court. Judge never spawns nested model CLIs.
     const frozenLegs = spec.cmrReviewLegs ?? [];
+    // #1094 F2: checkout + focus write ONCE before fan-out; legs only clone.
+    if (
+      frozenLegs.length > 0 &&
+      typeof familyBackend.prepareFamilyCmrPanelRound === "function"
+    ) {
+      await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
+    }
     const panelRound = await dispatchFamilyCmrPanelLegs({
       legs: frozenLegs,
       dispatch: (legSpec) =>
@@ -2393,6 +2400,9 @@ async function runIntegratedCmrPass(input: {
           },
         }),
     });
+    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
+    // (not judge prose cargo). Empty array after a real fan-out still wins.
+    const hostSkippedLegs = panelRound.skippedLegs;
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       panelLegTransports: panelRound.transports.map((t) => ({
@@ -2583,7 +2593,9 @@ async function runIntegratedCmrPass(input: {
       findings: judgeTraffic.findings,
     });
   }
-  // S3: skippedLegs must not drop on kind:judge (cargo rides).
+  // #1094 F4: host-mechanical skippedLegs are authoritative when panel legs
+  // were fan-out (including empty = none skipped). Judge cargo is fallback only
+  // when no legs were declared.
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"
       ? (rawOutput as {
@@ -2593,7 +2605,8 @@ async function runIntegratedCmrPass(input: {
           }>;
         })
       : undefined;
-  const skippedLegs = cargoSource?.skippedLegs;
+  const skippedLegs =
+    frozenLegs.length > 0 ? [...hostSkippedLegs] : cargoSource?.skippedLegs;
 
   if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>
