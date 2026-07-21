@@ -286,7 +286,7 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
   }
 
   protected override mountCmrAuth(): CmrAuth {
-    return { claudeToken: "tok" };
+    return { claudeToken: "tok", claudeAuthDir: mkDir("1005-claude-auth-") };
   }
 
   /**
