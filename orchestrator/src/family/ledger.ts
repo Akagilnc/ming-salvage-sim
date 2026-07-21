@@ -839,6 +839,7 @@ function isValidFamilyShipped(
     entry.phase === "final" &&
     typeof entry.pr === "string" &&
     entry.pr.trim().length > 0 &&
+    isCanonicalGithubPrUrl(entry.pr) &&
     typeof entry.familyHeadAfter === "string" &&
     entry.familyHeadAfter.trim().length > 0
   );

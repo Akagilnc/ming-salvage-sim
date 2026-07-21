@@ -3164,7 +3164,7 @@ export function resolveShippedPrUrl(
   familyBranch: string,
 ): string | undefined {
   return shipPr !== undefined && isPrUrl(shipPr)
-    ? shipPr
+    ? shipPr.trim()
     : resolveFamilyShipPr(familyBranch);
 }
 

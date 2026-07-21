@@ -92,6 +92,22 @@ describe("#1090 recordShipped rejects branch-name pr (loud)", () => {
     ).rejects.toThrow(/\/pull\//);
     expect(appended).toEqual([]);
   });
+
+  it("rejects URL-semantic query/hash poison embedded in owner or repo", async () => {
+    for (const pr of [
+      "https://github.com/o?x/r/pull/1",
+      "https://github.com/o/r#x/pull/1",
+    ]) {
+      const appended: FamilyLedgerEntry[] = [];
+      await expect(
+        recordShipped(fakeBackend(appended), {
+          pr,
+          familyHeadAfter: "abc123",
+        }),
+      ).rejects.toThrow(/\/pull\//);
+      expect(appended).toEqual([]);
+    }
+  });
 });
 
 describe("#1090 isPrUrl", () => {
@@ -177,7 +193,7 @@ describe("#1090 resolveFamilyShipPr", () => {
     }
   });
 
-  it("accepts a canonical ship.pr with trailing whitespace without calling gh", async () => {
+  it("normalizes a canonical ship.pr before it reaches the ledger write seam", async () => {
     const { resolveShippedPrUrl } = await import(
       "../../../src/family/verifyCmr.js"
     );
@@ -187,8 +203,23 @@ describe("#1090 resolveFamilyShipPr", () => {
         "https://github.com/owner/repo/pull/42\n",
         "family/1090-base",
       ),
-    ).toBe("https://github.com/owner/repo/pull/42\n");
+    ).toBe("https://github.com/owner/repo/pull/42");
     expect(shWithClock).not.toHaveBeenCalled();
+  });
+
+  it("refuses embedded query/hash poison at the ship-result write seam", async () => {
+    // Poison fails isPrUrl → falls through to gh branch resolve; empty list ⇒ undefined.
+    vi.mocked(shWithClock).mockReturnValue("[]");
+    const { resolveShippedPrUrl } = await import(
+      "../../../src/family/verifyCmr.js"
+    );
+
+    for (const pr of [
+      "https://github.com/o?x/r/pull/1",
+      "https://github.com/o/r#x/pull/1",
+    ]) {
+      expect(resolveShippedPrUrl(pr, "family/1090-base")).toBeUndefined();
+    }
   });
 
   it("appends --repo when ORCHESTRATOR_REPO is set", async () => {
