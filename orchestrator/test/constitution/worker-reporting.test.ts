@@ -14,6 +14,7 @@ import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import { runOnlineReviewLoopStage } from "../../src/family/onlineReviewLoop.js";
 import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
+import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
 import type { PrReviewSnapshot } from "../../src/botPolling.js";
 import type {
   Backend,
@@ -249,6 +250,8 @@ describe("#825 Group A family roles", () => {
       async readFamilyHead() { return "head"; }
       async runFamilyVerify() { return { ok: true as const }; }
       async dispatchWorker(spec: WorkerSpec, _ctx: DispatchContext): Promise<WorkerResult> {
+        const panelLeg = completeCmrPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           this.cmrCalls += 1;
           if (this.cmrCalls === 1) {

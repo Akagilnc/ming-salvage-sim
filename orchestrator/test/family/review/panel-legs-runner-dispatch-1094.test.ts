@@ -34,7 +34,12 @@ import { provisionWorkerAuth } from "../../../src/realBackend.js";
 import { successfulLegsFromTransports } from "../../../src/legPaper.js";
 import { buildJudgeReviewLegPrompt } from "../../../src/judgeStation.js";
 import { workerHostForModel } from "../../../src/dispatchWorker.js";
-import type { WorkerCmrReviewLeg, WorkerResult } from "../../../src/types.js";
+import type {
+  DispatchContext,
+  WorkerCmrReviewLeg,
+  WorkerResult,
+  WorkerSpec,
+} from "../../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const soulsDir = join(here, "..", "..", "..", "image", "souls");
@@ -621,6 +626,458 @@ describe("#1094 R2 F3 — prepareFamilyCmrPanelRound returns structured escalate
       expect("escalation" in prep && prep.escalation).toBeTruthy();
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#1094 R3 F1 — relayed pool mounts the executing provider credential", () => {
+  it("gpt-5.6-sol judge under grok-build pool mounts ~/.grok, not ~/.codex", async () => {
+    const { RealFamilyBackend } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const {
+      SANDBOX_CODEX_DIR,
+      SANDBOX_AGY_DIR,
+      SANDBOX_GROK_DIR,
+    } = await import("../../../src/realBackend.js");
+    const { resolveModelSlugForPool } = await import(
+      "../../../src/modelRegistry.js"
+    );
+
+    expect(resolveModelSlugForPool("gpt-5.6-sol", "grok-build").provider).toBe(
+      "grok",
+    );
+
+    class JudgeSeam extends RealFamilyBackend {
+      public cfg(
+        auth: {
+          codexAuthDir?: string;
+          agyDir?: string;
+          grokAuthDir?: string;
+          claudeToken?: string;
+        },
+        model: string,
+        billingPool?: string,
+      ) {
+        return this.cmrSandboxConfig(
+          auth as never,
+          { model, host: workerHostForModel(model) },
+          undefined,
+          billingPool !== undefined ? { billingPool } : undefined,
+        );
+      }
+    }
+
+    const be = new JudgeSeam({
+      workingRepo: mkdtempSync(join(tmpdir(), "1094-r3-f1-repo-")),
+      familyBase: "family/1094",
+      ledgerDir: mkdtempSync(join(tmpdir(), "1094-r3-f1-ledger-")),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir,
+      soulsDir,
+      imageName: "img",
+    });
+    const auth = {
+      codexAuthDir: "/tmp/r3-f1-codex",
+      agyDir: "/tmp/r3-f1-agy",
+      grokAuthDir: "/tmp/r3-f1-grok",
+      claudeToken: "tok",
+    };
+
+    const relayed = be.cfg(auth, "gpt-5.6-sol", "grok-build");
+    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(
+      true,
+    );
+    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
+      false,
+    );
+    expect(relayed.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(
+      false,
+    );
+
+    const opusRelayed = be.cfg(auth, "opus", "codex-5h");
+    expect(
+      resolveModelSlugForPool("opus", "codex-5h").provider,
+    ).toBe("codex");
+    expect(
+      opusRelayed.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR),
+    ).toBe(true);
+  });
+});
+
+describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () => {
+  it("leg dispatch ctx carries no judge pool after a cmr-slot relay", async () => {
+    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../../src/family/landing.js"
+    );
+    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
+      "../../helpers/cmr-panel-leg-dispatch.js"
+    );
+    const { legacyCmrScriptToWorkerOutput } = await import(
+      "../../helpers/judge-fixtures.js"
+    );
+
+    const legPools: Array<string | undefined> = [];
+    let judgePool: string | undefined;
+
+    const backend = {
+      ledger: [] as Array<Record<string, unknown>>,
+      escalations: [] as Array<{ reason: string }>,
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "head-1" };
+      },
+      async resolveMergeConflict() {
+        throw new Error("unused");
+      },
+      async appendFamilyLedger(entry: Record<string, unknown>) {
+        this.ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return this.ledger;
+      },
+      async readFamilyHead() {
+        return "head-1";
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+        if (isCmrPanelLegWorker(spec)) {
+          legPools.push(ctx.billingPool);
+          return (
+            completeCmrPanelLegWorker(spec) ?? {
+              kind: "failed",
+              reason: "panel leg fixture missing",
+            }
+          );
+        }
+        if (spec.kind === "cmr") {
+          judgePool = ctx.billingPool;
+          return {
+            kind: "completed",
+            output: legacyCmrScriptToWorkerOutput({
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              evidencePaths: ["cmr/review-summary.json"],
+              findings: [],
+            }),
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase!,
+              pr: "https://github.com/test/repo/pull/1094",
+              prHead: "head-1",
+              status: "pr_opened",
+            },
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      },
+      async recordAborted() {},
+      async escalateFamily(esc: { reason: string }) {
+        this.escalations.push(esc);
+      },
+    };
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1094-r3-f2",
+      familyBackend: backend as never,
+      billingPool: "grok-build",
+      billingPoolSlots: ["cmrCorrectness", "cmrCompleteness"],
+    });
+
+    // Seam under test is leg vs judge pool — not the post-ship online-review stage.
+    void result;
+    expect(judgePool).toBe("grok-build");
+    expect(legPools.length).toBeGreaterThan(0);
+    expect(legPools.every((p) => p === undefined)).toBe(true);
+  });
+});
+
+describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
+  it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
+    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../../src/family/landing.js"
+    );
+    const { isCmrPanelLegWorker } = await import(
+      "../../helpers/cmr-panel-leg-dispatch.js"
+    );
+    const { legacyCmrScriptToWorkerOutput } = await import(
+      "../../helpers/judge-fixtures.js"
+    );
+
+    let judgeDispatched = 0;
+    const backend = {
+      ledger: [] as Array<Record<string, unknown>>,
+      escalations: [] as Array<{
+        reason: string;
+        diagnosis: string;
+        escalationKind?: string;
+      }>,
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "head-1" };
+      },
+      async resolveMergeConflict() {
+        throw new Error("unused");
+      },
+      async appendFamilyLedger(entry: Record<string, unknown>) {
+        this.ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return this.ledger;
+      },
+      async readFamilyHead() {
+        return "head-1";
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
+        if (isCmrPanelLegWorker(spec)) {
+          return {
+            kind: "failed",
+            reason: `docker flake on ${spec.model}`,
+          };
+        }
+        if (spec.kind === "cmr") {
+          judgeDispatched += 1;
+          // Would have converged on empty evidence — host must not reach here.
+          return {
+            kind: "completed",
+            output: legacyCmrScriptToWorkerOutput({
+              converged: true,
+              successfulLegs: [],
+              evidencePaths: ["cmr/review-summary.json"],
+              findings: [],
+            }),
+          };
+        }
+        void ctx;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      },
+      async recordAborted() {},
+      async escalateFamily(esc: {
+        reason: string;
+        diagnosis: string;
+        escalationKind?: string;
+      }) {
+        this.escalations.push(esc);
+      },
+    };
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1094-r3-f3",
+      familyBackend: backend as never,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(judgeDispatched).toBe(0);
+    expect(
+      backend.ledger.some((e) => e.status === "cmr_passed"),
+    ).toBe(false);
+    expect(backend.escalations.length).toBeGreaterThan(0);
+    expect(backend.escalations[0]?.escalationKind).toBe("decision");
+    expect(backend.escalations[0]?.reason).toMatch(/zero successful panel legs/i);
+    expect(backend.escalations[0]?.diagnosis).toMatch(/docker flake/i);
+  });
+});
+
+describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", () => {
+  it("missing .cmr-focus.md yields failed transport, not a green present leg", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { RealFamilyBackend, CMR_FOCUS_FILENAME } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+    const { legTransportFromPanelLegResult } = await import(
+      "../../../src/family/cmrPanelLegs.js"
+    );
+    const { isLegalLegPaper } = await import("../../../src/legPaper.js");
+
+    const root = mkdtempSync(join(tmpdir(), "1094-r3-f4-"));
+    const ledger = mkdtempSync(join(tmpdir(), "1094-r3-f4-ledger-"));
+    try {
+      execFileSync("git", ["init"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: root });
+      writeFileSync(join(root, "a.txt"), "a\n");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: root });
+      // Intentionally NO .cmr-focus.md — copyFileSync must fail-loud.
+
+      class FocusFailBackend extends RealFamilyBackend {
+        public async runLeg(
+          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          ctx: { familyBase: string },
+        ) {
+          return this.runCmrPanelLegWorker(spec, ctx as never);
+        }
+        protected mountCmrAuth() {
+          return {
+            codexAuthDir: mkdtempSync(join(tmpdir(), "f4-codex-")),
+            agyDir: undefined,
+            grokAuthDir: undefined,
+            claudeToken: undefined,
+            ghToken: undefined,
+            providerAuth: { claude: false, grok: false, agy: false },
+          };
+        }
+        protected unavailableWorkerProviderAuth() {
+          return undefined;
+        }
+        protected async runAgentSandbox(): Promise<never> {
+          throw new Error("runAgentSandbox must not run after focus-copy failure");
+        }
+      }
+
+      const be = new FocusFailBackend({
+        workingRepo: root,
+        familyBase: "main",
+        ledgerDir: ledger,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      const spec = cmrPanelLegWorkerSpec(
+        { family: "codex", slug: "gpt-5.6-sol" },
+        "correctness",
+      );
+      const result = await be.runLeg(spec, { familyBase: "main" });
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.reason).toMatch(new RegExp(CMR_FOCUS_FILENAME));
+      }
+      const transport = legTransportFromPanelLegResult("gpt-5.6-sol", result);
+      expect(isLegalLegPaper(transport)).toBe(false);
+      expect(transport.exitCode).not.toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(ledger, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () => {
+  it("reads completeness promptFile even when ctx.cmrPass is correctness", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { RealFamilyBackend, CMR_FOCUS_FILENAME } = await import(
+      "../../../src/family/realFamilyBackend.js"
+    );
+
+    const root = mkdtempSync(join(tmpdir(), "1094-r3-f5-"));
+    const ledger = mkdtempSync(join(tmpdir(), "1094-r3-f5-ledger-"));
+    let capturedPrompt = "";
+    try {
+      execFileSync("git", ["init"], { cwd: root });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: root });
+      writeFileSync(join(root, "a.txt"), "a\n");
+      execFileSync("git", ["add", "."], { cwd: root });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: root });
+      writeFileSync(
+        join(root, CMR_FOCUS_FILENAME),
+        "# focus\n`git diff aaa...bbb`\n",
+      );
+
+      class LensBackend extends RealFamilyBackend {
+        public async runLeg(
+          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          ctx: { familyBase: string; cmrPass?: string },
+        ) {
+          return this.runCmrPanelLegWorker(spec, ctx as never);
+        }
+        protected mountCmrAuth() {
+          return {
+            codexAuthDir: mkdtempSync(join(tmpdir(), "f5-codex-")),
+            agyDir: undefined,
+            grokAuthDir: undefined,
+            claudeToken: undefined,
+            ghToken: undefined,
+            providerAuth: { claude: false, grok: false, agy: false },
+          };
+        }
+        protected unavailableWorkerProviderAuth() {
+          return undefined;
+        }
+        protected override async runAgentSandbox(
+          options: { promptFile?: string },
+        ): Promise<{
+          stdout: string;
+          iterations: never[];
+          commits: never[];
+          branch: string;
+        }> {
+          capturedPrompt = readFileSync(options.promptFile!, "utf8");
+          return {
+            stdout: "P1: lens authority must follow spec.promptFile.\n",
+            iterations: [],
+            commits: [],
+            branch: "HEAD",
+          };
+        }
+      }
+
+      const be = new LensBackend({
+        workingRepo: root,
+        familyBase: "main",
+        ledgerDir: ledger,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir,
+        soulsDir,
+        imageName: "img",
+      });
+      // Spec pinned to completeness lens; ctx deliberately disagrees.
+      const spec = cmrPanelLegWorkerSpec(
+        { family: "codex", slug: "gpt-5.6-sol" },
+        "completeness",
+      );
+      expect(spec.promptFile).toBe("cmr_panel_leg_completeness.md");
+      const result = await be.runLeg(spec, {
+        familyBase: "main",
+        cmrPass: "correctness",
+      });
+      expect(result.kind).toBe("completed");
+      expect(capturedPrompt).toMatch(/Clause–Wire–Exercise/);
+      expect(capturedPrompt).not.toMatch(/Trace–Break–Prove/);
+      expect(capturedPrompt).toMatch(/CMR pass: completeness/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(ledger, { recursive: true, force: true });
     }
   });
 });
