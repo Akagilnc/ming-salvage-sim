@@ -629,6 +629,32 @@ export interface SessionContinuityLostEvent {
   readonly ts: string;
 }
 
+/**
+ * #1081 / ADR 0147 — resident judge court opened at slice dispatch (S1).
+ * Session id is the sole continuity token for every later S3/S6 resume.
+ * Not a topology step result; runner-action bookkeeping only.
+ */
+export interface CourtOpenedEvent {
+  readonly event: "court_opened";
+  /** Model slug that owns the resident judge session. */
+  readonly modelSlug: string;
+  /** Human-readable open-court note (context loaded / authority set). */
+  readonly reason?: string;
+  readonly ts: string;
+}
+
+/**
+ * #1081 / ADR 0147 — resident judge court dismissed after slice convergence.
+ * After this row, no resumeable hanging session remains for the slice.
+ */
+export interface CourtDismissedEvent {
+  readonly event: "court_dismissed";
+  /** Session id that was dismissed (audit). */
+  readonly sessionId?: string;
+  readonly reason?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -639,7 +665,9 @@ export type LedgerBookkeepingEvent =
   | RouteDegradedEvent
   | CoderAdvanceEvent
   | CoderAdvanceStayPutEvent
-  | SessionContinuityLostEvent;
+  | SessionContinuityLostEvent
+  | CourtOpenedEvent
+  | CourtDismissedEvent;
 
 /**
  * The structured output of any worker step.

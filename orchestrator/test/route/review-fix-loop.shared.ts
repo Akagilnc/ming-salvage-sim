@@ -20,6 +20,8 @@ import { route } from "../../src/route.js";
 
 import { runOrchestrator } from "../../src/runner.js";
 
+import { openCourtWorkerResultIfMatch } from "../helpers/judge-fixtures.js";
+
 import type {
   Backend,
   DispatchContext,
@@ -150,6 +152,9 @@ class RetryReviewBackend implements Backend {
     this.specs.push(spec);
     this.ctxs.push(ctx);
     this.landings.push(landing);
+    // #1081: open-court birth does not consume judge script queue.
+    const openCourt = openCourtWorkerResultIfMatch(spec);
+    if (openCourt !== undefined) return openCourt;
     if (spec.kind === "coder" && spec.id === "S5") {
       const attempt = this.coderAttempts;
       const scripted = this.coderOutputs[this.coderAttempts];
@@ -168,7 +173,21 @@ class RetryReviewBackend implements Backend {
     if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const result = this.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
-      return result ?? { kind: "completed", output: { kind: "judge", status: "converged" } };
+      // Prefer resume session when provided so ledger proves same judge.
+      const sessionId =
+        typeof ctx.resumeSessionId === "string"
+          ? ctx.resumeSessionId
+          : undefined;
+      if (result !== undefined) {
+        return sessionId !== undefined && result.kind === "completed"
+          ? { ...result, sessionId: result.sessionId ?? sessionId }
+          : result;
+      }
+      return {
+        kind: "completed",
+        output: { kind: "judge", status: "converged" },
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      };
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) {

@@ -124,7 +124,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "fetchIssueMeta(247)", // S0 input_gate (lightweight metadata)
       "prepareWorktree(247, main)", // S1 resident worktree, base=main
       "runStep(S2:coder:coder_implement.md)", // S2 implementation
-      "runStep(S3:verify:judge_station.md)", // S3 fresh full-diff review
+      "runStep(S3:verify:judge_station.md)", // S3 full-diff review
       // S4 classify, S7 local handoff, S8 success are pure TS.
     ]);
   });

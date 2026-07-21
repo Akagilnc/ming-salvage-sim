@@ -83,10 +83,12 @@ import {
 } from "./stationReceiptContracts.js";
 import {
   isJudgeSeat,
+  JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeResultFromVerdict,
   mintJudgeEscalate,
   projectResidualReviewerToJudge,
   unusableResidualOpenCountPaper,
+  usesJudgeReceiptChannel,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -1238,6 +1240,7 @@ export function soulForStep(
 ): StepSoul {
   // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
   // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
+  // #1081 open-court birth uses role+soul "verify" (falls through expected arm).
   if (
     spec.soul === "verify" &&
     isJudgeSeat({ id: spec.id })
@@ -1398,10 +1401,10 @@ function extractVerifyTag(stdout: string): unknown | undefined {
  */
 function extractRoleReceipt(
   stdout: string,
-  spec: Pick<StepSpec, "role" | "id" | "soul">,
+  spec: Pick<StepSpec, "role" | "id" | "soul" | "promptFile">,
 ): unknown | undefined {
   try {
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return extractJudgeTag(stdout);
     }
     return spec.role === "coder"
@@ -1762,7 +1765,11 @@ export function attributeFailure(
  * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set(Object.values(WORKER_PROMPT_FILES)),
+  ...new Set([
+    ...Object.values(WORKER_PROMPT_FILES),
+    // #1081: resident judge birth at slice dispatch (not a topology WORKER step).
+    JUDGE_OPEN_COURT_PROMPT_FILE,
+  ]),
 ];
 
 /**
@@ -2997,6 +3004,7 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // #1081: open-court birth (judge_open_court.md) also takes JUDGE_RECEIPT.
     // S9 online-review must not take JUDGE_RECEIPT.
     // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
     // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
@@ -3005,7 +3013,7 @@ export class RealBackend implements Backend {
       ? options.billingPool
       : undefined;
     const resumeCapable = resumeCapableForSlug(spec.model, pool);
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
         judgeStationReceiptSchema(),
@@ -3118,7 +3126,7 @@ export class RealBackend implements Backend {
     const cargo =
       typedOutputUsed &&
       (spec.role === "coder" ||
-        isJudgeSeat({ id: spec.id }))
+        usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3140,9 +3148,10 @@ export class RealBackend implements Backend {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
     // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // #1081: open-court birth reuses the same judge receipt decode (ack only).
     // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
     // here on RealBackend (family review-loop owns verify decode).
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper

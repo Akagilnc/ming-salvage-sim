@@ -213,6 +213,13 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
+  /**
+   * #1081 / ADR 0147: resident judge resume must not silent-degrade to a fresh
+   * per-round session. When the first attempt carried `resumeSessionId` and
+   * fails (throw or process `failed`), do not strip resume and re-open fresh —
+   * surface the failure immediately (loud error package abort upstream).
+   */
+  readonly forbidFreshRetry?: boolean;
 }
 
 /**
@@ -305,6 +312,10 @@ export async function withMechanicalRetry(
       };
       await opts?.onAttempt?.(attempt);
       await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
+      // #1081: resident judge resume failure must not silent-fresh.
+      if (opts?.forbidFreshRetry === true && attemptHadResume) {
+        break;
+      }
       if (
         attemptHadResume &&
         isStructuredOutputParseFailure(err)
@@ -332,6 +343,10 @@ export async function withMechanicalRetry(
     last = result;
     await opts?.onAttempt?.(attempt);
     await opts?.onFailure?.({ result }, attempt);
+    // #1081: resident judge resume failure must not silent-fresh.
+    if (opts?.forbidFreshRetry === true && attemptHadResume) {
+      break;
+    }
     if (resumeSoParseFailed && !attemptHadResume) {
       break;
     }
