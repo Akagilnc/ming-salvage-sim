@@ -78,6 +78,17 @@ export function isGithubAuthFailure(err: unknown): boolean {
 const GH_HTTP_STATUS = /\bHTTP\s*(\d{3})\b/i;
 
 /**
+ * #1088 — real `gh api` transport blips surface as free-text only (exit 1, no
+ * errno `code`): `EOF`, `TLS handshake timeout`, connection reset, dial/i/o
+ * timeouts. {@link classifyExternalCallFailure} never reads free text, so the
+ * admission boundary must attach an allowlisted structured `code` before
+ * classify — same enrichment pattern as HTTP status below. Genuine 4xx (HTTP
+ * status in text) stay on the httpStatus path and fail-fast.
+ */
+const GH_TRANSIENT_TRANSPORT =
+  /(?:\bunexpected EOF\b|\bEOF\b)|TLS handshake timeout|connection reset|i\/?o timeout|Client\.Timeout exceeded|context deadline exceeded|connection refused|broken pipe|network is unreachable|no such host|temporary failure in name resolution|dial tcp .*: (?:connect|i\/o timeout)/i;
+
+/**
  * #1063 — gh CLI reports the HTTP status only in its stderr/message text (e.g.
  * `gh: Service Unavailable (HTTP 503)`) while `.status` on the execFileSync
  * error holds the process EXIT code (1). Extract the numeric HTTP status — a
@@ -86,21 +97,33 @@ const GH_HTTP_STATUS = /\bHTTP\s*(\d{3})\b/i;
  * text) can key on 5xx ahead of the shadowing exit code. Single boundary shared
  * by the retry budget below and, through it, the #1063 dual-channel fallback.
  * Mirrors the existing gh-text HTTP parse in {@link isGithubAuthFailure}.
+ *
+ * #1088 — also attach an allowlisted transport `code` for EOF/TLS/reset/timeout
+ * text shapes so the shared retry budget treats them as transient.
  */
 export function withGithubHttpStatus(err: unknown): unknown {
   if (err === null || typeof err !== "object") return err;
   const e = err as {
     httpStatus?: unknown;
+    code?: unknown;
     readonly message?: unknown;
     readonly stderr?: unknown;
   };
-  if (Number.isInteger(e.httpStatus)) return err;
   const text = [e.message, e.stderr]
     .filter((part): part is string => typeof part === "string")
     .join("\n");
-  const match = GH_HTTP_STATUS.exec(text);
-  if (match !== null) {
-    (err as { httpStatus?: number }).httpStatus = Number(match[1]);
+  if (!Number.isInteger(e.httpStatus)) {
+    const match = GH_HTTP_STATUS.exec(text);
+    if (match !== null) {
+      (err as { httpStatus?: number }).httpStatus = Number(match[1]);
+    }
+  }
+  // Prefer an already-structured errno; only lift free-text transport blips.
+  if (typeof e.code !== "string" || e.code.length === 0) {
+    if (GH_TRANSIENT_TRANSPORT.test(text)) {
+      // Allowlisted code {@link classifyExternalCallFailure} already trusts.
+      (err as { code?: string }).code = "ECONNRESET";
+    }
   }
   return err;
 }

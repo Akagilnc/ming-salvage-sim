@@ -92,6 +92,7 @@ import {
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
   execFileAsyncWithTimeout,
+  ExternalCallTimeoutError,
   shWithClock,
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
@@ -2202,6 +2203,11 @@ export class RealBackend implements Backend {
     // quota never retries — via withLegTransientRetry (production wire of
     // legTransientRetry.ts). Worker-process crashes stay on #598; in-container
     // ak-cross-m-review skill legs keep their own backend degrade chain.
+    //
+    // #1089: a timeout shot is "slow-but-maybe-alive", not credential death —
+    // subsequent attempts within the same #879 budget use 2× idle so a cold
+    // first-call (~80s) can still PONG. ORCHESTRATOR_SMOKE_IDLE_SECONDS stays
+    // the base/override knob. Auth missing stays fail-closed before any ping.
     const pingOne = async (
       entry: { readonly key: string; readonly slug: string },
       entryPool: BillingPoolDispatchId | undefined,
@@ -2217,18 +2223,26 @@ export class RealBackend implements Backend {
       const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
         const stage = `smoke-k:${entry.slug}`;
-        const stdout = await withLegTransientRetry(async () =>
-          this.execBarePing({
-            slug: entry.slug,
-            cwd: emptyDir,
-            prompt,
-            nonce,
-            file: built.file,
-            args: built.args,
-            stdin: built.input,
-            timeoutMs,
-          }),
-        );
+        let shotTimeoutMs = timeoutMs;
+        const stdout = await withLegTransientRetry(async () => {
+          try {
+            return await this.execBarePing({
+              slug: entry.slug,
+              cwd: emptyDir,
+              prompt,
+              nonce,
+              file: built.file,
+              args: built.args,
+              stdin: built.input,
+              timeoutMs: shotTimeoutMs,
+            });
+          } catch (err) {
+            if (err instanceof ExternalCallTimeoutError) {
+              shotTimeoutMs = timeoutMs * 2;
+            }
+            throw err;
+          }
+        });
         if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(
             `bare ping nonce missing for ${entry.slug} at stage ${stage}`,

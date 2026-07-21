@@ -65,6 +65,8 @@ class BarePingBackend extends RealBackend {
     cwd: string;
     prompt: string;
     nonce: string;
+    /** Wall budget the production smoke path handed this shot (#1089). */
+    timeoutMs: number;
   }> = [];
   private readonly pingImpl: (
     input: BarePingBackend["pingCalls"][number],
@@ -123,6 +125,7 @@ class BarePingBackend extends RealBackend {
       cwd: input.cwd,
       prompt: input.prompt,
       nonce: input.nonce,
+      timeoutMs: input.timeoutMs,
     };
     this.pingCalls.push(call);
     return this.pingImpl(call);
