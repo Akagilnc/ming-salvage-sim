@@ -69,6 +69,21 @@ export function judgeConverged(): JudgeResult {
   return { kind: "judge", status: "converged" };
 }
 
+/**
+ * #1082 plan pre-review continue — 0 live findings is legal; boundaries live
+ * in `fixPacketBody` prose (准/退/索证). Runner resumes same S2 builder.
+ */
+export function judgePlanContinue(
+  fixPacketBody = "fixture plan pre-review: boundaries approved (construct)",
+): JudgeResult {
+  return {
+    kind: "judge",
+    status: "continue",
+    findingDispositions: [],
+    fixPacketBody,
+  };
+}
+
 export function judgeContinue(
   findings: ReadonlyArray<Finding>,
   opts?: {
