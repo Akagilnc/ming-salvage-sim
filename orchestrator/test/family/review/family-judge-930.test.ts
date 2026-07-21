@@ -194,7 +194,7 @@ class FamilyJudgeBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase ?? "family/base",
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };

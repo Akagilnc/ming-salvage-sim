@@ -25,8 +25,8 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
-import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 import type {
   Backend,
   DispatchContext,
@@ -178,13 +178,13 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
         output: {
           kind: "ship",
           branch: familyBase,
-          pr: `pr://${familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.head,
           status: "pr_opened",
         },
       };
     }
-    return legacyDispatchFamilyWorker(this, spec, ctx);
+    return dispatchReviewLoopThroughAdmission(this, spec, ctx);
   }
 }
 

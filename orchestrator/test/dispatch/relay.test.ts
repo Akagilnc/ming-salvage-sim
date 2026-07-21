@@ -1698,7 +1698,7 @@ describe("#686 R2 production seams", () => {
                 kind: "ship",
                 branch: worktree.branch,
                 status: "pr_opened",
-                pr: "pr://r2-p0",
+                pr: "https://github.com/test/repo/pull/200",
                 prHead: "deadbeef",
               },
             };

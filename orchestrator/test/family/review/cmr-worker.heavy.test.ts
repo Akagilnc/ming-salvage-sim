@@ -126,7 +126,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ctx: DispatchContext,
     ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
       this.runShipCalls.push({ spec, ctx });
-      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
+      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://github.com/test/repo/pull/9" };
     }
     protected override async runFamilyCoderFixWorker(
       spec: WorkerSpec,
@@ -174,7 +174,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   }
 
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
         runs.push(options);
         const verdict = {
@@ -356,7 +356,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   }
 
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -510,7 +510,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -581,7 +581,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -660,7 +660,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -727,7 +727,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -1388,7 +1388,12 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    const backend = new AuthDispatchBackend({}, repo);
+    // #1091: cmrReview may include claude-family panel legs — credentials
+    // file mount satisfies assertClaudePanelLegAuth (token alone no longer passes).
+    const backend = new AuthDispatchBackend(
+      { claudeToken: "test-claude-panel-tok", claudeAuthDir: mkDir("cmr-claude-auth-") },
+      repo,
+    );
     await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
     return { backend };
   }
@@ -1964,7 +1969,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         return this.runCmrWorker(spec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok" };
+        return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") };
       }
       protected override prepareCmrOutcomeLanding(
         ctx: DispatchContext,
@@ -2205,7 +2210,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         return this.runCmrWorker(spec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok" };
+        return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") };
       }
       protected override prepareCmrOutcomeLanding(
         ctx: DispatchContext,
@@ -2282,7 +2287,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         return this.runCmrWorker(spec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok" };
+        return { claudeToken: "tok", claudeAuthDir: mkDir("cmr-claude-auth-") };
       }
       protected override prepareCmrOutcomeLanding(
         ctx: DispatchContext,

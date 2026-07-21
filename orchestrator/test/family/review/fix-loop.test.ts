@@ -280,7 +280,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
             kind: "ship",
             branch: ctx.familyBase!,
             status: "pr_opened",
-            pr: `pr://${ctx.familyBase}`,
+            pr: `https://github.com/test/repo/pull/1090`,
             prHead: this.currentFamilyHead,
           },
         }
@@ -480,7 +480,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -577,7 +577,7 @@ class CountChannelFixBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -706,7 +706,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -832,7 +832,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -983,7 +983,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -1111,7 +1111,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -1257,7 +1257,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: this.currentFamilyHead,
         },
       };
@@ -1725,7 +1725,7 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
           kind: "ship",
           branch: ctx.familyBase!,
           status: "pr_opened",
-          pr: `pr://${ctx.familyBase}`,
+          pr: `https://github.com/test/repo/pull/1090`,
           prHead: "family-head",
         },
       };
