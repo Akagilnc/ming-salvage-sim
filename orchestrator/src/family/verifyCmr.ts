@@ -98,9 +98,7 @@ import {
 } from "./familyWorkerSlots.js";
 import {
   modelFamilyForCmrReviewLeg,
-  providerForModelSlug,
   resumeCapableForSlug,
-  resolveModelSlugForPool,
 } from "../modelRegistry.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
@@ -318,185 +316,16 @@ function reholdRepairSeatFromFamilyLedger(
 // (与 CMR 庭同构,不另立法: reuse worker_dispatched / aborted vocabulary).
 const WAVE_VERIFY_JUDGE_STEP = "wave-verify-judge";
 const WAVE_VERIFY_FIX_STEP = "wave-verify-fix";
-/** Durable handoff reason after post-fixer green observe (#1111 / ADR 0147). */
-const WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON =
-  "wave verify green after fixer beat — resident judge must receive before exit";
-const CMR_PENDING_JUDGE_RECEIVE_REASON =
-  "integrated cmr coder-fix committed — resident judge must receive before panel fan-out";
 
 /**
- * Shared fragment of the exit-path JUDGE_STEP converged receipt (#1111).
- * Write builds via `waveVerifyConvergedReason`; pending-clear detects via
- * `isWaveVerifyConvergedReason` — one source, no freehand prose regex.
+ * Shared fragment of the exit-path JUDGE_STEP converged receipt (ledger
+ * observation only — not a crash-recover debt key).
  */
 const WAVE_VERIFY_CONVERGED_RECEIPT_MARKER = "converged after";
 
 function waveVerifyConvergedReason(label: string, round: number): string {
   return `${label} ${WAVE_VERIFY_CONVERGED_RECEIPT_MARKER} ${round} round(s)`;
 }
-
-function isWaveVerifyConvergedReason(reason: string): boolean {
-  return reason.includes(WAVE_VERIFY_CONVERGED_RECEIPT_MARKER);
-}
-
-/**
- * Crash-resume: a durable post-fixer pending-receive FIX_STEP stays open until
- * the court closes with the existing converged JUDGE_STEP marker (same
- * worker_dispatched vocabulary; no parallel event invent).
- *
- * #1111 r4 invariant: bare `wave-verify-judge` rows (dispatch intent or
- * mid-round receipt) never clear pending — only the exit-path
- * `waveVerifyConvergedReason` receipt does.
- */
-export interface PendingWaveJudgeReceiveInfo {
-  readonly pending: boolean;
-  readonly phase?: VerifyCmrPhase;
-  readonly cmrPass?: IntegratedCmrPass;
-  readonly judgeSessionId?: string;
-  readonly judgeModelSlug?: string;
-  readonly judgeProvider?: string;
-}
-
-function providerIdentityForModel(modelSlug: string, billingPool?: string): string | undefined {
-  try {
-    return resolveModelSlugForPool(
-      modelSlug,
-      billingPool as Parameters<typeof resolveModelSlugForPool>[1],
-    ).provider;
-  } catch {
-    return providerForModelSlug(modelSlug);
-  }
-}
-
-function samePendingJudgeIdentity(
-  pending: PendingWaveJudgeReceiveInfo,
-  current: { readonly judgeModelSlug: string; readonly judgeProvider?: string },
-): boolean {
-  if (pending.judgeSessionId !== undefined) {
-    if (pending.judgeModelSlug === undefined || pending.judgeModelSlug.length === 0) {
-      return false;
-    }
-    if (pending.judgeProvider === undefined || pending.judgeProvider.length === 0) {
-      return false;
-    }
-    if (current.judgeProvider === undefined || current.judgeProvider.length === 0) {
-      return false;
-    }
-  }
-  if (pending.judgeModelSlug !== undefined && pending.judgeModelSlug !== current.judgeModelSlug) {
-    return false;
-  }
-  if (pending.judgeProvider !== undefined && pending.judgeProvider !== current.judgeProvider) {
-    return false;
-  }
-  return true;
-}
-
-function pendingWaveJudgeReceiveFromFamilyLedger(
-  ledger: ReadonlyArray<{
-    readonly status?: string;
-    readonly event?: string;
-    readonly workerStep?: string;
-    readonly reason?: string;
-    readonly phase?: VerifyCmrPhase;
-    readonly cmrPass?: IntegratedCmrPass;
-    readonly judgeSessionId?: string;
-    readonly judgeModelSlug?: string;
-    readonly judgeProvider?: string;
-  }>,
-  filter?: { readonly phase?: VerifyCmrPhase; readonly cmrPass?: IntegratedCmrPass },
-): PendingWaveJudgeReceiveInfo {
-  const closedScopes = new Set<string>();
-  const scopeKey = (entry: {
-    readonly phase?: VerifyCmrPhase;
-    readonly cmrPass?: IntegratedCmrPass;
-  }): string => `${entry.phase ?? ""}\u0000${entry.cmrPass ?? ""}`;
-  const matchesFilter = (entry: {
-    readonly phase?: VerifyCmrPhase;
-    readonly cmrPass?: IntegratedCmrPass;
-  }): boolean =>
-    (filter?.phase === undefined || entry.phase === filter.phase) &&
-    (filter?.cmrPass === undefined || entry.cmrPass === filter.cmrPass);
-  for (let index = ledger.length - 1; index >= 0; index--) {
-    const entry = ledger[index]!;
-    const status = entry.status ?? entry.event;
-    if (
-      filter?.cmrPass !== undefined &&
-      status === "worker_dispatched" &&
-      entry.workerStep === `cmr:${filter.cmrPass}` &&
-      matchesFilter(entry) &&
-      typeof entry.reason === "string" &&
-      entry.reason.includes("resident judge received builder beat")
-    ) {
-      closedScopes.add(scopeKey(entry));
-      continue;
-    }
-    if (
-      filter?.cmrPass !== undefined &&
-      (status === "cmr_reviewed" || status === "cmr_passed") &&
-      matchesFilter(entry)
-    ) {
-      closedScopes.add(scopeKey(entry));
-      continue;
-    }
-    if (
-      filter?.cmrPass !== undefined &&
-      status === "cmr_fix_committed" &&
-      matchesFilter(entry) &&
-      !closedScopes.has(scopeKey(entry)) &&
-      typeof entry.judgeSessionId === "string" &&
-      entry.judgeSessionId.length > 0
-    ) {
-      return {
-        pending: true,
-        ...(entry.phase !== undefined ? { phase: entry.phase } : {}),
-        ...(entry.cmrPass !== undefined ? { cmrPass: entry.cmrPass } : {}),
-        judgeSessionId: entry.judgeSessionId,
-        ...(typeof entry.judgeModelSlug === "string" && entry.judgeModelSlug.length > 0
-          ? { judgeModelSlug: entry.judgeModelSlug }
-          : {}),
-        ...(typeof entry.judgeProvider === "string" && entry.judgeProvider.length > 0
-          ? { judgeProvider: entry.judgeProvider }
-          : {}),
-      };
-    }
-    if (entry.event !== "worker_dispatched") continue;
-    if (entry.workerStep === WAVE_VERIFY_JUDGE_STEP) {
-      if (
-        typeof entry.reason === "string" &&
-        isWaveVerifyConvergedReason(entry.reason)
-      ) {
-        if (matchesFilter(entry)) closedScopes.add(scopeKey(entry));
-      }
-      continue;
-    }
-    if (entry.workerStep === WAVE_VERIFY_FIX_STEP) {
-      if (
-        (entry.reason === WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON ||
-          entry.reason === CMR_PENDING_JUDGE_RECEIVE_REASON) &&
-        matchesFilter(entry) &&
-        !closedScopes.has(scopeKey(entry))
-      ) {
-        return {
-          pending: true,
-          ...(entry.phase !== undefined ? { phase: entry.phase } : {}),
-          ...(entry.cmrPass !== undefined ? { cmrPass: entry.cmrPass } : {}),
-          ...(typeof entry.judgeSessionId === "string" && entry.judgeSessionId.length > 0
-            ? { judgeSessionId: entry.judgeSessionId }
-            : {}),
-          ...(typeof entry.judgeModelSlug === "string" && entry.judgeModelSlug.length > 0
-            ? { judgeModelSlug: entry.judgeModelSlug }
-            : {}),
-          ...(typeof entry.judgeProvider === "string" && entry.judgeProvider.length > 0
-            ? { judgeProvider: entry.judgeProvider }
-            : {}),
-        };
-      }
-    }
-  }
-  return { pending: false };
-}
-
 
 /** Human-facing label for the verify-red judge court (scope is a parameter). */
 function familyVerifyCourtLabel(phase: VerifyCmrPhase): string {
@@ -792,9 +621,6 @@ async function runWaveVerifyJudgeCourt(input: {
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly initialFailure: string;
-  readonly initialJudgeSessionId?: string;
-  readonly initialJudgeModelSlug?: string;
-  readonly initialJudgeProvider?: string;
 }): Promise<VerifyJudgeCourtResult> {
   const { phase, familyBase, familyBackend, runId, familyIssue, escalationAnswer } =
     input;
@@ -832,48 +658,10 @@ async function runWaveVerifyJudgeCourt(input: {
     kind: "cmr",
   });
 
-  if (input.initialJudgeSessionId !== undefined) {
-    const initialJudgeModel = waveVerifyJudgeWorkerSpec(resolvedRoute).model;
-    const currentIdentity = {
-      judgeModelSlug: initialJudgeModel,
-      judgeProvider: providerIdentityForModel(initialJudgeModel, judgePool),
-    };
-    if (
-      !samePendingJudgeIdentity(
-        {
-          pending: true,
-          judgeSessionId: input.initialJudgeSessionId,
-          ...(input.initialJudgeModelSlug !== undefined
-            ? { judgeModelSlug: input.initialJudgeModelSlug }
-            : {}),
-          ...(input.initialJudgeProvider !== undefined
-            ? { judgeProvider: input.initialJudgeProvider }
-            : {}),
-        },
-        currentIdentity,
-      )
-    ) {
-      const reason =
-        `resident judge pending receive identity mismatch: ` +
-        `session model/provider ${input.initialJudgeModelSlug ?? "unknown"}/` +
-        `${input.initialJudgeProvider ?? "unknown"} does not match current ` +
-        `${currentIdentity.judgeModelSlug}/${currentIdentity.judgeProvider ?? "unknown"} ` +
-        `(sessionId=${input.initialJudgeSessionId}; #1081)`;
-      return await recordWaveVerifyAbort({
-        phase,
-        familyBase,
-        familyBackend,
-        ...(input.familyHeadAfter !== undefined
-          ? { familyHeadAfter: input.familyHeadAfter }
-          : {}),
-        reason,
-      });
-    }
-  }
-
   let failureReason = input.initialFailure;
   let familyHeadBefore = input.familyHeadAfter;
-  let judgeSessionId: string | undefined = input.initialJudgeSessionId;
+  /** Process-local court session across builder beats in this court open. */
+  let judgeSessionId: string | undefined;
   /** #1085 — resume same wave-fixer session across builder beats in this court. */
   let fixerSessionId: string | undefined;
   /**
@@ -888,10 +676,7 @@ async function runWaveVerifyJudgeCourt(input: {
   while (true) {
     round += 1;
     // ── dispatch/resume the triage judge over the current verify failure ──
-    // #1111 r4: do NOT ledger WAVE_VERIFY_JUDGE_STEP before dispatchOrAbort —
-    // that row is receipt evidence after the judge returns, never dispatch
-    // intent (pendingWaveJudgeReceiveFromFamilyLedger must not treat intent
-    // as a completed receive).
+    // Round receipt is written AFTER the judge returns (ledger observation).
     const judgeSpec = waveVerifyJudgeWorkerSpec(
       resolvedRoute,
       judgeSessionId !== undefined ? "resume" : "fresh",
@@ -1125,22 +910,11 @@ async function runWaveVerifyJudgeCourt(input: {
       lastObserve = reVerifyAfterFix;
       lastObserveFamilyHead = familyHeadBefore;
       if (reVerifyAfterFix.ok) {
-        // Persist before continue — process death must not skip the receive.
-        failureReason = WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON;
-        const judgeProvider = providerIdentityForModel(judgeSpec.model, judgePool);
-        await familyBackend.appendFamilyLedger({
-          status: "worker_dispatched",
-          event: "worker_dispatched",
-          workerStep: WAVE_VERIFY_FIX_STEP,
-          reason: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
-          phase,
-          ...(judgeSessionId !== undefined ? { judgeSessionId } : {}),
-          judgeModelSlug: judgeSpec.model,
-          ...(judgeProvider !== undefined ? { judgeProvider } : {}),
-          ...(familyHeadBefore !== undefined
-            ? { familyHeadAfter: familyHeadBefore }
-            : {}),
-        });
+        // In-process handoff to the resident judge receive step (ADR 0147).
+        // Crash mid-loop worst case = white-run one verify/court cycle; soul
+        // recovery is fresh judge reading ledger verdicts — no durable debt.
+        failureReason =
+          "wave verify green after fixer beat — resident judge must receive before exit";
       } else {
         failureReason =
           reVerifyAfterFix.errorPackage?.reason ?? "family verify failed";
@@ -1220,49 +994,12 @@ async function runFamilyVerifyThroughCourt(input: {
 }): Promise<VerifyJudgeCourtResult> {
   const { phase, familyBase, familyBackend, familyHeadAfter, runId, familyIssue } =
     input;
-  const familyLedger = await familyBackend.readFamilyLedger();
-  const currentPhasePendingInfo = pendingWaveJudgeReceiveFromFamilyLedger(
-    familyLedger,
-    { phase },
-  );
-  const pendingInfo = currentPhasePendingInfo.pending
-    ? currentPhasePendingInfo
-    : pendingWaveJudgeReceiveFromFamilyLedger(familyLedger);
   const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
     phase,
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
   });
-  if (pendingInfo.pending) {
-    const usePhase = pendingInfo.phase ?? phase;
-    return await runWaveVerifyJudgeCourt({
-      phase: usePhase,
-      familyBase,
-      familyBackend,
-      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-      ...(runId !== undefined ? { runId } : {}),
-      ...(familyIssue !== undefined ? { familyIssue } : {}),
-      ...(input.modelRoute !== undefined ? { modelRoute: input.modelRoute } : {}),
-      ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
-      ...(input.billingPoolSlots !== undefined
-        ? { billingPoolSlots: input.billingPoolSlots }
-        : {}),
-      ...(input.escalationAnswer !== undefined
-        ? { escalationAnswer: input.escalationAnswer }
-        : {}),
-      initialFailure: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
-      ...(pendingInfo.judgeSessionId !== undefined
-        ? { initialJudgeSessionId: pendingInfo.judgeSessionId }
-        : {}),
-      ...(pendingInfo.judgeModelSlug !== undefined
-        ? { initialJudgeModelSlug: pendingInfo.judgeModelSlug }
-        : {}),
-      ...(pendingInfo.judgeProvider !== undefined
-        ? { initialJudgeProvider: pendingInfo.judgeProvider }
-        : {}),
-    });
-  }
   if (verify.ok) {
     return {
       ok: true,
@@ -1605,9 +1342,6 @@ async function runCmrCoderFix(input: {
   readonly familyHeadBefore?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
-  readonly judgeSessionId?: string;
-  readonly judgeModelSlug?: string;
-  readonly judgeProvider?: string;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
@@ -1629,9 +1363,6 @@ async function runCmrCoderFix(input: {
     familyHeadBefore,
     escalationAnswer,
     familyIssue,
-    judgeSessionId,
-    judgeModelSlug,
-    judgeProvider,
     resolvedRoute,
     billingPool,
     billingPoolSlots,
@@ -1866,9 +1597,6 @@ async function runCmrCoderFix(input: {
     ...(openedFixerSessionId !== undefined
       ? { sessionId: openedFixerSessionId }
       : {}),
-    ...(judgeSessionId !== undefined ? { judgeSessionId } : {}),
-    ...(judgeModelSlug !== undefined ? { judgeModelSlug } : {}),
-    ...(judgeProvider !== undefined ? { judgeProvider } : {}),
   });
   return {
     result: { ok: true, ran: true },
@@ -2817,42 +2545,14 @@ async function runIntegratedCmrPass(input: {
     kind: "cmr",
     cmrPass: pass,
   });
-  const pendingReceive = pendingWaveJudgeReceiveFromFamilyLedger(familyLedger, {
-    phase: ledgerPhase,
-    cmrPass: pass,
-  });
   const ledgerResumeJudgeSessionId =
     familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
   const provisionalSpec = cmrWorkerSpec("fresh", pass, resolvedRoute);
   const cmrJudgeSeatResumeCapable = resumeCapableForSlug(provisionalSpec.model, cmrPool);
-  const latestPriorJudgeVerdict = priorJudgeVerdicts[priorJudgeVerdicts.length - 1];
-  const hasPriorContinueResumeObligation =
-    latestPriorJudgeVerdict?.status === "continue";
-  if (ledgerResumeJudgeSessionId === undefined && hasPriorContinueResumeObligation) {
-    const reason =
-      `integrated cmr ${pass} resident judge has a resume obligation but ` +
-      "the ledger has no judge sessionId (#1081)";
-    await recordDurableAbort(familyBackend, {
-      phase: ledgerPhase,
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
-      stopSummary: stageFailureStopSummary({
-        status: "cmr_failed",
-        summary: reason,
-        repairHint:
-          "resume the same resident judge session; do not open a fresh judge after a continue verdict",
-      }),
-    });
-    return {
-      result: stageGate("cmr_failed"),
-      familyHeadAfter: resolvedFamilyHeadAfter,
-      resolvedRoute: activeRoute,
-    };
-  }
-  const resumeObligationSessionId =
-    ledgerResumeJudgeSessionId ?? pendingReceive.judgeSessionId;
-  if (resumeObligationSessionId !== undefined && !cmrJudgeSeatResumeCapable) {
+  // Soul law: session lost → fresh judge; priorJudgeVerdicts still land above
+  // for trajectory / session-loss recovery (same shape as single-slice #925).
+  // No fail-loud when continue rows lack sessionId.
+  if (ledgerResumeJudgeSessionId !== undefined && !cmrJudgeSeatResumeCapable) {
     const reason =
       `integrated cmr ${pass} resident judge has a resume obligation but ` +
       `the judge seat is not resume-capable (${provisionalSpec.model}) (#1081)`;
@@ -2875,45 +2575,14 @@ async function runIntegratedCmrPass(input: {
     };
   }
   const resumeJudgeSessionId = cmrJudgeSeatResumeCapable
-    ? resumeObligationSessionId
+    ? ledgerResumeJudgeSessionId
     : undefined;
   const spec = cmrWorkerSpec(
     resumeJudgeSessionId !== undefined ? "resume" : "fresh",
     pass,
     resolvedRoute,
   );
-  const receivingBuilderBeat = receiveBuilderBeat || pendingReceive.pending;
-  if (pendingReceive.pending) {
-    const currentIdentity = {
-      judgeModelSlug: spec.model,
-      judgeProvider: providerIdentityForModel(spec.model, cmrPool),
-    };
-    if (!samePendingJudgeIdentity(pendingReceive, currentIdentity)) {
-      const reason =
-        `resident judge pending receive identity mismatch: ` +
-        `session model/provider ${pendingReceive.judgeModelSlug ?? "unknown"}/` +
-        `${pendingReceive.judgeProvider ?? "unknown"} does not match current ` +
-        `${currentIdentity.judgeModelSlug}/${currentIdentity.judgeProvider ?? "unknown"} ` +
-        `(sessionId=${pendingReceive.judgeSessionId ?? "unknown"}; #1081)`;
-      await recordDurableAbort(familyBackend, {
-        phase: ledgerPhase,
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        stopSummary: stageFailureStopSummary({
-          status: "cmr_failed",
-          summary: reason,
-          repairHint:
-            "restore the model/provider that owns the pending resident judge receive or re-open the family court intentionally",
-        }),
-      });
-      return {
-        result: stageGate("cmr_failed"),
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        resolvedRoute: activeRoute,
-      };
-    }
-  }
+  const receivingBuilderBeat = receiveBuilderBeat;
   const dispatchCtx: DispatchContext = {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
@@ -3698,11 +3367,6 @@ async function runIntegratedCmrPass(input: {
       familyHeadBefore: fixFamilyHeadBefore,
       escalationAnswer,
       familyIssue,
-      ...(openedJudgeSessionId !== undefined ? { judgeSessionId: openedJudgeSessionId } : {}),
-      judgeModelSlug: spec.model,
-      ...(providerIdentityForModel(spec.model, cmrPool) !== undefined
-        ? { judgeProvider: providerIdentityForModel(spec.model, cmrPool) }
-        : {}),
       resolvedRoute: activeRoute,
       // #961: checkpoint vs final ownership on durable fix rows (PR #982 C1).
       ledgerPhase,
