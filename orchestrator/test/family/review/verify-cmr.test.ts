@@ -436,8 +436,68 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
+    // #1111 r4: first JUDGE_STEP is round receipt (reason carries the failure
+    // the judge answered), not a pre-dispatch intent ahead of any FIX beat.
+    const firstJudge = backend.ledger.find(
+      (e) =>
+        e.event === "worker_dispatched" && e.workerStep === "wave-verify-judge",
+    );
+    expect(firstJudge?.reason).toMatch(/triage judge round 1 for:/);
     // Converged on green → no abort.
     expect(backend.aborted).toEqual([]);
+  });
+
+  it("#1111 r4 negative: JUDGE_STEP dispatch-intent row must not clear pending receive on green resume", async () => {
+    // Crash window the r1 A1 patch left open: FIX pending landed, then a
+    // wave-verify-judge worker_dispatched was appended BEFORE dispatchOrAbort;
+    // process died before the resident judge returned. Top-level verify is
+    // green — pending scan must still re-enter the court (intent ≠ receipt).
+    let judgeCalls = 0;
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          expect(ctx.waveVerifyFailure).toMatch(/resident judge must receive/);
+          judgeCalls += 1;
+          return completedJudge({ kind: "judge", status: "converged" });
+        }
+        throw new Error(`unexpected wave worker dispatch: ${spec.kind}`);
+      },
+    });
+    backend.ledger.push(
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "wave-verify-fix",
+        reason:
+          "wave verify green after fixer beat — resident judge must receive before exit",
+        familyHeadAfter: "head-after-fix",
+      },
+      {
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: "wave-verify-judge",
+        reason:
+          "wave verify triage judge round 1 for: wave verify green after fixer beat — resident judge must receive before exit",
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1111-pending-receive",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-fix",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(judgeCalls).toBe(1);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        event: "worker_dispatched",
+        workerStep: "wave-verify-judge",
+        reason: expect.stringMatching(/converged after 1 round/),
+      }),
+    );
   });
 
   it("AC3 negative: judge converged but re-verify RED → forced continue (green receipt is the hard precondition)", async () => {

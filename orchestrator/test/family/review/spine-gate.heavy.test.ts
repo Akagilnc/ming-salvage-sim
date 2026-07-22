@@ -76,7 +76,7 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
     // The red wave was routed UNIFORMLY through the triage judge court (the
-    // durable wave-verify-judge step is written before the judge dispatch)…
+    // durable wave-verify-judge step is written after the judge returns)…
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     // …and the typed `toolchain` terminal never opened a fixer round: no

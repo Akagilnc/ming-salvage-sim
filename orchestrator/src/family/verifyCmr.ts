@@ -321,21 +321,51 @@ const WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON =
   "wave verify green after fixer beat — resident judge must receive before exit";
 
 /**
- * Crash-resume: trailing wave-verify worker_dispatched is a fixer beat with no
- * subsequent judge dispatch → pending resident-judge receive (same
+ * Shared fragment of the exit-path JUDGE_STEP converged receipt (#1111).
+ * Write builds via `waveVerifyConvergedReason`; pending-clear detects via
+ * `isWaveVerifyConvergedReason` — one source, no freehand prose regex.
+ */
+const WAVE_VERIFY_CONVERGED_RECEIPT_MARKER = "converged after";
+
+function waveVerifyConvergedReason(label: string, round: number): string {
+  return `${label} ${WAVE_VERIFY_CONVERGED_RECEIPT_MARKER} ${round} round(s)`;
+}
+
+function isWaveVerifyConvergedReason(reason: string): boolean {
+  return reason.includes(WAVE_VERIFY_CONVERGED_RECEIPT_MARKER);
+}
+
+/**
+ * Crash-resume: a durable post-fixer pending-receive FIX_STEP stays open until
+ * the court closes with the existing converged JUDGE_STEP marker (same
  * worker_dispatched vocabulary; no parallel event invent).
+ *
+ * #1111 r4 invariant: bare `wave-verify-judge` rows (dispatch intent or
+ * mid-round receipt) never clear pending — only the exit-path
+ * `waveVerifyConvergedReason` receipt does.
  */
 function pendingWaveJudgeReceiveFromFamilyLedger(
   ledger: ReadonlyArray<{
     readonly event?: string;
     readonly workerStep?: string;
+    readonly reason?: string;
   }>,
 ): boolean {
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.event !== "worker_dispatched") continue;
-    if (entry.workerStep === WAVE_VERIFY_JUDGE_STEP) return false;
-    if (entry.workerStep === WAVE_VERIFY_FIX_STEP) return true;
+    if (entry.workerStep === WAVE_VERIFY_JUDGE_STEP) {
+      if (
+        typeof entry.reason === "string" &&
+        isWaveVerifyConvergedReason(entry.reason)
+      ) {
+        return false;
+      }
+      continue;
+    }
+    if (entry.workerStep === WAVE_VERIFY_FIX_STEP) {
+      return entry.reason === WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON;
+    }
   }
   return false;
 }
@@ -688,12 +718,10 @@ async function runWaveVerifyJudgeCourt(input: {
   while (true) {
     round += 1;
     // ── dispatch/resume the triage judge over the current verify failure ──
-    await familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: WAVE_VERIFY_JUDGE_STEP,
-      reason: `${label} triage judge round ${round} for: ${failureReason}`,
-    });
+    // #1111 r4: do NOT ledger WAVE_VERIFY_JUDGE_STEP before dispatchOrAbort —
+    // that row is receipt evidence after the judge returns, never dispatch
+    // intent (pendingWaveJudgeReceiveFromFamilyLedger must not treat intent
+    // as a completed receive).
     const judgeSpec = waveVerifyJudgeWorkerSpec(
       resolvedRoute,
       judgeSessionId !== undefined ? "resume" : "fresh",
@@ -708,6 +736,13 @@ async function runWaveVerifyJudgeCourt(input: {
       ...(judgeSessionId !== undefined ? { resumeSessionId: judgeSessionId } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    });
+    // Round receipt — durable only after the judge returned (any kind).
+    await familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: WAVE_VERIFY_JUDGE_STEP,
+      reason: `${label} triage judge round ${round} for: ${failureReason}`,
     });
     const judgeHead = await readPostCmrFamilyHead(
       familyBackend,
@@ -964,7 +999,7 @@ async function runWaveVerifyJudgeCourt(input: {
           status: "worker_dispatched",
           event: "worker_dispatched",
           workerStep: WAVE_VERIFY_JUDGE_STEP,
-          reason: `${label} converged after ${round} round(s)`,
+          reason: waveVerifyConvergedReason(label, round),
           ...(familyHeadBefore !== undefined
             ? { familyHeadAfter: familyHeadBefore }
             : {}),
