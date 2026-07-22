@@ -124,6 +124,7 @@ class CapableFamilyBackend implements FamilyBackend {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
       pr?: (req: TestShipRequest) => TestShipResult;
+      readFamilyHead?: (familyBase: string) => string;
       worker?: (spec: WorkerSpec, ctx: DispatchContext) => WorkerResult | Promise<WorkerResult>;
     } = {},
   ) {}
@@ -144,7 +145,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async readFamilyHead(familyBase: string): Promise<string> {
     this.readFamilyHeadCalls.push(familyBase);
-    return this.currentFamilyHead;
+    return this.script.readFamilyHead?.(familyBase) ?? this.currentFamilyHead;
   }
 
   // ── #296 verify/cmr/PR capabilities (optional methods) ──
@@ -384,6 +385,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
   it("AC1 tracer: red → judge continue → coder-fix → deterministic re-verify green → converge", async () => {
     let verifyCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
+    const judgePhases: Array<DispatchContext["phase"]> = [];
     const backend = new CapableFamilyBackend({
       // #1 initial wave verify (red) → court; #2 re-verify after fix (green).
       verify: () => {
@@ -392,8 +394,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           ? { ok: true }
           : { ok: false, errorPackage: { reason: "cross-slice seam red: 7 failing" } };
       },
-      worker: (spec) => {
+      worker: (spec, ctx) => {
         if (spec.kind === "cmr") {
+          judgePhases.push(ctx.phase);
           return completedJudge(
             judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
           );
@@ -417,6 +420,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(result).toEqual({ ok: true, ran: true });
     // One judge triage, one coder-fix, one re-verify (2 verify calls total).
     expect(verifyCalls).toBe(2);
+    expect(judgePhases).toEqual(["wave"]);
     expect(coderDispatches).toHaveLength(1);
     expect(coderDispatches[0]?.kind).toBe("coder");
     // Ledger records the wave triage + fix rounds (与 CMR 庭同构).
@@ -481,6 +485,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let verifyCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const coderIssues: Array<number | undefined> = [];
+    const verifyJudgePhases: Array<DispatchContext["phase"]> = [];
     const backend = new CapableFamilyBackend({
       verify: (req) => {
         verifyCalls += 1;
@@ -490,6 +495,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       },
       worker: (spec, ctx) => {
         if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgePhases.push(ctx.phase);
+          }
           return completedJudge(
             spec.promptFile === "wave_verify_judge.md"
               ? judgeContinue([sampleFinding("checkpoint finding", "src/a.ts:1")])
@@ -518,6 +526,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.verifyCalls[0]?.phase).toBe("correctness_checkpoint");
     expect(backend.verifyCalls[1]?.phase).toBe("correctness_checkpoint");
     expect(backend.verifyCalls.map((call) => call.issue)).toEqual([1107, 1107]);
+    expect(verifyJudgePhases).toEqual(["correctness_checkpoint"]);
     expect(coderDispatches).toHaveLength(1);
     expect(coderIssues).toEqual([1107]);
     expect(backend.ledger).toContainEqual(
@@ -583,6 +592,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
   it("final verify positive red → judge continue → coder-fix → mechanical re-verify green → continue to CMR courts & ship", async () => {
     let verifyCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
+    const verifyJudgePhases: Array<DispatchContext["phase"]> = [];
     const backend: CapableFamilyBackend = new CapableFamilyBackend({
       verify: () => {
         verifyCalls += 1;
@@ -592,6 +602,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       },
       worker: (spec, ctx): WorkerResult | Promise<WorkerResult> => {
         if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgePhases.push(ctx.phase);
+          }
           return completedJudge(
             spec.promptFile === "wave_verify_judge.md"
               ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
@@ -630,6 +643,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(verifyCalls).toBe(2);
     expect(backend.verifyCalls[0]?.phase).toBe("final");
     expect(backend.verifyCalls[1]?.phase).toBe("final");
+    expect(verifyJudgePhases).toEqual(["final"]);
     expect(coderDispatches).toHaveLength(1);
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_passed"),
@@ -708,8 +722,19 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     };
     let verifyCalls = 0;
     let coderDispatchCount = 0;
+    let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
     backend = new CapableFamilyBackend({
+      readFamilyHead: () => {
+        if (backend.currentFamilyHead !== "head-after-verify-fix") {
+          return backend.currentFamilyHead;
+        }
+        if (!verifyFixHeadObserved) {
+          verifyFixHeadObserved = true;
+          return backend.currentFamilyHead;
+        }
+        throw new Error("later HEAD observation unavailable — use propagated HEAD");
+      },
       verify: () => {
         verifyCalls += 1;
         // #1 initial final verify green → enter CMR.
@@ -772,6 +797,8 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           // First coder = CMR fixer; second = verify-court fixer after mid-court red.
           if (coderDispatchCount === 1) {
             backend.currentFamilyHead = "head-after-cmr-fix";
+          } else if (coderDispatchCount === 2) {
+            backend.currentFamilyHead = "head-after-verify-fix";
           }
           return {
             kind: "completed",
@@ -817,6 +844,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       "correctness",
       "correctness",
     ]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "final",
+        familyHeadAfter: "head-after-verify-fix",
+      }),
+    );
     expect(backend.prCalls).toEqual([{ familyBase: "family/1110-mid-court" }]);
     expect(backend.aborted).toEqual([]);
   });
@@ -954,8 +988,22 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     };
     let verifyCalls = 0;
     let coderDispatchCount = 0;
+    let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
     backend = new CapableFamilyBackend({
+      readFamilyHead: () => {
+        if (
+          backend.currentFamilyHead !==
+          "head-after-completeness-verify-fix"
+        ) {
+          return backend.currentFamilyHead;
+        }
+        if (!verifyFixHeadObserved) {
+          verifyFixHeadObserved = true;
+          return backend.currentFamilyHead;
+        }
+        throw new Error("later HEAD observation unavailable — use propagated HEAD");
+      },
       verify: () => {
         verifyCalls += 1;
         // #1 initial final verify green → enter CMR.
@@ -1024,6 +1072,8 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           // after mid-court red.
           if (coderDispatchCount === 1) {
             backend.currentFamilyHead = "head-after-completeness-fix";
+          } else if (coderDispatchCount === 2) {
+            backend.currentFamilyHead = "head-after-completeness-verify-fix";
           }
           return {
             kind: "completed",
@@ -1069,6 +1119,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       "completeness",
       "correctness",
     ]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "final",
+        familyHeadAfter: "head-after-completeness-verify-fix",
+      }),
+    );
     expect(backend.prCalls).toEqual([
       { familyBase: "family/1110-mid-court-completeness" },
     ]);
