@@ -344,13 +344,21 @@ function isWaveVerifyConvergedReason(reason: string): boolean {
  * mid-round receipt) never clear pending — only the exit-path
  * `waveVerifyConvergedReason` receipt does.
  */
+export interface PendingWaveJudgeReceiveInfo {
+  readonly pending: boolean;
+  readonly phase?: VerifyCmrPhase;
+  readonly judgeSessionId?: string;
+}
+
 function pendingWaveJudgeReceiveFromFamilyLedger(
   ledger: ReadonlyArray<{
     readonly event?: string;
     readonly workerStep?: string;
     readonly reason?: string;
+    readonly phase?: VerifyCmrPhase;
+    readonly judgeSessionId?: string;
   }>,
-): boolean {
+): PendingWaveJudgeReceiveInfo {
   for (let index = ledger.length - 1; index >= 0; index--) {
     const entry = ledger[index]!;
     if (entry.event !== "worker_dispatched") continue;
@@ -359,16 +367,25 @@ function pendingWaveJudgeReceiveFromFamilyLedger(
         typeof entry.reason === "string" &&
         isWaveVerifyConvergedReason(entry.reason)
       ) {
-        return false;
+        return { pending: false };
       }
       continue;
     }
     if (entry.workerStep === WAVE_VERIFY_FIX_STEP) {
-      return entry.reason === WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON;
+      if (entry.reason === WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON) {
+        return {
+          pending: true,
+          ...(entry.phase !== undefined ? { phase: entry.phase } : {}),
+          ...(typeof entry.judgeSessionId === "string" && entry.judgeSessionId.length > 0
+            ? { judgeSessionId: entry.judgeSessionId }
+            : {}),
+        };
+      }
     }
   }
-  return false;
+  return { pending: false };
 }
+
 
 /** Human-facing label for the verify-red judge court (scope is a parameter). */
 function familyVerifyCourtLabel(phase: VerifyCmrPhase): string {
@@ -664,6 +681,7 @@ async function runWaveVerifyJudgeCourt(input: {
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly initialFailure: string;
+  readonly initialJudgeSessionId?: string;
 }): Promise<VerifyJudgeCourtResult> {
   const { phase, familyBase, familyBackend, runId, familyIssue, escalationAnswer } =
     input;
@@ -703,7 +721,7 @@ async function runWaveVerifyJudgeCourt(input: {
 
   let failureReason = input.initialFailure;
   let familyHeadBefore = input.familyHeadAfter;
-  let judgeSessionId: string | undefined;
+  let judgeSessionId: string | undefined = input.initialJudgeSessionId;
   /** #1085 — resume same wave-fixer session across builder beats in this court. */
   let fixerSessionId: string | undefined;
   /**
@@ -962,6 +980,8 @@ async function runWaveVerifyJudgeCourt(input: {
           event: "worker_dispatched",
           workerStep: WAVE_VERIFY_FIX_STEP,
           reason: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
+          phase,
+          ...(judgeSessionId !== undefined ? { judgeSessionId } : {}),
           ...(familyHeadBefore !== undefined
             ? { familyHeadAfter: familyHeadBefore }
             : {}),
@@ -1054,12 +1074,13 @@ async function runFamilyVerifyThroughCourt(input: {
     // #1111 / ADR 0147: a crash after the post-fixer green observation must
     // still resume the resident judge for builder-beat receipt. The same court
     // serves every verify phase; phase is scope, not a second mechanism.
-    const pendingReceive = pendingWaveJudgeReceiveFromFamilyLedger(
+    const pendingInfo = pendingWaveJudgeReceiveFromFamilyLedger(
       await familyBackend.readFamilyLedger(),
     );
-    if (pendingReceive) {
+    if (pendingInfo.pending) {
+      const usePhase = pendingInfo.phase ?? phase;
       return await runWaveVerifyJudgeCourt({
-        phase,
+        phase: usePhase,
         familyBase,
         familyBackend,
         ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
@@ -1074,6 +1095,9 @@ async function runFamilyVerifyThroughCourt(input: {
           ? { escalationAnswer: input.escalationAnswer }
           : {}),
         initialFailure: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
+        ...(pendingInfo.judgeSessionId !== undefined
+          ? { initialJudgeSessionId: pendingInfo.judgeSessionId }
+          : {}),
       });
     }
     return {

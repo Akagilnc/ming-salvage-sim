@@ -386,7 +386,43 @@ describe("#598 withMechanicalRetry", () => {
     expect(seen).toHaveLength(2);
     expect(seen[0]?.ctx.resumeSessionId).toBeUndefined();
   });
+
+  it("F1: healable worktree consistency failure + forbidFreshRetry heals first, then resumes original judge session", async () => {
+    let calls = 0;
+    let heals = 0;
+    const seen: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
+    const wreckage = "fatal: not a git repository: /tmp/worktrees/feat-issue-1111";
+
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "session-orig-judge-1111" },
+      async (spec, ctx) => {
+        calls += 1;
+        seen.push({ spec, ctx });
+        if (calls === 1) {
+          return { kind: "failed", reason: wreckage };
+        }
+        return COMPLETED;
+      },
+      {
+        forbidFreshRetry: true,
+        sleepMs: async () => {},
+        healWorktreeConsistency: async () => {
+          heals += 1;
+        },
+      },
+    );
+
+    expect(result).toEqual(COMPLETED);
+    expect(calls).toBe(2);
+    expect(heals).toBe(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("session-orig-judge-1111");
+    expect(seen[0]?.spec.session).toBe("resume");
+    expect(seen[1]?.ctx.resumeSessionId).toBe("session-orig-judge-1111");
+    expect(seen[1]?.spec.session).toBe("resume");
+  });
 });
+
 
 describe("#909 retryProcessCrash must not thrash on quota wait", () => {
   it("QuotaWaitForResetError rethrows on first attempt (no mechanical retry)", async () => {

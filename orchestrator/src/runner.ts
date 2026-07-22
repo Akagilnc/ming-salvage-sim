@@ -3720,33 +3720,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ) {
           const openCourtSmoke = await ensureRouteSmoke();
           if (openCourtSmoke !== undefined) return openCourtSmoke;
-          let openModel = stepSpecs.S3.model;
-          const openPool = relayBillingPoolForDispatch("S3");
-          let openResumeCapable = resumeCapableForSlug(openModel, openPool);
           // Resume after open-court escalate park: re-enter the same judge
           // session with the human answer (mirror S2/S3/S5/S6 resumeFor +
           // escalationAnswerForStep). Never mint a silent orphan fresh court
           // when planResume already recorded the escalated session id.
-          let openResumeSessionId: string | undefined;
-          if (
+          const openCourtResumeTarget =
             resumeFor !== undefined &&
             resumeFor.step === "S1" &&
             typeof resumeFor.sessionId === "string"
-          ) {
-            const sessionModel = resumeFor.sessionModel;
-            const identityOk =
-              sessionModel === undefined || sessionModel === openModel;
-            if (identityOk && openResumeCapable) {
-              openResumeSessionId = resumeFor.sessionId;
-            } else {
-              const lostReason = !openResumeCapable
-                ? `provider_incapable (seat=${openModel})`
-                : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${openModel})`;
-              console.warn(
-                `[orchestrator] open-court resume continuity lost: ${lostReason}; ` +
-                  `dropping sessionId=${resumeFor.sessionId} (fresh open court; answer still delivered)`,
-              );
-            }
+              ? resumeFor
+              : undefined;
+          if (openCourtResumeTarget !== undefined) {
             resumeFor = undefined;
           }
           const openEscalationAnswer =
@@ -3757,17 +3741,53 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (openEscalationAnswer !== undefined) {
             resumedEscalationAnswer = undefined;
           }
-          const openSessionMode =
-            typeof openResumeSessionId === "string" ? "resume" : "fresh";
           let openResult: Awaited<
             ReturnType<typeof dispatchWorkerWithMonitor>
           >["result"];
+          let openModel = stepSpecs.S3.model;
+          let openResumeCapable = resumeCapableForSlug(
+            openModel,
+            relayBillingPoolForDispatch("S3"),
+          );
           // #1111/#1112: same dispatchSeatWithProtocol as S2/S3/S5/S6.
           openCourtDispatch: for (;;) {
             // Re-read verify seat after any in-loop baton (capacity/quota relay).
             openModel = stepSpecs.S3.model;
             const openDispatchPool = relayBillingPoolForDispatch("S3");
-            openResumeCapable = resumeCapableForSlug(openModel, openDispatchPool);
+            openResumeCapable = resumeCapableForSlug(
+              openModel,
+              openDispatchPool,
+            );
+            let openResumeSessionId: string | undefined;
+            if (openCourtResumeTarget !== undefined) {
+              const sessionModel = openCourtResumeTarget.sessionModel;
+              const identityOk =
+                sessionModel === undefined || sessionModel === openModel;
+              if (identityOk && openResumeCapable) {
+                openResumeSessionId = openCourtResumeTarget.sessionId;
+              } else {
+                const lostReason = !openResumeCapable
+                  ? `provider_incapable (seat=${openModel})`
+                  : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${openModel})`;
+                return await errorTermination(
+                  "S1",
+                  new Error(
+                    `resident judge open-court resume refused: ${lostReason} ` +
+                      `(sessionId=${openCourtResumeTarget.sessionId}); silent fresh judge is illegal`,
+                  ),
+                  {
+                    stopSummary: infraFailureStopSummary({
+                      summary: `resident judge open-court session continuity lost: ${lostReason}`,
+                      repairHint:
+                        "restore the verify seat model that owns the open court " +
+                        "or re-open the slice; do not fresh a new judge mid-slice",
+                    }),
+                  },
+                );
+              }
+            }
+            const openSessionMode =
+              typeof openResumeSessionId === "string" ? "resume" : "fresh";
             const openSpec = {
               id: "S1" as const,
               kind: "verify" as const,

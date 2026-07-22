@@ -315,6 +315,7 @@ export async function withMechanicalRetry(
   // #1105 A6: worktree consistency wreckage is deterministic — heal once, allow
   // one post-heal attempt, then stop (same short-circuit shape as #1092).
   let worktreeConsistencyHealDone = false;
+  let justHealedWorktree = false;
   /** #1105 R7 F2: heal throw → failed channel (never escape withMechanicalRetry). */
   const runConsistencyHeal = async (
     useCtx: DispatchContext,
@@ -326,6 +327,7 @@ export async function withMechanicalRetry(
     try {
       await opts.healWorktreeConsistency(useCtx);
       worktreeConsistencyHealDone = true;
+      justHealedWorktree = true;
       return "healed";
     } catch (healErr) {
       worktreeConsistencyHealDone = true;
@@ -342,8 +344,10 @@ export async function withMechanicalRetry(
   ) {
     attemptsPerformed = attempt;
     const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
-    const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
-    const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
+    const allowResume = firstAttemptThisInvocation || justHealedWorktree;
+    justHealedWorktree = false;
+    const useSpec = allowResume ? spec : forceFreshSpec(spec);
+    const useCtx = allowResume ? ctx : stripResume(ctx);
     const attemptHadResume = typeof useCtx.resumeSessionId === "string";
     // #934 ID-004/006 / #937: process-root redispatch preserves the current
     // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
@@ -386,6 +390,15 @@ export async function withMechanicalRetry(
       };
       await opts?.onAttempt?.(attempt);
       await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
+      const thrownMsg = worktreeConsistencyMessage({ kind: "thrown", error: err });
+      if (
+        thrownMsg !== undefined &&
+        isWorktreeConsistencyFailure(thrownMsg)
+      ) {
+        const heal = await runConsistencyHeal(useCtx, attempt);
+        if (heal === "healed") continue;
+        break;
+      }
       // #1081: resident judge resume failure must not silent-fresh.
       if (opts?.forbidFreshRetry === true && attemptHadResume) {
         break;
@@ -399,15 +412,6 @@ export async function withMechanicalRetry(
       }
       if (resumeSoParseFailed && !attemptHadResume) {
         // One fresh attempt after resume SO parse-fail already ran — stop.
-        break;
-      }
-      const thrownMsg = worktreeConsistencyMessage({ kind: "thrown", error: err });
-      if (
-        thrownMsg !== undefined &&
-        isWorktreeConsistencyFailure(thrownMsg)
-      ) {
-        const heal = await runConsistencyHeal(useCtx, attempt);
-        if (heal === "healed") continue;
         break;
       }
       continue;
@@ -426,13 +430,6 @@ export async function withMechanicalRetry(
     last = result;
     await opts?.onAttempt?.(attempt);
     await opts?.onFailure?.({ result }, attempt);
-    // #1081: resident judge resume failure must not silent-fresh.
-    if (opts?.forbidFreshRetry === true && attemptHadResume) {
-      break;
-    }
-    if (resumeSoParseFailed && !attemptHadResume) {
-      break;
-    }
     const failedMsg = worktreeConsistencyMessage({ result });
     if (
       failedMsg !== undefined &&
@@ -440,6 +437,13 @@ export async function withMechanicalRetry(
     ) {
       const heal = await runConsistencyHeal(useCtx, attempt);
       if (heal === "healed") continue;
+      break;
+    }
+    // #1081: resident judge resume failure must not silent-fresh.
+    if (opts?.forbidFreshRetry === true && attemptHadResume) {
+      break;
+    }
+    if (resumeSoParseFailed && !attemptHadResume) {
       break;
     }
   }
