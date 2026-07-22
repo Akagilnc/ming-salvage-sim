@@ -186,6 +186,15 @@ export {
 export type { MergeRecordAlignment } from "./autoMerge.js";
 export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
+export {
+  hubNextFromFamilyClosureAction,
+  routeResidentJudgeHub,
+} from "./residentJudgeHub.js";
+export type {
+  ResidentJudgeHubNext,
+  ResidentJudgeRing,
+  ResidentJudgeStatus,
+} from "./residentJudgeHub.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {
   VerifyCmrInput,
