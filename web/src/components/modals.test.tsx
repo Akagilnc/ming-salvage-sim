@@ -78,7 +78,7 @@ function renderModal(props: {
         secretOrders={[]}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
-        onInput={(value) => setInput(value ?? "")}
+        onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
