@@ -1,0 +1,333 @@
+"""登记表驱动的动作物化委派（#515）。
+
+真实 consumer（session.apply_cli_conversation_actions）只调
+`run_materialize_pipeline`；具体 kind 的 stage 逻辑挂在
+`register_materializer`。新聚类 = ACTION_CLUSTERS 加行 + 本文件
+register 一个 handler，不改编排散点。
+
+串行 fallback 与并发判词共用同一批 handler（不得两套接线）。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from ming_sim.action_clusters import (
+    EFFECT_MATERIALIZE,
+    get_materializer,
+    materialize_clusters_ordered,
+    register_materializer,
+)
+
+
+@dataclass
+class MaterializeCtx:
+    """物化上下文——真实 session/db 引用，handler 不另开落库路径。"""
+
+    session: Any
+    character: Any
+    player_message: str
+    reply: str
+    message_text: str
+    explicit_prefixed: bool
+    has_directive: bool
+    pend_for_minister: List[Dict[str, Any]]
+    out: Dict[str, Any]
+    intent: Optional[Dict[str, Any]]
+    intent_kind: str
+    llm_config: Any
+    conversation_intent_handled: bool = False
+    draft_staged: bool = False
+
+
+def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
+    """按登记 priority 依次调用已注册 materializer。
+
+    各 handler 内部保留既有互斥/关键词/串行抽取语义；编排层不再出现
+    secret/cultivate/draft/appointment 字面量分叉。
+    同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
+    """
+    seen: set = set()
+    for cluster in materialize_clusters_ordered():
+        fn = get_materializer(cluster.kind)
+        if fn is None or fn in seen:
+            continue
+        seen.add(fn)
+        fn(ctx)
+
+
+def _minister_name(ctx: MaterializeCtx) -> str:
+    return ctx.character.name
+
+
+# ── handlers（委派既有 stage，不另造落库）────────────────────────────
+
+
+def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
+    """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
+    from ming_sim.cli_backend import extract_minister_actions
+
+    if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
+        return
+    session = ctx.session
+    minister_name = _minister_name(ctx)
+    is_consort = getattr(ctx.character, "office_type", "") == "后宫"
+    active = session.db.get_active_secret_orders_for_minister(minister_name)
+    if not (active or is_consort):
+        return
+
+    intent = ctx.intent
+    intent_kind = ctx.intent_kind
+    # 仅当分类器未跑，或判为 secret/cultivate 时走抽取/物化；
+    # 其它 kind 的并发判词不得串行重抽密令。
+    if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
+        return
+    if intent is not None and intent_kind in ("secret", "cultivate"):
+        extracted = extract_minister_actions(
+            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+        act = extracted if (
+            extracted.get("secret_action") != "无"
+            or extracted.get("cultivate_skill")
+            or extracted.get("cultivate_trait")
+        ) else intent
+    elif intent is not None and intent_kind == "none":
+        act = {
+            "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+        }
+    else:
+        act = extract_minister_actions(
+            ctx.player_message, ctx.reply, active, is_consort, llm_config=ctx.llm_config)
+
+    sa = act["secret_action"]
+    if sa and sa != "无":
+        ctx.conversation_intent_handled = True
+    target = None
+    if act["order_id"]:
+        target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
+    if target is None and len(active) == 1:
+        target = active[0]
+    if target is not None and sa and sa != "无":
+        oid = int(target["id"])
+        target_active = str(target.get("status") or "active") == "active"
+        if target_active and sa == "更新":
+            ctx.out["pending_action_id"] = session.db.stage_pending_action(
+                session.state.turn, kind="secret_order", action="更新",
+                minister_name=minister_name, target_id=oid,
+                payload=session.db.attach_secret_oral_pin(
+                    minister_name, int(session.state.turn), {
+                        "new_title": act["new_title"] or str(target.get("title") or ""),
+                        "new_content": act["new_content"] or str(target.get("content") or ""),
+                        "deadline_months": act["deadline_months"],
+                    },
+                ),
+            )
+        elif target_active and sa == "催办":
+            rush_deadline = int(act.get("deadline_months") or 0)
+            if rush_deadline <= 0 and not any(
+                token in ctx.message_text
+                for token in ("即刻", "立即", "立刻", "马上", "本月", "当月", "即日")
+            ):
+                rush_deadline = 1
+            ctx.out["pending_action_id"] = session.db.stage_pending_action(
+                session.state.turn, kind="secret_order", action="催办",
+                minister_name=minister_name, target_id=oid,
+                payload={
+                    "deadline_months": rush_deadline,
+                    "reason": ctx.player_message[:80],
+                },
+            )
+        elif target_active and sa == "提交核议":
+            ctx.out["pending_action_id"] = session.db.stage_pending_action(
+                session.state.turn, kind="secret_order", action="提交核议",
+                minister_name=minister_name, target_id=oid,
+                payload={"claim": ctx.reply.strip()},
+            )
+        elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(session.state.turn):
+            ctx.out["pending_action_id"] = session.db.stage_pending_action(
+                session.state.turn, kind="secret_order", action="记进展",
+                minister_name=minister_name, target_id=oid,
+                payload={"note": ctx.reply.strip()},
+            )
+    if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
+        ctx.conversation_intent_handled = True
+        ctx.out["pending_action_id"] = session.db.stage_pending_action(
+            session.state.turn, kind="consort", action="调教",
+            minister_name=ctx.character.name, target_id=None,
+            payload={
+                "name": ctx.character.name,
+                "skill": act["cultivate_skill"],
+                "trait": act["cultivate_trait"],
+            },
+        )
+
+
+def _mentions_draft_request(text: str) -> bool:
+    if not text:
+        return False
+    return any(
+        token in text
+        for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨", "这道旨", "道旨")
+    )
+
+
+def _materialize_draft(ctx: MaterializeCtx) -> None:
+    from ming_sim.cli_backend import extract_draft_intent
+
+    session = ctx.session
+    minister_name = _minister_name(ctx)
+    intent = ctx.intent
+    intent_kind = ctx.intent_kind
+    pend_for_minister = ctx.pend_for_minister
+
+    has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
+    has_committed_directive = False
+    if not has_pending_directive:
+        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
+            if str(_directive["actor"] or "") == minister_name:
+                has_committed_directive = True
+                break
+    draft_keyword_requested = _mentions_draft_request(ctx.player_message)
+    if not (
+        (intent is not None and intent_kind == "draft")
+        or has_pending_directive
+        or has_committed_directive
+        or draft_keyword_requested
+    ):
+        return
+
+    if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
+        return
+
+    _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+    _committed_draft = None
+    if not _has_pending_draft:
+        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
+            if str(_directive["actor"] or "") == minister_name:
+                _committed_draft = _directive
+                break
+    _has_existing_draft = _has_pending_draft or _committed_draft is not None
+    _dir_candidates = []
+    for _p in pend_for_minister:
+        if _p["kind"] != "directive":
+            continue
+        _val = _p["payload_json"] or "{}"
+        try:
+            _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
+        except (ValueError, TypeError):
+            _cp = {}
+        _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
+        _dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+    _existing_draft_text = ""
+    if _dir_candidates:
+        _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
+    elif _committed_draft is not None and not _has_pending_draft:
+        _existing_draft_text = str(_committed_draft["text"] or "")
+
+    if intent is not None and intent_kind == "draft" and not _has_existing_draft:
+        draft_res = {"draft_action": "拟旨", "draft_text": ctx.reply, "target_candidate": ""}
+    elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
+        draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
+    else:
+        draft_res = extract_draft_intent(
+            ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
+            has_pending_draft=_has_existing_draft,
+            existing_draft_text=_existing_draft_text,
+            existing_candidates=_dir_candidates or None,
+        )
+
+    if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
+        ctx.out["directive_confirmation_ambiguous"] = {
+            "candidates": [{"id": c["id"], "summary": c["summary"]} for c in _dir_candidates]
+        }
+        ctx.draft_staged = True
+        return
+    if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+        _target = str(draft_res.get("target_candidate") or "")
+        _target_id = int(_target) if _target.isdigit() else None
+        if _dir_candidates and _target == "新":
+            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
+                session.state.turn, minister_name,
+                payload={"text": draft_res["draft_text"], "actor": minister_name},
+            )
+        elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
+            ctx.out["pending_action_id"] = session.db.update_directive_candidate(
+                _target_id,
+                payload={"text": draft_res["draft_text"], "actor": minister_name},
+            )
+        elif _committed_draft is not None and not _has_pending_draft:
+            did = int(_committed_draft["id"])
+            session.db.update_directive_text(did, draft_res["draft_text"])
+            ctx.out["directive"] = {
+                "id": did,
+                "text": draft_res["draft_text"],
+                "status": "draft",
+                "notes": f"由{minister_name}拟旨入档",
+            }
+        else:
+            pid = session.db.upsert_pending_directive(
+                session.state.turn, minister_name,
+                payload={"text": draft_res["draft_text"], "actor": minister_name},
+            )
+            ctx.out["pending_action_id"] = pid
+        ctx.draft_staged = True
+
+
+def _materialize_appointment(ctx: MaterializeCtx) -> None:
+    from ming_sim.cli_backend import extract_appointment_action
+    from ming_sim.session import (
+        _appointment_intent_is_current_office_noop,
+        _cancel_staged_opposing_office,
+        _target_active_officeholder,
+    )
+
+    if (
+        ctx.explicit_prefixed or ctx.draft_staged
+        or ctx.out.get("pending_action_id") or ctx.conversation_intent_handled
+    ):
+        return
+
+    session = ctx.session
+    minister_name = _minister_name(ctx)
+    intent = ctx.intent
+    intent_kind = ctx.intent_kind
+
+    if intent is not None:
+        appt = intent if intent_kind == "appointment" else {"appoint_action": "无", "name": "", "office": ""}
+    else:
+        appt = extract_appointment_action(
+            ctx.player_message, ctx.reply, llm_config=ctx.llm_config)
+
+    content_ref = getattr(session, "content", None)
+    appt_name = appt.get("name", "")
+    if appt.get("appoint_action") == "任命" and appt_name:
+        hedged = _cancel_staged_opposing_office(
+            session.db, "罢免", appt_name, int(session.state.turn), content=content_ref)
+        if hedged or _appointment_intent_is_current_office_noop(
+                session.db, appt_name, appt.get("office", ""), content=content_ref):
+            appt = {"appoint_action": "无", "name": "", "office": ""}
+    elif appt.get("appoint_action") == "罢免" and appt_name:
+        cancelled = _cancel_staged_opposing_office(
+            session.db, "任命", appt_name, int(session.state.turn), content=content_ref)
+        if cancelled and not _target_active_officeholder(
+                session.db, appt_name, content=content_ref):
+            appt = {"appoint_action": "无", "name": "", "office": ""}
+    if appt.get("appoint_action") in ("任命", "罢免") and appt.get("name"):
+        ctx.out["pending_action_id"] = session.db.stage_pending_action(
+            session.state.turn, kind="office", action=appt["appoint_action"],
+            minister_name=minister_name, target_id=None,
+            payload={
+                "name": appt["name"], "office": appt.get("office", ""),
+                "appointer": minister_name,
+            },
+        )
+
+
+# secret + cultivate share one extract path historically; both kinds map to same fn.
+register_materializer("secret", _materialize_secret_and_cultivate)
+register_materializer("cultivate", _materialize_secret_and_cultivate)
+register_materializer("draft", _materialize_draft)
+register_materializer("appointment", _materialize_appointment)

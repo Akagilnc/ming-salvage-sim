@@ -1268,11 +1268,16 @@ class GameSession:
         """
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
-            cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
-            extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
+            cli_backend_from_env, resolve_minister_actions,
+            extract_confirmation_intent,
             extract_directive_confirmation, _extract_secret_order,
         )
-        from ming_sim.action_clusters import normalize_intent_candidates, primary_intent
+        from ming_sim.action_clusters import (
+            EFFECT_ANSWER_EXISTING,
+            cluster_effect,
+            normalize_intent_candidates,
+            primary_intent,
+        )
         out: Dict[str, Any] = {
             "directive": None,
             "secret_order_id": secret_order_id,
@@ -1318,7 +1323,11 @@ class GameSession:
             confirm_action_ids = {int(p["id"]) for p in confirm_targets}
             summaries = [_pending_action_brief(p) for p in confirm_targets]
             if intent is not None:
-                confirm = str(intent.get("confirmation") or "无") if intent_kind == "confirmation" else "无"
+                confirm = (
+                    str(intent.get("confirmation") or "无")
+                    if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING
+                    else "无"
+                )
                 if confirm not in ("应允", "拒绝", "无"):
                     confirm = "无"
             else:
@@ -1544,271 +1553,26 @@ class GameSession:
                 force_default_assignee=False,
             )
             out["pending_action_id"] = _stage_secret_order_candidate(so)
-        # 会话动作：本轮未经前缀落密令时，LLM 判皇帝对密令/妃嫔的意图再落地。
-        # 前缀消息一律跳过（explicit_prefixed 已在顶部单一判定，统一把门所有后置 LLM 抽取器）。
-        conversation_intent_handled = False
-        if not out.get("pending_action_id") and not out["secret_order_id"] and not explicit_prefixed:
-            is_consort = getattr(character, "office_type", "") == "后宫"
-            active = self.db.get_active_secret_orders_for_minister(minister_name)
-            if active or is_consort:
-                if intent is not None and intent_kind in ("secret", "cultivate"):
-                    # 并发分类器只读皇帝话，不能作为最终字段真源；会话动作的完整 payload
-                    # 仍须等大臣回话后抽取，避免更新/调教丢掉回话里的实质补充。
-                    extracted = extract_minister_actions(
-                        player_message, reply, active, is_consort, llm_config=llm_config)
-                    act = extracted if (
-                        extracted.get("secret_action") != "无"
-                        or extracted.get("cultivate_skill")
-                        or extracted.get("cultivate_trait")
-                    ) else intent
-                elif intent is not None:
-                    act = {
-                        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-                        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""}
-                else:
-                    act = extract_minister_actions(
-                        player_message, reply, active, is_consort, llm_config=llm_config)
-                sa = act["secret_action"]
-                if sa and sa != "无":
-                    conversation_intent_handled = True
-                target = None
-                if act["order_id"]:
-                    target = next((o for o in active if int(o["id"]) == act["order_id"]), None)
-                if target is None and len(active) == 1:
-                    target = active[0]
-                if target is not None and sa and sa != "无":
-                    oid = int(target["id"])
-                    # 只对 active 目标 stage:pending_review/已结的密令,更新/催办/提交核议/记进展
-                    # 落库都会失败,stage 了只会成孤儿暂存行(ship-pre CMR codex)。非 active 一律不接。
-                    target_active = str(target.get("status") or "active") == "active"
-                    if target_active and sa == "更新":
-                        # 动作闸门(ADR 0006)：进暂存，不动真实表；颁诏批量落库。
-                        # #976：仅「更新」有新口谕正文 → 钉 held pin → commit withhold。
-                        # 催办/记进展/提交核议无新正文，不 pin（纯公开 held 不得吞）。
-                        out["pending_action_id"] = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="更新",
-                            minister_name=minister_name, target_id=oid,
-                            payload=self.db.attach_secret_oral_pin(
-                                minister_name, int(self.state.turn), {
-                                    "new_title": act["new_title"] or str(target.get("title") or ""),
-                                    "new_content": act["new_content"] or str(target.get("content") or ""),
-                                    "deadline_months": act["deadline_months"],
-                                },
-                            ),
-                        )
-                    elif target_active and sa == "催办":
-                        rush_deadline = int(act.get("deadline_months") or 0)
-                        if rush_deadline <= 0 and not any(
-                            token in message_text
-                            for token in ("即刻", "立即", "立刻", "马上", "本月", "当月", "即日")
-                        ):
-                            rush_deadline = 1
-                        out["pending_action_id"] = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="催办",
-                            minister_name=minister_name, target_id=oid,
-                            payload={
-                                "deadline_months": rush_deadline,
-                                "reason": player_message[:80],
-                            },
-                        )
-                    elif target_active and sa == "提交核议":
-                        out["pending_action_id"] = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="提交核议",
-                            minister_name=minister_name, target_id=oid,
-                            payload={"claim": reply.strip()},
-                        )
-                    elif target_active and sa == "记进展" and int(target.get("turn_issued") or 0) != int(self.state.turn):
-                        out["pending_action_id"] = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="记进展",
-                            minister_name=minister_name, target_id=oid,
-                            payload={"note": reply.strip()},
-                        )
-                    # 注:密令会话动作走闸门后只暂存(out["pending_action_id"]),不再当场改真实表,
-                    # 故无 secret_order_id、无需 refresh registry——暂存动作颁诏前对他臣不可见
-                    # (ADR 0006),且 commit 在月末 next_period 前、次回合 agent 本就重建,无须刷新。
-                if is_consort and (act["cultivate_skill"] or act["cultivate_trait"]):
-                    conversation_intent_handled = True
-                    # 后宫调教也是结构化聊天写动作,走动作闸门(ADR 0006):暂存,颁诏批量落库。
-                    out["pending_action_id"] = self.db.stage_pending_action(
-                        self.state.turn, kind="consort", action="调教",
-                        minister_name=character.name, target_id=None,
-                        payload={"name": character.name,
-                                 "skill": act["cultivate_skill"], "trait": act["cultivate_trait"]})
-        draft_probe_done = False
-        draft_staged = False
 
-        def _mentions_draft_request(text: str) -> bool:
-            if not text:
-                return False
-            return any(
-                token in text
-                for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨", "这道旨", "道旨")
-            )
-
-        def _stage_conversational_draft() -> bool:
-            nonlocal draft_probe_done
-            draft_probe_done = True
-            if explicit_prefixed or has_directive or out.get("pending_action_id"):
-                return False
-            _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
-            _committed_draft = None
-            if not _has_pending_draft:
-                for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
-                    if str(_directive["actor"] or "") == minister_name:
-                        _committed_draft = _directive
-                        break
-            _has_existing_draft = _has_pending_draft or _committed_draft is not None
-            # 多道模式（#502）：本夜已有 ≥1 道独立 pending 候选时，把各道 (id, 正文) 喂 extract，
-            # 由抽取器判本轮是新拟独立一道（target=新）还是补充某一道（target=该道 id）。
-            _dir_candidates = []
-            for _p in pend_for_minister:
-                if _p["kind"] != "directive":
-                    continue
-                _val = _p["payload_json"] or "{}"
-                try:
-                    _cp = _val if isinstance(_val, (list, dict)) else json.loads(_val)
-                except (ValueError, TypeError):
-                    _cp = {}
-                _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-                _dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
-            # 补充模式：提取现有草案文本喂 extract，让 LLM 合并新旧草案；直接用大臣回话
-            # （可能是确认语）会覆盖原草案（codex r6 F1）。多道时取最近一道候选正文作合并基线。
-            _existing_draft_text = ""
-            if _dir_candidates:
-                _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
-            elif _committed_draft is not None and not _has_pending_draft:
-                _existing_draft_text = str(_committed_draft["text"] or "")
-            if intent is not None and intent_kind == "draft" and not _has_existing_draft:
-                # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
-                draft_res = {"draft_action": "拟旨", "draft_text": reply, "target_candidate": ""}
-            elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
-                # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
-                draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
-            else:
-                # 【已有草案（pending/committed）的任何后续】或 intent is None（旧路）：一律走
-                # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
-                # committed draft，无论它判 none 还是 draft，直接拿回话覆盖都会丢掉原草案内容
-                # （codex correctness：none 半与 draft 半是同一覆盖丢失的两面，统一收敛到 merge）。
-                # 额外 LLM 只在「已有草案」这一动作场景发生，普通无草案消息不受影响。
-                draft_res = extract_draft_intent(
-                    player_message, reply, llm_config=llm_config,
-                    has_pending_draft=_has_existing_draft,
-                    existing_draft_text=_existing_draft_text,
-                    existing_candidates=_dir_candidates or None,
-                )
-            # 多道并存、改/补目标不明（#502 L7）：不静默新建第三道 → 结构化含糊态 + 追问哪一道。
-            if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
-                out["directive_confirmation_ambiguous"] = {
-                    "candidates": [{"id": c["id"], "summary": c["summary"]} for c in _dir_candidates]
-                }
-                return True
-            if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
-                _target = str(draft_res.get("target_candidate") or "")
-                _target_id = int(_target) if _target.isdigit() else None
-                if _dir_candidates and _target == "新":
-                    # 新拟独立一道 → INSERT 新候选，不并进任一现有候选（AC1）。
-                    out["pending_action_id"] = self.db.stage_directive_candidate(
-                        self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
-                    )
-                elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
-                    # 补充/改草某一道 → 原地更新那道候选正文（不冻结、不新增行；AC2）。
-                    out["pending_action_id"] = self.db.update_directive_candidate(
-                        _target_id,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
-                    )
-                elif _committed_draft is not None and not _has_pending_draft:
-                    did = int(_committed_draft["id"])
-                    self.db.update_directive_text(did, draft_res["draft_text"])
-                    out["directive"] = {
-                        "id": did,
-                        "text": draft_res["draft_text"],
-                        "status": "draft",
-                        "notes": f"由{minister_name}拟旨入档",
-                    }
-                else:
-                    pid = self.db.upsert_pending_directive(
-                        self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
-                    )
-                    out["pending_action_id"] = pid
-                return True
-            return False
-
-        # 若皇帝话里已明确「拟旨/起草/圣旨」，先让拟旨抽取器判；否则「帮我拟旨，
-        # 授某人为某官」会被任免抽取抢成 office pending，丢失诏书草案路径。
-        has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-        has_committed_directive = False
-        if not has_pending_directive:
-            for _directive in reversed(self.db.list_directives(self.state, statuses=("draft",))):
-                if str(_directive["actor"] or "") == minister_name:
-                    has_committed_directive = True
-                    break
-        draft_keyword_requested = _mentions_draft_request(player_message)
-        # 已有草案（pending 或 committed）时，无论并发分类器判什么都要进 _stage 合并：分类器只读
-        # 皇帝本条消息、且看不到 committed draft 上下文，会把「再补一条…随行」这类后续补充误判成
-        # none → 静默丢掉草案补充（违背 #344 US6「动作仍正确落库」，codex correctness）。无草案时
-        # 仍按原逻辑（intent=='draft' 或旧路 _mentions/pending）触发；只要皇帝明说「拟旨」
-        # 关键词，即使分类器误判 appointment 也须走拟旨抽取，普通无动作消息零额外 LLM 不变。
-        if (
-            (intent is not None and intent_kind == "draft")
-            or has_pending_directive
-            or has_committed_directive
-            or draft_keyword_requested
-        ):
-            draft_staged = _stage_conversational_draft()
-
-        # 任免(office)独立检测：与密令无关，随召对触发(ungated)，覆盖大臣+太监。
-        # 口头任命/罢免 → 暂存 kind=office；颁诏前不动 characters 表。
-        # 显式前缀(拟旨/密令)是皇帝已明示的动作，按既定例外直接走(拟旨里的任免随诏书
-        # 走 extractor 的 office_changes)，不在此自然语言路径重复 stage。
-        appt = {"appoint_action": "无"}
-        if (
-            not explicit_prefixed and not draft_staged
-            and not out.get("pending_action_id") and not conversation_intent_handled
-        ):
-            if intent is not None:
-                appt = intent if intent_kind == "appointment" else {"appoint_action": "无"}
-            else:
-                appt = extract_appointment_action(player_message, reply, llm_config=llm_config)
-        content_ref = getattr(self, "content", None)
-        appt_name = appt.get("name", "")
-        if appt["appoint_action"] == "任命" and appt_name:
-            # 对冲优先（ADR 0028 R1）：先按名撤销同回合暂存罢免——「留任」抽取形 office 常空/为
-            # 原职，暂存免职未提交时名册仍在职，只比名册会把留任误判 no-op 丢弃、免职照旧、反悔
-            # 失效。撤销成功=留任接住暂存免职；无相抵暂存时才落回 roster no-op（X 已在该职=背景
-            # 复述）。两路都不 stage 新任命；无对冲且非 no-op 才 stage。
-            hedged = _cancel_staged_opposing_office(
-                self.db, "罢免", appt_name, int(self.state.turn), content=content_ref)
-            if hedged or _appointment_intent_is_current_office_noop(
-                    self.db, appt_name, appt.get("office", ""), content=content_ref):
-                appt = {"appoint_action": "无"}
-        elif appt["appoint_action"] == "罢免" and appt_name:
-            # 对冲（ADR 0028 R2）：撤销同回合暂存任命（清掉反向 pending）。仅当【真撤销了】暂存
-            # 任命、且目标当前无可罢之职（R2「A 本就不在职」形：新任未落库/非 active）才净空、不落
-            # 罢免；目标仍 active 且有职（改任暂存后又革职）→ 撤暂存任命后仍落真罢免，不能吞。
-            # 无暂存任命可撤时按既有路径正常 stage（含非在职者 stage→ 收夜 commit 拒并标 failed 的
-            # 既有契约，不在召对期提前吞掉）。
-            cancelled = _cancel_staged_opposing_office(
-                self.db, "任命", appt_name, int(self.state.turn), content=content_ref)
-            if cancelled and not _target_active_officeholder(
-                    self.db, appt_name, content=content_ref):
-                appt = {"appoint_action": "无"}
-        if appt["appoint_action"] in ("任命", "罢免") and appt["name"]:
-            # minister_name = 召对对象(发起这道任免的大臣/太监),非被任者——对话确认按召对的
-            # 大臣过滤暂存,故须以召对对象为键;被任者姓名在 payload["name"]。
-            out["pending_action_id"] = self.db.stage_pending_action(
-                self.state.turn, kind="office", action=appt["appoint_action"],
-                minister_name=minister_name, target_id=None,
-                payload={"name": appt["name"], "office": appt["office"],
-                         "appointer": minister_name})
-        # 对话式拟旨意图(ADR 0006 自然语言路径)：非显式前缀、尚无 draft、且本轮未 stage 其他动作时，
-        # 判皇帝是否口头请拟旨；检测到则 upsert pending directive（last-write-wins，同大臣同回合至多一条）。
-        # 挂在任免之后、以"无其他 pending 动作"为守门：前缀/密令更新/任免等已处理的情形语义上
-        # 与拟旨互斥，跳过可省一次 LLM 调用；余下的才是真正口头请拟旨的情形。
-        # _has_pending_draft：此大臣本回合已有 kind=directive 暂存时为 True（confirm=="无"後仍在）。
-        # pend_for_minister snapshot 此处仍有效：confirm=="应允"/"拒绝"会在上方提前 return，
-        # 能到这里说明 directive 未 commit/drop，snapshot 与 DB 一致（codex r5 F1 修复）。
+        # #515：登记表驱动物化——secret/cultivate/draft/appointment 只经 materializer 委派，
+        # 串行 fallback 与并发判词共用同一批 handler（action_materialize）。
+        import ming_sim.action_materialize  # noqa: F401 — register handlers
+        from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+        mat_ctx = MaterializeCtx(
+            session=self,
+            character=character,
+            player_message=player_message,
+            reply=reply,
+            message_text=message_text,
+            explicit_prefixed=explicit_prefixed,
+            has_directive=has_directive,
+            pend_for_minister=pend_for_minister,
+            out=out,
+            intent=intent,
+            intent_kind=intent_kind,
+            llm_config=llm_config,
+        )
+        run_materialize_pipeline(mat_ctx)
         return out
 
     @staticmethod
