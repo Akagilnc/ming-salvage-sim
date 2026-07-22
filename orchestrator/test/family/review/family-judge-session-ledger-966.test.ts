@@ -133,18 +133,16 @@ describe("#966 family judge session from ledger", () => {
     ).toBe(true);
   });
 
-  it("session truly absent after judge continue → durable loud #1081 instead of fresh open", async () => {
+  it("session truly absent after judge continue → fresh reopen with priorJudgeVerdicts (soul law)", async () => {
     const backend = new FamilyJudgeLedgerBackend({
       completeness: (round, ctx) => {
         if (round === 0) {
-          // No sessionId on WorkerResult: continue forms a resume obligation,
-          // so the runner must fail loud before coder-fix / next fresh open.
+          // No sessionId on WorkerResult: next open is fresh + priors, not fail-loud.
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
-        throw new Error(`must not open a fresh judge after lost session: ${ctx.resumeSessionId}`);
-      },
-      coder: () => {
-        throw new Error("must fail loud before coder-fix when judge sessionId is absent");
+        expect(ctx.resumeSessionId).toBeUndefined();
+        expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        return completedJudge(judgeConverged(), "fresh-after-loss-966");
       },
     });
     const route = await grokCmrRoute();
@@ -154,12 +152,17 @@ describe("#966 family judge session from ledger", () => {
       familyBackend: backend,
       modelRoute: route,
     });
-    expect(result).toMatchObject({ ok: false, ran: true, failedStatus: "cmr_failed" });
+    expect(result).toEqual({ ok: true, ran: true });
     const opens = backend.dispatches.filter(
       (d) => d.kind === "cmr" && d.cmrPass === "completeness",
     );
+    expect(opens.length).toBeGreaterThanOrEqual(2);
     expect(opens[0]?.session).toBe("fresh");
-    expect(opens).toHaveLength(1);
+    expect(opens[0]?.resumeSessionId).toBeUndefined();
+    expect(opens[1]?.session).toBe("fresh");
+    expect(opens[1]?.resumeSessionId).toBeUndefined();
+    expect((opens[1]?.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
     expect(
       backend.ledger.some(
         (e) =>
@@ -169,7 +172,7 @@ describe("#966 family judge session from ledger", () => {
           e.reason.includes("#1081") &&
           e.reason.includes("no sessionId"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("older lost continue covered by a newer verdict no longer creates resume obligation", async () => {

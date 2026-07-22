@@ -2549,31 +2549,9 @@ async function runIntegratedCmrPass(input: {
     familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
   const provisionalSpec = cmrWorkerSpec("fresh", pass, resolvedRoute);
   const cmrJudgeSeatResumeCapable = resumeCapableForSlug(provisionalSpec.model, cmrPool);
-  // Soul law: session lost → fresh judge; priorJudgeVerdicts still land above
-  // for trajectory / session-loss recovery (same shape as single-slice #925).
-  // No fail-loud when continue rows lack sessionId.
-  if (ledgerResumeJudgeSessionId !== undefined && !cmrJudgeSeatResumeCapable) {
-    const reason =
-      `integrated cmr ${pass} resident judge has a resume obligation but ` +
-      `the judge seat is not resume-capable (${provisionalSpec.model}) (#1081)`;
-    await recordDurableAbort(familyBackend, {
-      phase: ledgerPhase,
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: resolvedFamilyHeadAfter,
-      stopSummary: stageFailureStopSummary({
-        status: "cmr_failed",
-        summary: reason,
-        repairHint:
-          "restore a resume-capable resident judge seat before continuing the family court",
-      }),
-    });
-    return {
-      result: stageGate("cmr_failed"),
-      familyHeadAfter: resolvedFamilyHeadAfter,
-      resolvedRoute: activeRoute,
-    };
-  }
+  // Soul law: session lost / seat not resume-capable → fresh judge;
+  // priorJudgeVerdicts still land above for trajectory / session-loss recovery
+  // (same shape as single-slice #925). No fail-loud terminal.
   const resumeJudgeSessionId = cmrJudgeSeatResumeCapable
     ? ledgerResumeJudgeSessionId
     : undefined;
@@ -3262,32 +3240,8 @@ async function runIntegratedCmrPass(input: {
     repairHint: "send live findings to coder-fix, then resume the family judge",
   });
 
-  if (allowCoderFix && (openedJudgeSessionId === undefined || !cmrJudgeSeatResumeCapable)) {
-    const missingSessionReason =
-      `integrated cmr ${pass} judge continue formed a resident resume obligation but ` +
-      (cmrJudgeSeatResumeCapable
-        ? "the judge returned no sessionId"
-        : `the judge seat is not resume-capable (${spec.model})`) +
-      " (#1081)";
-    await recordDurableAbort(familyBackend, {
-      phase: ledgerPhase,
-      cmrPass: pass,
-      reason: missingSessionReason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: stageFailureStopSummary({
-        status: "cmr_failed",
-        summary: missingSessionReason,
-        repairHint:
-          "resume the same resident judge session; do not run coder-fix and then open a fresh judge next round",
-      }),
-    });
-    return {
-      result: stageGate("cmr_failed"),
-      familyHeadAfter: postWorkerFamilyHead,
-      resolvedRoute: activeRoute,
-    };
-  }
-
+  // Soul law: missing sessionId / not resume-capable → still coder-fix;
+  // next open is fresh + priorJudgeVerdicts (no same-session-or-die terminal).
   if (allowCoderFix) {
     await persistFinalReviewRound("accepted", () =>
       recordCmrReviewed(familyBackend, {
@@ -3694,8 +3648,7 @@ export async function runVerifyCmr(
   };
 
   // ── verify (all phases: "wave", "correctness_checkpoint", "final") ──
-  // #1107 / #1110: one mechanism — green continues (except a durable pending
-  // judge receipt); red enters the shared court.
+  // #1107 / #1110: one mechanism — green continues; red enters the shared court.
   const verifyCourt = await runFamilyVerifyThroughCourt({
     phase,
     familyBase,
