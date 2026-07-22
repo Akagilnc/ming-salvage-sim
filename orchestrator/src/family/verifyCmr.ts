@@ -124,6 +124,7 @@ import {
 import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import { emitJudgeProgress } from "../progressBroadcast.js";
+import { hubNextFromFamilyClosureAction } from "../residentJudgeHub.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -729,14 +730,21 @@ async function runWaveVerifyJudgeCourt(input: {
     }
 
     const closure = closeFamilyCourtFromJudgeOutput(judgeResult.output);
-    // #1085 R2: branch on discriminant closure.action (TS narrows cargo).
-    // Next-action vocabulary stays the single shared hub table
-    // ({@link hubNextFromFamilyClosureAction} for wave_verify):
-    // pass→exit_loop, continue→resume_builder, escalate→park,
-    // toolchain→toolchain, unusable→fail_loud — not a second branch map.
+    // #1085 / #1080: sole production edge source = shared hub table
+    // (isomorphic with per-slice route.ts → routeResidentJudgeHub). Cargo
+    // still narrows on closure.action after hubNext is known.
+    const hubNext = hubNextFromFamilyClosureAction(
+      closure.action,
+      "wave_verify",
+    );
 
     // ── toolchain: env red → verify_failed (fixer zero-spin, loud). ──
-    if (closure.action === "toolchain") {
+    if (hubNext === "toolchain") {
+      if (closure.action !== "toolchain") {
+        throw new Error(
+          `wave verify: hub toolchain without toolchain action (${closure.action})`,
+        );
+      }
       const reason = `wave verify toolchain: ${closure.reason} — ${closure.diagnosis}`;
       return await recordWaveVerifyAbort({
         familyBase,
@@ -754,7 +762,12 @@ async function runWaveVerifyJudgeCourt(input: {
       });
     }
     // ── park: decision-gate escalate. ──
-    if (closure.action === "escalate") {
+    if (hubNext === "park") {
+      if (closure.action !== "escalate") {
+        throw new Error(
+          `wave verify: hub park without escalate action (${closure.action})`,
+        );
+      }
       return await recordWaveVerifyEscalation({
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
@@ -766,7 +779,12 @@ async function runWaveVerifyJudgeCourt(input: {
       });
     }
     // ── fail_loud: unusable envelope (seat-side SO re-ask is official). ──
-    if (closure.action === "unusable") {
+    if (hubNext === "fail_loud") {
+      if (closure.action !== "unusable") {
+        throw new Error(
+          `wave verify: hub fail_loud without unusable action (${closure.action})`,
+        );
+      }
       const reason = `wave verify triage judge round ${round}: ${closure.reason}`;
       return await recordWaveVerifyAbort({
         familyBase,
@@ -786,7 +804,12 @@ async function runWaveVerifyJudgeCourt(input: {
 
     // ── continue → resume_builder: judge-authored packet → coder-fix, then
     //    ALWAYS resume judge (ADR 0147). Green alone never exits past the hub. ──
-    if (closure.action === "continue") {
+    if (hubNext === "resume_builder") {
+      if (closure.action !== "continue") {
+        throw new Error(
+          `wave verify: hub resume_builder without continue action (${closure.action})`,
+        );
+      }
       let fixPacketBody: string;
       try {
         fixPacketBody = requireFixPacketBody({
@@ -885,7 +908,7 @@ async function runWaveVerifyJudgeCourt(input: {
     //    RED → force another judge round (even judge-converged cannot close).
     //    #1085: reuse last observe when HEAD unchanged (one full-family verify
     //    per convergence cycle — never double-run after a judge-only resume). ──
-    if (closure.action === "pass") {
+    if (hubNext === "exit_loop") {
       const headStable =
         lastObserve !== undefined &&
         lastObserveFamilyHead === familyHeadBefore;
@@ -917,10 +940,10 @@ async function runWaveVerifyJudgeCourt(input: {
       continue;
     }
 
-    // Closed FamilyJudgeClosure — compile-time exhaustiveness (no fallthrough).
-    const _never: never = closure;
+    // Closed ResidentJudgeHubNext — compile-time exhaustiveness (no fallthrough).
+    const _never: never = hubNext;
     throw new Error(
-      `wave verify triage judge round ${round}: unhandled closure ${JSON.stringify(_never)}`,
+      `wave verify triage judge round ${round}: unhandled hub next ${String(_never)}`,
     );
   }
 }
@@ -2846,13 +2869,13 @@ async function runIntegratedCmrPass(input: {
   const skippedLegs =
     frozenLegs.length > 0 ? [...hostSkippedLegs] : cargoSource?.skippedLegs;
 
-  // #1085 R2: branch on discriminant closure.action (TS narrows cargo).
-  // Shared hub table (hubNextFromFamilyClosureAction, family_cmr) defines
-  // next-action: pass→exit_loop, continue→resume_builder, escalate→park,
-  // toolchain→toolchain, unusable→fail_loud — not a second branch map.
+  // #1085 / #1080: sole production edge source = shared hub table
+  // (isomorphic with per-slice route.ts → routeResidentJudgeHub and wave
+  // court above). Cargo still narrows on closure.action after hubNext is known.
+  const hubNext = hubNextFromFamilyClosureAction(closure.action, "family_cmr");
 
   // pass → exit_loop / accepted.
-  if (closure.action === "pass") {
+  if (hubNext === "exit_loop") {
     // #1080 / ADR 0147 / US#10: pure-judge receive of a builder beat must not
     // close the court without the independent fresh-panel outer gate. Soft-
     // accept here (no cmr_passed row) and force the caller to re-open with
@@ -2896,7 +2919,12 @@ async function runIntegratedCmrPass(input: {
   }
 
   // escalate → park.
-  if (closure.action === "escalate") {
+  if (hubNext === "park") {
+    if (closure.action !== "escalate") {
+      throw new Error(
+        `integrated cmr ${pass}: hub park without escalate action (${closure.action})`,
+      );
+    }
     const reason = closure.reason;
     const diagnosis = closure.diagnosis;
     const stopSummary = decisionGateParkStopSummary({
@@ -2940,7 +2968,12 @@ async function runIntegratedCmrPass(input: {
   }
 
   // unusable → fail_loud (#919 M1) — never family coder-fix.
-  if (closure.action === "unusable") {
+  if (hubNext === "fail_loud") {
+    if (closure.action !== "unusable") {
+      throw new Error(
+        `integrated cmr ${pass}: hub fail_loud without unusable action (${closure.action})`,
+      );
+    }
     const reason = `integrated cmr ${pass} ${closure.reason}`;
     const stopSummary: StopSummary = stageFailureStopSummary({
       status: "cmr_failed",
@@ -2968,7 +3001,12 @@ async function runIntegratedCmrPass(input: {
   }
 
   // toolchain (ADR 0145) — verify_failed, zero fixer spin.
-  if (closure.action === "toolchain") {
+  if (hubNext === "toolchain") {
+    if (closure.action !== "toolchain") {
+      throw new Error(
+        `integrated cmr ${pass}: hub toolchain without toolchain action (${closure.action})`,
+      );
+    }
     const reason = `integrated cmr ${pass} toolchain: ${closure.reason} — ${closure.diagnosis}`;
     const stopSummary: StopSummary = stageFailureStopSummary({
       status: "verify_failed",
@@ -2998,10 +3036,15 @@ async function runIntegratedCmrPass(input: {
   // continue → resume_builder + live findings → coder-fix, then ALWAYS
   // re-open resident judge via restartFinalBarrier (ADR 0147 hub; #1085).
   // #952: terminal-only continue folds to pass at closeFamilyCourt (upstream).
-  if (closure.action !== "continue") {
-    const _never: never = closure;
+  if (hubNext !== "resume_builder") {
+    const _never: never = hubNext;
     throw new Error(
-      `integrated cmr ${pass}: unhandled closure ${JSON.stringify(_never)}`,
+      `integrated cmr ${pass}: unhandled hub next ${String(_never)}`,
+    );
+  }
+  if (closure.action !== "continue") {
+    throw new Error(
+      `integrated cmr ${pass}: hub resume_builder without continue action (${closure.action})`,
     );
   }
   const blockingFindings = closure.blocking;
