@@ -28,10 +28,7 @@
 
 import type { SliceStepId, StepOutput } from "./types.js";
 import { judgeStatusFromOutput } from "./judgeStation.js";
-import {
-  afterBuilderBeatNext,
-  routeResidentJudgeHub,
-} from "./residentJudgeHub.js";
+import { routeResidentJudgeHub } from "./residentJudgeHub.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -74,15 +71,13 @@ export type BuilderBeatStep = "S2" | "S5";
  *
  * Consumers (audit):
  * - route() S2 / S5 cases
- * - family/verifyCmr.ts wave + CMR fixer (via {@link afterBuilderBeatNext})
+ * - family/verifyCmr.ts wave + CMR fixer (topology: always re-open judge)
  */
 export function routeBuilderBeatToResidentJudge(
   from: BuilderBeatStep,
 ): RouteDecision {
-  // Shared hub constant — rings must not invent a second "after builder" table.
-  if (afterBuilderBeatNext() !== "resident_judge") {
-    throw new Error("route: afterBuilderBeatNext must be resident_judge");
-  }
+  // Step map only — the hub invariant "after builder → resident_judge" is the
+  // type of afterBuilderBeatNext() (literal), not a runtime self-compare.
   if (from === "S2") return { kind: "next", step: "S3" };
   return { kind: "next", step: "S6" };
 }
@@ -95,6 +90,8 @@ export function routeBuilderBeatToResidentJudge(
  *
  * Status collapse itself is {@link judgeStatusFromOutput} in judgeStation
  * (#919 S1 — shared with runner normalize; no parallel predicate here).
+ * Per-slice only yields exit_loop / park / resume_builder; toolchain and
+ * fail_loud are impossible and fail loud if they appear.
  */
 function routeEdgesFromJudgeStatus(
   status: "converged" | "continue" | "escalate" | "unusable",
@@ -103,12 +100,17 @@ function routeEdgesFromJudgeStatus(
   const hub = routeResidentJudgeHub(status, "per_slice");
   if (hub === "exit_loop") return { kind: "next", step: "S7" };
   if (hub === "park") return { kind: "handoff", status: "parked" };
-  // resume_builder (continue / unusable). toolchain never reaches per-slice
-  // collapse (judgeStatusFromOutput maps it to unusable → resume_builder).
-  if (hub === "resume_builder" || hub === "toolchain" || hub === "fail_loud") {
+  if (hub === "resume_builder") {
     // #1082: plan pre-review continue/unusable → same S2 builder (not fixer).
     if (coderPlanPhase === true) return { kind: "next", step: "S2" };
     return { kind: "next", step: "S5" };
+  }
+  // toolchain / fail_loud never come from per-slice collapse — do not silently
+  // fold them into the fixer path (family rings terminal them loudly).
+  if (hub === "toolchain" || hub === "fail_loud") {
+    throw new Error(
+      `route: per-slice impossible hub next ${hub} (toolchain/fail_loud are family-only)`,
+    );
   }
   const _never: never = hub;
   throw new Error(`route: unhandled hub next ${String(_never)}`);

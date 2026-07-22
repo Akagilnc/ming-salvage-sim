@@ -475,6 +475,9 @@ function assertNoBuilderToReviewer(
 }
 
 describe("#1085 e2e ring3: wave-verify hub + resume", () => {
+  const WAVE_FIXER_SESSION = "sess-wave-fix-1085";
+  const WAVE_JUDGE_SESSION = "sess-wave-judge-1085";
+
   it("continue → fixer → always resume judge before exit; green hard-pre on exit_loop", async () => {
     let verifyCalls = 0;
     let judgeCalls = 0;
@@ -495,13 +498,14 @@ describe("#1085 e2e ring3: wave-verify hub + resume", () => {
             judgeCalls === 1
               ? judgeContinue([sampleFinding("wave seam", "w.ts:1")])
               : judgeConverged(),
+            WAVE_JUDGE_SESSION,
           );
         }
         if (spec.kind === "coder") {
           return {
             kind: "completed",
             output: { kind: "coder", committed: true, commitsAdded: 1 },
-            sessionId: "sess-wave-fix-1085",
+            sessionId: WAVE_FIXER_SESSION,
           };
         }
         throw new Error(`unexpected ${spec.kind}`);
@@ -518,20 +522,147 @@ describe("#1085 e2e ring3: wave-verify hub + resume", () => {
     expect(result).toEqual({ ok: true, ran: true });
     // Builder beat must not have been the last topology worker before exit.
     expect(judgeCalls).toBeGreaterThanOrEqual(2);
+    // Initial red + post-fix green observe; exit reuses observe (#1085 F1).
+    expect(verifyCalls).toBe(2);
     const kinds = backend.dispatches.map((d) => d.spec.kind);
     const firstCoder = kinds.indexOf("coder");
     expect(firstCoder).toBeGreaterThanOrEqual(0);
     // After coder-fix there must be another cmr (judge) dispatch.
     expect(kinds.slice(firstCoder + 1).some((k) => k === "cmr")).toBe(true);
     assertNoBuilderToReviewer(backend.dispatches);
-    // Resume: second judge carries resumeSessionId when seat is capable.
+    // Judge resume: second wave-judge dispatch carries first session id.
     const judgeCtxs = backend.dispatches
       .filter((d) => d.spec.kind === "cmr")
       .map((d) => d.ctx);
     expect(judgeCtxs.length).toBeGreaterThanOrEqual(2);
-    // First may be fresh; subsequent must resume when session retained.
-    if (judgeCtxs[1]?.resumeSessionId !== undefined) {
-      expect(judgeCtxs[1]!.resumeSessionId!.length).toBeGreaterThan(0);
+    expect(judgeCtxs[0]?.resumeSessionId).toBeUndefined();
+    expect(judgeCtxs[1]?.resumeSessionId).toBe(WAVE_JUDGE_SESSION);
+  });
+
+  it("wave-fixer second beat resumes prior fixer session (positive resume)", async () => {
+    // Two continue rounds → two fixer beats; second must resume first session.
+    let verifyCalls = 0;
+    let judgeCalls = 0;
+    let fixerCalls = 0;
+    const backend = new FamilyHubBackend({
+      verify: () => {
+        verifyCalls += 1;
+        // Stay red until after the second fixer beat (verify call #3).
+        return verifyCalls >= 3
+          ? { ok: true }
+          : {
+              ok: false,
+              errorPackage: { reason: `still red @${verifyCalls}` },
+            };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          if (judgeCalls <= 2) {
+            return completedJudge(
+              judgeContinue([
+                sampleFinding(`wave residual r${judgeCalls}`, `w.ts:${judgeCalls}`),
+              ]),
+              WAVE_JUDGE_SESSION,
+            );
+          }
+          return completedJudge(judgeConverged(), WAVE_JUDGE_SESSION);
+        }
+        if (spec.kind === "coder") {
+          fixerCalls += 1;
+          if (fixerCalls === 1) {
+            expect(ctx.resumeSessionId).toBeUndefined();
+            expect(spec.session).toBe("fresh");
+          } else {
+            expect(ctx.resumeSessionId).toBe(WAVE_FIXER_SESSION);
+            expect(spec.session).toBe("resume");
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+            sessionId: WAVE_FIXER_SESSION,
+          };
+        }
+        throw new Error(`unexpected ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1085-wave-fixer-resume",
+      familyBackend: backend,
+      familyHeadAfter: "head-1085",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(fixerCalls).toBe(2);
+    const coderCtxs = backend.dispatches
+      .filter((d) => d.spec.kind === "coder")
+      .map((d) => d.ctx);
+    expect(coderCtxs[0]?.resumeSessionId).toBeUndefined();
+    expect(coderCtxs[1]?.resumeSessionId).toBe(WAVE_FIXER_SESSION);
+  });
+
+  it("wave-fixer seat not resume-capable → second beat opens fresh (negative)", async () => {
+    let judgeCalls = 0;
+    let fixerCalls = 0;
+    let verifyCalls = 0;
+    const backend = new FamilyHubBackend({
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls >= 3
+          ? { ok: true }
+          : {
+              ok: false,
+              errorPackage: { reason: `red @${verifyCalls}` },
+            };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          if (judgeCalls <= 2) {
+            return completedJudge(
+              judgeContinue([
+                sampleFinding(`incap r${judgeCalls}`, `i.ts:${judgeCalls}`),
+              ]),
+              WAVE_JUDGE_SESSION,
+            );
+          }
+          return completedJudge(judgeConverged(), WAVE_JUDGE_SESSION);
+        }
+        if (spec.kind === "coder") {
+          fixerCalls += 1;
+          // Capability gate drops resume even when prior session id exists.
+          expect(ctx.resumeSessionId).toBeUndefined();
+          expect(spec.session).toBe("fresh");
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+            sessionId: WAVE_FIXER_SESSION,
+          };
+        }
+        throw new Error(`unexpected ${spec.kind}`);
+      },
+    });
+
+    const mod = await import("../../src/modelRegistry.js");
+    const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
+    try {
+      const result = await runVerifyCmr({
+        phase: "wave",
+        familyBase: "family/1085-wave-fixer-incapable",
+        familyBackend: backend,
+        familyHeadAfter: "head-1085",
+      });
+      expect(result).toEqual({ ok: true, ran: true });
+      expect(fixerCalls).toBe(2);
+      const coderCtxs = backend.dispatches
+        .filter((d) => d.spec.kind === "coder")
+        .map((d) => d.ctx);
+      expect(coderCtxs[0]?.resumeSessionId).toBeUndefined();
+      expect(coderCtxs[1]?.resumeSessionId).toBeUndefined();
+    } finally {
+      spy.mockRestore();
     }
   });
 

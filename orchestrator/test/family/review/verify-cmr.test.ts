@@ -378,8 +378,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
-      // #1 initial wave verify (red) → court; #2 re-verify after fix (green,
-      // observed for next judge); #3 re-verify after judge exit_loop (green hard-pre).
+      // #1 initial wave verify (red) → court; #2 re-verify after fix (green
+      // observe). exit_loop reuses that observe when HEAD unchanged (#1085 F1)
+      // — no third full-family verify.
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 2
@@ -414,8 +415,8 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
 
     // ADR 0145 green hard-pre on exit_loop + ADR 0147 builder→judge hub.
     expect(result).toEqual({ ok: true, ran: true });
-    // Initial red + post-fix green observe + post-exit green hard-pre.
-    expect(verifyCalls).toBe(3);
+    // Initial red + post-fix green observe (exit reuses observe; no double-run).
+    expect(verifyCalls).toBe(2);
     expect(judgeCalls).toBe(2);
     expect(coderDispatches).toHaveLength(1);
     expect(coderDispatches[0]?.kind).toBe("coder");
@@ -432,9 +433,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
-      // #1 initial red; #2 still red (after the converged verdict — must NOT
-      // close); #3 green after fix (observe); #4 green hard-pre after final
-      // exit_loop.
+      // #1 initial red; #2 still red (after the first exit_loop — must NOT
+      // close); #3 green after fix (observe). Final exit_loop reuses #3 when
+      // HEAD unchanged (#1085 F1) — no fourth full-family verify.
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 3
@@ -475,11 +476,11 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
 
     expect(result).toEqual({ ok: true, ran: true });
     // Round 1 converged did NOT exit (re-verify red) → round 2 continue → fix
-    // → round 3 exit_loop + green hard-pre.
+    // → round 3 exit_loop reuses post-fix green observe.
     expect(judgeCalls).toBe(3);
     expect(coderDispatches).toHaveLength(1);
-    // initial + red-after-exit + green-after-fix + green-after-final-exit
-    expect(verifyCalls).toBe(4);
+    // initial + red-after-exit + green-after-fix (final exit reuses observe)
+    expect(verifyCalls).toBe(3);
     expect(backend.aborted).toEqual([]);
   });
 });
