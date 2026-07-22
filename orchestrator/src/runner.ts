@@ -512,12 +512,28 @@ function answerPayload(
 }
 
 /**
+ * Topology / executable ledger progress (not pure bookkeeping).
+ *
+ * Dual-field agent rows that fold a lifecycle event onto the same durable write
+ * as StepOutput (e.g. #1081 court_dismissed + judge converge) count as
+ * executable — sole dual-field awareness used by bookkeeping filters, quota
+ * park clearing, and mechanical-retry attempt scan.
+ */
+function isExecutableLedgerProgress(entry: {
+  readonly event?: string | null;
+  readonly output?: unknown;
+}): boolean {
+  // Pure bookkeeping: event set, no topology output.
+  return !(entry.event != null && entry.output == null);
+}
+
+/**
  * Pure bookkeeping rows (event marker, no topology output). Agent steps that
  * fold a lifecycle event onto the same durable write as their StepOutput
- * (e.g. #1081 court_dismissed + judge converge) remain executable resume truth.
+ * remain executable resume truth ({@link isExecutableLedgerProgress}).
  */
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
-  return entry.event != null && entry.output == null;
+  return !isExecutableLedgerProgress(entry);
 }
 
 /**
@@ -525,11 +541,15 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
  * parked step (not S8(failed)). Same family as `online_review_ci_pending` parks.
  * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
  * next baton can continue from the preserved worktree.
+ *
+ * Exported for pure dual-field regression probes (#1081 atomic dismiss fold
+ * must clear a prior quota park the same way an event-less step row does).
  */
-function sliceQuotaWaitPending(
+export function sliceQuotaWaitPending(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly event?: string;
+    readonly output?: unknown;
   }>,
 ): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -544,9 +564,11 @@ function sliceQuotaWaitPending(
       }
       return "S2";
     }
-    // Any newer executable agent/handoff progress clears the park.
+    // Any newer executable agent/handoff progress clears the park — including
+    // dual-field fold rows (output + court_dismissed) that isBookkeepingEntry
+    // already treats as executable.
     if (
-      entry.event === undefined &&
+      isExecutableLedgerProgress(entry) &&
       (entry.step === "S2" ||
         entry.step === "S3" ||
         entry.step === "S5" ||
@@ -2101,9 +2123,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let durableAttempts = 0;
     // A canonical completed row starts a new logical invocation.  Markers
     // before it have already been consumed by a successful invocation.
+    // Dual-field fold (output + court_dismissed) is a completed agent row too —
+    // same dual-field awareness as isBookkeepingEntry / sliceQuotaWaitPending.
     for (let index = history.length - 1; index >= 0; index--) {
       const entry = history[index]!;
-      if (entry.step === step && entry.event === undefined) break;
+      if (entry.step === step && isExecutableLedgerProgress(entry)) break;
       // A relay baton re-enters the same step under a new worker/model scene.
       // Its prior crash streak is audit history, not the next invocation's
       // dispatch budget.

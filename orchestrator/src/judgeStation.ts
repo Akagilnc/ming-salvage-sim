@@ -297,10 +297,11 @@ export function priorJudgeVerdictRowsFromSources(
 
   for (const entry of ledger) {
     if (wantSlice) {
-      // Slice steps never carry family event markers.
+      // Slice steps never carry family event markers. Dual-field fold rows
+      // (output + court_dismissed on converge) still carry judge topology
+      // output — read them as prior verdicts (event filter alone would drop them).
       const seatStep = entry.step;
       if (
-        entry.event === undefined &&
         seatStep !== undefined &&
         isJudgeSeat({ step: seatStep }) &&
         entry.output?.kind === "judge" &&
