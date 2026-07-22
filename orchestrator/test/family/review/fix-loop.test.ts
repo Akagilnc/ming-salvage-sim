@@ -1782,6 +1782,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080 / ADR 0147: after builder beat, pure-judge receive then independent
+    // panel outer gate before cmr_passed (收敛仍需 fresh 过目).
     expect(backend.dispatches).toEqual([
       expect.objectContaining({
         kind: "cmr",
@@ -1799,6 +1801,16 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         promptFile: "coder_fix.md",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({
+        kind: "cmr",
+        role: "verify",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      // Outer-gate re-open with panels (pure receive soft-accepted).
       expect.objectContaining({
         kind: "cmr",
         role: "verify",
@@ -1870,6 +1882,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: final pure-receive soft-accept is followed by a panel outer-gate open.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
@@ -1884,6 +1897,14 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [SECOND_BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [
+          BLOCKING_FAMILY_CMR_KEY,
+          SECOND_BLOCKING_FAMILY_CMR_KEY,
+        ],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2017,12 +2038,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       { phase: "final", familyBase: "family/550-base" },
       { phase: "final", familyBase: "family/550-base" },
     ]);
+    // #1080: pure-judge receive after coder-fix, then panel outer gate.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "correctness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2083,9 +2110,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -2165,9 +2198,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -2201,12 +2240,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
 
     expect(result).toEqual({ ok: true, ran: true });
     // HEAD does not authorize an extra fixer dispatch or a runner-authored park.
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2235,12 +2280,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -3126,7 +3177,8 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(3);
+    // completeness continue + pure receive + outer gate + correctness = 4
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(4);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({ status: "cmr_fix_committed", cmrPass: "completeness" }),
     );

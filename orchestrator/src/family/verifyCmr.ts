@@ -1177,6 +1177,13 @@ interface IntegratedCmrPassOutcome {
    * see the advanced coderFix seat (advance must not last only one dispatch).
    */
   readonly resolvedRoute?: ResolvedModelRoute;
+  /**
+   * #1080 / ADR 0147 — pure-judge receive of a builder beat soft-accepted the
+   * work without writing `cmr_passed`. Caller must re-open this pass with
+   * panel fan-out (independent outer gate; 收敛仍需 fresh 过目) before the
+   * court may close.
+   */
+  readonly needsFreshOuterGate?: boolean;
   readonly restartFinalBarrier?: {
     readonly familyHeadAfter?: string;
     readonly priorCmrFindingIdentityKeysByPass: Partial<
@@ -2368,8 +2375,10 @@ async function runIntegratedCmrPass(input: {
   readonly ledgerPhase?: VerifyCmrPhase;
   /**
    * #1085 / ADR 0147 — post-builder receive: resume pure judge first without
-   * re-fanning panel legs. Fresh legs are the judge's outer gate after receive,
-   * never the next step after a builder beat. First open of a pass keeps panels.
+   * re-fanning panel legs for THIS open only. Fresh legs remain the independent
+   * outer gate when the pure receive would close (see needsFreshOuterGate);
+   * they are never the immediate next worker after a builder beat.
+   * First open of a pass keeps panels (flag false).
    */
   readonly receiveBuilderBeat?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
@@ -2506,8 +2515,10 @@ async function runIntegratedCmrPass(input: {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
     // #1094: runner dispatches panel legs as first-class workers BEFORE the
     // pure judge court. Judge never spawns nested model CLIs.
-    // #1085 / ADR 0147: after a builder beat, skip panel fan-out — pure judge
-    // receives first; fresh legs are not the next topology step after fixer.
+    // #1085 / #1080 / ADR 0147: after a builder beat, this open skips panel
+    // fan-out so pure judge receives first. Soft-accept of that receive
+    // returns needsFreshOuterGate so the caller re-opens WITH panels before
+    // the court may close (never a permanent latch that starves outer gate).
     const frozenLegs = receiveBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     if (
@@ -2842,6 +2853,19 @@ async function runIntegratedCmrPass(input: {
 
   // pass → exit_loop / accepted.
   if (closure.action === "pass") {
+    // #1080 / ADR 0147 / US#10: pure-judge receive of a builder beat must not
+    // close the court without the independent fresh-panel outer gate. Soft-
+    // accept here (no cmr_passed row) and force the caller to re-open with
+    // panels. Permanent latch + zero outer-gate was the family/1080 defect.
+    if (receiveBuilderBeat) {
+      finalReviewRoundDisposition = "accepted";
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+        resolvedRoute: activeRoute,
+        needsFreshOuterGate: true,
+      };
+    }
     await persistFinalReviewRound("accepted", () =>
       recordCmrPassed(familyBackend, {
         phase: ledgerPhase,
@@ -3268,7 +3292,10 @@ async function runCorrectnessCourtLoop(input: {
   let refuseRecordsByPass: Partial<
     Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
   > = {};
-  // #1085: first open fans panels; post-builder re-open is pure judge receive.
+  // #1085 / #1080: post-builder open is pure-judge receive (skip panels).
+  // That flag is a one-shot for the immediate receive step only — when pure
+  // receive soft-accepts (needsFreshOuterGate), clear it so the next open
+  // re-fans panels (ADR 0147 independent outer gate; 收敛仍需 fresh 过目).
   let receiveBuilderBeat = false;
 
   while (true) {
@@ -3299,6 +3326,8 @@ async function runCorrectnessCourtLoop(input: {
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
     });
+    // Consume one-shot: only the immediate post-builder open skips panels.
+    receiveBuilderBeat = false;
     if (!correctness.result.ok) {
       return {
         result: correctness.result,
@@ -3311,6 +3340,13 @@ async function runCorrectnessCourtLoop(input: {
       resolvedRoute = correctness.resolvedRoute;
     }
     if (correctness.restartFinalBarrier === undefined) {
+      // Pure receive soft-accepted → re-open with panels (outer gate), do not exit.
+      if (correctness.needsFreshOuterGate === true) {
+        if (correctness.familyHeadAfter !== undefined) {
+          correctnessFamilyHeadAfter = correctness.familyHeadAfter;
+        }
+        continue;
+      }
       return {
         result: { ok: true, ran: true },
         familyHeadAfter: correctness.familyHeadAfter,
@@ -3620,7 +3656,8 @@ export async function runVerifyCmr(
   // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
   let completenessFamilyHeadAfter = familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
-  // #1085: first open fans panels; post-builder re-open is pure judge receive.
+  // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
+  // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
   let completenessReceiveBuilderBeat = false;
   for (;;) {
     const completeness = await runIntegratedCmrPass({
@@ -3651,13 +3688,21 @@ export async function runVerifyCmr(
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
     });
+    // Consume one-shot: only the immediate post-builder open skips panels.
+    completenessReceiveBuilderBeat = false;
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
     if (completeness.resolvedRoute !== undefined) {
       resolvedRoute = completeness.resolvedRoute;
     }
     if (completeness.restartFinalBarrier === undefined) {
-      completenessFamilyHeadAfter = completeness.familyHeadAfter;
+      if (completeness.familyHeadAfter !== undefined) {
+        completenessFamilyHeadAfter = completeness.familyHeadAfter;
+      }
+      // Pure receive soft-accepted → re-open with panels (outer gate).
+      if (completeness.needsFreshOuterGate === true) {
+        continue;
+      }
       break;
     }
     // After fix, re-verify before re-opening the court (parity with correctness).

@@ -237,6 +237,79 @@ describe("#598 withMechanicalRetry", () => {
     );
     expect(calls).toBe(1);
   });
+
+  // ── #1081 / ADR 0147: forbidFreshRetry on resident-judge resume ──
+
+  it("#1081 positive: resume + forbidFreshRetry + process failure stops after one attempt (no silent fresh)", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "resident judge resume crashed mid-run" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-1081" },
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.reason).toMatch(/resident judge resume crashed/);
+    }
+    // Load-bearing: do not strip resume and re-dispatch fresh.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-1081");
+  });
+
+  it("#1081 positive: resume + forbidFreshRetry + thrown process error stops after one attempt", async () => {
+    const { dispatch, seen } = scripted([
+      new Error("resident judge resume threw"),
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-throw" },
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result.kind).toBe("failed");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-throw");
+  });
+
+  it("#1081 negative: same process failure without forbidFreshRetry falls through to fresh retry", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "resident judge resume crashed mid-run" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-retry-ok" },
+      dispatch,
+      { sleepMs: async () => {} },
+    );
+    expect(result).toEqual(COMPLETED);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-retry-ok");
+    // Fresh retry strips resume.
+    expect(seen[1]?.ctx.resumeSessionId).toBeUndefined();
+    expect(seen[1]?.spec.session).toBe("fresh");
+  });
+
+  it("#1081 negative: forbidFreshRetry without resume still allows process-root retry", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "fresh judge seat crashed" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("fresh"),
+      {},
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result).toEqual(COMPLETED);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.ctx.resumeSessionId).toBeUndefined();
+  });
 });
 
 describe("#909 retryProcessCrash must not thrash on quota wait", () => {
