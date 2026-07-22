@@ -45,22 +45,18 @@ class ActionCluster:
 # 由 action_materialize.install_action_catalog() 装入（含 materialize_fn）。
 ACTION_CLUSTERS: Tuple[ActionCluster, ...] = ()
 LABEL_TO_KIND: Dict[str, str] = {}
-KIND_TO_LABEL: Dict[str, str] = {}
 KNOWN_KINDS: FrozenSet[str] = frozenset()
-KNOWN_LABELS: FrozenSet[str] = frozenset()
 # 从 catalog FieldSpec 派生的共享 superset 索引（只读 Mapping，非手写表）。
 _FIELD_SPECS_BY_NAME: Mapping[str, FieldSpec] = MappingProxyType({})
 
 
 def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
     """唯一装载点：登记行一次性写入派生索引。"""
-    global ACTION_CLUSTERS, LABEL_TO_KIND, KIND_TO_LABEL, KNOWN_KINDS, KNOWN_LABELS
+    global ACTION_CLUSTERS, LABEL_TO_KIND, KNOWN_KINDS
     global _FIELD_SPECS_BY_NAME
     ACTION_CLUSTERS = tuple(clusters)
     LABEL_TO_KIND = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
-    KIND_TO_LABEL = {c.kind: c.label_zh for c in ACTION_CLUSTERS}
-    KNOWN_KINDS = frozenset(KIND_TO_LABEL)
-    KNOWN_LABELS = frozenset(LABEL_TO_KIND)
+    KNOWN_KINDS = frozenset(c.kind for c in ACTION_CLUSTERS)
     specs: Dict[str, FieldSpec] = {}
     for c in ACTION_CLUSTERS:
         if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
@@ -119,11 +115,6 @@ def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
         if c.kind == kind:
             return c
     return None
-
-
-def get_materializer(kind: str) -> Optional[Callable[..., None]]:
-    c = cluster_by_kind(kind)
-    return c.materialize_fn if c is not None else None
 
 
 def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
@@ -321,6 +312,3 @@ def is_confirmation_decision(intent: Optional[Mapping[str, Any]]) -> bool:
         and str(intent.get("kind") or "") == "confirmation"
         and str(intent.get("confirmation") or "") in {"应允", "拒绝"}
     )
-
-
-

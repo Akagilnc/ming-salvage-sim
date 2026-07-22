@@ -19,7 +19,6 @@ from ming_sim.action_clusters import (
     EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
     EFFECT_NOOP,
-    get_materializer,
     install_action_catalog,
     materialize_clusters_ordered,
 )
@@ -54,7 +53,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """
     seen: set = set()
     for cluster in materialize_clusters_ordered():
-        fn = get_materializer(cluster.kind)
+        fn = cluster.materialize_fn
         if fn is None or fn in seen:
             continue
         seen.add(fn)

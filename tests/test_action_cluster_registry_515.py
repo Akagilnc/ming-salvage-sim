@@ -30,7 +30,6 @@ from ming_sim.action_clusters import (
     candidates_from_classifier_payload,
     classifier_json_fields_prompt,
     cluster_by_kind,
-    get_materializer,
     materialize_clusters_ordered,
     normalize_intent_candidates,
     normalize_one_candidate,
@@ -63,7 +62,6 @@ def test_registry_row_carries_handler_and_fields_prompt_from_specs():
     for c in materialize_clusters_ordered():
         assert c.effect == EFFECT_MATERIALIZE
         assert c.materialize_fn is not None
-        assert get_materializer(c.kind) is c.materialize_fn
     # prompt 字段来自 FieldSpec，非手写副本
     schema = classifier_json_fields_prompt()
     assert "动作类型" in schema
