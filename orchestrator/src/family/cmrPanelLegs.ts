@@ -15,6 +15,7 @@
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
   isLegalLegPaper,
+  successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
 import {
@@ -206,7 +207,92 @@ export function degradedTransportForNonRunnablePanelLeg(
 export type PanelLegsRoundResult = {
   readonly transports: ReadonlyArray<LegTransport>;
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
+  /**
+   * #1117 / #1118 — true when this round actually dispatched (or degraded)
+   * legs; false when valid prior transports were reused (no reburn).
+   */
+  readonly dispatched: boolean;
 };
+
+/**
+ * True when at least one transport is legal ADR 0141 review paper.
+ * Used by the court-open gate: valid evidence → no reburn; absent → fan-out.
+ */
+export function hasValidPanelLegTransports(
+  transports: ReadonlyArray<LegTransport> | undefined | null,
+): boolean {
+  if (transports === undefined || transports === null || transports.length === 0) {
+    return false;
+  }
+  return successfulLegsFromTransports(transports).length > 0;
+}
+
+/**
+ * Normalize landing/ctx transport cargo into {@link LegTransport} rows.
+ * Invalid rows are dropped (never invent legal paper).
+ */
+export function normalizePanelLegTransportCargo(
+  rows:
+    | ReadonlyArray<{
+        readonly slug?: unknown;
+        readonly exitCode?: unknown;
+        readonly stdout?: unknown;
+      }>
+    | undefined
+    | null,
+): LegTransport[] {
+  if (rows === undefined || rows === null || rows.length === 0) return [];
+  const out: LegTransport[] = [];
+  for (const row of rows) {
+    if (typeof row.slug !== "string" || row.slug.trim().length === 0) continue;
+    if (typeof row.exitCode !== "number" || !Number.isFinite(row.exitCode)) {
+      continue;
+    }
+    out.push({
+      slug: row.slug.trim(),
+      exitCode: row.exitCode,
+      stdout: typeof row.stdout === "string" ? row.stdout : "",
+    });
+  }
+  return out;
+}
+
+/**
+ * #1117 / #1118 — one panel-evidence gate for first open and court resume.
+ *
+ * Mechanism is only {@link dispatchFamilyCmrPanelLegs} (scope is a parameter).
+ * When valid transports already land, do not reburn; when missing (resume after
+ * claimed-fixed re-review, human "rerun jury", empty landing), fan-out again and
+ * land transports or host skip reasons — never open a pure court on silent empty.
+ */
+export async function ensureFamilyCmrPanelEvidence(input: {
+  readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
+  readonly cmrPass?: IntegratedCmrPass;
+  readonly existingTransports?:
+    | ReadonlyArray<{
+        readonly slug?: unknown;
+        readonly exitCode?: unknown;
+        readonly stdout?: unknown;
+      }>
+    | undefined;
+  readonly dispatch: (spec: WorkerSpec) => Promise<WorkerResult>;
+}): Promise<PanelLegsRoundResult> {
+  const legs = input.legs;
+  const existing = normalizePanelLegTransportCargo(input.existingTransports);
+  if (hasValidPanelLegTransports(existing)) {
+    return {
+      transports: existing,
+      skippedLegs: skippedLegsFromTransports(legs, existing),
+      dispatched: false,
+    };
+  }
+  const round = await dispatchFamilyCmrPanelLegs({
+    legs,
+    ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
+    dispatch: input.dispatch,
+  });
+  return { ...round, dispatched: legs.length > 0 };
+}
 
 /**
  * Runner-owned panel-leg fan-out for one family CMR court round (#1094).
@@ -223,7 +309,7 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   const legs = input.legs;
   const pass = input.cmrPass ?? "correctness";
   if (legs.length === 0) {
-    return { transports: [], skippedLegs: [] };
+    return { transports: [], skippedLegs: [], dispatched: false };
   }
   // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
   // park/relay throw. Settle every leg first, then rethrow one rejection.
@@ -253,5 +339,6 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   return {
     transports: results,
     skippedLegs: skippedLegsFromTransports(legs, results),
+    dispatched: true,
   };
 }
