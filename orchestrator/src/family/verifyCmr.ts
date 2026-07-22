@@ -629,6 +629,7 @@ async function runWaveVerifyJudgeCourt(input: {
       modelRoute: resolvedRoute,
       ...(judgePool !== undefined ? { billingPool: judgePool } : {}),
       waveVerifyFailure: failureReason,
+      phase,
       ...(judgeSessionId !== undefined ? { resumeSessionId: judgeSessionId } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),

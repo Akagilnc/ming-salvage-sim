@@ -1115,15 +1115,17 @@ export interface DispatchContext {
   /** FAMILY cmr worker only: parsed module declarations supplied by the runner. */
   readonly moduleContext?: FamilyModuleContext;
   /**
-   * #1027 S2 / ADR 0145 — FAMILY wave-verify triage judge only: the red family
-   * verify failure (the vitest/tsc summary) this judge presides over. Present
-   * ⇒ the worker is the wave-verify triage judge (not a diff CMR): the backend
-   * writes THIS text into the wave-verify focus file instead of a git-diff scope
+   * ADR 0145 — FAMILY verify triage judge only: the red family verify failure
+   * (the vitest/tsc summary) this judge presides over. Present ⇒ the worker is
+   * the family-verify triage judge (not a diff CMR): the backend writes THIS text
+   * into the shared focus file instead of a git-diff scope
    * and skips the cut-SHA review-scope guard. The judge returns the shared typed
    * verdict (`continue` repair packet / `toolchain` terminal); the runner does
    * no text/exit-code classification of the failure itself.
    */
   readonly waveVerifyFailure?: string;
+  /** The actual family-verify scope whose red the shared judge is triaging. */
+  readonly phase?: "wave" | "correctness_checkpoint" | "final";
   /**
    * FAMILY cmr worker only: runner-owned prior finding identity keys that the
    * worker is allowed to adjudicate as claimed-fixed. A worker may not invent

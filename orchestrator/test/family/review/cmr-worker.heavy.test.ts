@@ -1448,6 +1448,9 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     }): void {
       this.writeCmrFocusFile(ctx as never);
     }
+    public verifyFocus(ctx: DispatchContext): void {
+      this.writeWaveVerifyFocusFile(ctx);
+    }
     public routeFile(pass: "completeness" | "correctness" | undefined): void {
       const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
       this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
@@ -1499,6 +1502,37 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // It is git-ignored (info/exclude), so the review never accidentally commits it.
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it.each([
+    ["wave", "after the current wave's child slices merged"],
+    ["correctness_checkpoint", "at the correctness checkpoint"],
+    ["final", "at the final family verification barrier"],
+  ] as const)("writes the real %s verify accident scope into judge focus", (phase, scope) => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    be.verifyFocus({
+      familyBase: "feat/330-pure-scheduler",
+      phase,
+      waveVerifyFailure: `${phase} red`,
+    });
+
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain(scope);
+    expect(body).toContain(`${phase} red`);
+    if (phase !== "wave") {
+      expect(body).not.toContain("after merging the child slices");
+    }
   });
 
   it("serializes an answered gate into the real online-review landing", () => {
