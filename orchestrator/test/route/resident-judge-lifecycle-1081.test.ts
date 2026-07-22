@@ -18,6 +18,7 @@ import {
   usesJudgeReceiptChannel,
 } from "../../src/judgeStation.js";
 import { runOrchestrator, sliceQuotaWaitPending } from "../../src/runner.js";
+import { CapacityRelayError } from "../../src/relayDispatch.js";
 import type {
   Backend,
   DispatchContext,
@@ -48,6 +49,7 @@ class LifecycleBackend implements Backend {
   readonly ctxs: DispatchContext[] = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   private judgeRound = 0;
+  private openCourtFirstThrowDone = false;
 
   constructor(
     private readonly judgeResults: ReadonlyArray<WorkerResult> = [
@@ -58,6 +60,8 @@ class LifecycleBackend implements Backend {
       readonly resumeState?: import("../../src/types.js").ResumeState;
       /** Open-court dispatch throws instead of returning (L5 throw arm). */
       readonly openCourtThrow?: Error;
+      readonly openCourtFirstThrow?: Error;
+      readonly issueBody?: string;
     },
   ) {}
 
@@ -81,6 +85,7 @@ class LifecycleBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
+      ...(this.opts?.issueBody !== undefined ? { body: this.opts.issueBody } : {}),
     };
   }
   async prepareWorktree(): Promise<WorktreeHandle> {
@@ -98,6 +103,13 @@ class LifecycleBackend implements Backend {
     this.ctxs.push(ctx);
 
     if (isJudgeOpenCourtSpec(spec)) {
+      if (
+        this.opts?.openCourtFirstThrow !== undefined &&
+        !this.openCourtFirstThrowDone
+      ) {
+        this.openCourtFirstThrowDone = true;
+        throw this.opts.openCourtFirstThrow;
+      }
       if (this.opts?.openCourtThrow !== undefined) {
         throw this.opts.openCourtThrow;
       }
@@ -586,9 +598,11 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
-  it("open-court escalate resume: model mismatch → fresh open + answer delivered (negative)", async () => {
-    // #1080: S1 escalate rows must carry modelSlug so the identity gate can
-    // refuse a cross-model resume (mirror #955 S2/S5 mismatch coverage).
+  it("F3: open-court capacity relay cannot carry the resident session across provider/model", async () => {
+    // The first openCourtDispatch attempt resumes Sol and hits capacity. The
+    // live baton targets Sonnet, but that provider/model cannot satisfy the
+    // existing resident-session obligation: stop loud before a foreign fresh
+    // court can be dispatched.
     await runReal(async () => {
       const COURT = OPEN_COURT_SESSION;
       const priorLedger: PersistentLedgerEntry[] = [
@@ -602,8 +616,9 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         {
           step: "S1",
           sessionId: COURT,
-          // Parked under a different resume-capable model than normal verify.
-          modelSlug: "grok-4.5",
+          // The current verify seat owns this resumable court. Capacity during
+          // the actual resume dispatch is what forces the cross-provider baton.
+          modelSlug: "gpt-5.6-sol",
           output: judgeEscalate(
             "slice authority fork",
             "owner must choose between AC and ADR before construction",
@@ -633,15 +648,18 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           ts: "2026-07-21T00:00:03.000Z",
         },
       ];
-      const FRESH_COURT = "sess-open-court-fresh-after-mismatch";
       const backend = new LifecycleBackend(
-        [completedJudge(judgeConverged(), FRESH_COURT)],
+        [completedJudge(judgeConverged(), COURT)],
         {
           kind: "completed",
           output: judgeConverged(),
-          sessionId: FRESH_COURT,
+          sessionId: COURT,
         },
         {
+          openCourtFirstThrow: new CapacityRelayError(
+            "Selected model is at capacity",
+          ),
+          issueBody: "Coder-Rec: sol@med → sonnet-5",
           resumeState: {
             worktree: WORKTREE,
             stateDir: "/resident/worktrees/.ledger-1081-esc-mismatch",
@@ -649,27 +667,55 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           },
         },
       );
-      const result = await runOrchestrator({ issueNumber: 10818, backend });
-      expect(result.status).toBe("completed");
-
-      const openSpec = backend.specs.find((s) => isJudgeOpenCourtSpec(s));
-      expect(openSpec).toBeDefined();
-      // Seat is normal-route verify (gpt-5.6-sol); parked session was grok —
-      // must not resume the foreign session.
-      expect(openSpec!.model).toBe("gpt-5.6-sol");
-      expect(openSpec!.session).toBe("fresh");
-      const openCtx = backend.ctxs[backend.specs.indexOf(openSpec!)];
-      expect(openCtx?.resumeSessionId).toBeUndefined();
-      // Answer still reaches the worker — only session continuity is dropped.
-      expect(openCtx?.escalationAnswer).toMatchObject({
-        event: "escalation_answered",
-        forStep: "S1",
-        answer: "proceed under ADR 0147 as sole authority",
+      const result = await runOrchestrator({
+        issueNumber: 10818,
+        backend,
+        relayPools: [
+          {
+            id: "codex-5h",
+            status: "limited",
+            parkThresholdMs: 1,
+            models: ["sol@med", "gpt-5.6-sol"],
+          },
+          {
+            id: "claude",
+            status: "live",
+            parkThresholdMs: 1,
+            models: ["sonnet-5", "sonnet"],
+          },
+        ],
       });
-      expect(result.stepLedger.some((e) => e.event === "court_opened")).toBe(
-        true,
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") {
+        expect(result.errorPackage?.reason).toMatch(
+          /resident judge open-court resume refused/,
+        );
+      }
+      expect(backend.ledgerWrites).toContainEqual(
+        expect.objectContaining({
+          event: "relay_baton_handoff",
+          trigger: "capacity",
+          fromModelId: "sol@med",
+          toModelId: "sonnet-5",
+          toPool: "claude",
+          step: "S3",
+          state_summary: "open-court verify seat at capacity; drift preserved",
+        }),
       );
-      expect(backend.specs.some((s) => s.id === "S2")).toBe(true);
+      const openCourtAttempts = backend.specs
+        .map((spec, index) => ({ spec, ctx: backend.ctxs[index] }))
+        .filter(({ spec }) => isJudgeOpenCourtSpec(spec));
+      expect(openCourtAttempts).toHaveLength(1);
+      expect(openCourtAttempts[0]).toMatchObject({
+        spec: { model: "gpt-5.6-sol", session: "resume" },
+        ctx: { resumeSessionId: COURT },
+      });
+      expect(
+        openCourtAttempts.some(
+          ({ spec, ctx }) =>
+            spec.model === "sonnet" && ctx?.resumeSessionId === COURT,
+        ),
+      ).toBe(false);
     });
   });
 

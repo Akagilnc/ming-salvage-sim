@@ -500,6 +500,82 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     );
   });
 
+  it("F2: a real wave fixer beat persists scoped judge debt; final collects it with the original session", async () => {
+    const judgeSessionId = "sess-wave-judge-1111";
+    let verifyCalls = 0;
+    let judgeCalls = 0;
+    let crashAfterPendingWrite = true;
+    const seenJudgeContexts: DispatchContext[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls === 1
+          ? { ok: false, errorPackage: { reason: "wave verify red before fixer" } }
+          : { ok: true };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          seenJudgeContexts.push(ctx);
+          if (judgeCalls === 1) {
+            return completedJudge(
+              judgeContinue([sampleFinding("wave debt", "src/wave.ts:1")]),
+              judgeSessionId,
+            );
+          }
+          return completedJudge(judgeConverged(), judgeSessionId);
+        }
+        if (spec.kind === "coder") return completedCoder();
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+    const appendLedger = backend.appendFamilyLedger.bind(backend);
+    vi.spyOn(backend, "appendFamilyLedger").mockImplementation(async (entry) => {
+      await appendLedger(entry);
+      if (
+        crashAfterPendingWrite &&
+        entry.workerStep === "wave-verify-fix" &&
+        entry.reason ===
+          "wave verify green after fixer beat — resident judge must receive before exit"
+      ) {
+        crashAfterPendingWrite = false;
+        throw new Error("simulated process death after pending receive write");
+      }
+    });
+
+    await expect(
+      runVerifyCmr({
+        phase: "wave",
+        familyBase: "family/1111-f2-test",
+        familyBackend: backend,
+        familyHeadAfter: "head-after-fix",
+      }),
+    ).rejects.toThrow("simulated process death after pending receive write");
+
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        event: "worker_dispatched",
+        workerStep: "wave-verify-fix",
+        reason:
+          "wave verify green after fixer beat — resident judge must receive before exit",
+        phase: "wave",
+        judgeSessionId,
+      }),
+    );
+
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1111-f2-test",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-fix",
+    });
+
+    expect(seenJudgeContexts[1]).toMatchObject({
+      phase: "wave",
+      resumeSessionId: judgeSessionId,
+    });
+  });
+
   it("AC3 negative: judge converged but re-verify RED → forced continue (green receipt is the hard precondition)", async () => {
     let verifyCalls = 0;
     let judgeCalls = 0;
