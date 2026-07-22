@@ -17,6 +17,7 @@ import {
 import { basename, join, resolve } from "node:path";
 
 import { shWithClock } from "./externalCall.js";
+import { isFileNotFound } from "./fsErrors.js";
 
 /** Sandcastle names the worktree dir as the branch with `/` → `-` (#1103). */
 export function sandcastleWorktreePathForBranch(
@@ -138,8 +139,12 @@ export function quarantineOrRemoveOrphanDir(
   let entries: string[];
   try {
     entries = readdirSync(wtPath);
-  } catch {
-    return null;
+  } catch (err) {
+    // Disappearance race only — EACCES / ENOTDIR / IO must propagate so heal
+    // fails closed instead of continuing while the conflicting path remains
+    // (#1105 R8 → misleading path-exists on later cut).
+    if (isFileNotFound(err)) return null;
+    throw err;
   }
   if (entries.length === 0) {
     rmSync(wtPath, { recursive: true, force: true });

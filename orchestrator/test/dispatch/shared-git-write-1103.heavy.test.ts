@@ -9,6 +9,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -249,6 +250,43 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
     healBeforeWorktreeCut(repo, branch);
 
     expect(existsSync(admin)).toBe(false);
+  });
+
+  it("NEGATIVE: EACCES on orphan inspection propagates — does not silently continue heal (#1105 R8)", () => {
+    // Permission / IO probe failures must fail closed. Swallowing as null lets
+    // heal "succeed" while the conflicting path remains → later cut dies on a
+    // misleading path-exists error. Only ENOENT (disappearance race) is soft.
+    const repo = makeRepo();
+    const branch = "feat/issue-1103-eacces";
+    const wtPath = scWorktreePath(repo, branch);
+    mkdirSync(wtPath, { recursive: true });
+    writeFileSync(join(wtPath, "blocked.txt"), "still-here\n");
+    chmodSync(wtPath, 0);
+    try {
+      let thrown: unknown;
+      try {
+        healBeforeWorktreeCut(repo, branch);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, "heal must throw on EACCES, not return").toBeTruthy();
+      const code =
+        thrown && typeof thrown === "object" && "code" in thrown
+          ? String((thrown as { code: unknown }).code)
+          : "";
+      expect(code).toBe("EACCES");
+    } finally {
+      try {
+        chmodSync(wtPath, 0o755);
+      } catch {
+        /* restore for cleanup */
+      }
+    }
+    // Conflicting path still present — heal did not pretend the orphan was cleared.
+    expect(existsSync(wtPath)).toBe(true);
+    expect(readFileSync(join(wtPath, "blocked.txt"), "utf8")).toBe(
+      "still-here\n",
+    );
   });
 
   it("NEGATIVE: does not prune a live sibling with a dangling gitdir (#1105 R7 F1)", () => {
