@@ -50,14 +50,17 @@ function renderModal(props: {
   extractionPendingCount?: number;
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
-  onInput?: (text?: string) => void;
   onSend?: (text?: string) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() =>
-    root.render(
+
+  // Controlled input lives in the harness so prefix-chip clicks update textarea.value
+  // (ChatModal is a controlled component; frozen input="" would hide real fill).
+  function Harness() {
+    const [input, setInput] = React.useState("");
+    return (
       <ChatModal
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
@@ -70,12 +73,12 @@ function renderModal(props: {
         chatFailures={props.chatFailures ?? []}
         canUndoLastChat={false}
         composerHint=""
-        input=""
+        input={input}
         error=""
         secretOrders={[]}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
-        onInput={props.onInput ?? (() => {})}
+        onInput={(value) => setInput(value ?? "")}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
@@ -87,8 +90,12 @@ function renderModal(props: {
         onClose={() => {}}
         onCancel={props.onCancel}
       />
-    )
-  );
+    );
+  }
+
+  act(() => {
+    root.render(<Harness />);
+  });
   // Register for centralised teardown (afterEach) — no inline cleanup, so a failing
   // assertion can never skip unmount and leak a root into the next test.
   mountedRoots.push({ root, host });
@@ -284,55 +291,14 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     { label: "下密令", text: "密令如下：", prefix: true },
   ];
 
-  /**
-   * Stateful harness: ChatModal is controlled; parent must re-render `input`
-   * after onInput so textarea.value is observable (finding 527-prefix-input-observable).
-   */
-  function renderStatefulPrefixChat(onSend: (text?: string) => void) {
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-
-    function Harness() {
-      const [input, setInput] = React.useState("");
-      return (
-        <ChatModal
-          minister={MINISTER_MOCK}
-          portraitPrefix="minister_"
-          busy=""
-          chat={[]}
-          suggestions={PREFIX_SUGGESTIONS}
-          pendingUserMessage=""
-          streamingMinisterMessage=""
-          chatNotice=""
-          chatFailures={[]}
-          canUndoLastChat={false}
-          composerHint=""
-          input={input}
-          error=""
-          secretOrders={[]}
-          onInput={(value) => setInput(value ?? "")}
-          onSend={onSend}
-          onRetryFailure={() => {}}
-          onUndo={() => {}}
-          onHint={() => {}}
-          onFavorite={() => {}}
-          onOpenEdict={() => {}}
-          onClose={() => {}}
-        />
-      );
-    }
-
-    act(() => {
-      root.render(<Harness />);
-    });
-    mountedRoots.push({ root, host });
-    return { host, root };
-  }
-
   it("renders both prefix buttons; click fills textarea; never auto-sends", () => {
     const onSend = vi.fn();
-    const { host } = renderStatefulPrefixChat(onSend);
+    const { host } = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      suggestions: PREFIX_SUGGESTIONS,
+      onSend,
+    });
 
     const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
     const labels = hitlButtons.map((b) => b.textContent?.trim());

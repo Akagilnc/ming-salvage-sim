@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import web_app
-from ming_sim import skills as skills_mod
 
 # Skills that used to gate inquiry chips — must not reintroduce them.
 _LEGACY_INQUIRY_SKILLS = (
@@ -24,10 +23,15 @@ _PREFIX_ONLY = [
 
 
 def test_suggestions_for_returns_only_prefix_chips_even_with_legacy_skills(monkeypatch):
-    """Single contract: full legacy skill set still yields exact two prefix items."""
-    stub = lambda character, db=None: list(_LEGACY_INQUIRY_SKILLS)  # noqa: E731
-    monkeypatch.setattr(skills_mod, "available_skill_ids", stub)
-    monkeypatch.setattr(web_app, "available_skill_ids", stub)
+    """Single contract: full legacy skill set still yields exact two prefix items.
+
+    Production binds available_skill_ids via from-import on web_app; patch that name only.
+    """
+    monkeypatch.setattr(
+        web_app,
+        "available_skill_ids",
+        lambda character, db=None: list(_LEGACY_INQUIRY_SKILLS),
+    )
 
     runtime = object.__new__(web_app.WebGame)
     runtime.session = SimpleNamespace(db=MagicMock())
