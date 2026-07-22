@@ -505,6 +505,45 @@ describe("#925 pure: route tri-state", () => {
     expect(decision).toEqual({ kind: "next", step: "S5" });
   });
 
+  /**
+   * #1084 AC#4 — sole unique non-continue hub pin not already held by
+   * siblings (status→edge is #925; this locks *prose wording alone* never
+   * forks the edge). Two continues that differ only in fixPacketBody must
+   * yield the same route decision; same for converged + prose sibling.
+   */
+  it("#1084 AC#4: fixPacketBody prose alone never changes the edge (only enum does)", () => {
+    const live = sampleFinding("prose-invar", "a.ts:1");
+    const base = judgeContinue([live], {
+      fixPacketBody: "送修：修 a.ts 边界",
+    });
+    const reworded = judgeContinue([live], {
+      fixPacketBody:
+        "【完全不同的散文措辞】请立刻改 b.ts 并上抛 owner——仍是 continue",
+    });
+    expect(route({ from: "S3", output: base })).toEqual(
+      route({ from: "S3", output: reworded }),
+    );
+    expect(route({ from: "S3", output: base })).toEqual({
+      kind: "next",
+      step: "S5",
+    });
+
+    // Converged + optional cargo-ish prose sibling must not fork either.
+    const c1 = { kind: "judge" as const, status: "converged" as const };
+    const c2 = {
+      kind: "judge" as const,
+      status: "converged" as const,
+      fixPacketBody: "本庭关闭说明长文",
+    };
+    expect(route({ from: "S6", output: c1 })).toEqual(
+      route({ from: "S6", output: c2 as StepOutput }),
+    );
+    expect(route({ from: "S6", output: c1 })).toEqual({
+      kind: "next",
+      step: "S7",
+    });
+  });
+
   it("AS5: kind:verify+converged on judge seat is unusable (no third channel)", () => {
     expect(route({ from: "S3", output: { kind: "verify", converged: true } })).toEqual({ kind: "next", step: "S5" });
     expect(route({ from: "S6", output: { kind: "verify", converged: false } })).toEqual({ kind: "next", step: "S5" });
