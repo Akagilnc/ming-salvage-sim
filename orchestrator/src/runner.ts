@@ -184,6 +184,7 @@ import {
 import type {
   Backend,
   ContinueFixingEvent,
+  DispatchContext,
   ErrorPackage,
   Escalation,
   EscalationAnswerEvent,
@@ -205,6 +206,9 @@ import type {
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "./types.js";
 import {
@@ -2776,6 +2780,269 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * #1112: one seat-dispatch protocol for open-court (S1) and S2/S3/S5/S6.
+   * Differences are parameters only (step / wallStep / retry / copy / no-baton).
+   */
+  type SeatDispatchNoBaton =
+    | { readonly kind: "terminal"; readonly result: RunResult }
+    | { readonly kind: "stay_put_break" };
+
+  type SeatDispatchProtocolOutcome =
+    | { readonly kind: "dispatched"; readonly result: WorkerResult }
+    | { readonly kind: "relay" }
+    | { readonly kind: "terminal"; readonly result: RunResult }
+    | { readonly kind: "stay_put_break" };
+
+  const dispatchSeatWithProtocol = async (args: {
+    readonly step: SliceStepId;
+    readonly wallStep: StepId;
+    readonly spec: WorkerSpec;
+    readonly ctx: DispatchContext;
+    readonly retryOpts: MechanicalRetryOptions;
+    readonly landingPayload?: WorkerLandingPayload;
+    readonly capacityStateSummary: string;
+    readonly setMonitorHandle: (handle: WorkerMonitorHandle) => void;
+    readonly onDispatchCompleted?: () => void;
+    readonly unexpectedError?: (err: unknown) => {
+      readonly error: Error;
+      readonly options?: Parameters<typeof errorTermination>[2];
+    };
+    /** Review/fix stay-put. Omitted → quota park / capacity errorTermination. */
+    readonly onNoBaton?: (input: {
+      readonly trigger:
+        | "quota_no_relay"
+        | "quota_park"
+        | "capacity_no_relay"
+        | "capacity_no_handoff";
+      readonly err: unknown;
+      readonly parkResult?: RunResult;
+    }) => Promise<SeatDispatchNoBaton>;
+  }): Promise<SeatDispatchProtocolOutcome> => {
+    const {
+      step,
+      wallStep,
+      spec,
+      ctx,
+      retryOpts,
+      landingPayload,
+      capacityStateSummary,
+      setMonitorHandle,
+      onDispatchCompleted,
+      unexpectedError,
+      onNoBaton,
+    } = args;
+    const hashPromptForPark = (pf: string | undefined, s: SliceStepId) =>
+      hashPrompt(pf, s, backend);
+    const terminalFromWriteErr = async (
+      writeErr: unknown,
+    ): Promise<SeatDispatchProtocolOutcome> => ({
+      kind: "terminal",
+      result: await errorTermination(
+        step,
+        writeErr instanceof Error ? writeErr : new Error(String(writeErr)),
+      ),
+    });
+    const maybeNoBaton = async (
+      trigger: Parameters<NonNullable<typeof onNoBaton>>[0]["trigger"],
+      err: unknown,
+      parkResult?: RunResult,
+    ): Promise<SeatDispatchProtocolOutcome | undefined> => {
+      if (onNoBaton === undefined) return undefined;
+      const resolved = await onNoBaton(
+        parkResult !== undefined
+          ? { trigger, err, parkResult }
+          : { trigger, err },
+      );
+      if (resolved.kind === "terminal") {
+        return { kind: "terminal", result: resolved.result };
+      }
+      return { kind: "stay_put_break" };
+    };
+    const applyBatonOrStop = async (
+      baton: Parameters<typeof applyRelayBaton>[0],
+    ): Promise<SeatDispatchProtocolOutcome | undefined> => {
+      const applied = applyRelayBaton(baton, wallStep);
+      if (applied.kind === "stop") {
+        return {
+          kind: "terminal",
+          result: await stopForCoderRecTightRoutePolicy(applied.escalation),
+        };
+      }
+      return undefined;
+    };
+
+    try {
+      const result = await withMechanicalRetry(
+        spec,
+        ctx,
+        async (s, c) => {
+          // #684: persist monitor handle AT SPAWN (not post-exit).
+          const outcome = await dispatchWorkerWithMonitor(
+            backend,
+            s,
+            c,
+            landingPayload,
+            {
+              onMonitorHandleSpawned: async (handle) => {
+                setMonitorHandle(handle);
+                // #934 ID-006 / #937: persist failure → terminateSpawnedChild.
+                if (isValidStepId(s.id)) {
+                  await persistMonitorHandleAtSpawn(s.id, handle);
+                }
+              },
+            },
+          );
+          if (outcome.monitorHandle !== undefined) {
+            setMonitorHandle(outcome.monitorHandle);
+          }
+          await outcome.telemetryEnvironmentStamp;
+          return outcome.result;
+        },
+        retryOpts,
+      );
+      if (result.kind === "completed") {
+        completeMechanicalRetryInvocation(step);
+        onDispatchCompleted?.();
+      }
+      return { kind: "dispatched", result };
+    } catch (err) {
+      // #683/#686: 429 → park within T / relay beyond T with live baton.
+      if (isQuotaWaitForResetError(err)) {
+        const currentPool =
+          currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+        if (!canRelayInProcess()) {
+          const override = await maybeNoBaton("quota_no_relay", err);
+          if (override !== undefined) return override;
+          try {
+            return {
+              kind: "terminal",
+              result: await parkQuotaWaitForReset({
+                step,
+                err,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: hashPromptForPark,
+                issue: issueNumber,
+              }),
+            };
+          } catch (writeErr) {
+            return await terminalFromWriteErr(writeErr);
+          }
+        }
+        let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+        try {
+          outcome = await parkOrRelayQuotaWall({
+            step,
+            err,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            resolveBranchHEAD,
+            hashPrompt: hashPromptForPark,
+            worktreePath: worktree?.path,
+            currentModelId: modelIdForWallStep(wallStep),
+            currentPool,
+            rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+            pools: resolveRelayPools(
+              currentPool,
+              err.disposition.resetAt,
+              true,
+            ),
+            now: relayNow(),
+            issue: issueNumber,
+          });
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+        if (outcome.kind === "park") {
+          const override = await maybeNoBaton(
+            "quota_park",
+            err,
+            outcome.result,
+          );
+          if (override !== undefined) return override;
+          return { kind: "terminal", result: outcome.result };
+        }
+        if (outcome.relayBrief !== undefined) {
+          activeRelayBrief = outcome.relayBrief;
+        }
+        const stop = await applyBatonOrStop(outcome.nextBaton);
+        if (stop !== undefined) return stop;
+        return { kind: "relay" };
+      }
+      // #686/#787/#937: capacity relays without mechanical retry.
+      if (isCapacityRelayError(err)) {
+        if (!canRelayInProcess()) {
+          const override = await maybeNoBaton("capacity_no_relay", err);
+          if (override !== undefined) return override;
+          return {
+            kind: "terminal",
+            result: await errorTermination(step, err),
+          };
+        }
+        const { currentPool, pools } = resolveResourceFailurePool({
+          modelRef: modelRefForWallStep(wallStep),
+          capacity: true,
+        });
+        const handoff = await applyResourceFailureHandoff({
+          trigger: "capacity",
+          state_summary: capacityStateSummary,
+          reason: err instanceof Error ? err.message : String(err),
+          currentModelId: modelIdForWallStep(wallStep),
+          currentPool,
+          rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+          pools,
+          now: relayNow(),
+          step: wallStep,
+        });
+        if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+          const override = await maybeNoBaton("capacity_no_handoff", err);
+          if (override !== undefined) return override;
+          return {
+            kind: "terminal",
+            result: await errorTermination(step, err),
+          };
+        }
+        try {
+          await persistRelayBatonHandoff({
+            entry: handoff.ledgerEntry,
+            step,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            resolveBranchHEAD,
+            hashPrompt: hashPromptForPark,
+            persistClass: "capacity",
+          });
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+        activeRelayBrief = renderEphemeralRelayBrief(handoff.ledgerEntry);
+        completeMechanicalRetryInvocation(step);
+        const stop = await applyBatonOrStop(handoff.nextBaton);
+        if (stop !== undefined) return stop;
+        return { kind: "relay" };
+      }
+      if (unexpectedError !== undefined) {
+        const packed = unexpectedError(err);
+        return {
+          kind: "terminal",
+          result: await errorTermination(step, packed.error, packed.options),
+        };
+      }
+      return {
+        kind: "terminal",
+        result: await errorTermination(step, err),
+      };
+    }
+  };
+
   // ── #255 / #936: idempotent resume from Scene Action discovery ───────────
   // discoverResidentScene already ran at ignition (ID-005 Recovery first).
   // Crash-resume and escalate-resume share this ONE machine: read the ledger
@@ -3470,8 +3737,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let openResult: Awaited<
             ReturnType<typeof dispatchWorkerWithMonitor>
           >["result"];
-          // #1111: same dispatch wrap as S2/S3/S5/S6 — mechanical retry +
-          // monitor-handle persist + quota/capacity (not bare catch→failed).
+          // #1111/#1112: same dispatchSeatWithProtocol as S2/S3/S5/S6.
           openCourtDispatch: for (;;) {
             // Re-read verify seat after any in-loop baton (capacity/quota relay).
             openModel = stepSpecs.S3.model;
@@ -3509,182 +3775,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ? { escalationAnswer: openEscalationAnswer }
                 : {}),
             };
-            try {
-              openResult = await withMechanicalRetry(
-                openSpec,
-                openDispatchCtx,
-                async (s, c) => {
-                  const outcome = await dispatchWorkerWithMonitor(
-                    backend,
-                    s,
-                    c,
-                    undefined,
-                    {
-                      onMonitorHandleSpawned: async (handle) => {
-                        stepMonitorHandle = handle;
-                        if (isValidStepId(s.id)) {
-                          await persistMonitorHandleAtSpawn(s.id, handle);
-                        }
-                      },
-                    },
-                  );
-                  if (outcome.monitorHandle !== undefined) {
-                    stepMonitorHandle = outcome.monitorHandle;
-                  }
-                  await outcome.telemetryEnvironmentStamp;
-                  return outcome.result;
-                },
-                durableMechanicalRetryOptions("S1", {
-                  rethrowOnExhaustion: true,
-                  // Resume open-court must not silent-fresh (#1081); fresh birth
-                  // still retries fresh when resumeSessionId is absent.
-                  forbidFreshRetry: typeof openResumeSessionId === "string",
-                }),
-              );
-              if (openResult.kind === "completed") {
-                completeMechanicalRetryInvocation("S1");
-              }
-              break openCourtDispatch;
-            } catch (err) {
-              if (isQuotaWaitForResetError(err)) {
-                const currentPool =
-                  currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
-                if (!canRelayInProcess()) {
-                  try {
-                    return await parkQuotaWaitForReset({
-                      step: "S1",
-                      err,
-                      ledger,
-                      stateDir,
-                      sessionId,
-                      backend,
-                      resolveBranchHEAD,
-                      hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
-                      issue: issueNumber,
-                    });
-                  } catch (writeErr) {
-                    return await errorTermination(
-                      "S1",
-                      writeErr instanceof Error
-                        ? writeErr
-                        : new Error(String(writeErr)),
-                    );
-                  }
-                }
-                let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
-                try {
-                  outcome = await parkOrRelayQuotaWall({
-                    step: "S1",
-                    err,
-                    ledger,
-                    stateDir,
-                    sessionId,
-                    backend,
-                    resolveBranchHEAD,
-                    hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
-                    worktreePath: worktree?.path,
-                    // Verify seat owns open-court model (S3 slot), not coder.
-                    currentModelId: modelIdForWallStep("S3"),
-                    currentPool,
-                    rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                    pools: resolveRelayPools(
-                      currentPool,
-                      err.disposition.resetAt,
-                      true,
-                    ),
-                    now: relayNow(),
-                    issue: issueNumber,
-                  });
-                } catch (writeErr) {
-                  return await errorTermination(
-                    "S1",
-                    writeErr instanceof Error
-                      ? writeErr
-                      : new Error(String(writeErr)),
-                  );
-                }
-                if (outcome.kind === "park") {
-                  return outcome.result;
-                }
-                if (outcome.relayBrief !== undefined) {
-                  activeRelayBrief = outcome.relayBrief;
-                }
-                {
-                  const applied = applyRelayBaton(outcome.nextBaton, "S3");
-                  if (applied.kind === "stop") {
-                    return await stopForCoderRecTightRoutePolicy(
-                      applied.escalation,
-                    );
-                  }
-                }
-                continue openCourtDispatch;
-              }
-              if (isCapacityRelayError(err)) {
-                if (!canRelayInProcess()) {
-                  return await errorTermination("S1", err);
-                }
-                const { currentPool, pools } = resolveResourceFailurePool({
-                  modelRef: modelRefForWallStep("S3"),
-                  capacity: true,
-                });
-                const handoff = await applyResourceFailureHandoff({
-                  trigger: "capacity",
-                  state_summary:
-                    "open-court verify seat at capacity; drift preserved",
-                  reason: err instanceof Error ? err.message : String(err),
-                  currentModelId: modelIdForWallStep("S3"),
-                  currentPool,
-                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                  pools,
-                  now: relayNow(),
-                  step: "S3",
-                });
-                if (
-                  handoff.kind !== "relay" ||
-                  handoff.ledgerEntry === undefined
-                ) {
-                  return await errorTermination("S1", err);
-                }
-                try {
-                  await persistRelayBatonHandoff({
-                    entry: handoff.ledgerEntry,
-                    step: "S1",
-                    ledger,
-                    stateDir,
-                    sessionId,
-                    backend,
-                    resolveBranchHEAD,
-                    hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
-                    persistClass: "capacity",
-                  });
-                } catch (writeErr) {
-                  return await errorTermination(
-                    "S1",
-                    writeErr instanceof Error
-                      ? writeErr
-                      : new Error(String(writeErr)),
-                  );
-                }
-                activeRelayBrief = renderEphemeralRelayBrief(
-                  handoff.ledgerEntry,
-                );
-                completeMechanicalRetryInvocation("S1");
-                {
-                  const applied = applyRelayBaton(handoff.nextBaton, "S3");
-                  if (applied.kind === "stop") {
-                    return await stopForCoderRecTightRoutePolicy(
-                      applied.escalation,
-                    );
-                  }
-                }
-                continue openCourtDispatch;
-              }
-              return await errorTermination(
-                "S1",
-                err instanceof Error
-                  ? err
-                  : new Error(`open court dispatch threw: ${String(err)}`),
-                {
+            const openProtocol = await dispatchSeatWithProtocol({
+              step: "S1",
+              // Verify seat owns open-court model (S3 slot), not coder.
+              wallStep: "S3",
+              spec: openSpec,
+              ctx: openDispatchCtx,
+              retryOpts: durableMechanicalRetryOptions("S1", {
+                rethrowOnExhaustion: true,
+                // Resume open-court must not silent-fresh (#1081); fresh birth
+                // still retries fresh when resumeSessionId is absent.
+                forbidFreshRetry: typeof openResumeSessionId === "string",
+              }),
+              capacityStateSummary:
+                "open-court verify seat at capacity; drift preserved",
+              setMonitorHandle: (handle) => {
+                stepMonitorHandle = handle;
+              },
+              unexpectedError: (err) => ({
+                error:
+                  err instanceof Error
+                    ? err
+                    : new Error(`open court dispatch threw: ${String(err)}`),
+                options: {
                   stopSummary: infraFailureStopSummary({
                     summary:
                       "resident judge open court failed at slice dispatch",
@@ -3693,8 +3806,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       "do not continue without a resident judge session",
                   }),
                 },
-              );
+              }),
+            });
+            if (openProtocol.kind === "dispatched") {
+              openResult = openProtocol.result;
+              break openCourtDispatch;
             }
+            if (openProtocol.kind === "terminal") {
+              return openProtocol.result;
+            }
+            if (openProtocol.kind === "relay") {
+              continue openCourtDispatch;
+            }
+            return await errorTermination(
+              "S1",
+              new Error("open-court dispatch: unexpected stay_put_break"),
+            );
           }
           // Legal open-court escalate (same judgeStationReceiptSchema as S3/S6)
           // must park via the global decision-gate edge — never swallow into
@@ -4183,6 +4310,108 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Coder keeps default failed→durable abort (existing escalate path).
               // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
               // (role is always "verify" on those seats; dual-OR deleted).
+              // #934 ID-008 / #926: review/fix no-baton → stay-put (onNoBaton).
+              const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
+              const applyReviewFixStayPut = async (
+                stayReason: string,
+                stateSummary: string,
+                parkErr?: QuotaWaitForResetError,
+              ): Promise<"break" | RunResult> => {
+                const stayModel = modelIdForWallStep(step);
+                const stayTs = new Date().toISOString();
+                const stayEntry = {
+                  step,
+                  event: "coder_advance_stay_put" as const,
+                  reason: stayReason,
+                  fromModelId: stayModel,
+                  toModelId: stayModel,
+                  state_summary: stateSummary,
+                  ts: stayTs,
+                };
+                ledger.push(stayEntry);
+                // #926 / #934 ID-015: stay-put audit is required durable truth — not
+                // fail-open. writeLedger failure surfaces as typed failed.
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...stayEntry,
+                        sessionId,
+                        prompt_hash: await hashPrompt(undefined, step, backend),
+                        branchHEAD: await resolveBranchHEAD(),
+                        ts: stayTs,
+                      },
+                      stateDir,
+                    );
+                  } catch (writeErr) {
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `record_persist_failed: coder_advance_stay_put audit: ${
+                          writeErr instanceof Error
+                            ? writeErr.message
+                            : String(writeErr)
+                        }`,
+                      ),
+                      { cause: "record_persist_failed" },
+                    );
+                  }
+                }
+                consecutiveReviewFixStayPuts += 1;
+                // Second consecutive no-baton wall after return-to-judge: wait for
+                // external quota reset (ID-001 park) — never invent terminal from
+                // candidate exhaustion (#926 / ID-008).
+                if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
+                  try {
+                    return await parkQuotaWaitForReset({
+                      step,
+                      err: parkErr,
+                      ledger,
+                      stateDir,
+                      sessionId,
+                      backend,
+                      resolveBranchHEAD,
+                      hashPrompt: (promptFile, s) =>
+                        hashPrompt(promptFile, s, backend),
+                      issue: issueNumber,
+                    });
+                  } catch (writeErr) {
+                    return await errorTermination(
+                      step,
+                      writeErr instanceof Error
+                        ? writeErr
+                        : new Error(String(writeErr)),
+                    );
+                  }
+                }
+                if (step === "S5") {
+                  // #926: return result to persistent judge (S5→S6). Noop fix
+                  // receipt — live findings stay in pending* for S6.
+                  output = {
+                    kind: "coder",
+                    committed: false,
+                    commitsAdded: 0,
+                  };
+                  lastOutput = output;
+                  reviewFixStayPutRouted = true;
+                  return "break";
+                }
+                // S3/S6: never invent empty judge paper; never clear live findings.
+                // Prefer prior continue paper so route → S5 with the same open set;
+                // otherwise leave output undefined → unusable → S5 topology.
+                if (
+                  lastOutput?.kind === "judge" &&
+                  lastOutput.status === "continue" &&
+                  pendingBlockingFindingCount > 0
+                ) {
+                  output = lastOutput;
+                } else {
+                  output = undefined;
+                }
+                // pendingBlockingFindings intentionally untouched.
+                reviewFixStayPutRouted = true;
+                return "break";
+              };
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
                 isJudgeSeat({ step })
@@ -4193,55 +4422,62 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {},
               );
-              result = await withMechanicalRetry(
-                workerSpec,
-                dispatchCtx,
-                async (s, c) => {
-                  // #684: production path — CLI workers go through
-                  // dispatchMonitoredCliWorker atomically via
-                  // dispatchWorkerWithMonitor; RealBackend hooks make this the
-                  // production branch. Handle persisted AT SPAWN (not post-exit).
-                  const outcome = await dispatchWorkerWithMonitor(
-                    backend,
-                    s,
-                    c,
-                    landingPayload,
-                    {
-                      onMonitorHandleSpawned: async (handle) => {
-                        stepMonitorHandle = handle;
-                        // #934 ID-006 / #937: adoption/persist failure must
-                        // terminate the exact ChildProcess — rethrow so
-                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
-                        if (isValidStepId(s.id)) {
-                          await persistMonitorHandleAtSpawn(s.id, handle);
-                        }
-                      },
-                    },
-                  );
-                  if (outcome.monitorHandle !== undefined) {
-                    stepMonitorHandle = outcome.monitorHandle;
-                  }
-                  // The worker has already exited and its result is collected;
-                  // join the first-run environment side effect before this
-                  // runner advances or returns to an external caller. This
-                  // deliberately does not delay spawn / first output (#793).
-                  await outcome.telemetryEnvironmentStamp;
-                  const dispatched = outcome.result;
-                  if (dispatched.kind !== "completed") return dispatched;
-                  const dispatchedEscalation = escalateOf(dispatched.output);
-                  if (dispatchedEscalation !== undefined) {
-                    return dispatched;
-                  }
-
-                  return dispatched;
+              const seatProtocol = await dispatchSeatWithProtocol({
+                step,
+                wallStep: step,
+                spec: workerSpec,
+                ctx: dispatchCtx,
+                retryOpts: durableRetryOpts,
+                landingPayload,
+                capacityStateSummary:
+                  "model checkpoint at capacity; drift preserved",
+                setMonitorHandle: (handle) => {
+                  stepMonitorHandle = handle;
                 },
-                durableRetryOpts,
-              );
-              if (result.kind === "completed") {
-                completeMechanicalRetryInvocation(step);
-                // Successful productive dispatch breaks the stay-put streak.
-                consecutiveReviewFixStayPuts = 0;
+                onDispatchCompleted: () => {
+                  // Successful productive dispatch breaks the stay-put streak.
+                  consecutiveReviewFixStayPuts = 0;
+                },
+                onNoBaton: isReviewFixSeat
+                  ? async ({ trigger, err }) => {
+                      const msg =
+                        err instanceof Error ? err.message : String(err);
+                      const parkErr = isQuotaWaitForResetError(err)
+                        ? err
+                        : undefined;
+                      const stay =
+                        trigger === "quota_no_relay"
+                          ? await applyReviewFixStayPut(
+                              `quota wall stay-put on ${step}: no live baton`,
+                              msg,
+                              parkErr,
+                            )
+                          : trigger === "quota_park"
+                            ? await applyReviewFixStayPut(
+                                `quota wall stay-put on ${step}: park/no baton`,
+                                msg,
+                                parkErr,
+                              )
+                            : await applyReviewFixStayPut(
+                                `capacity stay-put on ${step}: no live baton`,
+                                msg,
+                              );
+                      return stay === "break"
+                        ? { kind: "stay_put_break" as const }
+                        : { kind: "terminal" as const, result: stay };
+                    }
+                  : undefined,
+              });
+              if (seatProtocol.kind === "terminal") {
+                return seatProtocol.result;
               }
+              if (seatProtocol.kind === "relay") {
+                continue orchestratorStepLoop;
+              }
+              if (seatProtocol.kind === "stay_put_break") {
+                break;
+              }
+              result = seatProtocol.result;
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
@@ -4287,296 +4523,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
-          // with the fourth fate channel. Decision gates arrive via typed station
-          // escalate; hang no longer invents host kill+relay from silence.
-          // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (ephemeral brief, apply next baton, re-enter).
-          //
-          // #934 ID-008 / #926 / #937: review/fix (S3/S5/S6) no-candidate is
-          // one stay-put seam — durable audit, keep owning coder, never invent
-          // terminal solely from candidate exhaustion, no fabricated judge paper,
-          // no clearing live findings. Topology returns to the persistent judge
-          // (S5→S6) or re-enters the fix desk with preserved findings (S3/S6→S5).
-          // After a full return-to-judge cycle still no baton: park for external
-          // quota reset when the wall is typed 429 (ID-001 park), never S8 error.
-          const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
-          const applyReviewFixStayPut = async (
-            stayReason: string,
-            stateSummary: string,
-            parkErr?: QuotaWaitForResetError,
-          ): Promise<"break" | RunResult> => {
-            const stayModel = modelIdForWallStep(step);
-            const stayTs = new Date().toISOString();
-            const stayEntry = {
-              step,
-              event: "coder_advance_stay_put" as const,
-              reason: stayReason,
-              fromModelId: stayModel,
-              toModelId: stayModel,
-              state_summary: stateSummary,
-              ts: stayTs,
-            };
-            ledger.push(stayEntry);
-            // #926 / #934 ID-015: stay-put audit is required durable truth — not
-            // fail-open. writeLedger failure surfaces as typed failed.
-            if (stateDir !== undefined) {
-              try {
-                await backend.writeLedger(
-                  {
-                    ...stayEntry,
-                    sessionId,
-                    prompt_hash: await hashPrompt(undefined, step, backend),
-                    branchHEAD: await resolveBranchHEAD(),
-                    ts: stayTs,
-                  },
-                  stateDir,
-                );
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  new Error(
-                    `record_persist_failed: coder_advance_stay_put audit: ${
-                      writeErr instanceof Error
-                        ? writeErr.message
-                        : String(writeErr)
-                    }`,
-                  ),
-                  { cause: "record_persist_failed" },
-                );
-              }
-            }
-            consecutiveReviewFixStayPuts += 1;
-            // Second consecutive no-baton wall after return-to-judge: wait for
-            // external quota reset (ID-001 park) — never invent terminal from
-            // candidate exhaustion (#926 / ID-008).
-            if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
-              // Mirror capacity path: park ledger-write failure → errorTermination
-              // (not raw rejection from inside this catch).
-              try {
-                return await parkQuotaWaitForReset({
-                  step,
-                  err: parkErr,
-                  ledger,
-                  stateDir,
-                  sessionId,
-                  backend,
-                  resolveBranchHEAD,
-                  hashPrompt: (promptFile, s) =>
-                    hashPrompt(promptFile, s, backend),
-                  issue: issueNumber,
-                });
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  writeErr instanceof Error
-                    ? writeErr
-                    : new Error(String(writeErr)),
-                );
-              }
-            }
-            if (step === "S5") {
-              // #926: return result to persistent judge (S5→S6). Noop fix
-              // receipt — live findings stay in pending* for S6.
-              output = {
-                kind: "coder",
-                committed: false,
-                commitsAdded: 0,
-              };
-              lastOutput = output;
-              reviewFixStayPutRouted = true;
-              return "break";
-            }
-            // S3/S6: never invent empty judge paper; never clear live findings.
-            // Prefer prior continue paper so route → S5 with the same open set;
-            // otherwise leave output undefined → unusable → S5 topology.
-            if (
-              lastOutput?.kind === "judge" &&
-              lastOutput.status === "continue" &&
-              pendingBlockingFindingCount > 0
-            ) {
-              output = lastOutput;
-            } else {
-              output = undefined;
-            }
-            // pendingBlockingFindings intentionally untouched.
-            reviewFixStayPutRouted = true;
-            return "break";
-          };
-
-          if (isQuotaWaitForResetError(err)) {
-            const currentPool =
-              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
-            if (!canRelayInProcess()) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `quota wall stay-put on ${step}: no live baton`,
-                  err.message,
-                  err,
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              // Mirror capacity path: park ledger-write failure → errorTermination
-              // (not raw rejection from inside this catch).
-              try {
-                return await parkQuotaWaitForReset({
-                  step,
-                  err,
-                  ledger,
-                  stateDir,
-                  sessionId,
-                  backend,
-                  resolveBranchHEAD,
-                  hashPrompt: (promptFile, s) =>
-                    hashPrompt(promptFile, s, backend),
-                  issue: issueNumber,
-                });
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  writeErr instanceof Error
-                    ? writeErr
-                    : new Error(String(writeErr)),
-                );
-              }
-            }
-            // parkOrRelayQuotaWall may throw on required ledger writes; surface
-            // via errorTermination so runOrchestrator returns S8, not rejects.
-            let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
-            try {
-              outcome = await parkOrRelayQuotaWall({
-                step,
-                err,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-                worktreePath: worktree?.path,
-                currentModelId: modelIdForWallStep(step),
-                currentPool,
-                rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                // #909 production live path: route-smoke knownLive for quota walls.
-                pools: resolveRelayPools(
-                  currentPool,
-                  err.disposition.resetAt,
-                  true,
-                ),
-                now: relayNow(),
-                issue: issueNumber,
-              });
-            } catch (writeErr) {
-              return await errorTermination(
-                step,
-                writeErr instanceof Error
-                  ? writeErr
-                  : new Error(String(writeErr)),
-              );
-            }
-            if (outcome.kind === "park") {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `quota wall stay-put on ${step}: park/no baton`,
-                  err.message,
-                  err,
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return outcome.result;
-            }
-            if (outcome.relayBrief !== undefined) {
-              activeRelayBrief = outcome.relayBrief;
-            }
-            {
-              const applied = applyRelayBaton(outcome.nextBaton, step);
-              if (applied.kind === "stop") {
-                return await stopForCoderRecTightRoutePolicy(applied.escalation);
-              }
-            }
-            continue orchestratorStepLoop;
-          }
-          // #686/#787/#937: capacity resource failure relays without retry
-          // (never mechanical-retry / never reset). Hang/self-report free-log
-          // constructors deleted with ID-006/007.
-          // #934 ID-008: review/fix no-candidate is stay-put even when the
-          // handoff chain is exhausted (canRelayInProcess false) — never invent
-          // terminal solely from capacity candidate exhaustion.
-          if (isCapacityRelayError(err)) {
-            if (!canRelayInProcess()) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `capacity stay-put on ${step}: no live baton`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return await errorTermination(step, err);
-            }
-            const { currentPool, pools } = resolveResourceFailurePool({
-              modelRef: modelRefForWallStep(step),
-              capacity: true,
-            });
-            const handoff = await applyResourceFailureHandoff({
-              trigger: "capacity",
-              state_summary: "model checkpoint at capacity; drift preserved",
-              reason: err instanceof Error ? err.message : String(err),
-              currentModelId: modelIdForWallStep(step),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools,
-              now: relayNow(),
-              step,
-            });
-            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `capacity stay-put on ${step}: no live baton`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return await errorTermination(step, err);
-            }
-            const entry = handoff.ledgerEntry;
-            // #934 S2: single durable court (shared with quota-wall relay).
-            try {
-              await persistRelayBatonHandoff({
-                entry,
-                step,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-                persistClass: "capacity",
-              });
-            } catch (writeErr) {
-              // Surface write failure class via errorTermination (not throw out).
-              return await errorTermination(
-                step,
-                writeErr instanceof Error
-                  ? writeErr
-                  : new Error(String(writeErr)),
-              );
-            }
-            activeRelayBrief = renderEphemeralRelayBrief(entry);
-            completeMechanicalRetryInvocation(step);
-            {
-              const applied = applyRelayBaton(handoff.nextBaton, step);
-              if (applied.kind === "stop") {
-                return await stopForCoderRecTightRoutePolicy(applied.escalation);
-              }
-            }
-            continue orchestratorStepLoop;
-          }
+          // Residual non-dispatch errors (setup / post-projection). Quota /
+          // capacity / monitor protocol lives in dispatchSeatWithProtocol.
           return await errorTermination(step, err);
         }
 
@@ -4590,6 +4538,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // skip worker-output projection so we do not clear the open set.
         if (reviewFixStayPutRouted) {
           if (output !== undefined) lastOutput = output;
+          break;
+        }
+        // Success path always assigns output above; narrow for the projection
+        // that follows (stay-put exits via the branch above).
+        if (output === undefined) {
           break;
         }
 
