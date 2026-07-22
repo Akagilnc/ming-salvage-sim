@@ -10,6 +10,7 @@ dispatcher 均只读本表。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 
@@ -47,8 +48,8 @@ LABEL_TO_KIND: Dict[str, str] = {}
 KIND_TO_LABEL: Dict[str, str] = {}
 KNOWN_KINDS: FrozenSet[str] = frozenset()
 KNOWN_LABELS: FrozenSet[str] = frozenset()
-# 从 catalog FieldSpec 派生的共享 superset 索引（非手写表）。
-_FIELD_SPECS_BY_NAME: Dict[str, FieldSpec] = {}
+# 从 catalog FieldSpec 派生的共享 superset 索引（只读 Mapping，非手写表）。
+_FIELD_SPECS_BY_NAME: Mapping[str, FieldSpec] = MappingProxyType({})
 
 
 def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
@@ -67,11 +68,11 @@ def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
         for f in c.fields:
             # 同名 FieldSpec 以先出现为准（catalog 内不得自相矛盾）
             specs.setdefault(f.name, f)
-    _FIELD_SPECS_BY_NAME = specs
+    _FIELD_SPECS_BY_NAME = MappingProxyType(specs)
 
 
-def all_field_specs() -> Dict[str, FieldSpec]:
-    """共享 superset：catalog 全部 FieldSpec，按 name 索引。"""
+def _field_specs() -> Mapping[str, FieldSpec]:
+    """内部只读索引；调用方 pop/mutate 不得影响全局真源。"""
     _ensure_catalog()
     return _FIELD_SPECS_BY_NAME
 
@@ -151,7 +152,7 @@ def empty_none_candidate() -> Dict[str, Any]:
 def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
     """空候选：字段与 default 只从 catalog FieldSpec 派生。"""
     out: Dict[str, Any] = {"kind": kind}
-    for name, spec in all_field_specs().items():
+    for name, spec in _field_specs().items():
         out[name] = spec.default
     return out
 
@@ -193,7 +194,7 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         raw_k = obj.get("kind") or obj.get("动作类型")
         return False, f"unknown action kind/label: {raw_k!r}"
     # 共享 superset：任一 catalog enum 字段若出现（en 或 zh 键），按 FieldSpec 校验
-    for spec in all_field_specs().values():
+    for spec in _field_specs().values():
         if spec.allowed is None:
             continue
         raw = _field_raw(obj, spec)
@@ -235,7 +236,7 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             return default
         raise ActionCandidateShapeError(f"value {v!r} not in {sorted(allowed)}")
 
-    for name, spec in all_field_specs().items():
+    for name, spec in _field_specs().items():
         raw = _field_raw(obj, spec)
         if raw is None:
             raw = spec.default
@@ -322,5 +323,4 @@ def is_confirmation_decision(intent: Optional[Mapping[str, Any]]) -> bool:
     )
 
 
-def inject_scripted_candidates(raw: Any) -> List[Dict[str, Any]]:
-    return candidates_from_classifier_payload(raw, soft=False)
+
