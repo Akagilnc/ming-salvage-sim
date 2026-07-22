@@ -64,6 +64,7 @@ import { logDriverStage } from "./stageLog.js";
 import {
   isBuilderBeatStep,
   isJudgeBeatStep,
+  projectBeatFromEntry,
   projectCompletedBeats,
   shouldForcePlanBeatStamp,
   stampBuilderBeatOnOutput,
@@ -4355,17 +4356,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // #1007 AC1: always echo typed judge tri-state (including escalate) so
         // latest verdict/counts are on the feed. Park/terminal alone do not fill
         // AC1. Open-set projection stays gated on !carriesEscalate below.
-        // #1086: rotation index = completed beats so far + this judge beat.
+        // #1086: builder↔judge rotation rides the beat channel only (not judge).
         if (isJudgeSeat({ step }) && output?.kind === "judge") {
           const judgeRound =
             ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
-          const rotation =
-            projectCompletedBeats(ledger).length + 1;
           emitJudgeProgress({
             issue: issueNumber,
             step,
             round: judgeRound,
-            rotation,
             verdict: output.status,
             findingDispositions: output.findingDispositions,
             findings: output.findings,
@@ -4663,12 +4661,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
     // #1086: progress line for every product beat (builder + judge). Fail-open
     // feed; durable ledger write below remains fail-loud (AC4).
+    // Project the just-pushed row only — unusable judge envelopes do not project
+    // as beats; never re-emit the previous beat's role/rotation (phantom replay).
     if (
       (isBuilderBeatStep(step) || isJudgeBeatStep(step)) &&
       output !== undefined
     ) {
-      const beats = projectCompletedBeats(ledger);
-      const justLanded = beats[beats.length - 1];
+      const justPushed = ledger[ledger.length - 1]!;
+      const completed = projectCompletedBeats(ledger);
+      const justLanded = projectBeatFromEntry(justPushed, completed.length);
       if (justLanded !== undefined) {
         emitBeatProgress({
           issue: issueNumber,

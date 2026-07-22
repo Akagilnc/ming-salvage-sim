@@ -10,8 +10,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  isCompletedBeatRerun,
-  latestCompletedBeat,
+  projectBeatFromEntry,
   projectCompletedBeats,
   stampBuilderBeatOnOutput,
 } from "../../src/builderJudgeBeat.js";
@@ -231,7 +230,7 @@ describe("#1086 pure beat projection", () => {
         rotation: 4,
       },
     ]);
-    expect(latestCompletedBeat(ledger)?.verdict).toBe("converged");
+    expect(beats[beats.length - 1]?.verdict).toBe("converged");
   });
 
   it("negative: bookkeeping-only rows are not product beats", () => {
@@ -268,28 +267,28 @@ describe("#1086 pure beat projection", () => {
     ).toBe("construct");
   });
 
-  it("isCompletedBeatRerun: same next step as last product beat is re-run", () => {
-    const ledger = [
-      entry("S2", {
-        kind: "coder",
+  it("negative: unusable judge envelope does not project as a beat", () => {
+    // Mirrors runner emit path: only project the just-pushed row — unusable
+    // kind≠judge cargo must not re-emit the previous beat.
+    const prior = {
+      step: "S2" as const,
+      output: {
+        kind: "coder" as const,
         committed: true,
         commitsAdded: 1,
-        beat: "construct",
-      }),
-    ];
+        beat: "construct" as const,
+      },
+    };
+    const unusable = {
+      step: "S3" as const,
+      output: { kind: "coder" as const, committed: false, commitsAdded: 0 },
+    };
+    const ledger = [prior, unusable];
+    const completed = projectCompletedBeats(ledger);
+    expect(completed).toHaveLength(1);
     expect(
-      isCompletedBeatRerun({ ledger, nextStep: "S2" }),
-    ).toBe(true);
-    expect(
-      isCompletedBeatRerun({ ledger, nextStep: "S3" }),
-    ).toBe(false);
-    expect(
-      isCompletedBeatRerun({
-        ledger,
-        nextStep: "S2",
-        intentionalReopen: true,
-      }),
-    ).toBe(false);
+      projectBeatFromEntry(unusable, completed.length),
+    ).toBeUndefined();
   });
 });
 
@@ -422,14 +421,6 @@ describe("#1086 runOrchestrator: beat ledger + progress + resume", () => {
         } as PersistentLedgerEntry,
       ],
     };
-    // Negative pure check: re-dispatching S2 would be a completed-beat re-run.
-    expect(
-      isCompletedBeatRerun({
-        ledger: resumeState.ledger,
-        nextStep: "S2",
-      }),
-    ).toBe(true);
-
     const backend = new BeatLedgerBackend({
       resumeState,
       planPhase: true,
