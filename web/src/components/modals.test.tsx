@@ -99,7 +99,7 @@ function renderModal(props: {
   // Register for centralised teardown (afterEach) — no inline cleanup, so a failing
   // assertion can never skip unmount and leak a root into the next test.
   mountedRoots.push({ root, host });
-  return { host, root };
+  return host;
 }
 
 function renderReportModal(props: { report: string }) {
@@ -293,7 +293,7 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
 
   it("renders both prefix buttons; click fills textarea; never auto-sends", () => {
     const onSend = vi.fn();
-    const { host } = renderModal({
+    const host = renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
       suggestions: PREFIX_SUGGESTIONS,
