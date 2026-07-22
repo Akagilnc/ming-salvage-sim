@@ -126,6 +126,34 @@ function isEisdirClassFailedResult(result: WorkerResult): boolean {
 }
 
 /**
+ * #1103 / #1105 A6 — deterministic worktree consistency wreckage.
+ * Matches `fatal: not a git repository: …/.git/worktrees/…` (and Sandcastle
+ * resident paths). Re-dispatch without heal burns the full process-root budget
+ * on the same orphan dir (#1084 six-hit).
+ */
+export function isWorktreeConsistencyFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  if (!lower.includes("not a git repository")) return false;
+  return (
+    lower.includes(".git/worktrees/") ||
+    lower.includes(".sandcastle/worktrees/") ||
+    /[/\\]worktrees[/\\]/.test(lower)
+  );
+}
+
+function worktreeConsistencyMessage(outcome: DispatchOutcome): string | undefined {
+  if ("kind" in outcome && outcome.kind === "thrown") {
+    return outcome.error instanceof Error
+      ? outcome.error.message
+      : String(outcome.error);
+  }
+  if ("result" in outcome && outcome.result.kind === "failed") {
+    return outcome.result.reason;
+  }
+  return undefined;
+}
+
+/**
  * Total process-root dispatch attempts for one fixed position (1 initial +
  * 5 retries) when invocation transport/crash/signal/SO extraction fails and
  * no durable outcome exists yet (#934 ID-004 / #937).
@@ -213,6 +241,14 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
+  /**
+   * #1105 A6 / #1092-style deterministic class: before the next attempt after a
+   * worktree consistency failure, clear wreckage and rebuild the resident
+   * worksite. Invoked at most once per withMechanicalRetry invocation.
+   */
+  readonly healWorktreeConsistency?: (
+    ctx: DispatchContext,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -257,6 +293,9 @@ export async function withMechanicalRetry(
   // one fresh attempt then stop — do not burn the remaining process-root budget
   // on six identical resume retries.
   let resumeSoParseFailed = false;
+  // #1105 A6: worktree consistency wreckage is deterministic — heal once, allow
+  // one post-heal attempt, then stop (same short-circuit shape as #1092).
+  let worktreeConsistencyHealDone = false;
   for (
     let attempt = attemptsAlreadyUsed + 1;
     attempt <= MAX_DISPATCH_ATTEMPTS;
@@ -268,6 +307,8 @@ export async function withMechanicalRetry(
     const attemptHadResume = typeof useCtx.resumeSessionId === "string";
     // #934 ID-004/006 / #937: process-root redispatch preserves the current
     // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
+    // #1105 A6 is the narrow exception: worktree consistency heal clears orphan
+    // dir↔metadata wreckage before the next attempt (not a broad Git reset).
     // Sleep binds to absolute attempt index (not first-in-this-process): a
     // durable re-entry with attemptsAlreadyUsed>0 must still honor the 15s
     // interval before the next dispatch (five 15s slots across six attempts).
@@ -316,6 +357,18 @@ export async function withMechanicalRetry(
         // One fresh attempt after resume SO parse-fail already ran — stop.
         break;
       }
+      const thrownMsg = worktreeConsistencyMessage({ kind: "thrown", error: err });
+      if (
+        thrownMsg !== undefined &&
+        isWorktreeConsistencyFailure(thrownMsg)
+      ) {
+        if (!worktreeConsistencyHealDone && opts?.healWorktreeConsistency) {
+          await opts.healWorktreeConsistency(useCtx);
+          worktreeConsistencyHealDone = true;
+          continue;
+        }
+        break;
+      }
       continue;
     }
     const capacityError =
@@ -333,6 +386,18 @@ export async function withMechanicalRetry(
     await opts?.onAttempt?.(attempt);
     await opts?.onFailure?.({ result }, attempt);
     if (resumeSoParseFailed && !attemptHadResume) {
+      break;
+    }
+    const failedMsg = worktreeConsistencyMessage({ result });
+    if (
+      failedMsg !== undefined &&
+      isWorktreeConsistencyFailure(failedMsg)
+    ) {
+      if (!worktreeConsistencyHealDone && opts?.healWorktreeConsistency) {
+        await opts.healWorktreeConsistency(useCtx);
+        worktreeConsistencyHealDone = true;
+        continue;
+      }
       break;
     }
   }
