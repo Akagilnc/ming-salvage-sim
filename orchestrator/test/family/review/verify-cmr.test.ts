@@ -560,6 +560,23 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.phase).toBe("correctness_checkpoint");
     expect(backend.aborted[0]?.familyBase).toBe("family/checkpoint-base");
+    // Phase-aware abort label: must not be wave/final mis-tagged.
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      "correctness_checkpoint verify toolchain",
+    );
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "correctness_checkpoint",
+        reason: expect.stringContaining("correctness_checkpoint verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          summary: expect.stringContaining("correctness_checkpoint verify toolchain"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
     expect(coderDispatches).toEqual([]);
   });
 
@@ -654,6 +671,20 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.phase).toBe("final");
     expect(backend.aborted[0]?.familyBase).toBe("family/final-base");
+    expect(backend.aborted[0]?.errorPackage.reason).toContain("final verify toolchain");
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: expect.stringContaining("final verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          summary: expect.stringContaining("final verify toolchain"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
     expect(coderDispatches).toEqual([]);
     expect(backend.prCalls).toEqual([]);
   });
