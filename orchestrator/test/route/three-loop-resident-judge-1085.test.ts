@@ -52,7 +52,10 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
+import {
+  completeCmrPanelLegWorker,
+  isCmrPanelLegWorker,
+} from "../helpers/cmr-panel-leg-dispatch.js";
 import {
   completedJudge,
   judgeContinue,
@@ -789,6 +792,84 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
     assertNoBuilderToReviewer(backend.dispatches);
     expect(correctnessOpens).toBeGreaterThanOrEqual(2);
     // Result may complete or fail on secondary gates; topology is the contract.
+    expect(result.ran).toBe(true);
+  });
+
+  it("after builder beat pure receive, converging open re-fans panel legs (ADR 0147 outer gate)", async () => {
+    // #1080 completeness F1: receiveBuilderBeat is one-shot for the immediate
+    // post-builder open only. Soft-accept of that pure receive must re-open
+    // with panel fan-out before the court may close (收敛仍需 fresh 过目).
+    let correctnessOpens = 0;
+    const finding = sampleFinding("outer-gate seam", "og.ts:1");
+    const backend = new FamilyHubBackend({
+      verify: () => ({ ok: true }),
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          if (ctx.cmrPass === "completeness") {
+            return completedJudge(judgeConverged(), "sess-cmr-comp-og");
+          }
+          correctnessOpens += 1;
+          if (correctnessOpens === 1) {
+            return completedJudge(
+              judgeContinue([finding]),
+              "sess-cmr-corr-og",
+            );
+          }
+          // Pure receive (open 2) and outer-gate open (open 3) both converge.
+          return completedJudge(judgeConverged(), "sess-cmr-corr-og");
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+            sessionId: "sess-cmr-fix-og",
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: "family/1080-outer-gate",
+              pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/1080",
+              status: "pr_opened",
+            },
+          };
+        }
+        throw new Error(`unexpected worker ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1080-outer-gate",
+      familyBackend: backend,
+      familyHeadAfter: "head-1080-og",
+    });
+
+    // Count correctness-pass panel legs immediately before each correctness cmr open.
+    const panelsPerCorrectnessOpen: number[] = [];
+    let pendingCorrectnessPanels = 0;
+    for (const d of backend.dispatches) {
+      if (isCmrPanelLegWorker(d.spec) && d.ctx.cmrPass === "correctness") {
+        pendingCorrectnessPanels += 1;
+        continue;
+      }
+      if (d.spec.kind === "cmr" && d.ctx.cmrPass === "correctness") {
+        panelsPerCorrectnessOpen.push(pendingCorrectnessPanels);
+        pendingCorrectnessPanels = 0;
+      }
+    }
+
+    // Open 1 (first court): panels fan. Open 2 (pure receive after fix): 0.
+    // Open 3 (independent outer gate): panels fan again before close.
+    expect(panelsPerCorrectnessOpen.length).toBeGreaterThanOrEqual(3);
+    expect(panelsPerCorrectnessOpen[0]).toBeGreaterThan(0);
+    expect(panelsPerCorrectnessOpen[1]).toBe(0);
+    expect(panelsPerCorrectnessOpen[2]).toBeGreaterThan(0);
+    // Negative topology: builder still never feeds a panel leg directly.
+    assertNoBuilderToReviewer(backend.dispatches);
+    expect(correctnessOpens).toBeGreaterThanOrEqual(3);
     expect(result.ran).toBe(true);
   });
 });

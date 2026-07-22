@@ -1372,8 +1372,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: correctness continue → fix → pure receive → panel outer gate.
     expect(backend.cmrCalls.map((call) => call.cmrPass)).toEqual([
       "completeness",
+      "correctness",
       "correctness",
       "correctness",
     ]);
