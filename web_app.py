@@ -2344,7 +2344,7 @@ class WebGame:
             if item.get("type") in {"end", "error"}:
                 break
 
-    def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
+    def suggestions_for(self, character: Character) -> List[Dict[str, Any]]:
         """召对快捷钮：仅保留意图声明前缀（拟旨/下密令）。
 
         ADR 0042 / #527：旧询问 chips（问在办事项/问阻力/查钱粮/查驻军/密查）已砍；
