@@ -73,7 +73,11 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
+import {
+  ensureFamilyCmrPanelEvidence,
+  hasValidPanelLegTransports,
+  skippedLegsFromTransports,
+} from "./cmrPanelLegs.js";
 import { successfulLegsFromTransports } from "../legPaper.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
@@ -2382,12 +2386,29 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
-    // #1094: runner dispatches panel legs as first-class workers BEFORE the
-    // pure judge court. Judge never spawns nested model CLIs.
+    // #1094 / #1117: one panel-evidence gate for first open AND court resume.
+    // Pure judge court never spawns nested model CLIs; missing transports on
+    // claimed-fixed re-review / decision-park resume must reburn the same fan-out
+    // (ensureFamilyCmrPanelEvidence → dispatchFamilyCmrPanelLegs), never open empty.
     const frozenLegs = spec.cmrReviewLegs ?? [];
+    // Existing landing transports (valid → no reburn). Resume after park with an
+    // empty landing forces fan-out again (AC #1118).
+    const existingPanelTransports =
+      refuseReopenLanding?.panelLegTransports ??
+      dispatchCtx.panelLegTransports;
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
-    if (
+    // Skip prep when reusing valid transports (no reburn).
+    const willFanOut =
       frozenLegs.length > 0 &&
+      !hasValidPanelLegTransports(
+        existingPanelTransports?.map((t) => ({
+          slug: t.slug,
+          exitCode: t.exitCode,
+          stdout: t.stdout ?? "",
+        })),
+      );
+    if (
+      willFanOut &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
     ) {
       const prep = await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
@@ -2430,15 +2451,25 @@ async function runIntegratedCmrPass(input: {
         };
       }
     }
-    const panelRound = await dispatchFamilyCmrPanelLegs({
+    const panelRound = await ensureFamilyCmrPanelEvidence({
       legs: frozenLegs,
       cmrPass: pass,
+      ...(existingPanelTransports !== undefined
+        ? { existingTransports: existingPanelTransports }
+        : {}),
       // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
       // legs keep their own registry providers (or none).
+      // #1117: legs are always fresh — strip judge resumeSessionId so panel
+      // fan-out never collides with the pure-court resume conversation.
       dispatch: (legSpec) => {
-        const { billingPool: _judgePool, ...legDispatchCtx } = dispatchCtx;
+        const {
+          billingPool: _judgePool,
+          resumeSessionId: _judgeResume,
+          ...legDispatchCtx
+        } = dispatchCtx;
         void _judgePool;
+        void _judgeResume;
         return dispatchOrAbort(
           familyBackend,
           legSpec,
@@ -2454,10 +2485,14 @@ async function runIntegratedCmrPass(input: {
     });
     // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
     // (not judge prose cargo). Empty array after a real fan-out still wins.
-    const hostSkippedLegs = panelRound.skippedLegs;
+    const hostSkippedLegs =
+      panelRound.skippedLegs.length > 0
+        ? panelRound.skippedLegs
+        : skippedLegsFromTransports(frozenLegs, panelRound.transports);
     // #1094 R3 F3: pure court with declared legs but ZERO successful transports
     // must not converge — escalate (decision park) with skippedLegs reasons.
     // One or more successful legs → optional-leg degrade still never blocks.
+    // #1118: never open a silent empty landing — park with runtime skip reasons.
     const successfulPanelLegs = successfulLegsFromTransports(
       panelRound.transports,
     );
@@ -2506,6 +2541,8 @@ async function runIntegratedCmrPass(input: {
         resolvedRoute: activeRoute,
       };
     }
+    // Land transports + host skip reasons so the pure court never sees a silent
+    // empty fix-findings file (production deadlock: resume without panel evidence).
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       panelLegTransports: panelRound.transports.map((t) => ({
@@ -2513,10 +2550,21 @@ async function runIntegratedCmrPass(input: {
         exitCode: t.exitCode,
         stdout: t.stdout,
       })),
+      ...(hostSkippedLegs.length > 0
+        ? {
+            panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
+              slug: leg.slug,
+              reason: leg.reason,
+            })),
+          }
+        : {}),
     };
     const judgeDispatchCtx: DispatchContext = {
       ...dispatchCtx,
       panelLegTransports: panelLanding.panelLegTransports,
+      ...(panelLanding.panelLegSkippedLegs !== undefined
+        ? { panelLegSkippedLegs: panelLanding.panelLegSkippedLegs }
+        : {}),
     };
     const cmrResult = await dispatchOrAbort(
       familyBackend,
