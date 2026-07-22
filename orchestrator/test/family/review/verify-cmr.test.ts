@@ -53,6 +53,7 @@ import type {
 import {
   completedJudge,
   judgeContinue,
+  judgeConverged,
   judgeToolchain,
   liveCmrJudgeContinue,
   legacyCmrScriptToWorkerOutput,
@@ -337,6 +338,14 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
           reason: "Error: Cannot find module 'tsx'",
         },
       }),
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("Error: Cannot find module 'tsx'", "install dependency"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
     });
 
     const result = await runVerifyCmr({
@@ -356,11 +365,10 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
         status: "aborted",
         event: "aborted",
         phase: "final",
-        reason: "Error: Cannot find module 'tsx'",
-        familyHeadAfter: "head-before-final-verify",
+        reason: expect.stringContaining("Cannot find module 'tsx'"),
         stopSummary: expect.objectContaining({
           reason: "verify_failed",
-          repairHint: expect.stringContaining("install or restore"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
         }),
       }),
     );
@@ -467,6 +475,187 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     // 3 verify calls: initial red + red-after-converged + green-after-fix.
     expect(verifyCalls).toBe(3);
     expect(backend.aborted).toEqual([]);
+  });
+
+  it("checkpoint positive red → judge continue → coder-fix → mechanical re-verify green → continue to correctness court", async () => {
+    let verifyCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const coderIssues: Array<number | undefined> = [];
+    const backend = new CapableFamilyBackend({
+      verify: (req) => {
+        verifyCalls += 1;
+        return verifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "correctness checkpoint red: test failure" } };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            spec.promptFile === "wave_verify_judge.md"
+              ? judgeContinue([sampleFinding("checkpoint finding", "src/a.ts:1")])
+              : judgeConverged(),
+          );
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          coderIssues.push(ctx.familyIssue);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "correctness_checkpoint",
+      familyBase: "family/checkpoint-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-cp-1",
+      familyIssue: 1107,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(2);
+    expect(backend.verifyCalls[0]?.phase).toBe("correctness_checkpoint");
+    expect(backend.verifyCalls[1]?.phase).toBe("correctness_checkpoint");
+    expect(backend.verifyCalls.map((call) => call.issue)).toEqual([1107, 1107]);
+    expect(coderDispatches).toHaveLength(1);
+    expect(coderIssues).toEqual([1107]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "correctness_checkpoint",
+        familyHeadAfter: "head-1",
+      }),
+    );
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("checkpoint real toolchain red → stageGate verify_failed (no coder fix)", async () => {
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: false, errorPackage: { reason: "MODULE_NOT_FOUND in correctness checkpoint" } }),
+      worker: (spec) => {
+        if (spec.kind === "coder") coderDispatches.push(spec);
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("MODULE_NOT_FOUND", "missing dep during checkpoint verify"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "correctness_checkpoint",
+      familyBase: "family/checkpoint-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-cp-1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("correctness_checkpoint");
+    expect(backend.aborted[0]?.familyBase).toBe("family/checkpoint-base");
+    expect(coderDispatches).toEqual([]);
+  });
+
+  it("final verify positive red → judge continue → coder-fix → mechanical re-verify green → continue to CMR courts & ship", async () => {
+    let verifyCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const backend: CapableFamilyBackend = new CapableFamilyBackend({
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "final verify red: test failure" } };
+      },
+      worker: (spec, ctx): WorkerResult | Promise<WorkerResult> => {
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            spec.promptFile === "wave_verify_judge.md"
+              ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
+              : judgeConverged(),
+          );
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        if (spec.kind === "ship") {
+          backend.prCalls.push({ familyBase: "family/291-base" });
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: "family/291-base",
+              pr: "https://github.com/test/repo/pull/291",
+              prHead: "head-1",
+              status: "pr_opened",
+            },
+          };
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-final-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(2);
+    expect(backend.verifyCalls[0]?.phase).toBe("final");
+    expect(backend.verifyCalls[1]?.phase).toBe("final");
+    expect(coderDispatches).toHaveLength(1);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toEqual([
+      expect.objectContaining({ familyHeadAfter: "head-1" }),
+      expect.objectContaining({ familyHeadAfter: "head-1" }),
+    ]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("final verify real toolchain red → stageGate verify_failed (no coder fix, no ship)", async () => {
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: false, errorPackage: { reason: "MODULE_NOT_FOUND in final verify" } }),
+      worker: (spec) => {
+        if (spec.kind === "coder") coderDispatches.push(spec);
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("MODULE_NOT_FOUND", "missing dep during final verify"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/final-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-final-1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("final");
+    expect(backend.aborted[0]?.familyBase).toBe("family/final-base");
+    expect(coderDispatches).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
   });
 });
 
@@ -1382,27 +1571,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "correctness",
       familyHeadAfter: "head-after-correctness-fix",
     }));
-  });
-
-  it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: false, errorPackage: { reason: "vitest: 3 failed" } }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    expect(result.ok).toBe(false);
-    expect(result.ran).toBe(true);
-    expect(backend.aborted).toHaveLength(1);
-    expect(backend.aborted[0]?.phase).toBe("final");
-    // cmr only runs on GREEN verify; a red final verify never reaches cmr or PR.
-    expect(backend.cmrCalls).toEqual([]);
-    expect(backend.prCalls).toEqual([]);
-    // online review r2 (codex P1): NO `shipped` marker on a failed barrier — only a
-    // real opened PR persists it, so a resume re-runs the barrier (does not skip).
-    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
   it("ESCALATED cmr worker → durable final aborted entry includes the cmr pass before escalate", async () => {
