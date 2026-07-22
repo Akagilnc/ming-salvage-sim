@@ -372,7 +372,7 @@ export interface RealFamilyBackendOptions {
   readonly familyBaseStartHead?: string;
   /**
    * Override $HOME for the cmr worker's auth-source paths (`~/.codex/auth.json`,
-   * `~/.sc-agy-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
+   * `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
    * Tests inject a fixture home so the auth copy/mount is exercised without the
    * real host credentials.
    */
@@ -965,8 +965,9 @@ export class RealFamilyBackend implements FamilyBackend {
           resolved: false,
           reason:
             "merger worker cannot start without agy OAuth token — the merger slot is " +
-            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
-            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "agy-family; host agy OAuth token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir reads the live antigravity-cli token). " +
+            "Without it the worker fails to start " +
             "and never resolves; returning a structured non-resolve here keeps " +
             "resolveMergeConflict's loud-throw semantics.",
         };
