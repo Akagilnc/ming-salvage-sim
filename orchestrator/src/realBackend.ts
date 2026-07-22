@@ -2639,8 +2639,19 @@ export class RealBackend implements Backend {
     // #1103 H1: under the per-clone mutex, heal dir↔metadata wreckage + stale
     // index.lock before Sandcastle createWorktree (prune alone is not enough
     // when a timed-out cut left a directory with no worktree admin entry).
-    healBeforeWorktreeCut(this.workingRepo, branch, (args) =>
-      this.sh("git", [...args], this.workingRepo),
+    // #1105 R6 F1: quarantine under durable clone-root ledger (survives
+    // `.sandcastle/` wipe); clone-local default is last-resort only.
+    healBeforeWorktreeCut(
+      this.workingRepo,
+      branch,
+      (args) => this.sh("git", [...args], this.workingRepo),
+      {
+        quarantineBaseDir: join(
+          this.workingRepo,
+          `.ledger-${issueNumber}`,
+          "quarantine-orphans",
+        ),
+      },
     );
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).

@@ -26,6 +26,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import type * as sc from "@ai-hero/sandcastle";
+
 import { ensureGitInfoExclude } from "../../src/gitInfoExclude.js";
 import {
   _resetGitMutex,
@@ -33,6 +35,7 @@ import {
   isPidAlive,
   LOCK_STALE_MS,
   mutexMapKey,
+  ORCHESTRATOR_GIT_LOCK_NAME,
   orchestratorGitLockPath,
   runExclusive,
   runExclusiveSync,
@@ -46,10 +49,16 @@ import {
   sandcastleWorktreePathForBranch,
   worktreeAdminDirForBranch,
 } from "../../src/gitWorktreePreflight.js";
+import {
+  branchForIssue,
+  RealBackend,
+} from "../../src/realBackend.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const distRoot = join(here, "..", "..", "dist");
 const orchRoot = join(here, "..", "..");
+const realPromptsDir = join(orchRoot, "prompts");
+const realSoulsDir = join(orchRoot, "image", "souls");
 
 const temps: string[] = [];
 function trackTemp(prefix: string): string {
@@ -238,6 +247,60 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
     healBeforeWorktreeCut(repo, branch);
 
     expect(existsSync(admin)).toBe(false);
+  });
+
+  it("prepareWorktreeLocked wires quarantine to durable .ledger-N (not clone .sandcastle)", async () => {
+    // #1105 R6 F1: production heal must land under ledger (survives sandcastle wipe).
+    const ISSUE = 1105;
+    const source = makeRepo();
+    const home = trackTemp("1105-f1-home-");
+    class LedgerQuarantineBackend extends RealBackend {
+      protected override async createResidentWorktree(
+        branch: string,
+        _baseBranch: string,
+      ): Promise<sc.Worktree> {
+        const wtPath = sandcastleWorktreePathForBranch(
+          this.workingRepoPath(),
+          branch,
+        );
+        mkdirSync(wtPath, { recursive: true });
+        writeFileSync(join(wtPath, "README"), "fresh-cut\n");
+        return {
+          branch,
+          worktreePath: wtPath,
+          run: async () => ({}),
+          interactive: async () => ({}),
+          createSandbox: async () => ({}),
+          close: async () => ({}),
+          [Symbol.asyncDispose]: async () => {},
+        } as unknown as sc.Worktree;
+      }
+    }
+    const backend = new LedgerQuarantineBackend({
+      sourceRepo: source,
+      runKey: ISSUE,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home,
+    });
+    const clone = backend.workingRepoPath();
+    const branch = branchForIssue(ISSUE);
+    const orphanPath = sandcastleWorktreePathForBranch(clone, branch);
+    mkdirSync(orphanPath, { recursive: true });
+    writeFileSync(join(orphanPath, "precious.ts"), "keep-me\n");
+
+    await backend.prepareWorktree(ISSUE, "main");
+
+    const ledgerQ = join(clone, `.ledger-${ISSUE}`, "quarantine-orphans");
+    const cloneQ = defaultQuarantineOrphansDir(clone);
+    expect(existsSync(cloneQ) ? readdirSync(cloneQ) : []).toEqual([]);
+    const moved = readdirSync(ledgerQ);
+    expect(moved).toHaveLength(1);
+    expect(
+      readFileSync(join(ledgerQ, moved[0]!, "precious.ts"), "utf8"),
+    ).toBe("keep-me\n");
   });
 });
 
@@ -470,6 +533,9 @@ runExclusiveSync(repo, () => {
     const reclaimA = `${lockDir}.reclaim.a`;
     renameSync(lockDir, reclaimA);
     expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(false);
+    // Loser must not destroy the claimed tree — reclaimA still holds the lock payload.
+    expect(existsSync(reclaimA)).toBe(true);
+    expect(readFileSync(join(reclaimA, "owner"), "utf8")).toBe("tok-race\n");
     // Put claimed path back under a fresh stale name and let one reclaim win.
     renameSync(reclaimA, lockDir);
     utimesSync(lockDir, old, old);
@@ -478,6 +544,29 @@ runExclusiveSync(repo, () => {
     expect(first).toBe(true);
     expect(second).toBe(false);
     expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it("revalidate failure after rename restores lock (EISDIR pid) — fail-closed", () => {
+    // #1105 R6 F2: post-claim read/stat exceptions must restore, never delete.
+    const repo = makeRepo();
+    const lockDir = orchestratorGitLockPath(repo);
+    if (lockDir === null) throw new Error("expected lock path");
+    mkdirSync(lockDir);
+    // `pid` as a directory → readFileSync throws EISDIR (not ENOENT half-created).
+    mkdirSync(join(lockDir, "pid"));
+    writeFileSync(join(lockDir, "owner"), "tok-bad-pid\n");
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1_000);
+    utimesSync(lockDir, old, old);
+
+    expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(false);
+    expect(existsSync(lockDir)).toBe(true);
+    expect(existsSync(join(lockDir, "owner"))).toBe(true);
+    expect(readFileSync(join(lockDir, "owner"), "utf8")).toBe("tok-bad-pid\n");
+    // No orphan .reclaim.* left behind after conservative restore.
+    const siblings = readdirSync(dirname(lockDir)).filter((n) =>
+      n.startsWith(`${ORCHESTRATOR_GIT_LOCK_NAME}.reclaim.`),
+    );
+    expect(siblings).toEqual([]);
   });
 });
 
