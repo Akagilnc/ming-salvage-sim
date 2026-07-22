@@ -47,36 +47,33 @@ LABEL_TO_KIND: Dict[str, str] = {}
 KIND_TO_LABEL: Dict[str, str] = {}
 KNOWN_KINDS: FrozenSet[str] = frozenset()
 KNOWN_LABELS: FrozenSet[str] = frozenset()
-CONFIRMATION_VALUES: FrozenSet[str] = frozenset({"应允", "拒绝", "无"})
-SECRET_ACTION_VALUES: FrozenSet[str] = frozenset(
-    {"无", "更新", "提交核议", "催办", "记进展"}
-)
-APPOINT_ACTION_VALUES: FrozenSet[str] = frozenset({"无", "任命", "罢免"})
+# 从 catalog FieldSpec 派生的共享 superset 索引（非手写表）。
+_FIELD_SPECS_BY_NAME: Dict[str, FieldSpec] = {}
 
 
 def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
     """唯一装载点：登记行一次性写入派生索引。"""
     global ACTION_CLUSTERS, LABEL_TO_KIND, KIND_TO_LABEL, KNOWN_KINDS, KNOWN_LABELS
-    global CONFIRMATION_VALUES, SECRET_ACTION_VALUES, APPOINT_ACTION_VALUES
+    global _FIELD_SPECS_BY_NAME
     ACTION_CLUSTERS = tuple(clusters)
     LABEL_TO_KIND = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
     KIND_TO_LABEL = {c.kind: c.label_zh for c in ACTION_CLUSTERS}
     KNOWN_KINDS = frozenset(KIND_TO_LABEL)
     KNOWN_LABELS = frozenset(LABEL_TO_KIND)
+    specs: Dict[str, FieldSpec] = {}
     for c in ACTION_CLUSTERS:
         if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
             raise RuntimeError(f"materialize cluster {c.kind!r} lacks materialize_fn")
-    CONFIRMATION_VALUES = _enum_allowed("confirmation") or CONFIRMATION_VALUES
-    SECRET_ACTION_VALUES = _enum_allowed("secret_action") or SECRET_ACTION_VALUES
-    APPOINT_ACTION_VALUES = _enum_allowed("appoint_action") or APPOINT_ACTION_VALUES
-
-
-def _enum_allowed(field_name: str) -> FrozenSet[str]:
-    for c in ACTION_CLUSTERS:
         for f in c.fields:
-            if f.name == field_name and f.allowed is not None:
-                return f.allowed
-    return frozenset()
+            # 同名 FieldSpec 以先出现为准（catalog 内不得自相矛盾）
+            specs.setdefault(f.name, f)
+    _FIELD_SPECS_BY_NAME = specs
+
+
+def all_field_specs() -> Dict[str, FieldSpec]:
+    """共享 superset：catalog 全部 FieldSpec，按 name 索引。"""
+    _ensure_catalog()
+    return _FIELD_SPECS_BY_NAME
 
 
 def _ensure_catalog() -> None:
@@ -152,20 +149,11 @@ def empty_none_candidate() -> Dict[str, Any]:
 
 
 def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
-    return {
-        "kind": kind,
-        "confirmation": "无",
-        "secret_action": "无",
-        "order_id": 0,
-        "new_title": "",
-        "new_content": "",
-        "deadline_months": 0,
-        "cultivate_skill": "",
-        "cultivate_trait": "",
-        "appoint_action": "无",
-        "name": "",
-        "office": "",
-    }
+    """空候选：字段与 default 只从 catalog FieldSpec 派生。"""
+    out: Dict[str, Any] = {"kind": kind}
+    for name, spec in all_field_specs().items():
+        out[name] = spec.default
+    return out
 
 
 def _as_int(value: object, *, lo: int = 0, hi: int = 10**9) -> int:
@@ -196,6 +184,7 @@ def _field_raw(obj: Mapping[str, Any], spec: FieldSpec) -> Any:
 
 
 def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
+    """未知 kind 拒；共享 superset 中出现的任意 enum 字段 out-of-enum 拒。"""
     _ensure_catalog()
     if not isinstance(obj, Mapping):
         return False, "candidate must be a mapping"
@@ -203,9 +192,8 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
     if kind is None:
         raw_k = obj.get("kind") or obj.get("动作类型")
         return False, f"unknown action kind/label: {raw_k!r}"
-    cluster = cluster_by_kind(kind)
-    assert cluster is not None
-    for spec in cluster.fields:
+    # 共享 superset：任一 catalog enum 字段若出现（en 或 zh 键），按 FieldSpec 校验
+    for spec in all_field_specs().values():
         if spec.allowed is None:
             continue
         raw = _field_raw(obj, spec)
@@ -213,16 +201,6 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
             continue
         if str(raw).strip() not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
-    for fname, allowed, zh in (
-        ("confirmation", CONFIRMATION_VALUES, "确认"),
-        ("secret_action", SECRET_ACTION_VALUES, "密令动作"),
-        ("appoint_action", APPOINT_ACTION_VALUES, "任免动作"),
-    ):
-        raw = obj.get(fname, obj.get(zh))
-        if raw is None:
-            continue
-        if str(raw).strip() not in allowed:
-            return False, f"{fname} out of enum: {raw!r}"
     return True, ""
 
 
@@ -248,10 +226,6 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             raise ActionCandidateShapeError(reason)
 
     out = _blank_candidate(kind=kind)
-    all_specs: Dict[str, FieldSpec] = {}
-    for c in ACTION_CLUSTERS:
-        for f in c.fields:
-            all_specs[f.name] = f
 
     def _enum(value: object, allowed: FrozenSet[str], default: str) -> str:
         v = str(value if value is not None else default).strip()
@@ -261,15 +235,12 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             return default
         raise ActionCandidateShapeError(f"value {v!r} not in {sorted(allowed)}")
 
-    for name, spec in all_specs.items():
+    for name, spec in all_field_specs().items():
         raw = _field_raw(obj, spec)
         if raw is None:
             raw = spec.default
         if spec.as_int:
-            if name == "deadline_months":
-                out[name] = max(0, min(_as_int(raw), 36))
-            else:
-                out[name] = _as_int(raw, hi=spec.int_hi)
+            out[name] = _as_int(raw, hi=int(spec.int_hi))
         elif spec.allowed is not None:
             out[name] = _enum(raw, spec.allowed, str(spec.default))
         else:

@@ -72,6 +72,8 @@ def test_registry_row_carries_handler_and_fields_prompt_from_specs():
 
 
 def test_registry_rows_generate_shape_contract_matrix():
+    from ming_sim.action_clusters import all_field_specs, normalize_one_candidate
+
     for c in ACTION_CLUSTERS:
         if c.kind == "none":
             assert candidates_from_classifier_payload({"kind": "none"}, soft=True) == []
@@ -94,6 +96,26 @@ def test_registry_rows_generate_shape_contract_matrix():
             bad[f.name] = "__not_in_enum__"
             with pytest.raises(ActionCandidateShapeError):
                 inject_scripted_candidates(bad)
+
+    # 共享 superset：enum 字段挂在别 kind 上仍 out-of-enum 拒
+    enum_specs = [s for s in all_field_specs().values() if s.allowed]
+    assert enum_specs, "catalog must expose at least one enum FieldSpec"
+    host_kind = next(c.kind for c in ACTION_CLUSTERS if c.kind not in ("none",) and c.kind != "confirmation")
+    for spec in enum_specs:
+        payload = {"kind": host_kind, spec.name: "__not_in_enum__"}
+        ok, reason = validate_action_candidate_shape(payload)
+        assert ok is False and "out of enum" in reason
+        with pytest.raises(ActionCandidateShapeError):
+            inject_scripted_candidates(payload)
+
+    # 整数上限取自 FieldSpec.int_hi（非名称特判）
+    int_specs = [s for s in all_field_specs().values() if s.as_int and s.int_hi < 10**9]
+    assert int_specs, "catalog must expose a clamped int FieldSpec"
+    for spec in int_specs:
+        over = normalize_one_candidate(
+            {"kind": "secret", spec.name: int(spec.int_hi) + 100}, soft=True,
+        )
+        assert over[spec.name] == int(spec.int_hi)
 
 
 def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
