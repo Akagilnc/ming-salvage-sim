@@ -215,7 +215,11 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
     writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
-    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-test-token\n");
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    writeFileSync(
+      join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+      "agy-test-token\n",
+    );
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), "{}\n");
     return home;
