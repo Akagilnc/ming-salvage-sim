@@ -2595,8 +2595,18 @@ async function runIntegratedCmrPass(input: {
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
       // legs keep their own registry providers (or none).
       dispatch: (legSpec) => {
-        const { billingPool: _judgePool, ...legDispatchCtx } = dispatchCtx;
+        // #1094 R3 F2: legs must NOT inherit the judge billingPool.
+        // #1080 R3: panel legs are always fresh (cmrPanelLegWorkerSpec session:
+        // "fresh") — strip the pure-court resumeSessionId so a transient leg
+        // failure keeps its full process-root retry budget and is never
+        // misclassified as a resident-judge resume (forbidFreshRetry).
+        const {
+          billingPool: _judgePool,
+          resumeSessionId: _judgeResume,
+          ...legDispatchCtx
+        } = dispatchCtx;
         void _judgePool;
+        void _judgeResume;
         return dispatchOrAbort(
           familyBackend,
           legSpec,

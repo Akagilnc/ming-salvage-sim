@@ -12,6 +12,7 @@ import {
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
 } from "../../src/family/dispatchFamilyWorker.js";
+import { cmrPanelLegWorkerSpec } from "../../src/family/cmrPanelLegs.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -191,5 +192,87 @@ describe("#1081 familyProcessRootDispatch forbidFreshRetry for resident judge", 
 
     expect(result.kind).toBe("completed");
     expect(calls).toBe(2);
+  });
+
+  it("#1080 R3 positive: panel leg with leaked judge resume still process-root retries", async () => {
+    // Panel legs share id S3 with the pure court but are kind "reviewer" /
+    // session "fresh". Even if a caller leaks resumeSessionId into ctx (the
+    // pre-fix contamination), they must keep the full mechanical-retry budget
+    // — forbidFreshRetry is for pure-court kind:"cmr" only.
+    let calls = 0;
+    const seen: DispatchContext[] = [];
+    const backend = minimalFamilyBackend({
+      dispatch: async (_spec, ctx) => {
+        calls += 1;
+        seen.push(ctx);
+        if (calls === 1) {
+          return { kind: "failed", reason: "panel leg transient blip" };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findingsCount: 0,
+            findings: [],
+            rawStdout: "panel leg ok after retry\n",
+          },
+        };
+      },
+    });
+
+    const legSpec = cmrPanelLegWorkerSpec(
+      { family: "codex", slug: "gpt-5.6-sol" },
+      "correctness",
+    );
+    expect(legSpec.id).toBe("S3");
+    expect(legSpec.kind).toBe("reviewer");
+    expect(legSpec.session).toBe("fresh");
+
+    const result = await dispatchFamilyWorkerOrAbort(
+      backend,
+      legSpec,
+      {
+        familyBase: "family/1080-panel-leg",
+        cmrPass: "correctness",
+        modelRoute,
+        // Contaminated ctx: judge resume leaked into panel fan-out.
+        resumeSessionId: "sess-leaked-judge-resume",
+      },
+      undefined,
+      { sleepMs: noSleep },
+    );
+
+    expect(result.kind).toBe("completed");
+    expect(calls).toBe(2);
+    // First attempt saw the leak; second is force-fresh (resume stripped by retry).
+    expect(seen[0]?.resumeSessionId).toBe("sess-leaked-judge-resume");
+    expect(seen[1]?.resumeSessionId).toBeUndefined();
+  });
+
+  it("#1080 R3 negative: pure-court kind:cmr with resume still stops after one attempt", async () => {
+    // Contrasts the panel-leg case: kind "cmr" + resume keeps forbidFreshRetry.
+    let calls = 0;
+    const backend = minimalFamilyBackend({
+      dispatch: async () => {
+        calls += 1;
+        return { kind: "failed", reason: "pure court resume still fails" };
+      },
+    });
+
+    const result = await dispatchFamilyWorkerOrAbort(
+      backend,
+      cmrWorkerSpec("resume", "correctness", modelRoute),
+      {
+        familyBase: "family/1080-cmr-not-panel",
+        resumeSessionId: "sess-pure-court",
+        cmrPass: "correctness",
+        modelRoute,
+      },
+      undefined,
+      { sleepMs: noSleep },
+    );
+
+    expect(result.kind).toBe("failed");
+    expect(calls).toBe(1);
   });
 });
