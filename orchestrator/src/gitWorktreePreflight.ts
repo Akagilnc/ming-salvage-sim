@@ -1,20 +1,20 @@
 /**
- * gitWorktreePreflight.ts — idempotent heal before a shared-clone worktree cut (#1103 H1).
- *
- * Mutex only prevents concurrent writers; a killed/timed-out `git worktree add` can
- * still leave dir-present/metadata-absent (or the reverse) wreckage plus a stale
- * `index.lock`. This preflight runs inside the per-clone exclusive section, before
- * Sandcastle `createWorktree`, and is safe to call repeatedly.
+ * gitWorktreePreflight.ts — idempotent heal before shared-clone worktree cut (#1103 H1).
+ * Content-bearing orphan dirs are never `rm -rf` (#1105 R4 / constitution §10):
+ * move to quarantine (runner-manual posture); empty dirs may be removed.
  */
 
 import {
   existsSync,
+  mkdirSync,
+  readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { shWithClock } from "./externalCall.js";
 
@@ -40,12 +40,25 @@ export function worktreeAdminDirForBranch(
 }
 
 /**
+ * Default quarantine root: `<clone>/.sandcastle/quarantine-orphans`.
+ * Callers with a ledger may pass `<ledgerDir>/quarantine-orphans` via opts.
+ */
+export function defaultQuarantineOrphansDir(repoPath: string): string {
+  return join(repoPath, ".sandcastle", "quarantine-orphans");
+}
+
+/**
  * Age above which an `index.lock` is treated as abandoned wreckage and unlinked.
  * Fresh locks are left alone (git worktree add does not require clearing them).
  */
 export const INDEX_LOCK_STALE_MS = 120_000;
 
 export type WorktreePreflightGit = (args: readonly string[]) => string;
+
+export type HealBeforeWorktreeCutOptions = {
+  /** Isolation root (`<base>/<name>-<ts>`). Default: {@link defaultQuarantineOrphansDir}. */
+  readonly quarantineBaseDir?: string;
+};
 
 function defaultGit(repoPath: string, args: readonly string[]): string {
   return shWithClock("git", ["-C", repoPath, ...args], {
@@ -115,6 +128,28 @@ export function clonePathFromSandcastleWorktree(worktreePath: string): string | 
   return normalized.slice(0, idx);
 }
 
+/** Empty orphan → rm; content-bearing → mv to `<quarantineBase>/<basename>-<ts>`. */
+export function quarantineOrRemoveOrphanDir(
+  wtPath: string,
+  quarantineBaseDir: string,
+  nowMs: number = Date.now(),
+): string | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(wtPath);
+  } catch {
+    return null;
+  }
+  if (entries.length === 0) {
+    rmSync(wtPath, { recursive: true, force: true });
+    return null;
+  }
+  mkdirSync(quarantineBaseDir, { recursive: true });
+  const dest = join(quarantineBaseDir, `${basename(wtPath)}-${nowMs}`);
+  renameSync(wtPath, dest);
+  return dest;
+}
+
 /**
  * Idempotent preflight before cutting `branch` under `repoPath`:
  * 1. `git worktree prune` (drop dead metadata),
@@ -128,6 +163,7 @@ export function healBeforeWorktreeCut(
   repoPath: string,
   branch: string,
   runGit: WorktreePreflightGit = (args) => defaultGit(repoPath, args),
+  opts?: HealBeforeWorktreeCutOptions,
 ): void {
   runGit(["worktree", "prune"]);
 
@@ -135,10 +171,13 @@ export function healBeforeWorktreeCut(
   const listed = listedWorktreePaths(repoPath, runGit);
   const inList = listed.has(normPath(wtPath));
   const dirExists = existsSync(wtPath);
+  const quarantineBase =
+    opts?.quarantineBaseDir ?? defaultQuarantineOrphansDir(repoPath);
 
   if (dirExists && !inList) {
     // Directory present / metadata absent — classic half-dead leftover.
-    rmSync(wtPath, { recursive: true, force: true });
+    // Never rm content-bearing trees (constitution §10).
+    quarantineOrRemoveOrphanDir(wtPath, quarantineBase);
   } else if (!dirExists && inList) {
     // Metadata present / directory absent — prune again after force-remove attempt.
     try {
@@ -149,6 +188,7 @@ export function healBeforeWorktreeCut(
   }
 
   // Orphan admin dir with no registered worktree (prune should clear; belt+suspenders).
+  // Admin metadata is not worker output — safe to remove.
   const admin = worktreeAdminDirForBranch(repoPath, branch);
   if (existsSync(admin) && !inList && !existsSync(wtPath)) {
     rmSync(admin, { recursive: true, force: true });

@@ -118,7 +118,11 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { findingIdentityKey } from "../findings.js";
-import { runExclusive, runExclusiveSync } from "../gitMutex.js";
+import {
+  isGitMutexHeldInProcess,
+  runExclusive,
+  runExclusiveSync,
+} from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
@@ -733,12 +737,16 @@ export class RealFamilyBackend implements FamilyBackend {
   // ─────────────────────────── merge ───────────────────────────
 
   /**
-   * #1103 H2: `git checkout` on a shared clone mutates HEAD / index under the
-   * common `.git`. Spawned hostCliWorkerRunner children hold an empty in-process
-   * Map — take the cross-process file lock (reentrant when already inside
-   * {@link runExclusive}).
+   * #1103 H2 / #1105 R4: `git checkout` on a shared clone mutates HEAD / index
+   * under the common `.git`. When already inside {@link runExclusive}, the file
+   * lock is held — do not nest {@link runExclusiveSync} (fail-fast on in-process
+   * overlap). Otherwise take the sync lock (cross-process wait still allowed).
    */
   private checkoutSharedRepo(branch: string, repo: string = this.opts.workingRepo): void {
+    if (isGitMutexHeldInProcess(repo)) {
+      this.sh("git", ["checkout", branch], repo);
+      return;
+    }
     runExclusiveSync(repo, () => {
       this.sh("git", ["checkout", branch], repo);
     });

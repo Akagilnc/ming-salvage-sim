@@ -288,6 +288,9 @@ export async function withMechanicalRetry(
   let last: WorkerResult | undefined;
   let lastError: unknown;
   let lastAttemptThrew = false;
+  // Absolute attempt index of the last dispatch actually performed (for the
+  // exhaustion suffix — heal/resume short-circuits must not report MAX).
+  let attemptsPerformed = attemptsAlreadyUsed;
   // #1092: SO parse failure on a resumed session is deterministic (YAML habit /
   // missing schema on hot resume). After the first such failure, allow exactly
   // one fresh attempt then stop — do not burn the remaining process-root budget
@@ -301,6 +304,7 @@ export async function withMechanicalRetry(
     attempt <= MAX_DISPATCH_ATTEMPTS;
     attempt++
   ) {
+    attemptsPerformed = attempt;
     const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
     const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
     const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
@@ -406,10 +410,11 @@ export async function withMechanicalRetry(
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
   // #934 ID-004 / #937: exhaustion is the phase's canonical failed edge —
   // attempt count only (no relay-candidate / baton handoff vocabulary).
-  const attempts = MAX_DISPATCH_ATTEMPTS;
+  // #1105 R4 F-P2: report attempts actually performed (heal short-circuit = 2,
+  // not always MAX_DISPATCH_ATTEMPTS).
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
-    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
+    reason: `${(last as { reason: string }).reason} (after ${attemptsPerformed} dispatch attempts)`,
   };
 }
 

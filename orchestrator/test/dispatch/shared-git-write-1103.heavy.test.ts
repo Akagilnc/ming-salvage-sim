@@ -14,7 +14,9 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -27,6 +29,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureGitInfoExclude } from "../../src/gitInfoExclude.js";
 import {
   _resetGitMutex,
+  isGitMutexHeldInProcess,
   isPidAlive,
   LOCK_STALE_MS,
   mutexMapKey,
@@ -37,6 +40,7 @@ import {
 } from "../../src/gitMutex.js";
 import {
   clearStaleIndexLock,
+  defaultQuarantineOrphansDir,
   healBeforeWorktreeCut,
   INDEX_LOCK_STALE_MS,
   sandcastleWorktreePathForBranch,
@@ -124,12 +128,47 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
     writeFileSync(join(wtPath, "orphan.txt"), "wreckage\n");
     expect(git(repo, "worktree", "list", "--porcelain")).not.toContain(wtPath);
 
+    const quarantineBase = defaultQuarantineOrphansDir(repo);
     healBeforeWorktreeCut(repo, branch);
 
+    // Path cleared for a fresh cut — but content is quarantined, never destroyed.
     expect(existsSync(wtPath)).toBe(false);
+    const quarantined = readdirSync(quarantineBase).filter((n) =>
+      n.startsWith("feat-issue-1103-"),
+    );
+    expect(quarantined.length).toBe(1);
+    expect(
+      readFileSync(join(quarantineBase, quarantined[0]!, "orphan.txt"), "utf8"),
+    ).toBe("wreckage\n");
     git(repo, "worktree", "add", "-b", branch, wtPath, "HEAD");
     expect(existsSync(join(wtPath, "README"))).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain")).toContain(wtPath);
+  });
+
+  it("quarantines content-bearing orphans intact (constitution §10 — never rm)", () => {
+    const repo = makeRepo();
+    const branch = "feat/issue-1103-preserve";
+    const wtPath = scWorktreePath(repo, branch);
+    mkdirSync(wtPath, { recursive: true });
+    writeFileSync(join(wtPath, "worker-uncommitted.ts"), "export const x = 1;\n");
+    mkdirSync(join(wtPath, "nested"), { recursive: true });
+    writeFileSync(join(wtPath, "nested", "keep.txt"), "precious\n");
+    const ledgerQuarantine = join(trackTemp("1103-ledger-"), "quarantine-orphans");
+
+    healBeforeWorktreeCut(repo, branch, undefined, {
+      quarantineBaseDir: ledgerQuarantine,
+    });
+
+    expect(existsSync(wtPath)).toBe(false);
+    const moved = readdirSync(ledgerQuarantine);
+    expect(moved).toHaveLength(1);
+    const dest = join(ledgerQuarantine, moved[0]!);
+    expect(readFileSync(join(dest, "worker-uncommitted.ts"), "utf8")).toBe(
+      "export const x = 1;\n",
+    );
+    expect(readFileSync(join(dest, "nested", "keep.txt"), "utf8")).toBe(
+      "precious\n",
+    );
   });
 
   it("NEGATIVE: does not delete an active registered worktree", () => {
@@ -309,11 +348,55 @@ runExclusiveSync(repo, () => {
     ]);
   });
 
-  it("same-owner sync nesting is reentrant; nested section observes the lock", async () => {
+  it("same-process async holder + runExclusiveSync fail-fasts (no Atomics.wait deadlock)", async () => {
+    const repo = makeRepo();
+    let syncError: unknown;
+    await runExclusive(repo, async () => {
+      expect(isGitMutexHeldInProcess(repo)).toBe(true);
+      try {
+        runExclusiveSync(repo, () => {
+          throw new Error("sync must not enter under async hold");
+        });
+      } catch (err) {
+        syncError = err;
+      }
+      // Yield so a waiting Atomics.wait would have deadlocked the holder.
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(syncError).toBeInstanceOf(Error);
+    expect(String(syncError)).toMatch(/fail-fast/);
+    expect(isGitMutexHeldInProcess(repo)).toBe(false);
+  });
+
+  it("holder timer inheriting ALS must not pierce the lock", async () => {
+    const repo = makeRepo();
+    let timerEntered = false;
+    let timerError: unknown;
+    await runExclusive(repo, async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          try {
+            runExclusiveSync(repo, () => {
+              timerEntered = true;
+            });
+          } catch (err) {
+            timerError = err;
+          }
+          resolve();
+        }, 10);
+      });
+    });
+    expect(timerEntered).toBe(false);
+    expect(timerError).toBeInstanceOf(Error);
+    expect(String(timerError)).toMatch(/fail-fast/);
+  });
+
+  it("same-owner sync nesting is reentrant; nested section observes the lock", () => {
     const repo = makeRepo();
     const lockPath = orchestratorGitLockPath(repo);
     if (lockPath === null) throw new Error("expected lock");
-    await runExclusive(repo, async () => {
+    // Sync-within-sync only — async no longer publishes ALS for nesting.
+    runExclusiveSync(repo, () => {
       expect(existsSync(lockPath)).toBe(true);
       runExclusiveSync(repo, () => {
         expect(existsSync(lockPath)).toBe(true);
@@ -370,6 +453,30 @@ runExclusiveSync(repo, () => {
     await runExclusive(repo, async () => {
       expect(existsSync(lockDir)).toBe(true);
     });
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it("reclaim race: two reclaimers interleave — at most one deletes, loser restores or yields", () => {
+    const repo = makeRepo();
+    const lockDir = orchestratorGitLockPath(repo);
+    if (lockDir === null) throw new Error("expected lock path");
+    mkdirSync(lockDir);
+    writeFileSync(join(lockDir, "pid"), "99999999\n");
+    writeFileSync(join(lockDir, "owner"), "tok-race\n");
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1_000);
+    utimesSync(lockDir, old, old);
+
+    // Simulate interleaving: first reclaimer renames away; second sees absence.
+    const reclaimA = `${lockDir}.reclaim.a`;
+    renameSync(lockDir, reclaimA);
+    expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(false);
+    // Put claimed path back under a fresh stale name and let one reclaim win.
+    renameSync(reclaimA, lockDir);
+    utimesSync(lockDir, old, old);
+    const first = tryReclaimStaleLock(lockDir, Date.now());
+    const second = tryReclaimStaleLock(lockDir, Date.now());
+    expect(first).toBe(true);
+    expect(second).toBe(false);
     expect(existsSync(lockDir)).toBe(false);
   });
 });
