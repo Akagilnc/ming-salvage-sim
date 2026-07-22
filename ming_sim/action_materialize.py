@@ -61,10 +61,6 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         fn(ctx)
 
 
-def _minister_name(ctx: MaterializeCtx) -> str:
-    return ctx.character.name
-
-
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
 
 
@@ -75,7 +71,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
         return
     session = ctx.session
-    minister_name = _minister_name(ctx)
+    minister_name = ctx.character.name
     is_consort = getattr(ctx.character, "office_type", "") == "后宫"
     active = session.db.get_active_secret_orders_for_minister(minister_name)
     if not (active or is_consort):
@@ -180,18 +176,21 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_draft_intent
 
     session = ctx.session
-    minister_name = _minister_name(ctx)
+    minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
     pend_for_minister = ctx.pend_for_minister
 
+    # 一次扫描 pending + 最近 committed draft（入口条件与后续物化共用）
     has_pending_directive = any(p["kind"] == "directive" for p in pend_for_minister)
-    has_committed_directive = False
+    committed_draft = None
     if not has_pending_directive:
         for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
             if str(_directive["actor"] or "") == minister_name:
-                has_committed_directive = True
+                committed_draft = _directive
                 break
+    has_committed_directive = committed_draft is not None
+    has_existing_draft = has_pending_directive or has_committed_directive
     draft_keyword_requested = _mentions_draft_request(ctx.player_message)
     if not (
         (intent is not None and intent_kind == "draft")
@@ -204,15 +203,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     if ctx.explicit_prefixed or ctx.has_directive or ctx.out.get("pending_action_id"):
         return
 
-    _has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
-    _committed_draft = None
-    if not _has_pending_draft:
-        for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
-            if str(_directive["actor"] or "") == minister_name:
-                _committed_draft = _directive
-                break
-    _has_existing_draft = _has_pending_draft or _committed_draft is not None
-    _dir_candidates = []
+    dir_candidates = []
     for _p in pend_for_minister:
         if _p["kind"] != "directive":
             continue
@@ -222,46 +213,46 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         except (ValueError, TypeError):
             _cp = {}
         _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        _dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
-    _existing_draft_text = ""
-    if _dir_candidates:
-        _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
-    elif _committed_draft is not None and not _has_pending_draft:
-        _existing_draft_text = str(_committed_draft["text"] or "")
+        dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+    existing_draft_text = ""
+    if dir_candidates:
+        existing_draft_text = str(dir_candidates[-1].get("text") or "")
+    elif committed_draft is not None and not has_pending_directive:
+        existing_draft_text = str(committed_draft["text"] or "")
 
-    if intent is not None and intent_kind == "draft" and not _has_existing_draft:
+    if intent is not None and intent_kind == "draft" and not has_existing_draft:
         draft_res = {"draft_action": "拟旨", "draft_text": ctx.reply, "target_candidate": ""}
-    elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
+    elif intent is not None and not has_existing_draft and not draft_keyword_requested:
         draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     else:
         draft_res = extract_draft_intent(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
-            has_pending_draft=_has_existing_draft,
-            existing_draft_text=_existing_draft_text,
-            existing_candidates=_dir_candidates or None,
+            has_pending_draft=has_existing_draft,
+            existing_draft_text=existing_draft_text,
+            existing_candidates=dir_candidates or None,
         )
 
     if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
         ctx.out["directive_confirmation_ambiguous"] = {
-            "candidates": [{"id": c["id"], "summary": c["summary"]} for c in _dir_candidates]
+            "candidates": [{"id": c["id"], "summary": c["summary"]} for c in dir_candidates]
         }
         ctx.draft_staged = True
         return
     if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
-        if _dir_candidates and _target == "新":
+        if dir_candidates and _target == "新":
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
                 payload={"text": draft_res["draft_text"], "actor": minister_name},
             )
-        elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
+        elif _target_id is not None and any(c["id"] == _target_id for c in dir_candidates):
             ctx.out["pending_action_id"] = session.db.update_directive_candidate(
                 _target_id,
                 payload={"text": draft_res["draft_text"], "actor": minister_name},
             )
-        elif _committed_draft is not None and not _has_pending_draft:
-            did = int(_committed_draft["id"])
+        elif committed_draft is not None and not has_pending_directive:
+            did = int(committed_draft["id"])
             session.db.update_directive_text(did, draft_res["draft_text"])
             ctx.out["directive"] = {
                 "id": did,
@@ -293,7 +284,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
         return
 
     session = ctx.session
-    minister_name = _minister_name(ctx)
+    minister_name = ctx.character.name
     intent = ctx.intent
     intent_kind = ctx.intent_kind
 
