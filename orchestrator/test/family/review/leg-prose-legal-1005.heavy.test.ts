@@ -355,7 +355,18 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // Production consumer: runCmrWorker extracts transports + overlays.
-      return super.dispatchWorker(spec, ctx);
+      const result = await super.dispatchWorker(spec, ctx);
+      if (
+        result.kind === "completed" &&
+        result.sessionId === undefined &&
+        result.output.kind === "judge"
+      ) {
+        return {
+          ...result,
+          sessionId: `fixture-1005-${ctx.cmrPass ?? "cmr"}`,
+        };
+      }
+      return result;
     }
     if (spec.kind === "ship") {
       return {

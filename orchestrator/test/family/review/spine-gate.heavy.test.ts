@@ -76,7 +76,7 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
     // The red wave was routed UNIFORMLY through the triage judge court (the
-    // durable wave-verify-judge step is written before the judge dispatch)…
+    // durable wave-verify-judge step is written after the judge returns)…
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     // …and the typed `toolchain` terminal never opened a fixer round: no
@@ -112,30 +112,32 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
 });
 
 describe("#1027 S4 spine tracer — a red wave the judge continues + fixer converges lets the NEXT wave proceed", () => {
-  it("red wave verify → judge continue → coder-fix → deterministic re-verify green → wave 2 merges → 止于 PR", async () => {
+  it("red wave verify → judge continue → coder-fix → resume judge → green hard-pre → wave 2 merges → 止于 PR", async () => {
     // Wave 1 = {294}; wave 2 = {296} (blocked_by 294). The wave-1 verify is RED
     // the FIRST time → the triage judge court runs. Unlike the toolchain terminal
     // (acceptance 1), here the judge returns a TYPED `continue` verdict carrying a
-    // repair packet → the family coder-fix seat commits → the deterministic
-    // re-verify turns GREEN (the SOLE convergence authority) → the wave clears and
-    // wave 2 proceeds. This is the multi-wave integration the unit-level tracer in
-    // verify-cmr.test.ts cannot show (wave scheduling ↔ wave court ↔ next wave).
+    // repair packet → the family coder-fix seat commits → hub resumes judge
+    // (#1085 / ADR 0147) → exit_loop + green hard-pre (ADR 0145) → wave 2.
     let waveVerifyCalls = 0;
+    let waveJudgeCalls = 0;
     const coderFixDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
       verify: (req) => {
         if (req.phase !== "wave") return { ok: true };
         waveVerifyCalls += 1;
-        // #1 wave-1 verify red → court; #2 court re-verify green (fix landed);
-        // #3 wave-2 verify green.
+        // #1 wave-1 verify red → court; #2 post-fix green observe;
+        // #3 post-exit green hard-pre; later wave-2 green.
         return waveVerifyCalls >= 2
           ? { ok: true }
           : { ok: false, errorPackage: { reason: "cross-slice seam red: 3 failing" } };
       },
       worker: (spec, ctx) => {
         if (spec.kind === "cmr" && ctx.waveVerifyFailure !== undefined) {
+          waveJudgeCalls += 1;
           return completedJudge(
-            judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
+            waveJudgeCalls === 1
+              ? judgeContinue([sampleFinding("seam regression", "a.ts:9")])
+              : { kind: "judge", status: "converged" },
           );
         }
         if (spec.kind === "coder") {

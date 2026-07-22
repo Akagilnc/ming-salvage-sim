@@ -182,6 +182,7 @@ class CapableFamilyBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: cmrScriptToWorkerOutput(cmr),
+        sessionId: `${ctx.cmrPass ?? "cmr"}-judge-session`,
       };
     }
     if (spec.kind === "ship") {
@@ -382,12 +383,15 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     output: { kind: "coder", committed: true, commitsAdded: 1 },
   });
 
-  it("AC1 tracer: red → judge continue → coder-fix → deterministic re-verify green → converge", async () => {
+  it("AC1 tracer: red → judge continue → coder-fix → resume judge → green hard-pre → converge (#1085 hub)", async () => {
     let verifyCalls = 0;
+    let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const judgePhases: Array<DispatchContext["phase"]> = [];
     const backend = new CapableFamilyBackend({
-      // #1 initial wave verify (red) → court; #2 re-verify after fix (green).
+      // #1 initial wave verify (red) → court; #2 re-verify after fix (green
+      // observe). exit_loop reuses that observe when HEAD unchanged (#1085 F1)
+      // — no third full-family verify.
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 2
@@ -396,9 +400,14 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       },
       worker: (spec, ctx) => {
         if (spec.kind === "cmr") {
+          judgeCalls += 1;
+          // #1085: after builder beat the hub resumes judge — second call
+          // must exit_loop (converged); green alone never skips the hub.
           judgePhases.push(ctx.phase);
           return completedJudge(
-            judgeContinue([sampleFinding("seam regression", "a.ts:9")]),
+            judgeCalls === 1
+              ? judgeContinue([sampleFinding("seam regression", "a.ts:9")])
+              : { kind: "judge", status: "converged" },
           );
         }
         if (spec.kind === "coder") {
@@ -416,17 +425,25 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       familyHeadAfter: "head-1",
     });
 
-    // Green mechanical re-verify is the SOLE convergence authority → ok.
+    // ADR 0145 green hard-pre on exit_loop + ADR 0147 builder→judge hub.
     expect(result).toEqual({ ok: true, ran: true });
-    // One judge triage, one coder-fix, one re-verify (2 verify calls total).
+    // Initial red + post-fix green observe (exit reuses observe; no double-run).
     expect(verifyCalls).toBe(2);
-    expect(judgePhases).toEqual(["wave"]);
+    expect(judgeCalls).toBe(2);
+    expect(judgePhases).toEqual(["wave", "wave"]);
     expect(coderDispatches).toHaveLength(1);
     expect(coderDispatches[0]?.kind).toBe("coder");
     // Ledger records the wave triage + fix rounds (与 CMR 庭同构).
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
+    // First JUDGE_STEP is round receipt after the judge returns (reason carries
+    // the failure the judge answered), not a pre-dispatch intent.
+    const firstJudge = backend.ledger.find(
+      (e) =>
+        e.event === "worker_dispatched" && e.workerStep === "wave-verify-judge",
+    );
+    expect(firstJudge?.reason).toMatch(/triage judge round 1 for:/);
     // Converged on green → no abort.
     expect(backend.aborted).toEqual([]);
   });
@@ -436,8 +453,9 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const backend = new CapableFamilyBackend({
-      // #1 initial red; #2 still red (after the converged verdict — must NOT
-      // close); #3 green (after the forced-continue fixer round).
+      // #1 initial red; #2 still red (after the first exit_loop — must NOT
+      // close); #3 green after fix (observe). Final exit_loop reuses #3 when
+      // HEAD unchanged (#1085 F1) — no fourth full-family verify.
       verify: () => {
         verifyCalls += 1;
         return verifyCalls >= 3
@@ -449,12 +467,17 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           judgeCalls += 1;
           // Round 1: judge says converged — but the re-verify is still red, so
           // the court must FORCE another round (not close on the judge's word).
-          // Round 2: a real continue drives the coder-fix that finally converges.
-          return completedJudge(
-            judgeCalls === 1
-              ? { kind: "judge", status: "converged" }
-              : judgeContinue([sampleFinding("seam regression", "b.ts:3")]),
-          );
+          // Round 2: continue drives the coder-fix.
+          // Round 3: after builder beat hub resumes judge → exit_loop.
+          if (judgeCalls === 1) {
+            return completedJudge({ kind: "judge", status: "converged" });
+          }
+          if (judgeCalls === 2) {
+            return completedJudge(
+              judgeContinue([sampleFinding("seam regression", "b.ts:3")]),
+            );
+          }
+          return completedJudge({ kind: "judge", status: "converged" });
         }
         if (spec.kind === "coder") {
           coderDispatches.push(spec);
@@ -472,11 +495,11 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    // Round 1 converged verdict did NOT converge (re-verify #2 red) → forced
-    // continue: the coder-fix only spins in round 2 (converged skips the fixer).
-    expect(judgeCalls).toBe(2);
+    // Round 1 converged did NOT exit (re-verify red) → round 2 continue → fix
+    // → round 3 exit_loop reuses post-fix green observe.
+    expect(judgeCalls).toBe(3);
     expect(coderDispatches).toHaveLength(1);
-    // 3 verify calls: initial red + red-after-converged + green-after-fix.
+    // initial + red-after-exit + green-after-fix (final exit reuses observe)
     expect(verifyCalls).toBe(3);
     expect(backend.aborted).toEqual([]);
   });
@@ -497,12 +520,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
         if (spec.kind === "cmr") {
           if (spec.promptFile === "wave_verify_judge.md") {
             verifyJudgePhases.push(ctx.phase);
+            return completedJudge(
+              verifyJudgePhases.length === 1
+                ? judgeContinue([sampleFinding("checkpoint finding", "src/a.ts:1")])
+                : judgeConverged(),
+            );
           }
-          return completedJudge(
-            spec.promptFile === "wave_verify_judge.md"
-              ? judgeContinue([sampleFinding("checkpoint finding", "src/a.ts:1")])
-              : judgeConverged(),
-          );
+          return completedJudge(judgeConverged());
         }
         if (spec.kind === "coder") {
           coderDispatches.push(spec);
@@ -526,7 +550,10 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.verifyCalls[0]?.phase).toBe("correctness_checkpoint");
     expect(backend.verifyCalls[1]?.phase).toBe("correctness_checkpoint");
     expect(backend.verifyCalls.map((call) => call.issue)).toEqual([1107, 1107]);
-    expect(verifyJudgePhases).toEqual(["correctness_checkpoint"]);
+    expect(verifyJudgePhases).toEqual([
+      "correctness_checkpoint",
+      "correctness_checkpoint",
+    ]);
     expect(coderDispatches).toHaveLength(1);
     expect(coderIssues).toEqual([1107]);
     expect(backend.ledger).toContainEqual(
@@ -604,12 +631,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
         if (spec.kind === "cmr") {
           if (spec.promptFile === "wave_verify_judge.md") {
             verifyJudgePhases.push(ctx.phase);
+            return completedJudge(
+              verifyJudgePhases.length === 1
+                ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
+                : judgeConverged(),
+            );
           }
-          return completedJudge(
-            spec.promptFile === "wave_verify_judge.md"
-              ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
-              : judgeConverged(),
-          );
+          return completedJudge(judgeConverged());
         }
         if (spec.kind === "coder") {
           coderDispatches.push(spec);
@@ -643,7 +671,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(verifyCalls).toBe(2);
     expect(backend.verifyCalls[0]?.phase).toBe("final");
     expect(backend.verifyCalls[1]?.phase).toBe("final");
-    expect(verifyJudgePhases).toEqual(["final"]);
+    expect(verifyJudgePhases).toEqual(["final", "final"]);
     expect(coderDispatches).toHaveLength(1);
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_passed"),
@@ -721,6 +749,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       action: "fix_now",
     };
     let verifyCalls = 0;
+    let verifyJudgeCalls = 0;
     let coderDispatchCount = 0;
     let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
@@ -774,10 +803,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       async worker(spec, ctx) {
         if (spec.kind === "cmr") {
           if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgeCalls += 1;
             return completedJudge(
-              judgeContinue([
-                sampleFinding("mid-court verify finding", "src/mid-court.ts:1"),
-              ]),
+              verifyJudgeCalls === 1
+                ? judgeContinue([
+                    sampleFinding("mid-court verify finding", "src/mid-court.ts:1"),
+                  ])
+                : judgeConverged(),
             );
           }
           const cmr = await backend.runIntegratedCmr({
@@ -790,6 +822,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-court-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -835,12 +868,14 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
 
     expect(result).toEqual({ ok: true, ran: true });
     expect(verifyCalls).toBe(3);
+    expect(verifyJudgeCalls).toBe(2);
     expect(coderDispatchCount).toBe(2);
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
       "completeness",
+      "correctness",
       "correctness",
       "correctness",
     ]);
@@ -913,6 +948,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-toolchain-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -987,6 +1023,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       action: "fix_now",
     };
     let verifyCalls = 0;
+    let verifyJudgeCalls = 0;
     let coderDispatchCount = 0;
     let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
@@ -1045,13 +1082,16 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       async worker(spec, ctx) {
         if (spec.kind === "cmr") {
           if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgeCalls += 1;
             return completedJudge(
-              judgeContinue([
-                sampleFinding(
-                  "mid-court completeness verify finding",
-                  "src/mid-court-completeness.ts:1",
-                ),
-              ]),
+              verifyJudgeCalls === 1
+                ? judgeContinue([
+                    sampleFinding(
+                      "mid-court completeness verify finding",
+                      "src/mid-court-completeness.ts:1",
+                    ),
+                  ])
+                : judgeConverged(),
             );
           }
           const cmr = await backend.runIntegratedCmr({
@@ -1064,6 +1104,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-completeness-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -1110,11 +1151,13 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
 
     expect(result).toEqual({ ok: true, ran: true });
     expect(verifyCalls).toBe(3);
+    expect(verifyJudgeCalls).toBe(2);
     expect(coderDispatchCount).toBe(2);
     const steps = backend.ledger.map((e) => e.workerStep);
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
       "completeness",
       "completeness",
       "correctness",
@@ -1190,6 +1233,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-completeness-toolchain-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -2078,6 +2122,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-291-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -2141,8 +2186,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: correctness continue → fix → pure receive → panel outer gate.
     expect(backend.cmrCalls.map((call) => call.cmrPass)).toEqual([
       "completeness",
+      "correctness",
       "correctness",
       "correctness",
     ]);
@@ -2298,6 +2345,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 ...CMR_EVIDENCE,
               },
             ),
+            sessionId: "coder-fix-startup-cmr-judge-session",
           };
         }
         if (spec.kind === "coder") {

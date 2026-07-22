@@ -384,6 +384,7 @@ export interface FamilyLedgerEntry {
    * Also: #979 family coder-fix session id on `cmr_fix_committed` rows so the
    * same fix chain resumes across rounds (ledger sole truth; absent → fresh).
    */
+  readonly judgeSessionId?: string;
   readonly sessionId?: string;
   /**
    * #930 — T2 judge status on family court rows (`cmr_reviewed` / `cmr_passed`).

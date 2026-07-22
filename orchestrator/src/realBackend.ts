@@ -83,10 +83,12 @@ import {
 } from "./stationReceiptContracts.js";
 import {
   isJudgeSeat,
+  JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeResultFromVerdict,
   mintJudgeEscalate,
   projectResidualReviewerToJudge,
   unusableResidualOpenCountPaper,
+  usesJudgeReceiptChannel,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -1249,6 +1251,7 @@ export function soulForStep(
 ): StepSoul {
   // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
   // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
+  // #1081 open-court birth uses role+soul "verify" (falls through expected arm).
   if (
     spec.soul === "verify" &&
     isJudgeSeat({ id: spec.id })
@@ -1409,10 +1412,10 @@ function extractVerifyTag(stdout: string): unknown | undefined {
  */
 function extractRoleReceipt(
   stdout: string,
-  spec: Pick<StepSpec, "role" | "id" | "soul">,
+  spec: Pick<StepSpec, "role" | "id" | "soul" | "promptFile">,
 ): unknown | undefined {
   try {
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return extractJudgeTag(stdout);
     }
     return spec.role === "coder"
@@ -1449,18 +1452,29 @@ export function stripJsonFence(s: string): string {
 }
 
 /**
- * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
- * values default to the no-commit report — never invent escalate from cargo,
- * never schema-reject ordinary cargo (#899 / ADR 0131).
+ * Tolerant coder cargo fields (committed / commitsAdded / beat / planBody).
+ * Missing or off-shape values default to the no-commit report — never invent
+ * escalate from cargo, never schema-reject ordinary cargo (#899 / ADR 0131).
+ * #1082 beat/planBody are optional opaque siblings for plan-phase transport.
  */
 export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly beat?: "plan" | "construct";
+  readonly planBody?: string;
 } {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return { committed: false, commitsAdded: 0 };
   }
   const receipt = body as Record<string, unknown>;
+  const beat =
+    receipt.beat === "plan" || receipt.beat === "construct"
+      ? receipt.beat
+      : undefined;
+  const planBody =
+    typeof receipt.planBody === "string" && receipt.planBody.trim().length > 0
+      ? receipt.planBody
+      : undefined;
   return {
     committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
     commitsAdded:
@@ -1469,6 +1483,8 @@ export function coderCargoFields(body: unknown): {
       receipt.commitsAdded >= 0
         ? receipt.commitsAdded
         : 0,
+    ...(beat !== undefined ? { beat } : {}),
+    ...(planBody !== undefined ? { planBody } : {}),
   };
 }
 
@@ -1521,6 +1537,14 @@ export function projectCoderStationReceipt(
   if (!envelope.ok) {
     throw new Error(`illegal coder station receipt: ${envelope.reason}`);
   }
+  const beatCargo =
+    fields.beat !== undefined || fields.planBody !== undefined
+      ? {
+          ...(fields.beat !== undefined ? { beat: fields.beat } : {}),
+          ...(fields.planBody !== undefined ? { planBody: fields.planBody } : {}),
+        }
+      : {};
+
   if (envelope.value.status === "escalate") {
     // Escalate is orthogonal to commit cargo; refuse traffic is a different
     // status — do not smuggle refusedFindingIdentityKeys onto a bell.
@@ -1528,6 +1552,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       escalate: {
         reason: envelope.value.reason,
         diagnosis: envelope.value.diagnosis,
@@ -1540,6 +1565,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
       ...refuseRecordsExtra,
     };
@@ -1549,6 +1575,7 @@ export function projectCoderStationReceipt(
     kind: "coder",
     committed: fields.committed,
     commitsAdded: fields.commitsAdded,
+    ...beatCargo,
   };
 }
 
@@ -1773,7 +1800,11 @@ export function attributeFailure(
  * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set(Object.values(WORKER_PROMPT_FILES)),
+  ...new Set([
+    ...Object.values(WORKER_PROMPT_FILES),
+    // #1081: resident judge birth at slice dispatch (not a topology WORKER step).
+    JUDGE_OPEN_COURT_PROMPT_FILE,
+  ]),
 ];
 
 /**
@@ -3025,6 +3056,7 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // #1081: open-court birth (judge_open_court.md) also takes JUDGE_RECEIPT.
     // S9 online-review must not take JUDGE_RECEIPT.
     // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
     // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
@@ -3033,7 +3065,7 @@ export class RealBackend implements Backend {
       ? options.billingPool
       : undefined;
     const resumeCapable = resumeCapableForSlug(spec.model, pool);
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
         judgeStationReceiptSchema(),
@@ -3146,7 +3178,7 @@ export class RealBackend implements Backend {
     const cargo =
       typedOutputUsed &&
       (spec.role === "coder" ||
-        isJudgeSeat({ id: spec.id }))
+        usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3168,9 +3200,10 @@ export class RealBackend implements Backend {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
     // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // #1081: open-court birth reuses the same judge receipt decode (ack only).
     // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
     // here on RealBackend (family review-loop owns verify decode).
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper

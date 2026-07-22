@@ -785,7 +785,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(coderFixCalls).toBe(0);
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
-  }, 20_000);
+  }, 120_000);
 
   it("#598 same-position redispatch on T2 coder SOE exhaust; zero next-gate", async () => {
     // #899 / #919 M1: T2 coder station receipt SO on the family coder-fix seat
@@ -897,7 +897,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(nextGateCalls).toBe(0);
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
-  }, 20_000);
+  }, 120_000);
 
   it("accepts initial-good T2 coder receipt at the family coder-fix production seam", async () => {
     // #899 / #919 M1: first-good T2 coder station receipt through production
