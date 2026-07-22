@@ -1843,20 +1843,11 @@ class WebGame:
                 character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (text or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
-        from ming_sim.action_clusters import normalize_intent_candidates, primary_intent
+        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
-        if preclassified_intent is None:
-            _intent_primary = None
-        elif isinstance(preclassified_intent, list):
-            _intent_primary = primary_intent(preclassified_intent)
-        else:
-            _intent_primary = primary_intent(normalize_intent_candidates(preclassified_intent))
-        confirmation_turn = (
-            isinstance(_intent_primary, dict)
-            and str(_intent_primary.get("kind") or "") == "confirmation"
-            and str(_intent_primary.get("confirmation") or "") in {"应允", "拒绝"}
-        )
+        confirmation_turn = is_confirmation_decision(
+            resolve_primary_intent(preclassified_intent))
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")

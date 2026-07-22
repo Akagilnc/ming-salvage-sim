@@ -328,5 +328,28 @@ def primary_intent(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
     return candidates[0]
 
 
+def resolve_primary_intent(preclassified_intent: Any) -> Optional[Dict[str, Any]]:
+    """session.chat / web stream 共用：None|list|dict → primary 候选。
+
+    - None → None（分类器未跑）
+    - list → primary_intent(list)
+    - dict/其它 → soft normalize 后再 primary
+    """
+    if preclassified_intent is None:
+        return None
+    if isinstance(preclassified_intent, list):
+        return primary_intent(preclassified_intent)
+    return primary_intent(normalize_intent_candidates(preclassified_intent))
+
+
+def is_confirmation_decision(intent: Optional[Mapping[str, Any]]) -> bool:
+    """确认回合屏蔽：kind=confirmation 且 应允/拒绝。"""
+    return (
+        isinstance(intent, Mapping)
+        and str(intent.get("kind") or "") == "confirmation"
+        and str(intent.get("confirmation") or "") in {"应允", "拒绝"}
+    )
+
+
 def inject_scripted_candidates(raw: Any) -> List[Dict[str, Any]]:
     return candidates_from_classifier_payload(raw, soft=False)
