@@ -950,8 +950,8 @@ def classify_cli_action_intent(
     这条调用可与大臣回话并发；后续落地只从大臣回话取文本。LLM 软判坏 shape → []。
     """
     from ming_sim.action_clusters import (
-        classifier_action_types_prompt,
         candidates_from_classifier_payload,
+        classifier_json_fields_prompt,
     )
 
     orders_brief = "；".join(
@@ -959,25 +959,13 @@ def classify_cli_action_intent(
         for o in (active_orders or [])
     ) or "（无）"
     pending_brief = "；".join(pending_summaries or []) or "（无）"
-    action_enum = classifier_action_types_prompt()
+    # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
+    schema_obj = classifier_json_fields_prompt()
     prompt = (
         "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
         "判断本轮是否属于一个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
         "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        "{\n"
-        f'  "动作类型": "{action_enum}",\n'
-        '  "确认": "应允|拒绝|无",\n'
-        '  "密令动作": "无|更新|提交核议|催办|记进展",\n'
-        '  "目标密令编号": 0,\n'
-        '  "新标题": "",\n'
-        '  "新内容": "",\n'
-        '  "期限月数": 0,\n'
-        '  "调教技能": "",\n'
-        '  "调教性格": "",\n'
-        '  "任免动作": "无|任命|罢免",\n'
-        '  "姓名": "",\n'
-        '  "官职": ""\n'
-        "}\n"
+        + schema_obj + "\n"
         "规则：确认优先于新动作；拟旨优先于任免；问询、查账、问军情、泛泛商议填无。\n"
         "没有现有密令时不要硬判密令动作；非妃嫔不要硬判调教。\n\n"
         f"【待确认动作】{pending_brief}\n"
