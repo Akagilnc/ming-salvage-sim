@@ -419,7 +419,7 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
           ),
         ],
       });
-      const result = await runOrchestrator({ issueNumber: 10824, backend });
+      const result = await runOrchestrator({ issueNumber: 10825, backend });
       expect(result.status).toBe("failed");
       expect(result.errorPackage).toBeDefined();
       // No second S2 construct and no silent completed handoff.

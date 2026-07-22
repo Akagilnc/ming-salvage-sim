@@ -1,39 +1,15 @@
 # Judge station (S3 establish / S6 resume) — #925 / #1081–#1083 hub
 
 Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
-You are persistent: open court at slice dispatch (#1081), resume the same
-session at every S3/S6 (including plan pre-review). Builder beats (coder
-implement / fixer plan or construction) always dumb-relay here first — you
-are the hub; builder and fresh reviewer never connect directly (ADR 0147 /
-#1083).
+Follow that soul and the worktree's `CLAUDE.md`. Method lives in the soul /
+baked skills — this file does not restate it.
 
-## Job
+## Runtime inputs
 
-1. **Receive the builder beat first** (plan prose or construction on the
-   worktree). Do **not** dispatch fresh review legs before this receive
-   step — a wrong plan must die cheaply on resume, not after a full
-   fresh-leg burn.
-   - **Plan pre-review (#1082 判未来)** when landing carries `builderPlanBody`
-     (coder plan beat, no construction yet): read the opaque plan prose;
-     reply with existing status enum only — `continue` + non-empty
-     `fixPacketBody` (准 / 退 / 索证 / boundaries live in that prose; 0 live
-     findings is legal here). `converged` only if nothing remains to build
-     (全撤). Never invent a second pre-review status token.
-   - Pre-review outcomes (approve, bounce with direction, demand evidence
-     including a diff draft, partial or full withdraw) stay on this receive
-     step.
-2. **Only after accepting construction goods**, dispatch **fresh** review
-   legs as the independent outer gate (never resume a prior leg session).
-   Prepend the full `reviewer.md` soul text at the head of every leg prompt
-   (single-track CLI injection — no Claude-only agent definition). Fresh
-   findings return to **you** for disposition — never straight to the fixer.
-3. Disposition each open finding: **refute** (four legal reasons), **suppress**
-   (parked with ground evidence), or **live**. Only **live** rows go to the
-   fixer. Bounce/continue resumes the **same** builder in the **same**
-   worktree (uncommitted output preserved; #1082 plan-phase continue resumes
-   S2, post-construction continue resumes S5).
-4. Emit a T2 judge verdict receipt (schema lives in
-   `stationReceiptContracts` — do not invent a second schema).
+- Landing / fix-findings transport from the runner (`$ORCHESTRATOR_FIX_FINDINGS_PATH`
+  when set, else `.orchestrator-fix-findings.json`) — builder beat cargo,
+  `priorJudgeVerdicts`, refuse records, panel-leg transports as applicable.
+- Issue / repo env for live-fetch when the soul requires it.
 
 ## Typed receipt (traffic only)
 
@@ -47,7 +23,7 @@ Always emit the official station envelope on the `<judge>` tag (Sandcastle
 ```
 
 Completion is clean exit + legal typed envelope / sidecar — no STEP_COMPLETE
-password. Finish inside the single iteration.
+password. Finish inside the single iteration (`maxIterations=1`).
 
 ### Converged (no further fix rounds)
 
@@ -100,9 +76,7 @@ use `continue`.
   sent to the fixer (only `live` enters S5).
 - **`fixPacketBody` is required on continue** (ADR 0138 / #978): the
   judge-authored coder-fix packet body. Runner transports it **verbatim** as
-  the sole packet content path — never packs bare `findings` rows. First round
-  may be thin (finding + authority anchors + boundary); with history, synthesize
-  (history table, direction pin, demolition list). Missing/empty fails loud.
+  the sole packet content path — never packs bare `findings` rows.
 - `advanceCoder` is an optional suggestion; runner stay-put policy is #926.
 - `findings` cargo is optional opaque siblings (identity/telemetry only after
   ADR 0138 — not the fixer packet path).
@@ -120,31 +94,3 @@ use `continue`.
 
 Escalate parks via the existing decision gate; owner answers and the run
 resumes in place. Do not invent a second escalate path.
-
-## Non-continue routing (#1084 / ADR 0147)
-
-Runner reads **only** the status enum (+ disposition table for live vs
-terminal collapse). It invents **no** round-count thresholds and does not
-parse `fixPacketBody` for fate:
-
-| Situation | Emit | Runner edge |
-| --- | --- | --- |
-| Full withdraw (nothing left live / nothing to build) | `converged` **or** continue with all rows `refute`/`suppress` (0 live) | out of ring → S7; no S5 construction spin |
-| Partial withdraw | `continue` with remaining `live` + prose in `fixPacketBody` | resume same builder (S5 / plan-phase S2) |
-| 换棒 | `continue` + optional `advanceCoder` | same worktree; #926 seat switch |
-| 上抛 | `escalate` + reason/diagnosis | existing decision-gate park |
-| Empty continue (0 live **and** 0 terminals) post-construction | do **not** emit — contract drift | fail-loud; never empty-spin builder |
-
-## Session loss
-
-If you are a fresh judge after a dead prior session, read prior verdict rows
-from the fix-findings landing file (`$ORCHESTRATOR_FIX_FINDINGS_PATH` when set,
-else `.orchestrator-fix-findings.json` in the worktree). The JSON field is
-`priorJudgeVerdicts` — structured ledger rows only (step / status /
-findingDispositions / advanceCoder / sessionId). Reconstruct trajectory from
-those rows yourself — the runner never synthesises a narrative summary.
-
-## maxIterations
-
-This seat is single-iteration (`maxIterations=1`). Finish inside one run;
-native structured-output re-asks are in-session only.

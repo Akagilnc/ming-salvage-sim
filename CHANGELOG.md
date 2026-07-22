@@ -15,7 +15,7 @@
 - #598 SOE 单测预算抬到 heavy 档 120s（#1102 家族 stopgap）。
 
 ### Fixed
-- 删除死导出 `isBuilderBeatStep`（#1083）与重复 non-continue 测试税（#1084）；判官 packet L1–L4 删死守卫、单旋转通道（#1086）。
+- 删除重复 non-continue 测试税（#1084）；判官 packet L1–L4 删死守卫、单旋转通道（#1086）。
 
 ## [0.41.0.0] - 2026-07-21
 
