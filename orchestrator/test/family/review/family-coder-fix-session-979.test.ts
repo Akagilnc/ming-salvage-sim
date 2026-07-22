@@ -151,19 +151,21 @@ describe("#979 family coder-fix chain resume from ledger", () => {
     expect(coderDispatches[1]?.resumeSessionId).toBeUndefined();
   });
 
-  it("resume-incapable judge seat → loud terminal, not silent fresh", async () => {
+  it("resume-incapable judge seat → fresh reopen with priorJudgeVerdicts (soul law)", async () => {
     const backend = new FamilyCoderFixLedgerBackend({
-      completeness: (round) => {
-        if (round <= 1) {
-          return completedJudge(
-            judgeContinue([round === 0 ? FINDING_R1 : FINDING_R2]),
-            "judge-979-incapable",
-          );
+      completeness: (round, ctx) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING_R1]), "judge-979-incapable");
         }
-        return completedJudge(judgeConverged(), "judge-979-incapable");
+        // Seat not resume-capable → drop resume; priors still land.
+        expect(ctx.resumeSessionId).toBeUndefined();
+        expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        if (round === 1) {
+          return completedJudge(judgeContinue([FINDING_R2]), "judge-979-incapable-r2");
+        }
+        return completedJudge(judgeConverged(), "judge-979-incapable-r3");
       },
       coder: (_round, ctx) => {
-        // Capability gate drops resume even when ledger has a prior id.
         expect(ctx.resumeSessionId).toBeUndefined();
         return completedCoder(FIXER_SESSION);
       },
@@ -178,19 +180,26 @@ describe("#979 family coder-fix chain resume from ledger", () => {
         familyBackend: backend,
         modelRoute: route,
       });
-      expect(result).toMatchObject({ ok: false, ran: true, failedStatus: "cmr_failed" });
+      expect(result).toEqual({ ok: true, ran: true });
+      const judgeOpens = backend.dispatches.filter(
+        (d) => d.kind === "cmr" && d.cmrPass === "completeness",
+      );
+      expect(judgeOpens.length).toBeGreaterThanOrEqual(2);
+      expect(judgeOpens.every((d) => d.session === "fresh")).toBe(true);
+      expect(judgeOpens.every((d) => d.resumeSessionId === undefined)).toBe(
+        true,
+      );
       const coderDispatches = backend.dispatches.filter((d) => d.kind === "coder");
-      expect(coderDispatches).toHaveLength(0);
+      expect(coderDispatches.length).toBeGreaterThanOrEqual(1);
       expect(
         backend.ledger.some(
           (e) =>
             e.status === "aborted" &&
-            e.cmrPass === "completeness" &&
             typeof e.reason === "string" &&
             e.reason.includes("#1081") &&
             e.reason.includes("not resume-capable"),
         ),
-      ).toBe(true);
+      ).toBe(false);
     } finally {
       spy.mockRestore();
     }

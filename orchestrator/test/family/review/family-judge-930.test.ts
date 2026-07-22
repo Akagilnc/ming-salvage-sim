@@ -651,16 +651,16 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(completenessDispatches[1]?.resumeSessionId).toBe("judge-sess-persist");
   });
 
-  it("session loss: continue without sessionId fails loud (#1081)", async () => {
+  it("session loss: continue without sessionId → fresh reopen with priorJudgeVerdicts (soul law)", async () => {
     const noSessionBackend = new FamilyJudgeBackend({
-      completeness: (round) => {
+      completeness: (round, ctx) => {
         if (round === 0) {
-          // No sessionId on a live continue forms an unfulfillable resident
-          // resume obligation; opening a fresh judge would silently lose court
-          // continuity, so #1081 must terminal-fail before round 2.
+          // No sessionId: next open is fresh + priors (not same-session-or-die).
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
-        throw new Error("must fail loud before opening fresh judge after lost session");
+        expect(ctx.resumeSessionId).toBeUndefined();
+        expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        return completedJudge(judgeConverged(), "judge-sess-fresh-after-loss");
       },
     });
     const result = await runVerifyCmr({
@@ -668,21 +668,30 @@ describe("#930 runVerifyCmr family judge courts", () => {
       familyBase: "family/919-base",
       familyBackend: noSessionBackend,
     });
-    expect(result).toMatchObject({ ok: false, ran: true, failedStatus: "cmr_failed" });
+    expect(result).toEqual({ ok: true, ran: true });
     const completenessDispatches = noSessionBackend.dispatches.filter(
       (d) => d.kind === "cmr" && d.cmrPass === "completeness",
     );
-    expect(completenessDispatches).toHaveLength(1);
+    expect(completenessDispatches.length).toBeGreaterThanOrEqual(2);
+    expect(completenessDispatches[0]?.session).toBe("fresh");
+    expect(completenessDispatches[0]?.resumeSessionId).toBeUndefined();
+    expect(completenessDispatches[1]?.session).toBe("fresh");
+    expect(completenessDispatches[1]?.resumeSessionId).toBeUndefined();
+    expect(
+      (completenessDispatches[1]?.priorJudgeVerdicts?.length ?? 0) > 0,
+    ).toBe(true);
+    expect(noSessionBackend.dispatches.some((d) => d.kind === "coder")).toBe(
+      true,
+    );
     expect(
       noSessionBackend.ledger.some(
         (e) =>
           e.status === "aborted" &&
-          e.cmrPass === "completeness" &&
           typeof e.reason === "string" &&
           e.reason.includes("#1081") &&
           e.reason.includes("no sessionId"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("refuse envelope blind-routes back to family judge (not terminal / not idle)", async () => {
