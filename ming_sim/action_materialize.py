@@ -1,25 +1,27 @@
 """登记表驱动的动作物化委派（#515）。
 
-真实 consumer（session.apply_cli_conversation_actions）只调
-`run_materialize_pipeline`；具体 kind 的 stage 逻辑挂在
-`register_materializer`。新聚类 = ACTION_CLUSTERS 加行 + 本文件
-register 一个 handler，不改编排散点。
+唯一扩展挂点：本模块 `install_action_catalog` 装入的 ACTION_CLUSTERS 行
+直接携带 materialize_fn + FieldSpec。真实 consumer 只调
+`run_materialize_pipeline`。串行 fallback 与并发判词共用 handler。
 
-串行 fallback 与并发判词共用同一批 handler（不得两套接线）。
+新增聚类 = 在 `_build_catalog()` 加一行（含 fn），不改编排散点、无副作用 register。
 """
 
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.action_clusters import (
+    ActionCluster,
+    FieldSpec,
+    EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
+    EFFECT_NOOP,
     get_materializer,
+    install_action_catalog,
     materialize_clusters_ordered,
-    register_materializer,
 )
 
 
@@ -326,8 +328,60 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
         )
 
 
-# secret + cultivate share one extract path historically; both kinds map to same fn.
-register_materializer("secret", _materialize_secret_and_cultivate)
-register_materializer("cultivate", _materialize_secret_and_cultivate)
-register_materializer("draft", _materialize_draft)
-register_materializer("appointment", _materialize_appointment)
+def _build_catalog() -> Tuple[ActionCluster, ...]:
+    """单一登记定义：label/kind/effect/fields/materialize_fn 同表。"""
+    secret_fn = _materialize_secret_and_cultivate
+    return (
+        ActionCluster("无", "none", EFFECT_NOOP, priority=0),
+        ActionCluster(
+            "确认", "confirmation", EFFECT_ANSWER_EXISTING, priority=10,
+            fields=(
+                FieldSpec(
+                    "confirmation", "确认",
+                    frozenset({"应允", "拒绝", "无"}), "无",
+                ),
+            ),
+        ),
+        ActionCluster(
+            "密令动作", "secret", EFFECT_MATERIALIZE, priority=30,
+            fields=(
+                FieldSpec(
+                    "secret_action", "密令动作",
+                    frozenset({"无", "更新", "提交核议", "催办", "记进展"}), "无",
+                ),
+                FieldSpec("order_id", "目标密令编号", None, 0, as_int=True),
+                FieldSpec("new_title", "新标题", None, ""),
+                FieldSpec("new_content", "新内容", None, "", max_len=500),
+                FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
+            ),
+            materialize_fn=secret_fn,
+        ),
+        ActionCluster(
+            "调教", "cultivate", EFFECT_MATERIALIZE, priority=40,
+            fields=(
+                FieldSpec("cultivate_skill", "调教技能", None, "", max_len=30),
+                FieldSpec("cultivate_trait", "调教性格", None, "", max_len=30),
+            ),
+            materialize_fn=secret_fn,  # 同 extract 缝，一 fn 两 kind
+        ),
+        ActionCluster(
+            "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
+            fields=(),
+            materialize_fn=_materialize_draft,
+        ),
+        ActionCluster(
+            "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
+            fields=(
+                FieldSpec(
+                    "appoint_action", "任免动作",
+                    frozenset({"无", "任命", "罢免"}), "无",
+                ),
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("office", "官职", None, "", max_len=40),
+            ),
+            materialize_fn=_materialize_appointment,
+        ),
+    )
+
+
+install_action_catalog(_build_catalog())

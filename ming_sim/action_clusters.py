@@ -1,15 +1,10 @@
 """动作档机械聚类登记表（#515 S0）。
 
-单一扩展挂点：后续动词聚类切片只在此加一行定义 + 注册 materialize 委派，
-分类器 prompt 枚举、label→kind、typed shape、消费/物化 dispatch 都从本表生成。
+唯一真源：ACTION_CLUSTERS（由 action_materialize.install 装入完整行，
+含 effect / fields / materialize_fn）。prompt 字段枚举、shape 校验、
+dispatcher 均只读本表。
 
-范围（ADR 0039 / #513）：**机械聚类**挂点，不是 25 词语义表，也不收
-平行自由文本规则库。口令档 / 对话档不进此表。
-
-effect 语义：
-- noop：零机械写入（「无」）
-- answer_existing：只处置既有 pending，不新 stage（「确认」）
-- materialize：经登记的 materializer 委派进真实 stage 路径（不抄第二套落库）
+范围（ADR 0039 / #513）：机械聚类挂点，不是 25 词语义表。
 """
 
 from __future__ import annotations
@@ -18,16 +13,18 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 
-# effect tokens（登记表用，consumer 不得再 hardcode 语义分叉）
 EFFECT_NOOP = "noop"
 EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
 
+# #515 验收：既有六类必须在登记中；未来新行 ⊆ 扩展，不改此集合。
+REQUIRED_MIGRATED_KINDS = frozenset({
+    "none", "confirmation", "secret", "cultivate", "appointment", "draft",
+})
+
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """候选子字段：英文名 + 中文 LLM 别名 + 枚举白名单（None=自由文本）+ default。"""
-
     name: str
     zh: str
     allowed: Optional[FrozenSet[str]] = None
@@ -39,68 +36,50 @@ class FieldSpec:
 
 @dataclass(frozen=True)
 class ActionCluster:
-    """一条动作档机械聚类。"""
-
     label_zh: str
     kind: str
     effect: str
-    # 物化顺序（小先跑）；仅 effect=materialize 有意义
     priority: int = 100
     fields: Tuple[FieldSpec, ...] = ()
+    # 物化委派：同一登记行携带；noop/answer 为 None
+    materialize_fn: Optional[Callable[..., None]] = field(
+        default=None, compare=False, hash=False, repr=False,
+    )
 
 
-# 现有六类——新聚类 = 追加一行 + register_materializer(kind)（见 action_materialize）。
-ACTION_CLUSTERS: Tuple[ActionCluster, ...] = (
-    ActionCluster("无", "none", EFFECT_NOOP, priority=0),
-    ActionCluster(
-        "确认", "confirmation", EFFECT_ANSWER_EXISTING, priority=10,
-        fields=(
-            FieldSpec("confirmation", "确认", frozenset({"应允", "拒绝", "无"}), "无"),
-        ),
-    ),
-    ActionCluster(
-        "密令动作", "secret", EFFECT_MATERIALIZE, priority=30,
-        fields=(
-            FieldSpec(
-                "secret_action", "密令动作",
-                frozenset({"无", "更新", "提交核议", "催办", "记进展"}), "无",
-            ),
-            FieldSpec("order_id", "目标密令编号", None, 0, as_int=True),
-            FieldSpec("new_title", "新标题", None, ""),
-            FieldSpec("new_content", "新内容", None, "", max_len=500),
-            FieldSpec("deadline_months", "期限月数", None, 0, as_int=True, int_hi=36),
-        ),
-    ),
-    ActionCluster(
-        "调教", "cultivate", EFFECT_MATERIALIZE, priority=40,
-        fields=(
-            FieldSpec("cultivate_skill", "调教技能", None, "", max_len=30),
-            FieldSpec("cultivate_trait", "调教性格", None, "", max_len=30),
-        ),
-    ),
-    ActionCluster(
-        "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
-        fields=(),
-    ),
-    ActionCluster(
-        "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
-        fields=(
-            FieldSpec(
-                "appoint_action", "任免动作",
-                frozenset({"无", "任命", "罢免"}), "无",
-            ),
-            FieldSpec("name", "姓名", None, "", max_len=20),
-            FieldSpec("office", "官职", None, "", max_len=40),
-        ),
-    ),
+# 由 action_materialize.install_action_catalog() 装入（含 materialize_fn）。
+ACTION_CLUSTERS: Tuple[ActionCluster, ...] = ()
+LABEL_TO_KIND: Dict[str, str] = {}
+KIND_TO_LABEL: Dict[str, str] = {}
+KNOWN_KINDS: FrozenSet[str] = frozenset()
+KNOWN_LABELS: FrozenSet[str] = frozenset()
+CONFIRMATION_VALUES: FrozenSet[str] = frozenset({"应允", "拒绝", "无"})
+SECRET_ACTION_VALUES: FrozenSet[str] = frozenset(
+    {"无", "更新", "提交核议", "催办", "记进展"}
 )
+APPOINT_ACTION_VALUES: FrozenSet[str] = frozenset({"无", "任命", "罢免"})
 
-LABEL_TO_KIND: Dict[str, str] = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
-KIND_TO_LABEL: Dict[str, str] = {c.kind: c.label_zh for c in ACTION_CLUSTERS}
-KNOWN_KINDS = frozenset(KIND_TO_LABEL)
-KNOWN_LABELS = frozenset(LABEL_TO_KIND)
 
-# 兼容旧 import 名（子枚举仍可由登记表派生）
+def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
+    """唯一装载点：登记行一次性写入派生索引。"""
+    global ACTION_CLUSTERS, LABEL_TO_KIND, KIND_TO_LABEL, KNOWN_KINDS, KNOWN_LABELS
+    global CONFIRMATION_VALUES, SECRET_ACTION_VALUES, APPOINT_ACTION_VALUES
+    ACTION_CLUSTERS = tuple(clusters)
+    LABEL_TO_KIND = {c.label_zh: c.kind for c in ACTION_CLUSTERS}
+    KIND_TO_LABEL = {c.kind: c.label_zh for c in ACTION_CLUSTERS}
+    KNOWN_KINDS = frozenset(KIND_TO_LABEL)
+    KNOWN_LABELS = frozenset(LABEL_TO_KIND)
+    missing = REQUIRED_MIGRATED_KINDS - KNOWN_KINDS
+    if missing:
+        raise RuntimeError(f"action catalog missing required kinds: {sorted(missing)}")
+    for c in ACTION_CLUSTERS:
+        if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
+            raise RuntimeError(f"materialize cluster {c.kind!r} lacks materialize_fn")
+    CONFIRMATION_VALUES = _enum_allowed("confirmation") or CONFIRMATION_VALUES
+    SECRET_ACTION_VALUES = _enum_allowed("secret_action") or SECRET_ACTION_VALUES
+    APPOINT_ACTION_VALUES = _enum_allowed("appoint_action") or APPOINT_ACTION_VALUES
+
+
 def _enum_allowed(field_name: str) -> FrozenSet[str]:
     for c in ACTION_CLUSTERS:
         for f in c.fields:
@@ -109,29 +88,57 @@ def _enum_allowed(field_name: str) -> FrozenSet[str]:
     return frozenset()
 
 
-CONFIRMATION_VALUES = _enum_allowed("confirmation") or frozenset({"应允", "拒绝", "无"})
-SECRET_ACTION_VALUES = _enum_allowed("secret_action") or frozenset(
-    {"无", "更新", "提交核议", "催办", "记进展"}
-)
-APPOINT_ACTION_VALUES = _enum_allowed("appoint_action") or frozenset({"无", "任命", "罢免"})
-
-# kind → materialize callable（由 action_materialize 在 import 时 register）
-MaterializeFn = Callable[..., None]
-_MATERIALIZERS: Dict[str, MaterializeFn] = {}
+def _ensure_catalog() -> None:
+    """Lazy-load action_materialize so ACTION_CLUSTERS carries materialize_fn."""
+    if ACTION_CLUSTERS:
+        return
+    import ming_sim.action_materialize  # noqa: F401
 
 
-def register_materializer(kind: str, fn: MaterializeFn) -> None:
-    """挂接物化委派。新聚类在此 + ACTION_CLUSTERS 行即可接入，不改编排散点。"""
-    if kind not in KNOWN_KINDS:
-        raise ValueError(f"register_materializer: unknown kind {kind!r}")
-    _MATERIALIZERS[kind] = fn
+def classifier_action_types_prompt() -> str:
+    _ensure_catalog()
+    return "|".join(c.label_zh for c in ACTION_CLUSTERS)
 
 
-def get_materializer(kind: str) -> Optional[MaterializeFn]:
-    return _MATERIALIZERS.get(kind)
+def classifier_json_fields_prompt() -> str:
+    """从登记 FieldSpec 生成 JSON 字段行（无手写字段副本）。"""
+    _ensure_catalog()
+    lines = [f'  "动作类型": "{classifier_action_types_prompt()}",']
+    seen_zh: set = set()
+    for c in ACTION_CLUSTERS:
+        for f in c.fields:
+            if f.zh in seen_zh:
+                continue
+            seen_zh.add(f.zh)
+            if f.allowed is not None:
+                # stable order for prompt: put 无 first when present
+                vals = sorted(f.allowed, key=lambda x: (x != "无", x))
+                lines.append(f'  "{f.zh}": "{"|".join(vals)}",')
+            elif f.as_int:
+                lines.append(f'  "{f.zh}": 0,')
+            else:
+                lines.append(f'  "{f.zh}": "",')
+    # trailing comma cleanup on last line
+    if lines:
+        lines[-1] = lines[-1].rstrip(",")
+    return "{\n" + "\n".join(lines) + "\n}"
+
+
+def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
+    _ensure_catalog()
+    for c in ACTION_CLUSTERS:
+        if c.kind == kind:
+            return c
+    return None
+
+
+def get_materializer(kind: str) -> Optional[Callable[..., None]]:
+    c = cluster_by_kind(kind)
+    return c.materialize_fn if c is not None else None
 
 
 def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
+    _ensure_catalog()
     return tuple(
         sorted(
             (c for c in ACTION_CLUSTERS if c.effect == EFFECT_MATERIALIZE),
@@ -140,20 +147,13 @@ def materialize_clusters_ordered() -> Tuple[ActionCluster, ...]:
     )
 
 
+def cluster_effect(kind: str) -> str:
+    c = cluster_by_kind(kind)
+    return c.effect if c else EFFECT_NOOP
+
+
 class ActionCandidateShapeError(ValueError):
-    """脚本化判词 / 严格注入路径：枚举外或未知 kind 响亮拒绝。"""
-
-
-def classifier_action_types_prompt() -> str:
-    """分类器 prompt 用的动作类型枚举串（同源登记表）。"""
-    return "|".join(c.label_zh for c in ACTION_CLUSTERS)
-
-
-def cluster_by_kind(kind: str) -> Optional[ActionCluster]:
-    for c in ACTION_CLUSTERS:
-        if c.kind == kind:
-            return c
-    return None
+    pass
 
 
 def empty_none_candidate() -> Dict[str, Any]:
@@ -161,7 +161,7 @@ def empty_none_candidate() -> Dict[str, Any]:
 
 
 def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
-    out: Dict[str, Any] = {
+    return {
         "kind": kind,
         "confirmation": "无",
         "secret_action": "无",
@@ -175,7 +175,6 @@ def _blank_candidate(*, kind: str = "none") -> Dict[str, Any]:
         "name": "",
         "office": "",
     }
-    return out
 
 
 def _as_int(value: object, *, lo: int = 0, hi: int = 10**9) -> int:
@@ -187,6 +186,7 @@ def _as_int(value: object, *, lo: int = 0, hi: int = 10**9) -> int:
 
 
 def _resolve_kind(obj: Mapping[str, Any]) -> Optional[str]:
+    _ensure_catalog()
     kind = str(obj.get("kind") or "").strip()
     if kind in KNOWN_KINDS:
         return kind
@@ -205,7 +205,7 @@ def _field_raw(obj: Mapping[str, Any], spec: FieldSpec) -> Any:
 
 
 def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
-    """严格 shape：未知 kind / 登记子枚举外值 → (False, reason)。"""
+    _ensure_catalog()
     if not isinstance(obj, Mapping):
         return False, "candidate must be a mapping"
     kind = _resolve_kind(obj)
@@ -220,17 +220,13 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         raw = _field_raw(obj, spec)
         if raw is None:
             continue
-        v = str(raw).strip()
-        if v not in spec.allowed:
+        if str(raw).strip() not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
-    # 跨类携带的常见子枚举（LLM 可能多填）——若出现也须在全局白名单内
-    for fname, allowed in (
-        ("confirmation", CONFIRMATION_VALUES),
-        ("secret_action", SECRET_ACTION_VALUES),
-        ("appoint_action", APPOINT_ACTION_VALUES),
+    for fname, allowed, zh in (
+        ("confirmation", CONFIRMATION_VALUES, "确认"),
+        ("secret_action", SECRET_ACTION_VALUES, "密令动作"),
+        ("appoint_action", APPOINT_ACTION_VALUES, "任免动作"),
     ):
-        # zh aliases
-        zh = {"confirmation": "确认", "secret_action": "密令动作", "appoint_action": "任免动作"}[fname]
         raw = obj.get(fname, obj.get(zh))
         if raw is None:
             continue
@@ -247,6 +243,7 @@ def assert_action_candidate_shape(obj: Any) -> Dict[str, Any]:
 
 
 def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, Any]:
+    _ensure_catalog()
     kind = _resolve_kind(obj)
     if kind is None:
         if soft:
@@ -259,11 +256,7 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         if not ok:
             raise ActionCandidateShapeError(reason)
 
-    cluster = cluster_by_kind(kind)
-    assert cluster is not None
     out = _blank_candidate(kind=kind)
-
-    # Apply all clusters' known fields so multi-field payloads stay intact
     all_specs: Dict[str, FieldSpec] = {}
     for c in ACTION_CLUSTERS:
         for f in c.fields:
@@ -282,10 +275,10 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         if raw is None:
             raw = spec.default
         if spec.as_int:
-            hi = spec.int_hi
-            out[name] = max(0, min(_as_int(raw, hi=hi), hi)) if hi < 10**9 else _as_int(raw)
             if name == "deadline_months":
                 out[name] = max(0, min(_as_int(raw), 36))
+            else:
+                out[name] = _as_int(raw, hi=spec.int_hi)
         elif spec.allowed is not None:
             out[name] = _enum(raw, spec.allowed, str(spec.default))
         else:
@@ -293,7 +286,6 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
             if spec.max_len is not None:
                 s = s[: spec.max_len]
             out[name] = s
-
     if "draft_text" in obj:
         out["draft_text"] = obj.get("draft_text")
     return out
@@ -327,7 +319,6 @@ def candidates_from_classifier_payload(raw: Any, *, soft: bool = True) -> List[D
             cand = assert_action_candidate_shape(item)
         if cand["kind"] == "none":
             continue
-        # effect=noop never appears here (none stripped); answer/materialize kept
         out.append(cand)
     return out
 
@@ -348,8 +339,3 @@ def primary_intent(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
 
 def inject_scripted_candidates(raw: Any) -> List[Dict[str, Any]]:
     return candidates_from_classifier_payload(raw, soft=False)
-
-
-def cluster_effect(kind: str) -> str:
-    c = cluster_by_kind(kind)
-    return c.effect if c else EFFECT_NOOP

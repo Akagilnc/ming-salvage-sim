@@ -1554,9 +1554,8 @@ class GameSession:
             )
             out["pending_action_id"] = _stage_secret_order_candidate(so)
 
-        # #515：登记表驱动物化——secret/cultivate/draft/appointment 只经 materializer 委派，
-        # 串行 fallback 与并发判词共用同一批 handler（action_materialize）。
-        import ming_sim.action_materialize  # noqa: F401 — register handlers
+        # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
+        import ming_sim.action_materialize  # noqa: F401 — install catalog
         from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
         mat_ctx = MaterializeCtx(
             session=self,
