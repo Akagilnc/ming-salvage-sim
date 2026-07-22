@@ -1,37 +1,51 @@
 /**
  * #1103 — shared-.git write class: worktree wreckage self-heal (H1) +
  * cross-process gitMutex (H2) + exclude RMW under the same lock (H3).
+ * #1105 R2 — owner-aware lock, fresh index.lock pass-through, self-contained
+ * child processes, deterministic H3 contention, coverage gaps.
  *
  * Real git repos + real filesystem only — no mocked FS / no psychic fixtures.
  */
 
 import { execFileSync, spawn } from "node:child_process";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { ensureGitInfoExclude } from "../../src/gitInfoExclude.js";
 import {
   _resetGitMutex,
+  isPidAlive,
+  LOCK_STALE_MS,
+  mutexMapKey,
   orchestratorGitLockPath,
   runExclusive,
+  runExclusiveSync,
+  tryReclaimStaleLock,
 } from "../../src/gitMutex.js";
 import {
+  clearStaleIndexLock,
   healBeforeWorktreeCut,
+  INDEX_LOCK_STALE_MS,
   sandcastleWorktreePathForBranch,
+  worktreeAdminDirForBranch,
 } from "../../src/gitWorktreePreflight.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const srcRoot = join(here, "..", "..", "src");
+const distRoot = join(here, "..", "..", "dist");
+const orchRoot = join(here, "..", "..");
 
 const temps: string[] = [];
 function trackTemp(prefix: string): string {
@@ -45,6 +59,15 @@ afterEach(() => {
     const d = temps.pop();
     if (d !== undefined) rmSync(d, { recursive: true, force: true });
   }
+});
+
+beforeAll(() => {
+  // Child processes import precompiled dist/*.js (no npx/tsx network).
+  execFileSync(
+    process.execPath,
+    [join(orchRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"],
+    { cwd: orchRoot, stdio: "pipe" },
+  );
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -65,11 +88,16 @@ function makeRepo(): string {
   return dir;
 }
 
-function spawnTsx(
+/** Sandcastle's real on-disk layout (mirrors @ai-hero/sandcastle create()). */
+function scWorktreePath(repo: string, branch: string): string {
+  return join(repo, ".sandcastle", "worktrees", branch.replace(/\//g, "-"));
+}
+
+function spawnNode(
   scriptPath: string,
 ): Promise<{ status: number | null; stderr: string; stdout: string }> {
   return new Promise((resolve) => {
-    const child = spawn("npx", ["--yes", "tsx", scriptPath], {
+    const child = spawn(process.execPath, [scriptPath], {
       env: { ...process.env },
       shell: false,
     });
@@ -89,7 +117,9 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
   it("heals dir-present/metadata-absent wreckage so a fresh worktree add succeeds", () => {
     const repo = makeRepo();
     const branch = "feat/issue-1103";
-    const wtPath = sandcastleWorktreePathForBranch(repo, branch);
+    // Fixture path from Sandcastle layout; helper only checked for agreement (#1105 A7).
+    const wtPath = scWorktreePath(repo, branch);
+    expect(sandcastleWorktreePathForBranch(repo, branch)).toBe(wtPath);
     mkdirSync(wtPath, { recursive: true });
     writeFileSync(join(wtPath, "orphan.txt"), "wreckage\n");
     expect(git(repo, "worktree", "list", "--porcelain")).not.toContain(wtPath);
@@ -105,7 +135,7 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
   it("NEGATIVE: does not delete an active registered worktree", () => {
     const repo = makeRepo();
     const branch = "feat/issue-1103-live";
-    const wtPath = sandcastleWorktreePathForBranch(repo, branch);
+    const wtPath = scWorktreePath(repo, branch);
     mkdirSync(dirname(wtPath), { recursive: true });
     git(repo, "worktree", "add", "-b", branch, wtPath, "HEAD");
     writeFileSync(join(wtPath, "keep-me.txt"), "live\n");
@@ -114,6 +144,61 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
 
     expect(existsSync(join(wtPath, "keep-me.txt"))).toBe(true);
     expect(git(repo, "worktree", "list", "--porcelain")).toContain(wtPath);
+  });
+
+  it("leaves a fresh index.lock in place (no throw, no delete)", () => {
+    const repo = makeRepo();
+    const lockPath = join(repo, ".git", "index.lock");
+    writeFileSync(lockPath, "");
+    utimesSync(lockPath, new Date(), new Date());
+    expect(() => clearStaleIndexLock(repo)).not.toThrow();
+    expect(existsSync(lockPath)).toBe(true);
+    const branch = "feat/issue-1103-fresh-lock";
+    const wtPath = scWorktreePath(repo, branch);
+    mkdirSync(dirname(wtPath), { recursive: true });
+    git(repo, "worktree", "add", "-b", branch, wtPath, "HEAD");
+    expect(existsSync(join(wtPath, "README"))).toBe(true);
+  });
+
+  it("reclaims a stale index.lock", () => {
+    const repo = makeRepo();
+    const lockPath = join(repo, ".git", "index.lock");
+    writeFileSync(lockPath, "");
+    const old = new Date(Date.now() - INDEX_LOCK_STALE_MS - 1_000);
+    utimesSync(lockPath, old, old);
+    clearStaleIndexLock(repo);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("heals metadata-present/directory-absent (!dirExists && inList)", () => {
+    const repo = makeRepo();
+    const branch = "feat/issue-1103-meta-only";
+    const wtPath = scWorktreePath(repo, branch);
+    mkdirSync(dirname(wtPath), { recursive: true });
+    git(repo, "worktree", "add", "-b", branch, wtPath, "HEAD");
+    rmSync(wtPath, { recursive: true, force: true });
+    expect(git(repo, "worktree", "list", "--porcelain")).toContain(
+      branch.replace(/\//g, "-"),
+    );
+
+    healBeforeWorktreeCut(repo, branch);
+
+    expect(existsSync(wtPath)).toBe(false);
+    git(repo, "worktree", "add", wtPath, "HEAD");
+    expect(existsSync(join(wtPath, "README"))).toBe(true);
+  });
+
+  it("clears an orphan admin dir when worktree is unlisted", () => {
+    const repo = makeRepo();
+    const branch = "feat/issue-1103-orphan-admin";
+    const admin = worktreeAdminDirForBranch(repo, branch);
+    mkdirSync(admin, { recursive: true });
+    writeFileSync(join(admin, "HEAD"), "ref: refs/heads/orphan\n");
+    expect(existsSync(admin)).toBe(true);
+
+    healBeforeWorktreeCut(repo, branch);
+
+    expect(existsSync(admin)).toBe(false);
   });
 });
 
@@ -132,7 +217,7 @@ describe("#1103 H2 cross-process gitMutex", () => {
       `
 import { appendFileSync, existsSync } from "node:fs";
 import { runExclusive, orchestratorGitLockPath } from ${JSON.stringify(
-        join(srcRoot, "gitMutex.ts"),
+        join(distRoot, "gitMutex.js"),
       )};
 const repo = ${JSON.stringify(repo)};
 const marker = ${JSON.stringify(marker)};
@@ -150,8 +235,7 @@ await runExclusive(repo, async () => {
       "utf8",
     );
 
-    const childDone = spawnTsx(childScript);
-    // Wait until child has entered the critical section (and created the lock).
+    const childDone = spawnNode(childScript);
     const deadline = Date.now() + 10_000;
     for (;;) {
       if (existsSync(marker) && readFileSync(marker, "utf8").includes("child-enter")) {
@@ -167,7 +251,6 @@ await runExclusive(repo, async () => {
     let parentSawLock = false;
     await runExclusive(repo, async () => {
       parentSawLock = existsSync(lockPath);
-      // Child must have fully exited before we enter (serialised).
       const body = readFileSync(marker, "utf8");
       expect(body).toContain("child-exit");
       writeFileSync(marker, body + "parent-enter\n");
@@ -179,31 +262,150 @@ await runExclusive(repo, async () => {
     const finalBody = readFileSync(marker, "utf8").trim().split("\n");
     expect(finalBody).toEqual(["child-enter", "child-exit", "parent-enter"]);
   });
+
+  it("async holder does not let a concurrent sync child pierce the lock", async () => {
+    const repo = makeRepo();
+    const marker = join(repo, "pierce-order.txt");
+    writeFileSync(marker, "");
+    const childScript = join(trackTemp("1103-pierce-"), "sync-child.mjs");
+    writeFileSync(
+      childScript,
+      `
+import { appendFileSync, existsSync } from "node:fs";
+import { runExclusiveSync } from ${JSON.stringify(join(distRoot, "gitMutex.js"))};
+const repo = ${JSON.stringify(repo)};
+const marker = ${JSON.stringify(marker)};
+const gate = ${JSON.stringify(join(repo, "pierce-gate"))};
+const deadline = Date.now() + 10_000;
+while (!existsSync(gate)) {
+  if (Date.now() > deadline) throw new Error("pierce gate timeout");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+}
+runExclusiveSync(repo, () => {
+  appendFileSync(marker, "sync-enter\\n");
+  appendFileSync(marker, "sync-exit\\n");
+});
+`,
+      "utf8",
+    );
+
+    const childDone = spawnNode(childScript);
+    await runExclusive(repo, async () => {
+      writeFileSync(marker, "async-enter\n");
+      // Release the child; it must block on the file lock until we exit.
+      closeSync(openSync(join(repo, "pierce-gate"), "w"));
+      await new Promise((r) => setTimeout(r, 300));
+      expect(readFileSync(marker, "utf8")).toBe("async-enter\n");
+      writeFileSync(marker, "async-enter\nasync-exit\n");
+    });
+
+    const child = await childDone;
+    expect(child.status, child.stderr).toBe(0);
+    expect(readFileSync(marker, "utf8").trim().split("\n")).toEqual([
+      "async-enter",
+      "async-exit",
+      "sync-enter",
+      "sync-exit",
+    ]);
+  });
+
+  it("same-owner sync nesting is reentrant; nested section observes the lock", async () => {
+    const repo = makeRepo();
+    const lockPath = orchestratorGitLockPath(repo);
+    if (lockPath === null) throw new Error("expected lock");
+    await runExclusive(repo, async () => {
+      expect(existsSync(lockPath)).toBe(true);
+      runExclusiveSync(repo, () => {
+        expect(existsSync(lockPath)).toBe(true);
+      });
+      expect(existsSync(lockPath)).toBe(true);
+    });
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("linked worktree path and clone root share one mutexMapKey (common-dir)", () => {
+    const repo = makeRepo();
+    const branch = "feat/issue-1103-link";
+    const wtPath = join(repo, "linked-wt");
+    git(repo, "worktree", "add", "-b", branch, wtPath, "HEAD");
+    expect(mutexMapKey(wtPath)).toBe(mutexMapKey(repo));
+    expect(orchestratorGitLockPath(wtPath)).toBe(orchestratorGitLockPath(repo));
+  });
+
+  it("isPidAlive treats missing pid as dead and live pid as alive", () => {
+    expect(isPidAlive(process.pid)).toBe(true);
+    expect(isPidAlive(0)).toBe(false);
+    expect(isPidAlive(-1)).toBe(false);
+  });
+
+  it("tryReclaimStaleLock refuses a live pid and reclaims a dead stale lock", () => {
+    const repo = makeRepo();
+    const lockDir = orchestratorGitLockPath(repo);
+    if (lockDir === null) throw new Error("expected lock path");
+    mkdirSync(lockDir);
+    writeFileSync(join(lockDir, "pid"), `${process.pid}\n`);
+    writeFileSync(join(lockDir, "owner"), "tok-live\n");
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1_000);
+    utimesSync(lockDir, old, old);
+    expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(false);
+    expect(existsSync(lockDir)).toBe(true);
+
+    writeFileSync(join(lockDir, "pid"), "99999999\n");
+    writeFileSync(join(lockDir, "owner"), "tok-dead\n");
+    utimesSync(lockDir, old, old);
+    expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(true);
+    expect(existsSync(lockDir)).toBe(false);
+  });
+
+  it("half-created lock dir (mkdir, no owner) is reclaimable when stale so waiters are not stuck", async () => {
+    const repo = makeRepo();
+    const lockDir = orchestratorGitLockPath(repo);
+    if (lockDir === null) throw new Error("expected lock path");
+    mkdirSync(lockDir);
+    // No pid/owner — A5 prevents this on the write-fail path; stale reclaim
+    // is the backstop if a crash still leaves the dir.
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1_000);
+    utimesSync(lockDir, old, old);
+    expect(tryReclaimStaleLock(lockDir, Date.now())).toBe(true);
+    await runExclusive(repo, async () => {
+      expect(existsSync(lockDir)).toBe(true);
+    });
+    expect(existsSync(lockDir)).toBe(false);
+  });
 });
 
 describe("#1103 H3 ensureGitInfoExclude under lock", () => {
   it("concurrent ensureGitInfoExclude on the same exclude file loses no writes", async () => {
     const repo = makeRepo();
-    const patterns = Array.from({ length: 12 }, (_, i) => `.pat-${i}/`);
+    // High fan-out + start barrier so lost-write races are deterministic (#1105 A7).
+    const patterns = Array.from({ length: 32 }, (_, i) => `.pat-${i}/`);
     const childDir = trackTemp("1103-h3-child-");
+    const gate = join(childDir, "start-gate");
 
-    const jobs = patterns.map((pattern) => {
-      const script = join(
-        childDir,
-        `c-${pattern.replace(/[^a-z0-9]/gi, "")}.mjs`,
-      );
+    const jobs = patterns.map((pattern, i) => {
+      const script = join(childDir, `c-${i}.mjs`);
       writeFileSync(
         script,
         `
+import { existsSync } from "node:fs";
 import { ensureGitInfoExclude } from ${JSON.stringify(
-          join(srcRoot, "gitInfoExclude.ts"),
+          join(distRoot, "gitInfoExclude.js"),
         )};
+const gate = ${JSON.stringify(gate)};
+const deadline = Date.now() + 15_000;
+while (!existsSync(gate)) {
+  if (Date.now() > deadline) throw new Error("start gate timeout");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+}
 ensureGitInfoExclude(${JSON.stringify(repo)}, ${JSON.stringify(pattern)});
 `,
         "utf8",
       );
-      return spawnTsx(script);
+      return spawnNode(script);
     });
+
+    await new Promise((r) => setTimeout(r, 200));
+    closeSync(openSync(gate, "w"));
 
     const results = await Promise.all(jobs);
     for (const r of results) {
@@ -214,7 +416,6 @@ ensureGitInfoExclude(${JSON.stringify(repo)}, ${JSON.stringify(pattern)});
     for (const pattern of patterns) {
       expect(body.split(/\r?\n/)).toContain(pattern);
     }
-    // Also exercise same-process sync path once (API smoke).
     ensureGitInfoExclude(repo, ".same-proc/");
     expect(readFileSync(excludePath, "utf8").split(/\r?\n/)).toContain(
       ".same-proc/",

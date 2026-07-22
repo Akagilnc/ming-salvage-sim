@@ -40,8 +40,8 @@ export function worktreeAdminDirForBranch(
 }
 
 /**
- * Age above which an `index.lock` is treated as abandoned wreckage.
- * Below this, refuse to delete (fail-loud) — may still be held by a live writer.
+ * Age above which an `index.lock` is treated as abandoned wreckage and unlinked.
+ * Fresh locks are left alone (git worktree add does not require clearing them).
  */
 export const INDEX_LOCK_STALE_MS = 120_000;
 
@@ -78,7 +78,8 @@ function listedWorktreePaths(
 
 /**
  * Remove a stale `index.lock` only when clearly abandoned (mtime older than
- * {@link INDEX_LOCK_STALE_MS}). A fresh lock fails loud — never yank a live holder.
+ * {@link INDEX_LOCK_STALE_MS}). Fresh locks are left in place — never deleted,
+ * never fail-loud (#1105 A2: worktree add succeeds even with a live lock).
  */
 export function clearStaleIndexLock(
   repoPath: string,
@@ -93,21 +94,32 @@ export function clearStaleIndexLock(
     return;
   }
   const ageMs = nowMs - mtimeMs;
-  if (ageMs < INDEX_LOCK_STALE_MS) {
-    throw new Error(
-      `gitWorktreePreflight: refusing to delete fresh index.lock at ${lockPath} ` +
-        `(age ${Math.floor(ageMs)}ms < ${INDEX_LOCK_STALE_MS}ms stale threshold); ` +
-        `another git writer may still hold it`,
-    );
+  if (ageMs < INDEX_LOCK_STALE_MS) return;
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Raced with another clearer / holder exit — preflight stays idempotent.
   }
-  unlinkSync(lockPath);
+}
+
+/**
+ * Derive the iso clone root from a Sandcastle resident worktree path
+ * (`<clone>/.sandcastle/worktrees/<name>`). Returns `null` when the path is not
+ * under that layout.
+ */
+export function clonePathFromSandcastleWorktree(worktreePath: string): string | null {
+  const normalized = worktreePath.replace(/\\/g, "/");
+  const marker = "/.sandcastle/worktrees/";
+  const idx = normalized.lastIndexOf(marker);
+  if (idx <= 0) return null;
+  return normalized.slice(0, idx);
 }
 
 /**
  * Idempotent preflight before cutting `branch` under `repoPath`:
  * 1. `git worktree prune` (drop dead metadata),
  * 2. heal dir↔metadata skew for the intended Sandcastle path,
- * 3. clear a clearly-stale `index.lock` (or fail-loud if fresh).
+ * 3. clear a clearly-stale `index.lock` (fresh locks are left alone).
  *
  * `runGit` defaults to host `git -C repoPath`; RealBackend passes `this.sh` so
  * unit intercepts (worktree-cut / branch-fallback) stay on the same seam.
