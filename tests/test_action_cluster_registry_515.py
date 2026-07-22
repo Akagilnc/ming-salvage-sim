@@ -25,7 +25,6 @@ from ming_sim.action_clusters import (
     EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
     EFFECT_NOOP,
-    REQUIRED_MIGRATED_KINDS,
     ActionCandidateShapeError,
     assert_action_candidate_shape,
     candidates_from_classifier_payload,
@@ -38,6 +37,11 @@ from ming_sim.action_clusters import (
     primary_intent,
     validate_action_candidate_shape,
 )
+
+# 测试本地固定期望（#515 六类）；非生产常量——删 catalog 行仍红，未来新类不改此集。
+_EXPECTED_MIGRATED_KINDS = frozenset({
+    "none", "confirmation", "secret", "cultivate", "appointment", "draft",
+})
 from ming_sim.session import GameSession
 from web_app import WebGame
 
@@ -46,11 +50,10 @@ from web_app import WebGame
 
 
 def test_required_six_migrated_subset_of_registry():
-    """required-six ⊆ registered；未来新行不改 REQUIRED 集。"""
+    """固定六类 ⊆ registered；期望集在测试本地，不读生产 guard 常量。"""
     registered = {c.kind for c in ACTION_CLUSTERS}
-    assert REQUIRED_MIGRATED_KINDS <= registered
-    # 删除任一 required 类必须红（非 tautology）
-    for k in REQUIRED_MIGRATED_KINDS:
+    assert _EXPECTED_MIGRATED_KINDS <= registered
+    for k in _EXPECTED_MIGRATED_KINDS:
         assert cluster_by_kind(k) is not None
 
 
@@ -198,6 +201,10 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
         if r["kind"] == "office"
     ]
     assert len(office_rows) == 1
+    assert office_rows[0]["action"] == "任命"
+    payload = json.loads(office_rows[0]["payload_json"] or "{}")
+    assert payload.get("name") == "测试候选人甲"
+    assert payload.get("office") == "陕西巡抚"
     assert _count_pending(db, state.turn) == before + 1
 
 
@@ -311,12 +318,20 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
     assert "毒化" not in text
 
 
-def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch):
+@pytest.mark.parametrize(
+    "classify_mode",
+    ["bad_shape", "raises"],
+    ids=["bad_shape_return", "classifier_raises"],
+)
+def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch, classify_mode):
+    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。"""
     db, state, content = game
     minister = _active_ch(db, content)
 
     def fake_classify(*a, **k):
-        return {"kind": "not_a_cluster"}
+        if classify_mode == "raises":
+            raise RuntimeError("classifier boom")
+        return {"kind": "not_a_cluster", "appoint_action": "流放"}
 
     class FakeAgent:
         def run(self, _msg):
@@ -335,6 +350,7 @@ def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch):
     _silence_serial(monkeypatch)
     before = _count_pending(db, state.turn)
     result = sess.chat(minister.name, "卿且坐。")
+    assert result.answer == "臣惶恐。"
     assert not result.pending_action_id
     assert _count_pending(db, state.turn) == before
 
