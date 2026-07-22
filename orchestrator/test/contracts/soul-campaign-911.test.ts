@@ -314,7 +314,11 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     tempHomes.push(home);
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{}}\n');
-    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-token-xyz\n");
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    writeFileSync(
+      join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+      "agy-token-xyz\n",
+    );
     writeFileSync(join(home, ".sc-claude-token"), "claude-tok\n");
 
     class AgyShipProbe extends FamilyProbe {
