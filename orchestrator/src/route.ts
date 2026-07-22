@@ -76,8 +76,8 @@ export type BuilderBeatStep = "S2" | "S5";
 export function routeBuilderBeatToResidentJudge(
   from: BuilderBeatStep,
 ): RouteDecision {
-  // Step map only — the hub invariant "after builder → resident_judge" is the
-  // type of afterBuilderBeatNext() (literal), not a runtime self-compare.
+  // Builder beat → resident judge seats only (S2→S3, S5→S6). Plan vs
+  // construction is not a runner fork; fresh reviewer is never next.
   if (from === "S2") return { kind: "next", step: "S3" };
   return { kind: "next", step: "S6" };
 }

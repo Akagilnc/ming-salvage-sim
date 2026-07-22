@@ -21,7 +21,6 @@ import { join } from "node:path";
 
 import { route, routeBuilderBeatToResidentJudge } from "../../src/route.js";
 import {
-  afterBuilderBeatNext,
   hubNextFromFamilyClosureAction,
   routeResidentJudgeHub,
   type ResidentJudgeHubNext,
@@ -126,8 +125,7 @@ describe("#1085 pure: one status→hub table for three rings", () => {
     }
   });
 
-  it("after every builder beat the hub next is always resident_judge", () => {
-    expect(afterBuilderBeatNext()).toBe("resident_judge");
+  it("after every builder beat the next seat is the resident judge (S2→S3 / S5→S6)", () => {
     // Per-slice step mapping is the only fork; both land on judge seats.
     expect(routeBuilderBeatToResidentJudge("S2")).toEqual({
       kind: "next",

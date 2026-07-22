@@ -60,18 +60,6 @@ export function routeResidentJudgeHub(
 }
 
 /**
- * #1085 / ADR 0147 — after every builder beat the next hub seat is always the
- * resident judge. Plan vs construction is not a runner fork; fresh reviewer is
- * never the next step.
- *
- * Returns the constant `"resident_judge"` so call sites can assert the seam
- * without re-encoding the rule in prose or a second table.
- */
-export function afterBuilderBeatNext(): "resident_judge" {
-  return "resident_judge";
-}
-
-/**
  * Project {@link FamilyJudgeClosure}.action onto the shared hub next-action.
  * Empty continue (0 live keys) is NOT resume_builder — callers must fail-loud
  * before spinning the builder (shared empty-continue gate).
