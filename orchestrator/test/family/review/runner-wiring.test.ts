@@ -1207,6 +1207,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     const blockingCmrOutput: WorkerResult = {
       kind: "completed",
+      sessionId: "fixture-cmr-runner-wiring",
       output: liveCmrJudgeContinue([blocker], {
         reason: "family CMR found a blocking finding",
         successfulLegs: [...CMR_LEGS],

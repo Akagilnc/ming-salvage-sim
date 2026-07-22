@@ -220,6 +220,10 @@ export interface CmrFixCommittedRecord {
    * Absent when the provider surfaced no id.
    */
   readonly sessionId?: string;
+  /** #1080/#1111 — resident CMR judge receive debt carried by this fix row. */
+  readonly judgeSessionId?: string;
+  readonly judgeModelSlug?: string;
+  readonly judgeProvider?: string;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -450,6 +454,9 @@ export async function recordCmrFixCommitted(
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       // #979: durable fixer-chain session continuity (ledger sole truth).
       ...(sessionId !== undefined ? { sessionId } : {}),
+      judgeSessionId: record.judgeSessionId,
+      judgeModelSlug: record.judgeModelSlug,
+      judgeProvider: record.judgeProvider,
       stopSummary:
         record.stopSummary ??
         successStopSummary({

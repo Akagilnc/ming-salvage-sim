@@ -151,7 +151,7 @@ describe("#979 family coder-fix chain resume from ledger", () => {
     expect(coderDispatches[1]?.resumeSessionId).toBeUndefined();
   });
 
-  it("resume-incapable seat → second fix opens fresh (negative)", async () => {
+  it("resume-incapable judge seat → loud terminal, not silent fresh", async () => {
     const backend = new FamilyCoderFixLedgerBackend({
       completeness: (round) => {
         if (round <= 1) {
@@ -178,12 +178,19 @@ describe("#979 family coder-fix chain resume from ledger", () => {
         familyBackend: backend,
         modelRoute: route,
       });
-      expect(result).toEqual({ ok: true, ran: true });
+      expect(result).toMatchObject({ ok: false, ran: true, failedStatus: "cmr_failed" });
       const coderDispatches = backend.dispatches.filter((d) => d.kind === "coder");
-      expect(coderDispatches.length).toBeGreaterThanOrEqual(2);
-      expect(coderDispatches[0]?.session).toBe("fresh");
-      expect(coderDispatches[1]?.session).toBe("fresh");
-      expect(coderDispatches[1]?.resumeSessionId).toBeUndefined();
+      expect(coderDispatches).toHaveLength(0);
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.status === "aborted" &&
+            e.cmrPass === "completeness" &&
+            typeof e.reason === "string" &&
+            e.reason.includes("#1081") &&
+            e.reason.includes("not resume-capable"),
+        ),
+      ).toBe(true);
     } finally {
       spy.mockRestore();
     }

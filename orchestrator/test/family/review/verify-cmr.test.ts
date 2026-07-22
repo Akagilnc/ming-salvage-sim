@@ -182,6 +182,7 @@ class CapableFamilyBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: cmrScriptToWorkerOutput(cmr),
+        sessionId: `${ctx.cmrPass ?? "cmr"}-judge-session`,
       };
     }
     if (spec.kind === "ship") {
@@ -576,6 +577,262 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     });
   });
 
+  it("F2 negative: pending receive with a foreign judge identity fails loud instead of resuming", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      worker: (spec) => {
+        throw new Error(`must not dispatch a foreign pending judge session: ${spec.kind}`);
+      },
+    });
+    backend.ledger.push({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "wave-verify-fix",
+      reason:
+        "wave verify green after fixer beat — resident judge must receive before exit",
+      phase: "wave",
+      judgeSessionId: "foreign-judge-session",
+      judgeModelSlug: "foreign-model",
+      judgeProvider: "codex",
+    } as FamilyLedgerEntry);
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1111-identity-mismatch",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-fix",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      "resident judge pending receive identity mismatch",
+    );
+  });
+
+  it("F2 negative: pending receive with missing judge WHO identity fails loud", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      worker: (spec) => {
+        throw new Error(`must not dispatch pending judge with missing WHO identity: ${spec.kind}`);
+      },
+    });
+    backend.ledger.push({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "wave-verify-fix",
+      reason:
+        "wave verify green after fixer beat — resident judge must receive before exit",
+      phase: "wave",
+      judgeSessionId: "judge-session-without-who",
+    } as FamilyLedgerEntry);
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1111-missing-who",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-fix",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      "resident judge pending receive identity mismatch",
+    );
+    expect(backend.aborted[0]?.errorPackage.reason).toContain("unknown/unknown");
+  });
+
+  it("F3: pending receive is honored before a RED verify result and resumes the ledger phase/session", async () => {
+    const judgeContexts: DispatchContext[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: false, errorPackage: { reason: "new red must wait" } }),
+      worker: (spec, ctx) => {
+        if (spec.kind !== "cmr") {
+          throw new Error(`unexpected worker while receiving pending judge: ${spec.kind}`);
+        }
+        judgeContexts.push(ctx);
+        if (judgeContexts.length > 1) {
+          return completedJudge(
+            judgeToolchain("new red after pending receipt", "verify remains red"),
+            "pending-wave-judge-session",
+          );
+        }
+        return completedJudge(judgeConverged(), "pending-wave-judge-session");
+      },
+    });
+    backend.ledger.push({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "wave-verify-fix",
+      reason:
+        "wave verify green after fixer beat — resident judge must receive before exit",
+      phase: "final",
+      judgeSessionId: "pending-wave-judge-session",
+      judgeModelSlug: "gpt-5.6-sol",
+      judgeProvider: "codex",
+    } as FamilyLedgerEntry);
+
+    const result = await runVerifyCmr({
+      phase: "wave",
+      familyBase: "family/1111-red-pending-first",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-fix",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true, failedStatus: "verify_failed" });
+    expect(judgeContexts[0]).toMatchObject({
+      phase: "final",
+      resumeSessionId: "pending-wave-judge-session",
+      waveVerifyFailure:
+        "wave verify green after fixer beat — resident judge must receive before exit",
+    });
+  });
+
+  it("F3: crash after cmr_fix_committed re-enters the same CMR judge for builder receive before panel fan-out", async () => {
+    const correctnessKey =
+      "correctness|src/cmr-builder-receive.ts:1|builder receive after cmr fix";
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "builder receive after cmr fix",
+      location: "src/cmr-builder-receive.ts:1",
+      suggested_fix: "repair and return to judge before outer fan-out",
+      action: "fix_now",
+    };
+    let crashAfterFixCommit = true;
+    const cmrJudgeContexts: DispatchContext[] = [];
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+        }
+        if (
+          req.priorCmrFindingIdentityKeys?.includes(correctnessKey) ||
+          backend.ledger.some(
+            (entry) =>
+              entry.status === "cmr_fix_committed" &&
+              entry.cmrPass === "correctness" &&
+              entry.blockingFindingIdentityKeys?.includes(correctnessKey),
+          )
+        ) {
+          return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+        }
+        return {
+          converged: false,
+          findingsCount: 1,
+          reason: "correctness asks for a builder beat",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          findings: [finding],
+          ...CMR_EVIDENCE,
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          if (ctx.cmrPass === "correctness") cmrJudgeContexts.push(ctx);
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/1111-cmr-builder-receive",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: cmrScriptToWorkerOutput(cmr),
+            sessionId:
+              ctx.cmrPass === "correctness"
+                ? "cmr-correctness-judge-1111"
+                : undefined,
+          };
+        }
+        if (spec.kind === "coder") {
+          backend.currentFamilyHead = "head-after-cmr-fix";
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/1111-cmr-builder-receive",
+              pr: "https://github.com/test/repo/pull/1111",
+              prHead: backend.currentFamilyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+    const appendLedger = backend.appendFamilyLedger.bind(backend);
+    vi.spyOn(backend, "appendFamilyLedger").mockImplementation(async (entry) => {
+      await appendLedger(entry);
+      if (crashAfterFixCommit && entry.status === "cmr_fix_committed") {
+        crashAfterFixCommit = false;
+        throw new Error("simulated crash after cmr_fix_committed");
+      }
+    });
+
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/1111-cmr-builder-receive",
+        familyBackend: backend,
+        familyHeadAfter: "head-before-cmr-fix",
+        familyIssue: 1111,
+      }),
+    ).rejects.toThrow("simulated crash after cmr_fix_committed");
+
+    cmrJudgeContexts.length = 0;
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1111-cmr-builder-receive",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr-fix",
+      familyIssue: 1111,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(cmrJudgeContexts[0]).toMatchObject({
+      cmrPass: "correctness",
+      resumeSessionId: "cmr-correctness-judge-1111",
+    });
+    expect(cmrJudgeContexts[0]?.panelLegTransports ?? []).toHaveLength(0);
+    expect(cmrJudgeContexts[1]).toMatchObject({
+      cmrPass: "correctness",
+      resumeSessionId: "cmr-correctness-judge-1111",
+    });
+    expect(cmrJudgeContexts[1]?.panelLegTransports ?? []).not.toHaveLength(0);
+    const fixCommittedIndex = backend.ledger.findIndex(
+      (entry) =>
+        entry.status === "cmr_fix_committed" &&
+        entry.cmrPass === "correctness",
+    );
+    const builderReceiptIndex = backend.ledger.findIndex(
+      (entry) =>
+        entry.event === "worker_dispatched" &&
+        entry.workerStep === "cmr:correctness" &&
+        typeof entry.reason === "string" &&
+        entry.reason.includes("resident judge received builder beat"),
+    );
+    const passedIndex = backend.ledger.findIndex(
+      (entry) =>
+        entry.status === "cmr_passed" && entry.cmrPass === "correctness",
+    );
+    expect(fixCommittedIndex).toBeGreaterThanOrEqual(0);
+    expect(builderReceiptIndex).toBeGreaterThan(fixCommittedIndex);
+    expect(passedIndex).toBeGreaterThan(builderReceiptIndex);
+  });
+
   it("AC3 negative: judge converged but re-verify RED → forced continue (green receipt is the hard precondition)", async () => {
     let verifyCalls = 0;
     let judgeCalls = 0;
@@ -950,6 +1207,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-court-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -1075,6 +1333,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-toolchain-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -1230,6 +1489,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-completeness-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -1358,6 +1618,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-mid-completeness-toolchain-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -2246,6 +2507,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: cmrScriptToWorkerOutput(cmr),
+            sessionId: `${ctx.cmrPass ?? "cmr"}-291-judge-session`,
           };
         }
         if (spec.kind === "coder") {
@@ -2468,6 +2730,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 ...CMR_EVIDENCE,
               },
             ),
+            sessionId: "coder-fix-startup-cmr-judge-session",
           };
         }
         if (spec.kind === "coder") {

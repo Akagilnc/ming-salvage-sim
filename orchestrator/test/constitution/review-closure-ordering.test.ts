@@ -94,6 +94,7 @@ class ClosureOrderingBackend implements FamilyBackend {
       // #919 CR N3: live kind:judge continue (not residual kind:cmr).
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-604-ordering",
         output: liveCmrJudgeContinue([NEW_BLOCKER], {
           reason: "fresh re-review found a new blocker",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
