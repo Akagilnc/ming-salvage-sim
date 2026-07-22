@@ -938,53 +938,77 @@ class GameSession:
             getattr(self, "llm_config", None),
         )
 
-    def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[Dict[str, Any]]:
+    def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
+        """Join concurrent classifier. None=did not run; list (possibly empty)=ran.
+
+        #515: classifier output contract is a candidate list. Failure → [] (zero writes).
+        """
         if future is None:
             return None
+        from ming_sim.action_clusters import normalize_intent_candidates
         try:
             result = future.result()
         except Exception:
-            return {"kind": "none"}
-        return result if isinstance(result, dict) else {"kind": "none"}
+            return []
+        # normalize_intent_candidates(None) is None; non-None raw → list (soft).
+        normalized = normalize_intent_candidates(result)
+        return [] if normalized is None else normalized
 
     def _confirmation_intent_for_preexisting_pending(
         self,
         minister_name: str,
         player_message: str,
         reply: str,
-        preclassified_intent: Optional[Dict[str, Any]],
+        preclassified_intent: Optional[Any],
         confirm_target_ids: set[int],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[Any]:
         """Classify confirmation before consuming same-turn write tools.
 
         Confirmation rounds are intentionally terminal for new inferred writes:
         the minister's reply may restate or tool-emit the same order, but that
         output must not stage a fresh pending action before the old visible one
         is committed/rejected.
+
+        #515: accepts dict or list; returns list (or None if classifier did not run).
         """
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES, extract_confirmation_intent
+        from ming_sim.action_clusters import (
+            empty_none_candidate,
+            normalize_intent_candidates,
+            primary_intent,
+        )
 
-        intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
+        if preclassified_intent is None:
+            candidates: Optional[List[Dict[str, Any]]] = None
+        else:
+            candidates = normalize_intent_candidates(preclassified_intent)
+            if candidates is None:
+                candidates = []
+
+        intent = primary_intent(candidates)
         message_text = (player_message or "").strip()
         if message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES):
-            return intent
+            return candidates
         if not confirm_target_ids:
-            return intent
+            return candidates
         if intent is not None and str(intent.get("kind") or "") == "confirmation":
-            return intent
+            return candidates if candidates is not None else []
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
         allowed_confirm_ids = {int(pid) for pid in confirm_target_ids}
         pend_for_minister = [p for p in pend_for_minister if int(p["id"]) in allowed_confirm_ids]
         confirm_targets = _confirmation_targets_for_message(pend_for_minister, message_text)
         if not confirm_targets:
-            return intent
+            return candidates
         summaries = [_pending_action_brief(p) for p in confirm_targets]
         confirm = extract_confirmation_intent(
             player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
         if confirm in ("应允", "拒绝"):
-            return {"kind": "confirmation", "confirmation": confirm}
-        return intent
+            cand = empty_none_candidate()
+            cand["kind"] = "confirmation"
+            cand["confirmation"] = confirm
+            return [cand]
+        return candidates
 
     def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
@@ -1027,12 +1051,19 @@ class GameSession:
             character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (message or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        from ming_sim.action_clusters import normalize_intent_candidates, primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
+        if preclassified_intent is None:
+            _intent_primary = None
+        elif isinstance(preclassified_intent, list):
+            _intent_primary = primary_intent(preclassified_intent)
+        else:
+            _intent_primary = primary_intent(normalize_intent_candidates(preclassified_intent))
         confirmation_turn = (
-            isinstance(preclassified_intent, dict)
-            and str(preclassified_intent.get("kind") or "") == "confirmation"
-            and str(preclassified_intent.get("confirmation") or "") in {"应允", "拒绝"}
+            isinstance(_intent_primary, dict)
+            and str(_intent_primary.get("kind") or "") == "confirmation"
+            and str(_intent_primary.get("confirmation") or "") in {"应允", "拒绝"}
         )
         for tool_exec in getattr(run_output, "tools", None) or []:
             tool_name = getattr(tool_exec, "tool_name", "")
@@ -1220,7 +1251,7 @@ class GameSession:
     def apply_cli_conversation_actions(
         self, character: Character, player_message: str, answer: str,
         has_directive: bool, secret_order_id: Optional[int],
-        preclassified_intent: Optional[Dict[str, Any]] = None,
+        preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
     ) -> Dict[str, Any]:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
@@ -1230,19 +1261,31 @@ class GameSession:
         secret_order 新建候选；③ 无前缀时让 LLM 判会话动作（更新/催办/提交核议/记进展/
         调教妃嫔）并暂存。
         入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
-        返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。"""
+        返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。
+
+        #515：preclassified_intent 接受 list（生产契约）或 dict（测试/旧注入）；
+        None = 分类器未跑（串行回落）；[] = 已跑无动作（零 classifier 写入）。
+        """
         from ming_sim.cli_backend import (
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions, extract_minister_actions,
             extract_appointment_action, extract_confirmation_intent, extract_draft_intent,
             extract_directive_confirmation, _extract_secret_order,
         )
+        from ming_sim.action_clusters import normalize_intent_candidates, primary_intent
         out: Dict[str, Any] = {
             "directive": None,
             "secret_order_id": secret_order_id,
             "pending_action_failures": [],
         }
-        intent = preclassified_intent if isinstance(preclassified_intent, dict) else None
+        if preclassified_intent is None:
+            intent_candidates: Optional[List[Dict[str, Any]]] = None
+        else:
+            intent_candidates = normalize_intent_candidates(preclassified_intent)
+            if intent_candidates is None:
+                intent_candidates = []
+        intent = primary_intent(intent_candidates)
+        # intent is None only when classifier did not run; [] → primary {kind:none}.
         intent_kind = str((intent or {}).get("kind") or "none")
         minister_name = character.name
         reply = (answer or "").strip()
@@ -1889,7 +1932,7 @@ class GameSession:
 
     def _cli_backend_fallback_actions(
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
-        preclassified_intent: Optional[Dict[str, Any]] = None,
+        preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
