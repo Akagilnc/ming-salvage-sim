@@ -2350,7 +2350,6 @@ class WebGame:
         ADR 0042 / #527：旧询问 chips（问在办事项/问阻力/查钱粮/查驻军/密查）已砍；
         问事走直接开口 + 角色见闻。character 保留在签名上以兼容三处 payload 调用点。
         """
-        _ = character  # signature kept for callers; chips no longer skill-gated
         return [
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
             {"label": "下密令", "text": "密令如下：", "prefix": True},
