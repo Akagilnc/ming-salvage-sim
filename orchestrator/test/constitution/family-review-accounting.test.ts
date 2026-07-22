@@ -127,7 +127,7 @@ class ScriptedCmrBackend implements FamilyBackend {
         : [this.cmrOutputs];
       const output = outputs[Math.min(this.cmrIndex, outputs.length - 1)]!;
       this.cmrIndex += 1;
-      return { kind: "completed", output };
+      return { kind: "completed", output, sessionId: "fixture-cmr-875" };
     }
     if (spec.kind === "ship") {
       return {

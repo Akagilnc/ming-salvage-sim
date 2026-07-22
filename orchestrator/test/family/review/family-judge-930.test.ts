@@ -651,35 +651,16 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(completenessDispatches[1]?.resumeSessionId).toBe("judge-sess-persist");
   });
 
-  it("session loss: fresh judge receives priorJudgeVerdicts from ledger rows", async () => {
-    const backend = new FamilyJudgeBackend({
-      completeness: (round, ctx) => {
-        if (round === 0) {
-          return completedJudge(judgeContinue([FINDING]), "judge-sess-lost");
-        }
-        // Simulate lost session: backend returns a new session id; runner
-        // must have supplied priorJudgeVerdicts on a fresh (no resume) open.
-        expect(ctx.priorJudgeVerdicts?.length ?? 0).toBeGreaterThan(0);
-        expect(ctx.priorJudgeVerdicts?.[0]).toMatchObject({
-          status: "continue",
-        });
-        return completedJudge(judgeConverged(), "judge-sess-new");
-      },
-    });
-    // Force second open without resume by clearing session after first open:
-    // script still gets resume from runner — we instead seed ledger-only path
-    // by using a backend that omits sessionId on first open, then checks priors.
+  it("session loss: continue without sessionId fails loud (#1081)", async () => {
     const noSessionBackend = new FamilyJudgeBackend({
-      completeness: (round, ctx) => {
+      completeness: (round) => {
         if (round === 0) {
-          // No sessionId → runner cannot resume; second open is fresh + priors.
+          // No sessionId on a live continue forms an unfulfillable resident
+          // resume obligation; opening a fresh judge would silently lose court
+          // continuity, so #1081 must terminal-fail before round 2.
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
-        expect(ctx.resumeSessionId).toBeUndefined();
-        expect(ctx.priorJudgeVerdicts?.some((r) => r.status === "continue")).toBe(
-          true,
-        );
-        return completedJudge(judgeConverged(), "judge-fresh-after-loss");
+        throw new Error("must fail loud before opening fresh judge after lost session");
       },
     });
     const result = await runVerifyCmr({
@@ -687,8 +668,21 @@ describe("#930 runVerifyCmr family judge courts", () => {
       familyBase: "family/919-base",
       familyBackend: noSessionBackend,
     });
-    expect(result).toEqual({ ok: true, ran: true });
-    void backend;
+    expect(result).toMatchObject({ ok: false, ran: true, failedStatus: "cmr_failed" });
+    const completenessDispatches = noSessionBackend.dispatches.filter(
+      (d) => d.kind === "cmr" && d.cmrPass === "completeness",
+    );
+    expect(completenessDispatches).toHaveLength(1);
+    expect(
+      noSessionBackend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          e.cmrPass === "completeness" &&
+          typeof e.reason === "string" &&
+          e.reason.includes("#1081") &&
+          e.reason.includes("no sessionId"),
+      ),
+    ).toBe(true);
   });
 
   it("refuse envelope blind-routes back to family judge (not terminal / not idle)", async () => {
