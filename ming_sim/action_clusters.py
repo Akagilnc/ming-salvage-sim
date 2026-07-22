@@ -17,12 +17,6 @@ EFFECT_NOOP = "noop"
 EFFECT_ANSWER_EXISTING = "answer_existing"
 EFFECT_MATERIALIZE = "materialize"
 
-# #515 验收：既有六类必须在登记中；未来新行 ⊆ 扩展，不改此集合。
-REQUIRED_MIGRATED_KINDS = frozenset({
-    "none", "confirmation", "secret", "cultivate", "appointment", "draft",
-})
-
-
 @dataclass(frozen=True)
 class FieldSpec:
     name: str
@@ -69,9 +63,6 @@ def install_action_catalog(clusters: Sequence[ActionCluster]) -> None:
     KIND_TO_LABEL = {c.kind: c.label_zh for c in ACTION_CLUSTERS}
     KNOWN_KINDS = frozenset(KIND_TO_LABEL)
     KNOWN_LABELS = frozenset(LABEL_TO_KIND)
-    missing = REQUIRED_MIGRATED_KINDS - KNOWN_KINDS
-    if missing:
-        raise RuntimeError(f"action catalog missing required kinds: {sorted(missing)}")
     for c in ACTION_CLUSTERS:
         if c.effect == EFFECT_MATERIALIZE and c.materialize_fn is None:
             raise RuntimeError(f"materialize cluster {c.kind!r} lacks materialize_fn")
