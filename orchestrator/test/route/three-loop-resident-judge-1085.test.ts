@@ -128,6 +128,42 @@ describe("#1085 pure: one status→hub table for three rings", () => {
     }
   });
 
+  it("#1080 production family/wave rings share one hub edge vocabulary with per-slice", () => {
+    // #1085 AC: 无双规则并存 — family_cmr / wave_verify / per_slice all project
+    // the same next-action set through routeResidentJudgeHub /
+    // hubNextFromFamilyClosureAction (production verifyCmr + route.ts).
+    const actions = [
+      "pass",
+      "continue",
+      "escalate",
+      "toolchain",
+      "unusable",
+    ] as const;
+    for (const action of actions) {
+      const family = hubNextFromFamilyClosureAction(action, "family_cmr");
+      const wave = hubNextFromFamilyClosureAction(action, "wave_verify");
+      expect(family).toBe(wave);
+      // Map FamilyJudgeClosure.action → ResidentJudgeStatus for per-slice parity.
+      const status =
+        action === "pass"
+          ? ("converged" as const)
+          : action === "continue"
+            ? ("continue" as const)
+            : action === "escalate"
+              ? ("escalate" as const)
+              : action === "toolchain"
+                ? ("toolchain" as const)
+                : ("unusable" as const);
+      if (status === "unusable") {
+        // Documented dual only for unusable (family fail_loud vs per-slice builder).
+        expect(routeResidentJudgeHub(status, "per_slice")).toBe("resume_builder");
+        expect(family).toBe("fail_loud");
+      } else {
+        expect(routeResidentJudgeHub(status, "per_slice")).toBe(family);
+      }
+    }
+  });
+
   it("after every builder beat the next seat is the resident judge (S2→S3 / S5→S6)", () => {
     // Per-slice step mapping is the only fork; both land on judge seats.
     expect(routeBuilderBeatToResidentJudge("S2")).toEqual({

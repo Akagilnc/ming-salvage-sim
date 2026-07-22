@@ -10,6 +10,7 @@
  */
 
 import { withMechanicalRetry } from "../dispatchRetry.js";
+import { isJudgeSeat } from "../judgeStation.js";
 import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import type {
   DispatchContext,
@@ -57,6 +58,8 @@ export async function dispatchFamilyWorkerOrAbort(
   landing?: WorkerLandingPayload,
   opts?: {
     readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
+    /** Test seam: injectable process-root backoff (production uses default). */
+    readonly sleepMs?: (ms: number) => Promise<void>;
   },
 ): Promise<WorkerResult> {
   try {
@@ -72,6 +75,11 @@ export async function dispatchFamilyWorkerOrAbort(
       ledger,
       workerStep,
     );
+    // #1081 / #1085 / ADR 0147: family/wave resident-judge seats share the
+    // same resume continuity rule as per-slice (runner.ts isJudgeSeat gate).
+    // A resumed pure court (kind cmr, id S3) must not silent-fresh on process
+    // failure. Panel legs also carry id S3 but never resume — flag is inert.
+    const residentJudgeSeat = isJudgeSeat({ id: spec.id });
     return await withMechanicalRetry(
       spec,
       ctx,
@@ -108,6 +116,8 @@ export async function dispatchFamilyWorkerOrAbort(
       },
       {
         attemptsAlreadyUsed,
+        ...(residentJudgeSeat ? { forbidFreshRetry: true as const } : {}),
+        ...(opts?.sleepMs !== undefined ? { sleepMs: opts.sleepMs } : {}),
         onFailure: async (outcome, attempt) => {
           const reason =
             "result" in outcome
