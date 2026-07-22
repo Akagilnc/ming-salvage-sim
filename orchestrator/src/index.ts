@@ -72,9 +72,7 @@ export type {
 // ── #1086 / ADR 0147 S6 — builder↔judge beat ledger + progress ──────────────
 export {
   isBuilderBeatStep,
-  isCompletedBeatRerun,
   isJudgeBeatStep,
-  latestCompletedBeat,
   projectCompletedBeats,
   projectBeatFromEntry,
   shouldForcePlanBeatStamp,

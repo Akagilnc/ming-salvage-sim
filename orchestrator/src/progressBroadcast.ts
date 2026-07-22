@@ -184,11 +184,6 @@ export interface ProgressJudgeEvent extends ProgressEventBase {
   readonly severity?: ProgressSeverityCounts | null;
   /** Path pointer only — never finding body prose. */
   readonly cargoPointer?: string | null;
-  /**
-   * #1086 — 1-based builder↔judge product-beat index (same rotation as
-   * {@link ProgressBeatEvent.rotation}).
-   */
-  readonly rotation?: number | null;
 }
 
 /**
@@ -358,10 +353,6 @@ export function formatProgressLogLine(event: ProgressEvent): string {
         event.round !== undefined && event.round !== null
           ? ` round=${event.round}`
           : "";
-      const rot =
-        event.rotation !== undefined && event.rotation !== null
-          ? ` rotation=${event.rotation}`
-          : "";
       const ptr =
         event.cargoPointer !== undefined &&
         event.cargoPointer !== null &&
@@ -370,7 +361,7 @@ export function formatProgressLogLine(event: ProgressEvent): string {
           : "";
       return (
         `${base} judge${issueTag(event.issue)}${epicTag(event.epic)}` +
-        ` step=${event.step}${round}${rot} verdict=${event.verdict}` +
+        ` step=${event.step}${round} verdict=${event.verdict}` +
         ` dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}` +
         `${sevPart}${ptr}`
       );
@@ -581,8 +572,6 @@ export function emitJudgeProgress(input: {
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   readonly findings?: ReadonlyArray<Finding>;
   readonly cargoPointer?: string | null;
-  /** #1086 — builder↔judge rotation index when known. */
-  readonly rotation?: number | null;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
   readonly now?: () => string;
@@ -600,7 +589,6 @@ export function emitJudgeProgress(input: {
     dispositions: countJudgeDispositions(input.findingDispositions),
     severity,
     cargoPointer: input.cargoPointer ?? null,
-    rotation: input.rotation ?? null,
   };
   emitProgressEvent({
     event,
@@ -863,7 +851,7 @@ export interface IssueProgressSnapshot {
   readonly merged: boolean;
   readonly cargoPointer: string | null;
   /**
-   * #1086 — builder↔judge rotation position from the latest beat/judge event.
+   * #1086 — builder↔judge rotation from the latest beat event only.
    * Operators locate the loop without reading worker prose.
    */
   readonly latestBeatRole: BeatRole | null;
@@ -994,11 +982,8 @@ export function renderFamilyStatus(input: {
           row.dispositions = event.dispositions;
           row.severity = event.severity ?? null;
           row.cargoPointer = event.cargoPointer ?? null;
-          row.latestBeatRole = "judge";
-          row.latestBeatKind = null;
-          if (event.rotation !== undefined && event.rotation !== null) {
-            row.latestRotation = event.rotation;
-          }
+          // Rotation is sole beat-channel truth (#1086 L4) — do not dual-write
+          // latestBeatRole / latestRotation from judge events.
           if (event.verdict === "escalate") {
             row.parked = true;
             row.parkSummary = row.parkSummary ?? "judge escalate";

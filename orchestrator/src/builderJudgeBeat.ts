@@ -1,16 +1,16 @@
 /**
  * #1086 / ADR 0147 S6 — every builder↔judge beat lands a typed ledger row
  * and a progress line (拍别 + 判词终态). Crash resume continues from the last
- * committed beat; completed product beats are not re-dispatched.
+ * committed beat via the existing route/planResume topology (not a parallel
+ * guard); completed product beats are not re-dispatched.
  *
  * Runner never reads prose. This module projects only typed surfaces already
  * on ledger rows (coder `beat`, judge `status`) and normalises builder beat
  * stamps before durable write.
  *
  * Consumers (audit):
- * - runner.ts — stamp on product write + emitBeatProgress
- * - progressBroadcast.ts — beat progress event shape + status rotation
- * - planResume / crash-resume tests — completed beats are not re-run
+ * - runner.ts — stamp on product write + projectBeatFromEntry → emitBeatProgress
+ * - progressBroadcast.ts — beat progress event shape + family-status rotation
  */
 
 import {
@@ -124,7 +124,7 @@ export function projectBeatFromEntry(
   return undefined;
 }
 
-/** All completed product beats in ledger order (sole resume / progress truth). */
+/** All completed product beats in ledger order (sole progress / stamp truth). */
 export function projectCompletedBeats(
   ledger: ReadonlyArray<BeatLedgerEntry>,
 ): ReadonlyArray<BeatLedgerRow> {
@@ -134,35 +134,6 @@ export function projectCompletedBeats(
     if (beat !== undefined) out.push(beat);
   }
   return out;
-}
-
-/** Latest completed beat — operator rotation position. */
-export function latestCompletedBeat(
-  ledger: ReadonlyArray<BeatLedgerEntry>,
-): BeatLedgerRow | undefined {
-  const beats = projectCompletedBeats(ledger);
-  return beats.length === 0 ? undefined : beats[beats.length - 1];
-}
-
-/**
- * Negative resume contract: a crash-resume next step must not equal the last
- * completed product beat step when that beat already finished (route successor
- * advances). Intentional same-step reopen (decision-answer resume) is not a
- * completed-beat re-run — callers pass `intentionalReopen: true` to exempt.
- *
- * Returns true when dispatching `nextStep` would re-burn a finished product beat.
- */
-export function isCompletedBeatRerun(input: {
-  readonly ledger: ReadonlyArray<BeatLedgerEntry>;
-  readonly nextStep: string;
-  /** Escalate-answer / decision reopen of the same step — not a re-run. */
-  readonly intentionalReopen?: boolean;
-}): boolean {
-  if (input.intentionalReopen === true) return false;
-  if (!isBeatProductStep(input.nextStep)) return false;
-  const last = latestCompletedBeat(input.ledger);
-  if (last === undefined) return false;
-  return last.step === input.nextStep;
 }
 
 // ─── builder output stamp (durable 拍别) ─────────────────────────────────────
