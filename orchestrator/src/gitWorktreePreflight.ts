@@ -153,9 +153,13 @@ export function quarantineOrRemoveOrphanDir(
 
 /**
  * Idempotent preflight before cutting `branch` under `repoPath`:
- * 1. `git worktree prune` (drop dead metadata),
- * 2. heal dir↔metadata skew for the intended Sandcastle path,
+ * 1. heal dir↔metadata skew for the intended Sandcastle path only,
+ * 2. clear that branch's orphan admin entry under `.git/worktrees/<name>`,
  * 3. clear a clearly-stale `index.lock` (fresh locks are left alone).
+ *
+ * Never runs repo-wide `git worktree prune` — in a family wave a sibling's
+ * gitdir may look prunable to the host after container path rewrite; pruning
+ * would delete the live sibling mid-run (#1105 R7 F1).
  *
  * `runGit` defaults to host `git -C repoPath`; RealBackend passes `this.sh` so
  * unit intercepts (worktree-cut / branch-fallback) stay on the same seam.
@@ -166,9 +170,8 @@ export function healBeforeWorktreeCut(
   runGit: WorktreePreflightGit = (args) => defaultGit(repoPath, args),
   opts?: HealBeforeWorktreeCutOptions,
 ): void {
-  runGit(["worktree", "prune"]);
-
   const wtPath = sandcastleWorktreePathForBranch(repoPath, branch);
+  const admin = worktreeAdminDirForBranch(repoPath, branch);
   const listed = listedWorktreePaths(repoPath, runGit);
   const inList = listed.has(normPath(wtPath));
   const dirExists = existsSync(wtPath);
@@ -180,20 +183,21 @@ export function healBeforeWorktreeCut(
     // Never rm content-bearing trees (constitution §10).
     quarantineOrRemoveOrphanDir(wtPath, quarantineBase);
   } else if (!dirExists && inList) {
-    // Metadata present / directory absent — prune again after force-remove attempt.
+    // Metadata present / directory absent — remove this worktree only.
     try {
       runGit(["worktree", "remove", "--force", wtPath]);
     } catch {
-      runGit(["worktree", "prune"]);
+      // Targeted: drop only this name's admin entry (never repo-wide prune).
+      if (existsSync(admin)) {
+        rmSync(admin, { recursive: true, force: true });
+      }
     }
   }
 
-  // Orphan admin dir with no registered worktree (prune should clear; belt+suspenders).
+  // Orphan admin dir with no registered worktree for THIS name only.
   // Admin metadata is not worker output — safe to remove.
-  const admin = worktreeAdminDirForBranch(repoPath, branch);
-  if (existsSync(admin) && !inList && !existsSync(wtPath)) {
+  if (existsSync(admin) && !listed.has(normPath(wtPath)) && !existsSync(wtPath)) {
     rmSync(admin, { recursive: true, force: true });
-    runGit(["worktree", "prune"]);
   }
 
   clearStaleIndexLock(repoPath);

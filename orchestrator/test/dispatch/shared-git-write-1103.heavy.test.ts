@@ -76,12 +76,14 @@ afterEach(() => {
 
 beforeAll(() => {
   // Child processes import precompiled dist/*.js (no npx/tsx network).
+  // Explicit hook timeout: full-orch tsc can outlast Vitest's default 10s in CI.
+  // inherit stdio so compiler diagnostics surface on failure (#1105 R7 F3).
   execFileSync(
     process.execPath,
     [join(orchRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"],
-    { cwd: orchRoot, stdio: "pipe" },
+    { cwd: orchRoot, stdio: "inherit" },
   );
-});
+}, 120_000);
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], {
@@ -247,6 +249,37 @@ describe("#1103 H1 healBeforeWorktreeCut", () => {
     healBeforeWorktreeCut(repo, branch);
 
     expect(existsSync(admin)).toBe(false);
+  });
+
+  it("NEGATIVE: does not prune a live sibling with a dangling gitdir (#1105 R7 F1)", () => {
+    // Wave concurrency: sibling's gitdir was rewritten to a container path the
+    // host cannot stat → prunable. Global `git worktree prune` would delete it
+    // and kill the sibling mid-run. Heal must only touch the target name.
+    const repo = makeRepo();
+    const siblingBranch = "feat/issue-1103-sibling";
+    const siblingPath = scWorktreePath(repo, siblingBranch);
+    mkdirSync(dirname(siblingPath), { recursive: true });
+    git(repo, "worktree", "add", "-b", siblingBranch, siblingPath, "HEAD");
+    const siblingAdmin = worktreeAdminDirForBranch(repo, siblingBranch);
+    writeFileSync(
+      join(siblingAdmin, "gitdir"),
+      "/sandbox/nonexistent/feat-issue-1103-sibling/.git\n",
+    );
+    expect(existsSync(siblingAdmin)).toBe(true);
+    expect(git(repo, "worktree", "list")).toMatch(/prunable/i);
+
+    const target = "feat/issue-1103-target";
+    const targetAdmin = worktreeAdminDirForBranch(repo, target);
+    mkdirSync(targetAdmin, { recursive: true });
+    writeFileSync(join(targetAdmin, "HEAD"), "ref: refs/heads/orphan\n");
+
+    healBeforeWorktreeCut(repo, target);
+
+    expect(existsSync(targetAdmin)).toBe(false);
+    expect(existsSync(siblingAdmin)).toBe(true);
+    expect(readFileSync(join(siblingAdmin, "gitdir"), "utf8")).toContain(
+      "/sandbox/nonexistent/",
+    );
   });
 
   it("prepareWorktreeLocked wires quarantine to durable .ledger-N (not clone .sandcastle)", async () => {
