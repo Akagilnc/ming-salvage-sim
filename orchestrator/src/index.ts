@@ -187,7 +187,6 @@ export type { MergeRecordAlignment } from "./autoMerge.js";
 export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
 export {
-  afterBuilderBeatNext,
   hubNextFromFamilyClosureAction,
   routeResidentJudgeHub,
 } from "./residentJudgeHub.js";
