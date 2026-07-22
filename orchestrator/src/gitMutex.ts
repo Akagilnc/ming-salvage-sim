@@ -157,7 +157,7 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-/** Rename-first stale reclaim (#1105 R4): claim → re-verify → rm, else restore. */
+/** Rename-first stale reclaim (#1105 R4/R6): claim → re-verify → rm, else restore. */
 export function tryReclaimStaleLock(lockDir: string, nowMs: number): boolean {
   if (!existsSync(lockDir)) return false;
   let mtimeMs: number;
@@ -193,12 +193,15 @@ export function tryReclaimStaleLock(lockDir: string, nowMs: number): boolean {
     }
   };
 
+  // Post-claim revalidate: any unexpected failure is conservative — restore,
+  // do not delete (#1105 R6 F2). ENOENT on pid = half-created, still reclaimable.
   try {
     if (nowMs - statSync(reclaimPath).mtimeMs < LOCK_STALE_MS) {
       restore();
       return false;
     }
   } catch {
+    restore();
     return false;
   }
 
@@ -208,8 +211,15 @@ export function tryReclaimStaleLock(lockDir: string, nowMs: number): boolean {
       restore();
       return false;
     }
-  } catch {
-    /* no pid on claimed path — ok if stale */
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code: unknown }).code)
+        : "";
+    if (code !== "ENOENT") {
+      restore();
+      return false;
+    }
   }
 
   try {

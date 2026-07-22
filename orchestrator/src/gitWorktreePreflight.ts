@@ -41,7 +41,8 @@ export function worktreeAdminDirForBranch(
 
 /**
  * Default quarantine root: `<clone>/.sandcastle/quarantine-orphans`.
- * Callers with a ledger may pass `<ledgerDir>/quarantine-orphans` via opts.
+ * Last-resort only when no ledgerDir is available — production callers with a
+ * durable ledger MUST pass `<ledgerDir>/quarantine-orphans` via opts (#1105 R6).
  */
 export function defaultQuarantineOrphansDir(repoPath: string): string {
   return join(repoPath, ".sandcastle", "quarantine-orphans");
@@ -56,7 +57,7 @@ export const INDEX_LOCK_STALE_MS = 120_000;
 export type WorktreePreflightGit = (args: readonly string[]) => string;
 
 export type HealBeforeWorktreeCutOptions = {
-  /** Isolation root (`<base>/<name>-<ts>`). Default: {@link defaultQuarantineOrphansDir}. */
+  /** Isolation root (`<base>/<name>-<ts>`). Prefer `<ledgerDir>/quarantine-orphans`. */
   readonly quarantineBaseDir?: string;
 };
 

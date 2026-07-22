@@ -2087,7 +2087,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const clone = clonePathFromSandcastleWorktree(handle.path);
       if (clone === null) return;
       await runExclusive(clone, () => {
-        healBeforeWorktreeCut(clone, handle.branch);
+        // #1105 R6 F1: same durable-ledger quarantine as prepareWorktreeLocked.
+        healBeforeWorktreeCut(clone, handle.branch, undefined, {
+          quarantineBaseDir: join(
+            clone,
+            `.ledger-${issueNumber}`,
+            "quarantine-orphans",
+          ),
+        });
       });
       // Sandcastle path is deterministic per branch — rebuild keeps the same
       // path so the in-flight dispatchCtx.worktree handle stays valid.
