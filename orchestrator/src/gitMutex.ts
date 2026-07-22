@@ -1,15 +1,8 @@
 /**
- * gitMutex.ts — per-clone mutex serialising git-MUTATING operations (#291 B7),
- * upgraded for cross-process exclusivity (#1103 H2 / #1105 R2).
- *
- * Layers (one mechanism, two scopes — not two locks to reason about separately):
- *   1. process-local promise-chain Map keyed on git common-dir (linked worktrees
- *      and the clone root share one FIFO — raw path keys would miss each other)
- *   2. directory lock at `<common-dir>/.orchestrator-git.lock` (mkdir / O_EXCL-style;
- *      shared by the host runner AND spawned hostCliWorkerRunner children)
- *
- * Same-process nesting is reentrant only for the ALS owner token that acquired
- * the lock — a concurrent task must wait (never pierce via depth alone).
+ * gitMutex.ts — per-clone mutex for git-MUTATING ops (#291 B7 / #1103 H2 / #1105).
+ * Promise-chain FIFO + `<common-dir>/.orchestrator-git.lock` directory lock.
+ * Sync never Atomics.wait on an in-process holder (deadlocks the JS thread);
+ * ALS is sync-stack reentry only (async does not publish ALS).
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -37,13 +30,13 @@ const heldBy = new Map<string, { token: string; depth: number }>();
 /** Cached `git rev-parse --git-common-dir` results (fail-closed resolve once). */
 const commonDirCache = new Map<string, string>();
 
-/** Async-local owner token so nested sync helpers reenter only the holder. */
+/** Async-local owner token — sync-stack reentry only (never published by async). */
 const lockOwnerAls = new AsyncLocalStorage<string>();
 
 /** Lock directory name under the clone's git common dir. */
 export const ORCHESTRATOR_GIT_LOCK_NAME = ".orchestrator-git.lock";
 
-/** Wait budget when another process/holder owns the lock. */
+/** Wait budget when another process owns the lock (async acquire only). */
 export const LOCK_WAIT_MS = 120_000;
 /** Spin interval while waiting for the lock directory. */
 const LOCK_SPIN_MS = 50;
@@ -120,6 +113,13 @@ export function orchestratorGitLockPath(repoPath: string): string | null {
   return join(resolveGitCommonDir(repoPath), ORCHESTRATOR_GIT_LOCK_NAME);
 }
 
+/** True when this process currently holds the file lock for `repoPath`. */
+export function isGitMutexHeldInProcess(repoPath: string): boolean {
+  const lockDir = orchestratorGitLockPath(repoPath);
+  if (lockDir === null) return false;
+  return heldBy.has(lockDir);
+}
+
 function sleepSync(ms: number): void {
   const sab = new SharedArrayBuffer(4);
   const ia = new Int32Array(sab);
@@ -157,11 +157,7 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-/**
- * Stale reclaim with ABA protection: rename-then-verify-token-then-rm.
- * Two reclaimers cannot both delete and then both recreate without serialising
- * on the rename of the same directory.
- */
+/** Rename-first stale reclaim (#1105 R4): claim → re-verify → rm, else restore. */
 export function tryReclaimStaleLock(lockDir: string, nowMs: number): boolean {
   if (!existsSync(lockDir)) return false;
   let mtimeMs: number;
@@ -171,41 +167,51 @@ export function tryReclaimStaleLock(lockDir: string, nowMs: number): boolean {
     return false;
   }
   if (nowMs - mtimeMs < LOCK_STALE_MS) return false;
+  let hasPidFile = false;
   let pid = 0;
   try {
     pid = Number(readFileSync(lockPidPath(lockDir), "utf8").trim());
+    hasPidFile = true;
   } catch {
-    pid = 0;
+    /* half-created: no pid */
   }
-  if (isPidAlive(pid)) return false;
-  let expectedToken = "";
-  try {
-    expectedToken = readFileSync(lockTokenPath(lockDir), "utf8").trim();
-  } catch {
-    expectedToken = "";
-  }
+  // No-token/no-pid: only proceed when stale (above) and pid dead/missing.
+  if (hasPidFile && isPidAlive(pid)) return false;
+
   const reclaimPath = `${lockDir}.reclaim.${newOwnerToken()}`;
   try {
     renameSync(lockDir, reclaimPath);
   } catch {
     return false;
   }
-  if (expectedToken.length > 0) {
+
+  const restore = (): void => {
     try {
-      const got = readFileSync(lockTokenPath(reclaimPath), "utf8").trim();
-      if (got !== expectedToken) {
-        // Lost the race — put it back if we can; otherwise leave for the winner.
-        try {
-          renameSync(reclaimPath, lockDir);
-        } catch {
-          /* winner owns the name */
-        }
-        return false;
-      }
+      renameSync(reclaimPath, lockDir);
     } catch {
-      // No token after rename — treat as abandoned wreckage and remove.
+      /* race owns the name */
     }
+  };
+
+  try {
+    if (nowMs - statSync(reclaimPath).mtimeMs < LOCK_STALE_MS) {
+      restore();
+      return false;
+    }
+  } catch {
+    return false;
   }
+
+  try {
+    const claimedPid = Number(readFileSync(lockPidPath(reclaimPath), "utf8").trim());
+    if (isPidAlive(claimedPid)) {
+      restore();
+      return false;
+    }
+  } catch {
+    /* no pid on claimed path — ok if stale */
+  }
+
   try {
     rmSync(reclaimPath, { recursive: true, force: true });
     return true;
@@ -246,6 +252,15 @@ function acquireFileLock(lockDir: string, token: string): void {
           ? String((err as { code: unknown }).code)
           : "";
       if (code !== "EEXIST") throw err;
+      // Same-process holder (async or foreign sync): never Atomics.wait —
+      // blocking the event loop deadlocks the holder that must release.
+      const inProc = heldBy.get(lockDir);
+      if (inProc !== undefined && inProc.token !== token) {
+        throw new Error(
+          `gitMutex: fail-fast — in-process lock held at ${lockDir} ` +
+            `(depth=${inProc.depth}); sync/async critical sections must not overlap`,
+        );
+      }
       tryReclaimStaleLock(lockDir, Date.now());
       // A4 WAIT==STALE boundary: if reclaim (or the holder) freed the dir,
       // retry mkdir even when the wait budget has elapsed.
@@ -287,6 +302,7 @@ function releaseFileLock(lockDir: string, token: string): void {
 function runWithFileLockSync<T>(lockDir: string, fn: () => T): T {
   const existing = lockOwnerAls.getStore();
   const held = heldBy.get(lockDir);
+  // Sync-stack reentry only (ALS published solely by sync acquire below).
   if (existing !== undefined && held !== undefined && held.token === existing) {
     acquireFileLock(lockDir, existing);
     try {
@@ -294,6 +310,13 @@ function runWithFileLockSync<T>(lockDir: string, fn: () => T): T {
     } finally {
       releaseFileLock(lockDir, existing);
     }
+  }
+  // In-process async (or foreign) holder: fail-fast — never wait.
+  if (held !== undefined) {
+    throw new Error(
+      `gitMutex: runExclusiveSync fail-fast — in-process lock held at ${lockDir} ` +
+        `(depth=${held.depth}); sync critical sections must not overlap async holders`,
+    );
   }
   const token = newOwnerToken();
   return lockOwnerAls.run(token, () => {
@@ -310,25 +333,15 @@ async function runWithFileLockAsync<T>(
   lockDir: string,
   fn: () => Promise<T> | T,
 ): Promise<T> {
-  const existing = lockOwnerAls.getStore();
-  const held = heldBy.get(lockDir);
-  if (existing !== undefined && held !== undefined && held.token === existing) {
-    acquireFileLock(lockDir, existing);
-    try {
-      return await fn();
-    } finally {
-      releaseFileLock(lockDir, existing);
-    }
-  }
+  // No ALS around async — timers must not inherit an owner token and pierce.
+  // Nested runExclusiveSync under an async hold is a contract violation (fail-fast).
   const token = newOwnerToken();
-  return lockOwnerAls.run(token, async () => {
-    acquireFileLock(lockDir, token);
-    try {
-      return await fn();
-    } finally {
-      releaseFileLock(lockDir, token);
-    }
-  });
+  acquireFileLock(lockDir, token);
+  try {
+    return await fn();
+  } finally {
+    releaseFileLock(lockDir, token);
+  }
 }
 
 /**
@@ -367,11 +380,7 @@ export async function runExclusive<T>(
   return run;
 }
 
-/**
- * Synchronous exclusive section for sync git / exclude RMW callers (#1103 H3).
- * Same file lock as {@link runExclusive}; reentrant only for the ALS owner.
- * Concurrent sync callers while another task holds the lock wait — never pierce.
- */
+/** Sync exclusive (#1103 H3). Fail-fast on in-process overlap; ALS reentry only. */
 export function runExclusiveSync<T>(key: string, fn: () => T): T {
   const lockDir = orchestratorGitLockPath(key);
   if (lockDir === null) return fn();

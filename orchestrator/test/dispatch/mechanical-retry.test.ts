@@ -163,6 +163,8 @@ describe("#598 withMechanicalRetry", () => {
     expect(heals).toBe(1);
     if (result.kind !== "failed") throw new Error("expected failed");
     expect(result.reason).toContain("not a git repository");
+    // #1105 R4 F-P2: exhaustion suffix must reflect real attempts (2), not MAX.
+    expect(result.reason).toMatch(/\(after 2 dispatch attempts\)$/);
   });
 
   it("re-entry with attemptsAlreadyUsed>0 sleeps the next 15s slot before first dispatch (#934 ID-004)", async () => {
