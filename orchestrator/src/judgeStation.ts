@@ -297,10 +297,11 @@ export function priorJudgeVerdictRowsFromSources(
 
   for (const entry of ledger) {
     if (wantSlice) {
-      // Slice steps never carry family event markers.
+      // Slice steps never carry family event markers. Dual-field fold rows
+      // (output + court_dismissed on converge) still carry judge topology
+      // output — read them as prior verdicts (event filter alone would drop them).
       const seatStep = entry.step;
       if (
-        entry.event === undefined &&
         seatStep !== undefined &&
         isJudgeSeat({ step: seatStep }) &&
         entry.output?.kind === "judge" &&
@@ -1018,4 +1019,271 @@ export function isJudgeSeat(input: {
   // (S9 online-review carries kind/role/soul "verify" and is NOT a judge seat).
   const seat = input.step ?? input.id;
   return seat === "S3" || seat === "S6";
+}
+
+// ─── #1081 / ADR 0147 resident judge lifecycle (birth at dispatch → dismiss) ─
+
+/** Versioned open-court prompt (slice dispatch birth; not a topology 拍). */
+export const JUDGE_OPEN_COURT_PROMPT_FILE = "judge_open_court.md";
+
+/**
+ * True when this worker is the S1 open-court birth dispatch (not S3/S6
+ * judging). Distinguished solely by prompt file — zero new StepId.
+ */
+export function isJudgeOpenCourtSpec(input: {
+  readonly promptFile?: string;
+}): boolean {
+  return input.promptFile === JUDGE_OPEN_COURT_PROMPT_FILE;
+}
+
+/**
+ * Judge-receipt path for production SO: topology seats (S3/S6) **or** the
+ * open-court birth dispatch. Family S9 online-review stays out.
+ */
+export function usesJudgeReceiptChannel(input: {
+  readonly step?: string;
+  readonly id?: string;
+  readonly promptFile?: string;
+}): boolean {
+  return isJudgeSeat(input) || isJudgeOpenCourtSpec(input);
+}
+
+/** Resident-judge lifecycle state rebuilt from the durable ledger. */
+export type ResidentJudgeLifecycle =
+  | { readonly status: "absent" }
+  | {
+      readonly status: "open";
+      readonly sessionId: string;
+      readonly modelSlug: string;
+    }
+  | { readonly status: "dismissed" };
+
+type ResidentJudgeLedgerRow = {
+  readonly event?: string;
+  readonly step?: string;
+  readonly sessionId?: string;
+  readonly modelSlug?: string;
+  /** Topology output when present (judge converge heals dismiss crash window). */
+  readonly output?: StepOutput | { readonly kind?: string };
+};
+
+/**
+ * Rebuild resident-judge lifecycle from ledger sole truth (#1081).
+ *
+ * Scan newest→oldest:
+ * - `court_dismissed` → dismissed (no residual resumeable session)
+ * - `court_opened` with sessionId → open (birth at dispatch)
+ * - judge-seat step with sessionId (S3/S6) → open (continuity refresh)
+ * - else → absent
+ *
+ * Heal (pre-atomic two-write crash window): when `court_opened` is present, a
+ * later judge seat product-converged, and no `court_dismissed` was recorded,
+ * treat as dismissed so a crash between converge write and dismiss write cannot
+ * leave a permanently hanging court after full completion.
+ *
+ * Bookkeeping `session_continuity_lost` on a **judge seat** does not resurrect
+ * a dropped id. Coder-seat continuity losses (S2/S5) must NOT orphan an open
+ * court — only judge seats write judge continuity loss post-#1081, and pre-#1081
+ * migration ledgers may still carry judge-seat rows.
+ */
+export function rebuildResidentJudgeFromLedger(
+  ledger: ReadonlyArray<ResidentJudgeLedgerRow>,
+): ResidentJudgeLifecycle {
+  // Heal pass: product converge after open court without an explicit dismiss
+  // row → dismissed (atomic fold writes event on the same row; this covers
+  // residual two-write crash ledgers).
+  let sawCourtOpened = false;
+  let sawDismiss = false;
+  let sawProductConvergeAfterOpen = false;
+  for (const entry of ledger) {
+    if (entry.event === "court_dismissed") {
+      sawDismiss = true;
+    }
+    if (
+      entry.event === "court_opened" &&
+      typeof entry.sessionId === "string" &&
+      entry.sessionId.length > 0
+    ) {
+      sawCourtOpened = true;
+    }
+    if (
+      sawCourtOpened &&
+      !sawDismiss &&
+      isJudgeSeat({ step: entry.step }) &&
+      entry.output !== undefined &&
+      judgeStatusFromOutput(entry.output as StepOutput) === "converged"
+    ) {
+      sawProductConvergeAfterOpen = true;
+    }
+  }
+  if (sawCourtOpened && sawProductConvergeAfterOpen && !sawDismiss) {
+    return { status: "dismissed" };
+  }
+
+  for (let i = ledger.length - 1; i >= 0; i -= 1) {
+    const entry = ledger[i]!;
+    if (entry.event === "court_dismissed") {
+      return { status: "dismissed" };
+    }
+    if (
+      entry.event === "session_continuity_lost" &&
+      isJudgeSeat({ step: entry.step })
+    ) {
+      // Judge continuity abandoned; do not revive the dropped id from older rows.
+      return { status: "absent" };
+    }
+    if (
+      entry.event === "court_opened" &&
+      typeof entry.sessionId === "string" &&
+      entry.sessionId.length > 0
+    ) {
+      return {
+        status: "open",
+        sessionId: entry.sessionId,
+        modelSlug:
+          typeof entry.modelSlug === "string" && entry.modelSlug.length > 0
+            ? entry.modelSlug
+            : "unknown",
+      };
+    }
+    // Agent steps may fold court_dismissed onto the same durable row as
+    // topology output (event set + output present). Those are handled above.
+    // Pure agent rows (event undefined) still refresh open continuity.
+    if (
+      entry.event === undefined &&
+      isJudgeSeat({ step: entry.step }) &&
+      typeof entry.sessionId === "string" &&
+      entry.sessionId.length > 0
+    ) {
+      return {
+        status: "open",
+        sessionId: entry.sessionId,
+        modelSlug:
+          typeof entry.modelSlug === "string" && entry.modelSlug.length > 0
+            ? entry.modelSlug
+            : "unknown",
+      };
+    }
+  }
+  return { status: "absent" };
+}
+
+/**
+ * Resolve how a judging seat (S3/S6) must open.
+ *
+ * #1081 AC: when the court is **open**, resume is mandatory — never silent
+ * fresh-per-round. Create/resume failure is loud.
+ *
+ * Legal `establish` (fresh) paths only (both require a resume-capable seat —
+ * same gate as {@link requireOpenCourtSession}; never mint a "resident" judge
+ * under a provider that cannot resume later rounds):
+ * - court never opened (absent) — S1 birth missed (crash before court_opened,
+ *   or pre-#1081 ledger re-feed); first S3 births the resident session
+ * - verify model changed under an open court (quota relay) — re-birth under
+ *   the new seat model (old session cannot cross models)
+ *
+ * Open + same model + not resume-capable → **fail** (AC#3: no silent fresh
+ * while court is open; matches runner resumeFor judge provider_incapable path).
+ *
+ * `dismissed` always fails (no hanging resumeable session after converge).
+ */
+export function requireResidentJudgeResume(input: {
+  readonly lifecycle: ResidentJudgeLifecycle;
+  readonly seatModel: string;
+  readonly seatResumeCapable: boolean;
+}):
+  | { readonly kind: "resume"; readonly sessionId: string }
+  | { readonly kind: "establish" }
+  | { readonly kind: "fail"; readonly reason: string } {
+  const { lifecycle, seatModel, seatResumeCapable } = input;
+  if (lifecycle.status === "dismissed") {
+    return {
+      kind: "fail",
+      reason:
+        "resident judge court is dismissed; judging seat cannot reopen a " +
+        "hanging session (court_dismissed is terminal for this slice run)",
+    };
+  }
+  if (lifecycle.status === "absent") {
+    // Birth at S1 is the normal path; establish here is the crash/migration
+    // fallback when court_opened was never recorded. Fail loud when the seat
+    // cannot resume — same as open-court gate (no silent non-resident mint).
+    if (!seatResumeCapable) {
+      return {
+        kind: "fail",
+        reason:
+          `resident judge establish refused: seat model ${seatModel} is not ` +
+          "resume-capable (resident judge requires resume across judging rounds); " +
+          "silent fresh-per-round judge is illegal",
+      };
+    }
+    return { kind: "establish" };
+  }
+  // lifecycle.status === "open"
+  if (
+    lifecycle.modelSlug !== "unknown" &&
+    lifecycle.modelSlug !== seatModel
+  ) {
+    // Verify-seat model moved (e.g. quota relay) — re-birth under the new seat.
+    // New seat must still be resume-capable or we fail at create time.
+    if (!seatResumeCapable) {
+      return {
+        kind: "fail",
+        reason:
+          `resident judge re-establish refused: seat model ${seatModel} is not ` +
+          "resume-capable (cannot re-birth resident court under an incapable seat); " +
+          "silent fresh-per-round judge is illegal",
+      };
+    }
+    return { kind: "establish" };
+  }
+  if (!seatResumeCapable) {
+    // AC#3 / resumeFor judge path: open same-model court + provider incapable
+    // must fail loud — never silent-establish a fresh per-round judge.
+    return {
+      kind: "fail",
+      reason:
+        `resident judge resume refused: seat model ${seatModel} is not ` +
+        "resume-capable (provider cannot continue the open-court session); " +
+        "silent fresh judge is illegal",
+    };
+  }
+  return { kind: "resume", sessionId: lifecycle.sessionId };
+}
+
+/**
+ * Validate open-court birth result. Fail loud when the worker did not surface
+ * a real session id (no silent proceed to S2 without a resident judge).
+ */
+export function requireOpenCourtSession(input: {
+  readonly resultKind: string;
+  readonly sessionId?: string;
+  readonly seatResumeCapable: boolean;
+  readonly seatModel: string;
+}):
+  | { readonly kind: "ok"; readonly sessionId: string }
+  | { readonly kind: "fail"; readonly reason: string } {
+  if (!input.seatResumeCapable) {
+    return {
+      kind: "fail",
+      reason:
+        `open court refused: seat model ${input.seatModel} is not ` +
+        "resume-capable (resident judge requires resume across judging rounds)",
+    };
+  }
+  if (input.resultKind !== "completed") {
+    return {
+      kind: "fail",
+      reason: `open court worker failed (${input.resultKind}); resident judge not established`,
+    };
+  }
+  if (typeof input.sessionId !== "string" || input.sessionId.length === 0) {
+    return {
+      kind: "fail",
+      reason:
+        "open court completed without a session id; cannot establish " +
+        "resident judge continuity (silent fresh-per-round is illegal)",
+    };
+  }
+  return { kind: "ok", sessionId: input.sessionId };
 }

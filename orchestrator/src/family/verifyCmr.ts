@@ -124,6 +124,7 @@ import {
 import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import { emitJudgeProgress } from "../progressBroadcast.js";
+import { hubNextFromFamilyClosureAction } from "../residentJudgeHub.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -316,6 +317,16 @@ function reholdRepairSeatFromFamilyLedger(
 const WAVE_VERIFY_JUDGE_STEP = "wave-verify-judge";
 const WAVE_VERIFY_FIX_STEP = "wave-verify-fix";
 
+/**
+ * Shared fragment of the exit-path JUDGE_STEP converged receipt (ledger
+ * observation only — not a crash-recover debt key).
+ */
+const WAVE_VERIFY_CONVERGED_RECEIPT_MARKER = "converged after";
+
+function waveVerifyConvergedReason(label: string, round: number): string {
+  return `${label} ${WAVE_VERIFY_CONVERGED_RECEIPT_MARKER} ${round} round(s)`;
+}
+
 /** Human-facing label for the verify-red judge court (scope is a parameter). */
 function familyVerifyCourtLabel(phase: VerifyCmrPhase): string {
   if (phase === "correctness_checkpoint") return "correctness_checkpoint verify";
@@ -421,11 +432,15 @@ interface VerifyJudgeCourtResult extends VerifyCmrResult {
 }
 
 /**
- * #1027 S2 — dispatch ONE wave-verify coder-fix round with the judge-authored
- * repair packet (ADR 0138 verbatim body). Reuses the family coder-fix seat (S5)
- * + its discipline (independent commit / 五条尺 / gate negative cases live in the
- * fixer soul). A completed fix (including a legal refuse) returns non-terminal so
- * the caller's deterministic re-verify is the sole convergence authority.
+ * #1027 S2 / #1085 — dispatch ONE wave-verify coder-fix round with the
+ * judge-authored repair packet (ADR 0138 verbatim body). Reuses the family
+ * coder-fix seat (S5) + its discipline. A completed fix (including a legal
+ * refuse) returns non-terminal so the caller resumes the resident judge hub
+ * (ADR 0147) — green re-verify is the hard precondition on the *exit* path
+ * only (ADR 0145), never a builder→exit skip of the judge.
+ *
+ * #1085 resume: same-court fixer rounds resume the prior fixer session when
+ * the seat is resume-capable (isomorphic with CMR #979).
  */
 async function runWaveVerifyFixerRound(input: {
   readonly phase: VerifyCmrPhase;
@@ -442,7 +457,9 @@ async function runWaveVerifyFixerRound(input: {
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly blockingFindingCount?: number;
   readonly familyHeadBefore?: string;
-}): Promise<WaveVerifyFixerOutcome> {
+  /** #1085 — prior wave-fixer session in this court (process-local resume). */
+  readonly resumeSessionId?: string;
+}): Promise<WaveVerifyFixerOutcome & { readonly sessionId?: string }> {
   const { phase, familyBase, familyBackend, runId, familyIssue, round } = input;
   const label = familyVerifyCourtLabel(phase);
   const fixPool = billingPoolForFamilyWorker({
@@ -458,7 +475,21 @@ async function runWaveVerifyFixerRound(input: {
     workerStep: WAVE_VERIFY_FIX_STEP,
     reason: `${label} fixer round ${round}: dispatch coder-fix`,
   });
-  const coderFixSpec = familyCoderFixWorkerSpec(input.resolvedRoute, "fresh");
+  const provisionalFixSpec = familyCoderFixWorkerSpec(input.resolvedRoute);
+  const seatResumeCapable = resumeCapableForSlug(
+    provisionalFixSpec.model,
+    fixPool,
+  );
+  const resumeSessionId =
+    typeof input.resumeSessionId === "string" &&
+    input.resumeSessionId.length > 0 &&
+    seatResumeCapable
+      ? input.resumeSessionId
+      : undefined;
+  const coderFixSpec = familyCoderFixWorkerSpec(
+    input.resolvedRoute,
+    resumeSessionId !== undefined ? "resume" : "fresh",
+  );
   const fixResult = await dispatchOrAbort(
     familyBackend,
     coderFixSpec,
@@ -467,6 +498,7 @@ async function runWaveVerifyFixerRound(input: {
       ...(runId !== undefined ? { runId } : {}),
       modelRoute: input.resolvedRoute,
       ...(fixPool !== undefined ? { billingPool: fixPool } : {}),
+      ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
       blockingFindingIdentityKeys: input.blockingFindingIdentityKeys,
       ...(input.blockingFindingCount !== undefined
         ? { blockingFindingCount: input.blockingFindingCount }
@@ -489,72 +521,93 @@ async function runWaveVerifyFixerRound(input: {
     ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
   });
 
+  const sessionId =
+    typeof fixResult.sessionId === "string" && fixResult.sessionId.length > 0
+      ? fixResult.sessionId
+      : undefined;
+  const withSession = (
+    outcome: WaveVerifyFixerOutcome,
+  ): WaveVerifyFixerOutcome & { readonly sessionId?: string } =>
+    sessionId !== undefined ? { ...outcome, sessionId } : outcome;
+
   if (fixResult.kind === "escalated") {
-    return withHead(
-      await recordWaveVerifyEscalation({
-        phase,
-        familyBackend,
-        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-        seat: "fixer",
-        round,
-        reason: fixResult.escalation.reason,
-        diagnosis: fixResult.escalation.diagnosis,
-        synthesizedFailure: isRunnerSynthesizedFailureEscalation(
-          fixResult.escalation,
-        ),
-      }),
+    return withSession(
+      withHead(
+        await recordWaveVerifyEscalation({
+          phase,
+          familyBackend,
+          ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+          seat: "fixer",
+          round,
+          reason: fixResult.escalation.reason,
+          diagnosis: fixResult.escalation.diagnosis,
+          synthesizedFailure: isRunnerSynthesizedFailureEscalation(
+            fixResult.escalation,
+          ),
+        }),
+      ),
     );
   }
   if (fixResult.kind !== "completed") {
-    return withHead(
-      await recordWaveVerifyAbort({
-        phase,
-        familyBase,
-        familyBackend,
-        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-        reason: `${label} fixer worker failed at round ${round}: ${fixResult.reason}`,
-      }),
+    return withSession(
+      withHead(
+        await recordWaveVerifyAbort({
+          phase,
+          familyBase,
+          familyBackend,
+          ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+          reason: `${label} fixer worker failed at round ${round}: ${fixResult.reason}`,
+        }),
+      ),
     );
   }
   if (
     fixResult.output.kind === "coder" &&
     fixResult.output.escalate !== undefined
   ) {
-    return withHead(
-      await recordWaveVerifyEscalation({
-        phase,
-        familyBackend,
-        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-        seat: "fixer",
-        round,
-        reason: fixResult.output.escalate.reason,
-        diagnosis: fixResult.output.escalate.diagnosis,
-        synthesizedFailure: false,
-      }),
+    return withSession(
+      withHead(
+        await recordWaveVerifyEscalation({
+          phase,
+          familyBackend,
+          ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+          seat: "fixer",
+          round,
+          reason: fixResult.output.escalate.reason,
+          diagnosis: fixResult.output.escalate.diagnosis,
+          synthesizedFailure: false,
+        }),
+      ),
     );
   }
-  // Completed (including a legal refuse): the deterministic re-verify is the
-  // convergence authority. Loud terminals handled above.
-  return familyHeadAfter !== undefined ? { familyHeadAfter } : {};
+  // #1085 / ADR 0147: completed builder beat always returns to the resident
+  // judge hub — never exit on green alone. Caller resumes judge; ADR 0145
+  // green hard-pre lives on the exit_loop path only.
+  return withSession(
+    familyHeadAfter !== undefined ? { familyHeadAfter } : {},
+  );
 }
 
 /**
- * #1027 S2 / ADR 0145 / #1107 — the family-verify triage judge court.
+ * #1027 S2 / ADR 0145 / #1085 / #1107 — the family-verify triage judge court.
  *
  * Entered after a red family verify at ANY barrier scope (`wave` /
  * `correctness_checkpoint` / `final`). Owner 07-22: one mechanism, scope is a
  * parameter — not a layered second control shape. Owner FINAL 2026-07-20: the
  * runner does ZERO verify-kind classification — a red is handed uniformly to the
- * judge, which returns the shared typed verdict. Each round:
+ * judge. Routing uses the **shared** resident-judge hub table
+ * ({@link hubNextFromFamilyClosureAction}) — same language as per-slice and
+ * integrated CMR. Each round:
  *   1. dispatch/resume the triage judge over the current verify failure;
- *   2. route the typed verdict — `toolchain` → the unchanged `verify_failed`
- *      terminal (fixer zero-spin); `escalate` → decision-gate park; `continue` →
- *      the judge-authored repair packet → the family coder-fix seat;
- *   3. run the deterministic re-verify — GREEN is the SOLE convergence authority
- *      (converged 硬前置); RED forces another round (even a judge `pass`/converged
- *      verdict cannot close on a red re-verify).
- * Stuck detection is the resumed judge's call via round trend (既有轮数走势) — no
- * mechanical runner round cap.
+ *   2. hub-route the typed verdict — `toolchain` → `verify_failed` (fixer
+ *      zero-spin); `park`/`escalate` → decision-gate; `resume_builder` →
+ *      judge-authored packet → family coder-fix; `exit_loop`/`pass` →
+ *      deterministic re-verify (ADR 0145 green hard-pre);
+ *   3. **after every builder beat** resume the same judge (ADR 0147 hub) —
+ *      green re-verify never exits without the judge receive step;
+ *   4. exit_loop + GREEN re-verify → close; RED forces another judge round.
+ * Stuck detection is the resumed judge's call via round trend — no mechanical
+ * runner round cap.
  */
 async function runWaveVerifyJudgeCourt(input: {
   readonly phase: VerifyCmrPhase;
@@ -607,18 +660,23 @@ async function runWaveVerifyJudgeCourt(input: {
 
   let failureReason = input.initialFailure;
   let familyHeadBefore = input.familyHeadAfter;
+  /** Process-local court session across builder beats in this court open. */
   let judgeSessionId: string | undefined;
+  /** #1085 — resume same wave-fixer session across builder beats in this court. */
+  let fixerSessionId: string | undefined;
+  /**
+   * #1085 F1: last post-builder (or exit-path) family-verify observation.
+   * exit_loop reuses it as ADR 0145 green hard-pre when family HEAD is
+   * unchanged across the judge resume (no second full-family verify).
+   */
+  let lastObserve: FamilyVerifyResult | undefined;
+  let lastObserveFamilyHead: string | undefined;
   let round = 0;
 
   while (true) {
     round += 1;
     // ── dispatch/resume the triage judge over the current verify failure ──
-    await familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: WAVE_VERIFY_JUDGE_STEP,
-      reason: `${label} triage judge round ${round} for: ${failureReason}`,
-    });
+    // Round receipt is written AFTER the judge returns (ledger observation).
     const judgeSpec = waveVerifyJudgeWorkerSpec(
       resolvedRoute,
       judgeSessionId !== undefined ? "resume" : "fresh",
@@ -633,6 +691,13 @@ async function runWaveVerifyJudgeCourt(input: {
       ...(judgeSessionId !== undefined ? { resumeSessionId: judgeSessionId } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    });
+    // Round receipt — durable only after the judge returned (any kind).
+    await familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: WAVE_VERIFY_JUDGE_STEP,
+      reason: `${label} triage judge round ${round} for: ${failureReason}`,
     });
     const judgeHead = await readPostCmrFamilyHead(
       familyBackend,
@@ -671,10 +736,21 @@ async function runWaveVerifyJudgeCourt(input: {
     }
 
     const closure = closeFamilyCourtFromJudgeOutput(judgeResult.output);
+    // #1085 / #1080: sole production edge source = shared hub table
+    // (isomorphic with per-slice route.ts → routeResidentJudgeHub). Cargo
+    // still narrows on closure.action after hubNext is known.
+    const hubNext = hubNextFromFamilyClosureAction(
+      closure.action,
+      "wave_verify",
+    );
 
-    // ── toolchain: judge classified an environment/toolchain red → the runner's
-    //    unchanged verify_failed terminal (AC2: fixer zero-spin, loud). ──
-    if (closure.action === "toolchain") {
+    // ── toolchain: env red → verify_failed (fixer zero-spin, loud). ──
+    if (hubNext === "toolchain") {
+      if (closure.action !== "toolchain") {
+        throw new Error(
+          `${label}: hub toolchain without toolchain action (${closure.action})`,
+        );
+      }
       const reason = `${label} toolchain: ${closure.reason} — ${closure.diagnosis}`;
       return await recordWaveVerifyAbort({
         phase,
@@ -692,8 +768,13 @@ async function runWaveVerifyJudgeCourt(input: {
         }),
       });
     }
-    // ── escalate: worker-authored decision gate → park for a human (通道③). ──
-    if (closure.action === "escalate") {
+    // ── park: decision-gate escalate. ──
+    if (hubNext === "park") {
+      if (closure.action !== "escalate") {
+        throw new Error(
+          `wave verify: hub park without escalate action (${closure.action})`,
+        );
+      }
       return await recordWaveVerifyEscalation({
         phase,
         familyBackend,
@@ -705,9 +786,13 @@ async function runWaveVerifyJudgeCourt(input: {
         synthesizedFailure: false,
       });
     }
-    // ── unusable: bad judge envelope shape (official re-furnace is seat-side SO
-    //    re-ask). Loud verify_failed; never coder-fix bad shape. ──
-    if (closure.action === "unusable") {
+    // ── fail_loud: unusable envelope (seat-side SO re-ask is official). ──
+    if (hubNext === "fail_loud") {
+      if (closure.action !== "unusable") {
+        throw new Error(
+          `${label}: hub fail_loud without unusable action (${closure.action})`,
+        );
+      }
       const reason = `${label} triage judge round ${round}: ${closure.reason}`;
       return await recordWaveVerifyAbort({
         phase,
@@ -726,11 +811,14 @@ async function runWaveVerifyJudgeCourt(input: {
       });
     }
 
-    // ── continue: the judge authored a repair packet → coder-fix seat. ──
-    //    (`pass`/converged skips the fixer: the re-verify below is the sole
-    //    convergence authority, so a judge-converged verdict on a still-red
-    //    re-verify is forced back into another round — AC3.)
-    if (closure.action === "continue") {
+    // ── continue → resume_builder: judge-authored packet → coder-fix, then
+    //    ALWAYS resume judge (ADR 0147). Green alone never exits past the hub. ──
+    if (hubNext === "resume_builder") {
+      if (closure.action !== "continue") {
+        throw new Error(
+          `wave verify: hub resume_builder without continue action (${closure.action})`,
+        );
+      }
       let fixPacketBody: string;
       try {
         fixPacketBody = requireFixPacketBody({
@@ -757,6 +845,29 @@ async function runWaveVerifyJudgeCourt(input: {
           }),
         });
       }
+      // Empty continue must not spin builder (shared gate with CMR / per-slice).
+      if (
+        closure.blockingFindingCount === 0 &&
+        closure.blockingIdentityKeys.length === 0
+      ) {
+        const reason =
+          `${label} judge continue with 0 live findings ` +
+          `(court contract drift; empty continue must not spin coder-fix)`;
+        return await recordWaveVerifyAbort({
+          phase,
+          familyBase,
+          familyBackend,
+          ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
+          reason,
+          stopSummary: stageFailureStopSummary({
+            status: "verify_failed",
+            summary: reason,
+            repairHint:
+              `${label} judge status:continue requires non-empty live identity keys; ` +
+              "do not empty-spin coder-fix",
+          }),
+        });
+      }
       const fixOutcome = await runWaveVerifyFixerRound({
         phase,
         familyBase,
@@ -776,41 +887,90 @@ async function runWaveVerifyJudgeCourt(input: {
           ? { blockingFindingCount: closure.blockingFindingCount }
           : {}),
         ...(familyHeadBefore !== undefined ? { familyHeadBefore } : {}),
+        ...(fixerSessionId !== undefined ? { resumeSessionId: fixerSessionId } : {}),
       });
       if (fixOutcome.terminal !== undefined) return fixOutcome.terminal;
       if (fixOutcome.familyHeadAfter !== undefined) {
         familyHeadBefore = fixOutcome.familyHeadAfter;
       }
+      if (
+        typeof fixOutcome.sessionId === "string" &&
+        fixOutcome.sessionId.length > 0
+      ) {
+        fixerSessionId = fixOutcome.sessionId;
+      }
+      // Observe re-verify for the next judge resume (fact, not exit authority).
+      const reVerifyAfterFix: FamilyVerifyResult =
+        await familyBackend.runFamilyVerify({
+          phase,
+          familyBase,
+          ...(runId !== undefined ? { runId } : {}),
+          ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
+        });
+      lastObserve = reVerifyAfterFix;
+      lastObserveFamilyHead = familyHeadBefore;
+      if (reVerifyAfterFix.ok) {
+        // In-process handoff to the resident judge receive step (ADR 0147).
+        // Crash mid-loop worst case = white-run one verify/court cycle; soul
+        // recovery is fresh judge reading ledger verdicts — no durable debt.
+        failureReason =
+          "wave verify green after fixer beat — resident judge must receive before exit";
+      } else {
+        failureReason =
+          reVerifyAfterFix.errorPackage?.reason ?? "family verify failed";
+      }
+      // ADR 0147: builder beat → resident judge (loop).
+      continue;
     }
 
-    // ── deterministic re-verify: the SOLE convergence authority. GREEN → close;
-    //    RED → green hard-precondition unmet → force another round (loop back to
-    //    the resumed judge with the new failure). ──
-    const reVerify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
-      phase,
-      familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
-    });
-    if (reVerify.ok) {
-      await familyBackend.appendFamilyLedger({
-        status: "worker_dispatched",
-        event: "worker_dispatched",
-        workerStep: WAVE_VERIFY_JUDGE_STEP,
-        reason: `${label} converged after ${round} round(s)`,
-        ...(familyHeadBefore !== undefined
-          ? { familyHeadAfter: familyHeadBefore }
-          : {}),
-      });
-      return {
-        ok: true,
-        ran: true,
-        ...(familyHeadBefore !== undefined
-          ? { familyHeadAfter: familyHeadBefore }
-          : {}),
-      };
+    // ── pass → exit_loop: ADR 0145 green hard-pre. GREEN → close;
+    //    RED → force another judge round (even judge-converged cannot close).
+    //    #1085: reuse last observe when HEAD unchanged (one full-family verify
+    //    per convergence cycle — never double-run after a judge-only resume). ──
+    if (hubNext === "exit_loop") {
+      const headStable =
+        lastObserve !== undefined &&
+        lastObserveFamilyHead === familyHeadBefore;
+      const reVerify: FamilyVerifyResult = headStable
+        ? lastObserve!
+        : await familyBackend.runFamilyVerify({
+            phase,
+            familyBase,
+            ...(runId !== undefined ? { runId } : {}),
+            ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
+          });
+      if (!headStable) {
+        lastObserve = reVerify;
+        lastObserveFamilyHead = familyHeadBefore;
+      }
+      if (reVerify.ok) {
+        await familyBackend.appendFamilyLedger({
+          status: "worker_dispatched",
+          event: "worker_dispatched",
+          workerStep: WAVE_VERIFY_JUDGE_STEP,
+          reason: waveVerifyConvergedReason(label, round),
+          phase,
+          ...(familyHeadBefore !== undefined
+            ? { familyHeadAfter: familyHeadBefore }
+            : {}),
+        });
+        return {
+          ok: true,
+          ran: true,
+          ...(familyHeadBefore !== undefined
+            ? { familyHeadAfter: familyHeadBefore }
+            : {}),
+        };
+      }
+      failureReason = reVerify.errorPackage?.reason ?? "family verify failed";
+      continue;
     }
-    failureReason = reVerify.errorPackage?.reason ?? "family verify failed";
+
+    // Closed ResidentJudgeHubNext — compile-time exhaustiveness (no fallthrough).
+    const _never: never = hubNext;
+    throw new Error(
+      `wave verify triage judge round ${round}: unhandled hub next ${String(_never)}`,
+    );
   }
 }
 
@@ -1118,6 +1278,13 @@ interface IntegratedCmrPassOutcome {
    * see the advanced coderFix seat (advance must not last only one dispatch).
    */
   readonly resolvedRoute?: ResolvedModelRoute;
+  /**
+   * #1080 / ADR 0147 — pure-judge receive of a builder beat soft-accepted the
+   * work without writing `cmr_passed`. Caller must re-open this pass with
+   * panel fan-out (independent outer gate; 收敛仍需 fresh 过目) before the
+   * court may close.
+   */
+  readonly needsFreshOuterGate?: boolean;
   readonly restartFinalBarrier?: {
     readonly familyHeadAfter?: string;
     readonly priorCmrFindingIdentityKeysByPass: Partial<
@@ -2307,6 +2474,14 @@ async function runIntegratedCmrPass(input: {
   readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
   /** #961 — which barrier owns this court (default final). */
   readonly ledgerPhase?: VerifyCmrPhase;
+  /**
+   * #1085 / ADR 0147 — post-builder receive: resume pure judge first without
+   * re-fanning panel legs for THIS open only. Fresh legs remain the independent
+   * outer gate when the pure receive would close (see needsFreshOuterGate);
+   * they are never the immediate next worker after a builder beat.
+   * First open of a pass keeps panels (flag false).
+   */
+  readonly receiveBuilderBeat?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2327,6 +2502,7 @@ async function runIntegratedCmrPass(input: {
     refusedFindingIdentityKeys,
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
+    receiveBuilderBeat = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -2363,19 +2539,28 @@ async function runIntegratedCmrPass(input: {
     familyLedger,
     pass,
   );
-  const resumeJudgeSessionId =
-    familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
-  const spec = cmrWorkerSpec(
-    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
-    pass,
-    resolvedRoute,
-  );
   const cmrPool = billingPoolForFamilyWorker({
     ...(billingPool !== undefined ? { billingPool } : {}),
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
     kind: "cmr",
     cmrPass: pass,
   });
+  const ledgerResumeJudgeSessionId =
+    familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
+  const provisionalSpec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  const cmrJudgeSeatResumeCapable = resumeCapableForSlug(provisionalSpec.model, cmrPool);
+  // Soul law: session lost / seat not resume-capable → fresh judge;
+  // priorJudgeVerdicts still land above for trajectory / session-loss recovery
+  // (same shape as single-slice #925). No fail-loud terminal.
+  const resumeJudgeSessionId = cmrJudgeSeatResumeCapable
+    ? ledgerResumeJudgeSessionId
+    : undefined;
+  const spec = cmrWorkerSpec(
+    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
+    pass,
+    resolvedRoute,
+  );
+  const receivingBuilderBeat = receiveBuilderBeat;
   const dispatchCtx: DispatchContext = {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
@@ -2440,7 +2625,11 @@ async function runIntegratedCmrPass(input: {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
     // #1094: runner dispatches panel legs as first-class workers BEFORE the
     // pure judge court. Judge never spawns nested model CLIs.
-    const frozenLegs = spec.cmrReviewLegs ?? [];
+    // #1085 / #1080 / ADR 0147: after a builder beat, this open skips panel
+    // fan-out so pure judge receives first. Soft-accept of that receive
+    // returns needsFreshOuterGate so the caller re-opens WITH panels before
+    // the court may close (never a permanent latch that starves outer gate).
+    const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     if (
       frozenLegs.length > 0 &&
@@ -2493,8 +2682,18 @@ async function runIntegratedCmrPass(input: {
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
       // legs keep their own registry providers (or none).
       dispatch: (legSpec) => {
-        const { billingPool: _judgePool, ...legDispatchCtx } = dispatchCtx;
+        // #1094 R3 F2: legs must NOT inherit the judge billingPool.
+        // #1080 R3: panel legs are always fresh (cmrPanelLegWorkerSpec session:
+        // "fresh") — strip the pure-court resumeSessionId so a transient leg
+        // failure keeps its full process-root retry budget and is never
+        // misclassified as a resident-judge resume (forbidFreshRetry).
+        const {
+          billingPool: _judgePool,
+          resumeSessionId: _judgeResume,
+          ...legDispatchCtx
+        } = dispatchCtx;
         void _judgePool;
+        void _judgeResume;
         return dispatchOrAbort(
           familyBackend,
           legSpec,
@@ -2767,7 +2966,39 @@ async function runIntegratedCmrPass(input: {
   const skippedLegs =
     frozenLegs.length > 0 ? [...hostSkippedLegs] : cargoSource?.skippedLegs;
 
-  if (closure.action === "pass") {
+  // #1085 / #1080: sole production edge source = shared hub table
+  // (isomorphic with per-slice route.ts → routeResidentJudgeHub and wave
+  // court above). Cargo still narrows on closure.action after hubNext is known.
+  const hubNext = hubNextFromFamilyClosureAction(closure.action, "family_cmr");
+
+  // pass → exit_loop / accepted.
+  if (hubNext === "exit_loop") {
+    // #1080 / ADR 0147 / US#10: pure-judge receive of a builder beat must not
+    // close the court without the independent fresh-panel outer gate. Soft-
+    // accept here (no cmr_passed row) and force the caller to re-open with
+    // panels. Permanent latch + zero outer-gate was the family/1080 defect.
+    if (receivingBuilderBeat) {
+      finalReviewRoundDisposition = "accepted";
+      await familyBackend.appendFamilyLedger({
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: `cmr:${pass}`,
+        reason:
+          `integrated cmr ${pass} resident judge received builder beat; ` +
+          "fresh outer panel gate still required",
+        phase: ledgerPhase,
+        cmrPass: pass,
+        ...(openedJudgeSessionId !== undefined
+          ? { judgeSessionId: openedJudgeSessionId }
+          : {}),
+      });
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+        resolvedRoute: activeRoute,
+        needsFreshOuterGate: true,
+      };
+    }
     await persistFinalReviewRound("accepted", () =>
       recordCmrPassed(familyBackend, {
         phase: ledgerPhase,
@@ -2797,7 +3028,13 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  if (closure.action === "escalate") {
+  // escalate → park.
+  if (hubNext === "park") {
+    if (closure.action !== "escalate") {
+      throw new Error(
+        `integrated cmr ${pass}: hub park without escalate action (${closure.action})`,
+      );
+    }
     const reason = closure.reason;
     const diagnosis = closure.diagnosis;
     const stopSummary = decisionGateParkStopSummary({
@@ -2840,10 +3077,13 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  // #919 M1 / #930 AC: unusable / bad shape is NOT family coder-fix.
-  // Official typed re-furnace = seat-side SO re-ask (RECEIPT_MAX_RETRIES).
-  // Runner never uses fixer/coder-fix as a schema court.
-  if (closure.action === "unusable") {
+  // unusable → fail_loud (#919 M1) — never family coder-fix.
+  if (hubNext === "fail_loud") {
+    if (closure.action !== "unusable") {
+      throw new Error(
+        `integrated cmr ${pass}: hub fail_loud without unusable action (${closure.action})`,
+      );
+    }
     const reason = `integrated cmr ${pass} ${closure.reason}`;
     const stopSummary: StopSummary = stageFailureStopSummary({
       status: "cmr_failed",
@@ -2870,10 +3110,13 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  // #1027 FINAL / ADR 0145: toolchain terminal — judge classified the red as a
-  // toolchain/environment failure, so the runner falls back to verify_failed
-  // (no coder-fix loop, no decision-gate park). Loud terminal, never silent.
-  if (closure.action === "toolchain") {
+  // toolchain (ADR 0145) — verify_failed, zero fixer spin.
+  if (hubNext === "toolchain") {
+    if (closure.action !== "toolchain") {
+      throw new Error(
+        `integrated cmr ${pass}: hub toolchain without toolchain action (${closure.action})`,
+      );
+    }
     const reason = `integrated cmr ${pass} toolchain: ${closure.reason} — ${closure.diagnosis}`;
     const stopSummary: StopSummary = stageFailureStopSummary({
       status: "verify_failed",
@@ -2900,54 +3143,31 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  // continue + live findings → coder-fix (or abort when fix disabled)
-  // #952: terminal-only continue (0 live + suppress/refute flips) is already
-  // folded to closure.action === "pass" by closeFamilyCourtFromJudgeOutput —
-  // isomorphic with single-slice runner (continue + terminals → converged route).
+  // continue → resume_builder + live findings → coder-fix, then ALWAYS
+  // re-open resident judge via restartFinalBarrier (ADR 0147 hub; #1085).
+  // #952: terminal-only continue folds to pass at closeFamilyCourt (upstream).
+  if (hubNext !== "resume_builder") {
+    const _never: never = hubNext;
+    throw new Error(
+      `integrated cmr ${pass}: unhandled hub next ${String(_never)}`,
+    );
+  }
+  if (closure.action !== "continue") {
+    throw new Error(
+      `integrated cmr ${pass}: hub resume_builder without continue action (${closure.action})`,
+    );
+  }
   const blockingFindings = closure.blocking;
   const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
   const blockingFindingCount = closure.blockingFindingCount;
 
-  // #919 M1 / #930 AC: true empty continue (0 live AND 0 terminals) is court
-  // contract drift — never empty-spin family coder-fix. openFindingsForFixer
-  // may yield [] for cargo filter; that does NOT authorize a topology fix loop
-  // with zero live identity keys. Terminal-only never reaches here (pass above).
+  // #919 M1 / #930 AC: true empty continue is court contract drift — never
+  // empty-spin family coder-fix. Terminal-only already folded to pass upstream
+  // (isomorphic with wave empty-continue gate — no dead close-like-pass mirror).
   if (
     blockingFindingCount === 0 &&
     blockingFindingIdentityKeys.length === 0
   ) {
-    // Defense in depth: if a continue still carries terminal flips, close like
-    // pass rather than inventing cmr_failed (mirrors runner M6/#952 gate).
-    if (closure.terminalDispositions.length > 0) {
-      await persistFinalReviewRound("accepted", () =>
-        recordCmrPassed(familyBackend, {
-        phase: ledgerPhase,
-          cmrPass: pass,
-          familyHeadAfter: postWorkerFamilyHead,
-          routeFingerprint,
-          ...(openedJudgeSessionId !== undefined
-            ? { sessionId: openedJudgeSessionId }
-            : {}),
-          // Keep envelope truth queryable; topology already treated as pass.
-          judgeStatus: "continue",
-          ...(judgeDispositionsForLedger !== undefined
-            ? { findingDispositions: judgeDispositionsForLedger }
-            : {}),
-          ...(advanceCoderForLedger !== undefined
-            ? { advanceCoder: advanceCoderForLedger }
-            : {}),
-          stopSummary: familyCmrPassStopSummary({
-            familyHeadAfter: postWorkerFamilyHead,
-            skippedLegs,
-          }),
-        }),
-      );
-      return {
-        result: { ok: true, ran: true },
-        familyHeadAfter: postWorkerFamilyHead,
-        resolvedRoute: activeRoute,
-      };
-    }
     const reason =
       `integrated cmr ${pass} judge continue with 0 live findings ` +
       `(court contract drift; empty continue must not spin coder-fix)`;
@@ -2955,8 +3175,7 @@ async function runIntegratedCmrPass(input: {
       status: "cmr_failed",
       summary: reason,
       repairHint:
-        "family judge status:continue requires non-empty live identity keys " +
-        "or terminal-only dispositions (suppress/refute); " +
+        "family judge status:continue requires non-empty live identity keys; " +
         "re-open the same family judge seat or repair the seat envelope — " +
         "do not empty-spin coder-fix",
     });
@@ -3021,6 +3240,8 @@ async function runIntegratedCmrPass(input: {
     repairHint: "send live findings to coder-fix, then resume the family judge",
   });
 
+  // Soul law: missing sessionId / not resume-capable → still coder-fix;
+  // next open is fresh + priorJudgeVerdicts (no same-session-or-die terminal).
   if (allowCoderFix) {
     await persistFinalReviewRound("accepted", () =>
       recordCmrReviewed(familyBackend, {
@@ -3109,6 +3330,8 @@ async function runIntegratedCmrPass(input: {
         ? { priorCmrFindingIdentityKeysByPass }
         : {}),
     });
+    // #1085 / ADR 0147: builder beat → resident judge only (restartFinalBarrier
+    // re-opens the pure court). Never a builder→reviewer-only exit.
     if (!fixRound.result.ok) {
       return { ...fixRound, resolvedRoute: activeRoute };
     }
@@ -3224,6 +3447,11 @@ async function runCorrectnessCourtLoop(input: {
   let refuseRecordsByPass: Partial<
     Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
   > = {};
+  // #1085 / #1080: post-builder open is pure-judge receive (skip panels).
+  // That flag is a one-shot for the immediate receive step only — when pure
+  // receive soft-accepts (needsFreshOuterGate), clear it so the next open
+  // re-fans panels (ADR 0147 independent outer gate; 收敛仍需 fresh 过目).
+  let receiveBuilderBeat = false;
 
   while (true) {
     const correctness = await runIntegratedCmrPass({
@@ -3241,6 +3469,7 @@ async function runCorrectnessCourtLoop(input: {
       resolvedRoute,
       allowCoderFix: true,
       ledgerPhase,
+      receiveBuilderBeat,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
@@ -3252,6 +3481,8 @@ async function runCorrectnessCourtLoop(input: {
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
     });
+    // Consume one-shot: only the immediate post-builder open skips panels.
+    receiveBuilderBeat = false;
     if (!correctness.result.ok) {
       return {
         result: correctness.result,
@@ -3264,6 +3495,13 @@ async function runCorrectnessCourtLoop(input: {
       resolvedRoute = correctness.resolvedRoute;
     }
     if (correctness.restartFinalBarrier === undefined) {
+      // Pure receive soft-accepted → re-open with panels (outer gate), do not exit.
+      if (correctness.needsFreshOuterGate === true) {
+        if (correctness.familyHeadAfter !== undefined) {
+          correctnessFamilyHeadAfter = correctness.familyHeadAfter;
+        }
+        continue;
+      }
       return {
         result: { ok: true, ran: true },
         familyHeadAfter: correctness.familyHeadAfter,
@@ -3309,6 +3547,8 @@ async function runCorrectnessCourtLoop(input: {
       nextRefuseRecords !== undefined
         ? { correctness: nextRefuseRecords }
         : {};
+    // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
+    receiveBuilderBeat = true;
   }
 }
 
@@ -3560,6 +3800,9 @@ export async function runVerifyCmr(
   // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
   let completenessFamilyHeadAfter = familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
+  // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
+  // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
+  let completenessReceiveBuilderBeat = false;
   for (;;) {
     const completeness = await runIntegratedCmrPass({
       pass: "completeness",
@@ -3577,6 +3820,7 @@ export async function runVerifyCmr(
       priorCmrFindingIdentityKeysByPass: completenessPriorKeysByPass,
       resolvedRoute,
       allowCoderFix: true,
+      receiveBuilderBeat: completenessReceiveBuilderBeat,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
@@ -3588,13 +3832,21 @@ export async function runVerifyCmr(
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
     });
+    // Consume one-shot: only the immediate post-builder open skips panels.
+    completenessReceiveBuilderBeat = false;
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
     if (completeness.resolvedRoute !== undefined) {
       resolvedRoute = completeness.resolvedRoute;
     }
     if (completeness.restartFinalBarrier === undefined) {
-      completenessFamilyHeadAfter = completeness.familyHeadAfter;
+      if (completeness.familyHeadAfter !== undefined) {
+        completenessFamilyHeadAfter = completeness.familyHeadAfter;
+      }
+      // Pure receive soft-accepted → re-open with panels (outer gate).
+      if (completeness.needsFreshOuterGate === true) {
+        continue;
+      }
       break;
     }
     // #1110 P1: mid-court re-verify after completeness fixer — same court glue.
@@ -3631,6 +3883,8 @@ export async function runVerifyCmr(
       nextRefuseRecords !== undefined
         ? { completeness: nextRefuseRecords }
         : {};
+    // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
+    completenessReceiveBuilderBeat = true;
   }
   // Correctness court shares the same loop machine as #961 checkpoint
   // (ledgerPhase final; ship / online-review / landing continue below).

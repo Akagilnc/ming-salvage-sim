@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { ensureRegularFileForBindMount } from "./fsErrors.js";
 import { ensureGitInfoExclude } from "./gitInfoExclude.js";
 import {
+  isJudgeOpenCourtSpec,
   isJudgeSeat,
   materializeLandingFixPacketBody,
   mintJudgeEscalate,
@@ -164,6 +165,14 @@ function writeFixFindingsLandingFile(
       ? ctx.priorJudgeVerdicts
       : undefined;
   const judgeSeat = isJudgeSeat({ id: spec.id });
+  // #1082: plan-phase landings use the same fix-findings file seam so the
+  // runner can dumb-transport plan prose / beat hints without a second channel.
+  const planPhaseLanding =
+    landing?.builderPlanBody !== undefined ||
+    landing?.builderBeat !== undefined ||
+    (spec.id === "S2" &&
+      spec.kind === "coder" &&
+      landing?.fixPacketBody !== undefined);
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
     // #925 / #919 S2: S6 judge seat still needs fix-findings landing for
@@ -172,7 +181,8 @@ function writeFixFindingsLandingFile(
     ctx.escalationAnswer !== undefined ||
     // #925 F1: prior judge verdict rows must reach the worker via the same
     // fix-findings landing seam (session-loss / fresh-after-dead-session).
-    (judgeSeat && priorJudgeVerdicts !== undefined);
+    (judgeSeat && priorJudgeVerdicts !== undefined) ||
+    planPhaseLanding;
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -250,6 +260,13 @@ function writeFixFindingsLandingFile(
         // synthesises a narrative trajectory summary.
         ...(priorJudgeVerdicts !== undefined
           ? { priorJudgeVerdicts }
+          : {}),
+        // #1082 / ADR 0147: opaque plan-phase transport (runner never interprets).
+        ...(landing?.builderPlanBody !== undefined
+          ? { builderPlanBody: landing.builderPlanBody }
+          : {}),
+        ...(landing?.builderBeat !== undefined
+          ? { builderBeat: landing.builderBeat }
           : {}),
       },
       null,
@@ -506,6 +523,24 @@ export async function legacyDispatchWorker(
   }
   const { output, sessionId } = normalizeStepReturn(ret);
   return { kind: "completed", output, sessionId };
+}
+
+/**
+ * #1081: whether open-court birth runs as a real agent dispatch.
+ *
+ * Production (no vitest): always true.
+ * Vitest: off by default so scripted backends keep the pre-#1081 S3-establish
+ * shape. Suites that exercise open-court set
+ * `ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1` (process-env, not a shared
+ * mutable flag — parallel vitest workers must not race a global).
+ */
+export function shouldOpenResidentJudgeCourtAtDispatch(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const underVitest =
+    env.VITEST === "true" || typeof env.VITEST_WORKER_ID === "string";
+  if (!underVitest) return true;
+  return env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT === "1";
 }
 
 /**

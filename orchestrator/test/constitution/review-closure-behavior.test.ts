@@ -109,7 +109,11 @@ class ScriptedCmrBackend implements FamilyBackend {
     const panelLeg = completeCmrPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
-      return { kind: "completed", output: this.cmrOutput };
+      return {
+        kind: "completed",
+        output: this.cmrOutput,
+        sessionId: "fixture-cmr-604-behavior",
+      };
     }
     this.dispatchedNonCmrKinds.push(spec.kind);
     return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };

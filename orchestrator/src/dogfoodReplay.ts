@@ -288,6 +288,7 @@ async function familyClassificationScenario(input: {
     input.finding.action === "wont_fix" || input.finding.action === "rejected";
   const cmrOutput: WorkerResult = {
     kind: "completed",
+    sessionId: `dogfood-cmr-${input.id}`,
     output: isSuppressionOnly
       ? judgeGreenOutput({
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
@@ -659,12 +660,24 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
       ) {
         this.advanceFamilyHead();
       }
+      if (
+        spec.kind === "cmr" &&
+        scripted.kind === "completed" &&
+        scripted.sessionId === undefined &&
+        scripted.output.kind === "judge"
+      ) {
+        return {
+          ...scripted,
+          sessionId: `dogfood-cmr-${ctx.cmrPass ?? "unknown"}`,
+        };
+      }
       return scripted;
     }
     if (spec.kind === "cmr") {
       const priorKeys = ctx.priorCmrFindingIdentityKeys ?? [];
       return {
         kind: "completed",
+        sessionId: `dogfood-cmr-${ctx.cmrPass ?? "unknown"}`,
         output: judgeGreenOutput({          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: priorKeys,
           priorFindingDispositions: priorKeys.map((identityKey) => ({

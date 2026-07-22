@@ -4,6 +4,19 @@
 
 ## [未发布]
 
+## [0.42.0.0] - 2026-07-22
+
+### Added
+- **#1080–#1086 驻庭判官枢纽**：切片开工即开庭（#1081）；coder 施工前走计划相闭环（#1082）；fixer 拍一律经驻庭判官 hub（#1083）；非 continue 判词与保险丝挂 hub（#1084）；三环驻庭判官枢纽（#1085）；builder↔judge 每拍 ledger 与进度广播（#1086）。
+- **#1080 open-court / 续跑硬化**：S1 开庭 escalate 可 resume；pure-judge receive 后外闸 panel legs；`forbidFreshRetry` 家族边；panel legs 在 judge resume 下保留 retry 预算；双字段 executable progress 清 quota park；S1 escalate 回执 stamp `modelSlug`。
+
+### Changed
+- 判官 station / open-court prompt 与 coder/fixer soul 对齐驻庭 hub 与计划相；`verifyCmr` 与 runner 路由收敛到单一 hub 边体。
+- #598 SOE 单测预算抬到 heavy 档 120s（#1102 家族 stopgap）。
+
+### Fixed
+- 删除重复 non-continue 测试税（#1084）；判官 packet L1–L4 删死守卫、单旋转通道（#1086）。
+
 ## [0.41.0.0] - 2026-07-21
 
 ### Added

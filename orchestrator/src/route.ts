@@ -5,12 +5,30 @@
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
- * #925 / ADR 0132: per-slice review/fix convergence is judge-verdict driven:
+ * #925 / ADR 0132 + #1083 / ADR 0147: per-slice review/fix is a **judge hub**:
  *
- *   S0→S1→S2(implement)→S3(judge establish)
+ *   S0→S1→S2(builder beat)→S3(resident judge)
  *     converged → S7(local handoff) → S8(completed)
- *     continue  → S5(fix)→S6(judge resume)→(verdict again)
+ *     continue  → S5(builder beat)→S6(resident judge)→(verdict again)
  *     escalate  → decision-kind park (global stop edge)
+ *
+ * Builder beats (S2 / S5 — plan or construction, no envelope classification)
+ * always dumb-relay to the resident judge. Builder and fresh reviewer never
+ * connect directly; fresh review legs are the judge's post-receive outer gate.
+ *
+ * #1082 / ADR 0147: when `coderPlanPhase` is true, judge continue resumes the
+ * same S2 builder (plan pre-review / construction) instead of S5 — 准/退/索证
+ * live in judge prose, not live-finding rows.
+ *
+ * #1084 / ADR 0147 — non-continue paths on this hub (zero new thresholds):
+ *   - full withdraw (live findings → 0): status:converged **or** terminal-only
+ *     continue (all refute/suppress) → S7; no S5 construction spin
+ *   - partial withdraw: continue with remaining live → S5; prose is cargo only
+ *   - 换棒: optional `advanceCoder` on continue (runner #926; same worktree)
+ *   - 上抛: status:escalate → existing decision-gate park (not a new channel)
+ *   - empty continue (0 live, 0 terminals): not a clean S7; runner M6 fail-loud
+ *   - prose wording never forks edges — only JudgeVerdictStatus does
+ *   - fuses: no blind round cap (ADR 0132); process failures use dispatchRetry
  *
  * S4 mechanical open-count classification is dissolved. A valid decision
  * escalation stays the global stop edge (checked FIRST). Envelope shape never
@@ -20,6 +38,7 @@
 
 import type { SliceStepId, StepOutput } from "./types.js";
 import { judgeStatusFromOutput } from "./judgeStation.js";
+import { routeResidentJudgeHub } from "./residentJudgeHub.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -41,30 +60,85 @@ export interface RouteContext {
    * run yet.
    */
   readonly output?: StepOutput;
+  /**
+   * #1082 — still in coder plan pre-review (no construction beat yet).
+   * When true, judge `continue` resumes S2 (same builder), not S5.
+   */
+  readonly coderPlanPhase?: boolean;
 }
 
 /**
- * S3 / S6 / residual-S4 status → edge table (single copy).
- * Unusable and continue both go to S5 (never silent clean / S7).
+ * Builder beat seats that always dumb-relay to the resident judge hub
+ * (#1083 / ADR 0147). Plan vs construction is not a runner concern.
+ */
+export type BuilderBeatStep = "S2" | "S5";
+
+/**
+ * #1083 / #1085 / ADR 0147 — single seam: every builder beat routes to the
+ * resident judge. No envelope classification (committed / plan-only / refuse
+ * cargo never forks this edge). Fresh reviewer is never the next step from a
+ * builder beat — judge receives first, then may dispatch fresh legs.
+ *
+ * Consumers (audit):
+ * - route() S2 / S5 cases
+ * - family/verifyCmr.ts wave + CMR fixer (topology: always re-open judge)
+ */
+export function routeBuilderBeatToResidentJudge(
+  from: BuilderBeatStep,
+): RouteDecision {
+  // Builder beat → resident judge seats only (S2→S3, S5→S6). Plan vs
+  // construction is not a runner fork; fresh reviewer is never next.
+  if (from === "S2") return { kind: "next", step: "S3" };
+  return { kind: "next", step: "S6" };
+}
+
+/**
+ * S3 / S6 / residual-S4 status → edge table via the shared #1085 hub
+ * ({@link routeResidentJudgeHub}) — #1084 sole non-continue edge seam for
+ * the builder↔judge hub.
+ *
+ * Unusable and continue both go to S5 (never silent clean / S7) — except
+ * #1082 plan phase, where continue resumes S2. Full withdraw collapses to
+ * `converged` inside {@link judgeStatusFromOutput} (terminal-only continue);
+ * escalate is decision-gate park. No prose / no live-count thresholds here.
  *
  * Status collapse itself is {@link judgeStatusFromOutput} in judgeStation
  * (#919 S1 — shared with runner normalize; no parallel predicate here).
+ * Per-slice only yields exit_loop / park / resume_builder; toolchain and
+ * fail_loud are impossible and fail loud if they appear.
+ *
+ * Consumers (audit):
+ * - route() S3 / S6 / residual-S4 cases
  */
 function routeEdgesFromJudgeStatus(
   status: "converged" | "continue" | "escalate" | "unusable",
+  coderPlanPhase?: boolean,
 ): RouteDecision {
-  if (status === "converged") return { kind: "next", step: "S7" };
-  if (status === "continue") return { kind: "next", step: "S5" };
-  if (status === "escalate") return { kind: "handoff", status: "parked" };
-  // Unusable envelope → fixer path (never silent clean / S7).
-  return { kind: "next", step: "S5" };
+  const hub = routeResidentJudgeHub(status, "per_slice");
+  if (hub === "exit_loop") return { kind: "next", step: "S7" };
+  if (hub === "park") return { kind: "handoff", status: "parked" };
+  if (hub === "resume_builder") {
+    // #1082: plan pre-review continue/unusable → same S2 builder (not fixer).
+    if (coderPlanPhase === true) return { kind: "next", step: "S2" };
+    return { kind: "next", step: "S5" };
+  }
+  // toolchain / fail_loud never come from per-slice collapse — do not silently
+  // fold them into the fixer path (family rings terminal them loudly).
+  if (hub === "toolchain" || hub === "fail_loud") {
+    throw new Error(
+      `route: per-slice impossible hub next ${hub} (toolchain/fail_loud are family-only)`,
+    );
+  }
+  const _never: never = hub;
+  throw new Error(`route: unhandled hub next ${String(_never)}`);
 }
 
 /**
  * Decide the next step.
  *
- * #925 edges: S2 → S3 judge; S3/S6 judge verdict → S7 / S5 / escalate park;
- * S5 → S6. The global escalate stop (#251) is still checked FIRST.
+ * #925 / #1083 edges: S2/S5 builder beat → resident judge (S3/S6);
+ * S3/S6 judge verdict → S7 / S5 / escalate park. #1082: plan-phase judge
+ * continue → S2. The global escalate stop (#251) is still checked FIRST.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
@@ -84,10 +158,9 @@ export function route(ctx: RouteContext): RouteDecision {
     case "S1":
       return { kind: "next", step: "S2" };
 
-    case "S2": {
-      // Implementation always hands the scene to the judge (S3 establish).
-      return { kind: "next", step: "S3" };
-    }
+    case "S2":
+      // #1083: builder beat → resident judge hub (no envelope fork).
+      return routeBuilderBeatToResidentJudge("S2");
 
     case "S3":
     case "S6":
@@ -95,13 +168,15 @@ export function route(ctx: RouteContext): RouteDecision {
       // #925: judge verdict tri-state is the sole convergence signal.
       // S4 is dissolved open-count station — residual historical ledgers only;
       // same edge helper as live S3/S6 (no second status→edge table).
-      return routeEdgesFromJudgeStatus(judgeStatusFromOutput(ctx.output));
+      return routeEdgesFromJudgeStatus(
+        judgeStatusFromOutput(ctx.output),
+        ctx.coderPlanPhase,
+      );
     }
 
-    case "S5": {
-      // Fix and fresh re-judge alternate by topology.
-      return { kind: "next", step: "S6" };
-    }
+    case "S5":
+      // #1083: fixer beat → resident judge hub (never direct fresh reviewer).
+      return routeBuilderBeatToResidentJudge("S5");
 
     case "S7":
       return { kind: "handoff", status: "completed" };

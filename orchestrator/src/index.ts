@@ -40,6 +40,7 @@ export {
   configureProgressBroadcast,
   countJudgeDispositions,
   countSeverityFromFindings,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   emitLandingProgress,
@@ -68,6 +69,23 @@ export type {
   ProgressSeverityCounts,
   NotifySpawn,
 } from "./progressBroadcast.js";
+// ── #1086 / ADR 0147 S6 — builder↔judge beat ledger + progress ──────────────
+export {
+  isBuilderBeatStep,
+  isJudgeBeatStep,
+  projectCompletedBeats,
+  projectBeatFromEntry,
+  shouldForcePlanBeatStamp,
+  stampBuilderBeatOnOutput,
+} from "./builderJudgeBeat.js";
+export type {
+  BeatLedgerEntry,
+  BeatLedgerRow,
+  BeatProductStepId,
+  BeatRole,
+  BuilderBeatStepId,
+  JudgeBeatStepId,
+} from "./builderJudgeBeat.js";
 
 // ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
 export {
@@ -186,6 +204,15 @@ export {
 export type { MergeRecordAlignment } from "./autoMerge.js";
 export { runLandingAction } from "./family/landing.js";
 export { reconcileFamilyLedger } from "./family/reconcile.js";
+export {
+  hubNextFromFamilyClosureAction,
+  routeResidentJudgeHub,
+} from "./residentJudgeHub.js";
+export type {
+  ResidentJudgeHubNext,
+  ResidentJudgeRing,
+  ResidentJudgeStatus,
+} from "./residentJudgeHub.js";
 export { runVerifyCmr } from "./family/verifyCmr.js";
 export type {
   VerifyCmrInput,

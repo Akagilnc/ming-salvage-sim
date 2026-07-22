@@ -651,35 +651,16 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(completenessDispatches[1]?.resumeSessionId).toBe("judge-sess-persist");
   });
 
-  it("session loss: fresh judge receives priorJudgeVerdicts from ledger rows", async () => {
-    const backend = new FamilyJudgeBackend({
-      completeness: (round, ctx) => {
-        if (round === 0) {
-          return completedJudge(judgeContinue([FINDING]), "judge-sess-lost");
-        }
-        // Simulate lost session: backend returns a new session id; runner
-        // must have supplied priorJudgeVerdicts on a fresh (no resume) open.
-        expect(ctx.priorJudgeVerdicts?.length ?? 0).toBeGreaterThan(0);
-        expect(ctx.priorJudgeVerdicts?.[0]).toMatchObject({
-          status: "continue",
-        });
-        return completedJudge(judgeConverged(), "judge-sess-new");
-      },
-    });
-    // Force second open without resume by clearing session after first open:
-    // script still gets resume from runner — we instead seed ledger-only path
-    // by using a backend that omits sessionId on first open, then checks priors.
+  it("session loss: continue without sessionId → fresh reopen with priorJudgeVerdicts (soul law)", async () => {
     const noSessionBackend = new FamilyJudgeBackend({
       completeness: (round, ctx) => {
         if (round === 0) {
-          // No sessionId → runner cannot resume; second open is fresh + priors.
+          // No sessionId: next open is fresh + priors (not same-session-or-die).
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
         expect(ctx.resumeSessionId).toBeUndefined();
-        expect(ctx.priorJudgeVerdicts?.some((r) => r.status === "continue")).toBe(
-          true,
-        );
-        return completedJudge(judgeConverged(), "judge-fresh-after-loss");
+        expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        return completedJudge(judgeConverged(), "judge-sess-fresh-after-loss");
       },
     });
     const result = await runVerifyCmr({
@@ -688,7 +669,29 @@ describe("#930 runVerifyCmr family judge courts", () => {
       familyBackend: noSessionBackend,
     });
     expect(result).toEqual({ ok: true, ran: true });
-    void backend;
+    const completenessDispatches = noSessionBackend.dispatches.filter(
+      (d) => d.kind === "cmr" && d.cmrPass === "completeness",
+    );
+    expect(completenessDispatches.length).toBeGreaterThanOrEqual(2);
+    expect(completenessDispatches[0]?.session).toBe("fresh");
+    expect(completenessDispatches[0]?.resumeSessionId).toBeUndefined();
+    expect(completenessDispatches[1]?.session).toBe("fresh");
+    expect(completenessDispatches[1]?.resumeSessionId).toBeUndefined();
+    expect(
+      (completenessDispatches[1]?.priorJudgeVerdicts?.length ?? 0) > 0,
+    ).toBe(true);
+    expect(noSessionBackend.dispatches.some((d) => d.kind === "coder")).toBe(
+      true,
+    );
+    expect(
+      noSessionBackend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          typeof e.reason === "string" &&
+          e.reason.includes("#1081") &&
+          e.reason.includes("no sessionId"),
+      ),
+    ).toBe(false);
   });
 
   it("refuse envelope blind-routes back to family judge (not terminal / not idle)", async () => {

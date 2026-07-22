@@ -94,6 +94,7 @@ describe("review-round persistence immunity", () => {
       // helper-record: fail earlier on HEAD/ledger; residual unusable is not needed.
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -436,6 +437,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       if (ctx.cmrPass === "completeness" && this.completenessReviewRound++ === 0) {
         return {
           kind: "completed",
+          sessionId: "fixture-cmr-fix-loop",
           output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
             reason: "blocking family CMR finding requires coder-fix",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -447,6 +449,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -560,10 +563,21 @@ class CountChannelFixBackend implements FamilyBackend {
     this.landings.push(landing);
     if (spec.kind === "cmr") {
       if (ctx.cmrPass === "completeness" && this.completenessRound++ === 0) {
+        if (
+          this.firstCmrResult.kind === "completed" &&
+          this.firstCmrResult.sessionId === undefined &&
+          this.firstCmrResult.output.kind === "judge"
+        ) {
+          return {
+            ...this.firstCmrResult,
+            sessionId: "fixture-cmr-count-channel",
+          };
+        }
         return this.firstCmrResult;
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -665,6 +679,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
       if (ctx.cmrPass === "completeness" && this.completenessReviewRound++ === 0) {
         return {
           kind: "completed",
+          sessionId: "fixture-cmr-fix-loop",
           output: liveCmrJudgeContinue([this.blockingFinding], {
             reason:
               "reviewer content-labels the blocker as owning-issue-still-red",
@@ -677,6 +692,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -805,6 +821,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
       if (ctx.cmrPass === "correctness" && this.correctnessReviewRound++ === 0) {
         return {
           kind: "completed",
+          sessionId: "fixture-cmr-fix-loop",
           output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
             reason: "correctness pass found a fixable family CMR finding",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -816,6 +833,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -925,6 +943,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
         if (reviewRound === 0) {
           return {
             kind: "completed",
+            sessionId: "fixture-cmr-fix-loop",
             output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
               reason: "first blocking family CMR finding requires coder-fix",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -937,6 +956,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
         if (reviewRound === 1) {
           return {
             kind: "completed",
+            sessionId: "fixture-cmr-fix-loop",
             output: liveCmrJudgeContinue([SECOND_BLOCKING_FAMILY_CMR_FINDING], {
               reason:
                 "fresh full-diff re-review found a new same-module blocker",
@@ -981,6 +1001,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -1079,6 +1100,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
           const closedPriorKeys = EXCESSIVE_CMR_FIX_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
+            sessionId: "fixture-cmr-fix-loop",
             output: liveCmrJudgeContinue([EXCESSIVE_CMR_FIX_FINDINGS[reviewRound]!], {
               reason: `fresh full-diff re-review found blocker ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -1095,6 +1117,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -1233,6 +1256,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
           const closedPriorKeys = DOGFOOD_272_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
+            sessionId: "fixture-cmr-fix-loop",
             output: liveCmrJudgeContinue([DOGFOOD_272_FINDINGS[reviewRound]!], {
               reason: `dogfood #272 fresh re-review still has blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -1249,6 +1273,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -1382,6 +1407,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
           const closedPriorKeys = ESCALATE_NONCONV_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
+            sessionId: "fixture-cmr-fix-loop",
             output: liveCmrJudgeContinue([ESCALATE_NONCONV_FINDINGS[reviewRound]!], {
               reason: `non-converging blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -1410,6 +1436,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
       }
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -1759,6 +1786,7 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
     if (spec.kind === "cmr") {
       return {
         kind: "completed",
+        sessionId: "fixture-cmr-fix-loop",
         output: {
           kind: "judge",
           status: "converged",
@@ -1794,6 +1822,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080 / ADR 0147: after builder beat, pure-judge receive then independent
+    // panel outer gate before cmr_passed (收敛仍需 fresh 过目).
     expect(backend.dispatches).toEqual([
       expect.objectContaining({
         kind: "cmr",
@@ -1814,7 +1844,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "cmr",
         role: "verify",
-        session: "fresh",
+        session: "resume",
+        contextRetention: "clean",
+        promptFile: "integrated_cmr_completeness.md",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      // Outer-gate re-open with panels (pure receive soft-accepted).
+      expect.objectContaining({
+        kind: "cmr",
+        role: "verify",
+        session: "resume",
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
         cmrPass: "completeness",
@@ -1882,6 +1922,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: final pure-receive soft-accept is followed by a panel outer-gate open.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
@@ -1896,6 +1937,14 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [SECOND_BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [
+          BLOCKING_FAMILY_CMR_KEY,
+          SECOND_BLOCKING_FAMILY_CMR_KEY,
+        ],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2029,12 +2078,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       { phase: "final", familyBase: "family/550-base" },
       { phase: "final", familyBase: "family/550-base" },
     ]);
+    // #1080: pure-judge receive after coder-fix, then panel outer gate.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "correctness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2101,9 +2156,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -2183,9 +2244,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -2219,12 +2286,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
 
     expect(result).toEqual({ ok: true, ran: true });
     // HEAD does not authorize an extra fixer dispatch or a runner-authored park.
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2253,12 +2326,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // #1080: pure receive + panel outer gate after builder beat.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2657,6 +2736,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
+        sessionId: "fixture-cmr-suppression-routing",
         output: liveCmrJudgeContinue([suppressed, blocker], {
           reason: "has blocking findings",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -3144,7 +3224,8 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(3);
+    // completeness continue + pure receive + outer gate + correctness = 4
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(4);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({ status: "cmr_fix_committed", cmrPass: "completeness" }),
     );

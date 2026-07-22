@@ -21,6 +21,12 @@ import type { ChildProcess } from "node:child_process";
 
 import { spawnDetached } from "./externalCall.js";
 import type {
+  BeatRole,
+  BuilderBeatStepId,
+  JudgeBeatStepId,
+} from "./builderJudgeBeat.js";
+import type { CoderBeatKind } from "./coderPlanPhase.js";
+import type {
   Finding,
   JudgeFindingDisposition,
   JudgeVerdictStatus,
@@ -145,6 +151,7 @@ export function countSeverityFromFindings(
 export type ProgressEventKind =
   | "stage"
   | "judge"
+  | "beat"
   | "park"
   | "merge"
   | "ship"
@@ -177,6 +184,22 @@ export interface ProgressJudgeEvent extends ProgressEventBase {
   readonly severity?: ProgressSeverityCounts | null;
   /** Path pointer only — never finding body prose. */
   readonly cargoPointer?: string | null;
+}
+
+/**
+ * #1086 / ADR 0147 S6 — one progress line per builder or judge product beat.
+ * Typed surface only (拍别 + 判词终态); never worker prose.
+ */
+export interface ProgressBeatEvent extends ProgressEventBase {
+  readonly kind: "beat";
+  readonly role: BeatRole;
+  readonly step: string;
+  /** 1-based interleaved builder↔judge beat index. */
+  readonly rotation: number;
+  /** Builder only: plan | construct. */
+  readonly beatKind?: CoderBeatKind | null;
+  /** Judge only: tri-state terminal verdict. */
+  readonly verdict?: JudgeVerdictStatus | null;
 }
 
 export interface ProgressParkEvent extends ProgressEventBase {
@@ -219,6 +242,7 @@ export interface ProgressTerminalEvent extends ProgressEventBase {
 export type ProgressEvent =
   | ProgressStageEvent
   | ProgressJudgeEvent
+  | ProgressBeatEvent
   | ProgressParkEvent
   | ProgressMergeEvent
   | ProgressShipEvent
@@ -340,6 +364,21 @@ export function formatProgressLogLine(event: ProgressEvent): string {
         ` step=${event.step}${round} verdict=${event.verdict}` +
         ` dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}` +
         `${sevPart}${ptr}`
+      );
+    }
+    case "beat": {
+      const kindPart =
+        event.beatKind !== undefined && event.beatKind !== null
+          ? ` beatKind=${event.beatKind}`
+          : "";
+      const verdictPart =
+        event.verdict !== undefined && event.verdict !== null
+          ? ` verdict=${event.verdict}`
+          : "";
+      return (
+        `${base} beat${issueTag(event.issue)}${epicTag(event.epic)}` +
+        ` role=${event.role} step=${event.step} rotation=${event.rotation}` +
+        `${kindPart}${verdictPart}`
       );
     }
     case "park": {
@@ -561,6 +600,43 @@ export function emitJudgeProgress(input: {
   // via a follow-up park event when the runner parks; do not double-notify here.
 }
 
+/**
+ * #1086 — emit one beat progress line (builder or judge). Fail-open I/O
+ * (same as other progress kinds); durable ledger write is the fail-loud path.
+ */
+export function emitBeatProgress(input: {
+  readonly ledgerDir?: string;
+  readonly issue?: number | null;
+  readonly epic?: number | null;
+  readonly role: BeatRole;
+  readonly step: BuilderBeatStepId | JudgeBeatStepId | string;
+  readonly rotation: number;
+  readonly beatKind?: CoderBeatKind | null;
+  readonly verdict?: JudgeVerdictStatus | null;
+  readonly log?: (line: string) => void;
+  readonly notifySpawn?: NotifySpawn;
+  readonly now?: () => string;
+}): void {
+  const event: ProgressBeatEvent = {
+    v: PROGRESS_SCHEMA_VERSION,
+    ts: (input.now ?? (() => new Date().toISOString()))(),
+    kind: "beat",
+    epic: resolveEpic(input.epic) ?? null,
+    issue: input.issue ?? null,
+    role: input.role,
+    step: input.step,
+    rotation: input.rotation,
+    beatKind: input.beatKind ?? null,
+    verdict: input.verdict ?? null,
+  };
+  emitProgressEvent({
+    event,
+    ledgerDir: input.ledgerDir,
+    log: input.log,
+    notifySpawn: input.notifySpawn,
+  });
+}
+
 export function emitParkProgress(input: {
   readonly ledgerDir?: string;
   readonly issue?: number | null;
@@ -774,6 +850,13 @@ export interface IssueProgressSnapshot {
   readonly parkSummary: string | null;
   readonly merged: boolean;
   readonly cargoPointer: string | null;
+  /**
+   * #1086 — builder↔judge rotation from the latest beat event only.
+   * Operators locate the loop without reading worker prose.
+   */
+  readonly latestBeatRole: BeatRole | null;
+  readonly latestBeatKind: CoderBeatKind | null;
+  readonly latestRotation: number | null;
 }
 
 export interface FamilyStatusSnapshot {
@@ -838,6 +921,9 @@ export function renderFamilyStatus(input: {
       parked: boolean;
       parkSummary: string | null;
       cargoPointer: string | null;
+      latestBeatRole: BeatRole | null;
+      latestBeatKind: CoderBeatKind | null;
+      latestRotation: number | null;
     }
   >();
 
@@ -854,6 +940,9 @@ export function renderFamilyStatus(input: {
         parked: false,
         parkSummary: null,
         cargoPointer: null,
+        latestBeatRole: null,
+        latestBeatKind: null,
+        latestRotation: null,
       };
       byIssue.set(issue, row);
     }
@@ -893,9 +982,28 @@ export function renderFamilyStatus(input: {
           row.dispositions = event.dispositions;
           row.severity = event.severity ?? null;
           row.cargoPointer = event.cargoPointer ?? null;
+          // Rotation is sole beat-channel truth (#1086 L4) — do not dual-write
+          // latestBeatRole / latestRotation from judge events.
           if (event.verdict === "escalate") {
             row.parked = true;
             row.parkSummary = row.parkSummary ?? "judge escalate";
+          }
+        }
+        break;
+      }
+      case "beat": {
+        if (event.issue !== undefined && event.issue !== null) {
+          const row = ensure(event.issue);
+          row.latestStep = event.step;
+          row.latestBeatRole = event.role;
+          row.latestRotation = event.rotation;
+          if (event.role === "builder") {
+            row.latestBeatKind = event.beatKind ?? null;
+          } else {
+            row.latestBeatKind = null;
+            if (event.verdict !== undefined && event.verdict !== null) {
+              row.latestVerdict = event.verdict;
+            }
           }
         }
         break;
@@ -975,6 +1083,9 @@ export function renderFamilyStatus(input: {
       parkSummary: row.parkSummary,
       merged: mergedFromLedger.has(issue),
       cargoPointer: row.cargoPointer,
+      latestBeatRole: row.latestBeatRole,
+      latestBeatKind: row.latestBeatKind,
+      latestRotation: row.latestRotation,
     }));
 
   return { issues, waves, ships, landings, terminals };
@@ -1001,6 +1112,14 @@ export function renderFamilyStatusFromDir(ledgerDir: string): string {
       `rounds=${issue.judgeRounds}`,
       `verdict=${issue.latestVerdict ?? "—"}`,
     ];
+    // #1086: builder↔judge rotation without reading worker logs.
+    if (issue.latestBeatRole !== null) {
+      const rot =
+        issue.latestRotation !== null ? `@${issue.latestRotation}` : "";
+      const kind =
+        issue.latestBeatKind !== null ? `/${issue.latestBeatKind}` : "";
+      parts.push(`rotation=${issue.latestBeatRole}${kind}${rot}`);
+    }
     // AC 站位: surface latest stage token when the feed has one.
     if (issue.latestStage !== null && issue.latestStage.length > 0) {
       parts.push(`stage=${issue.latestStage}`);

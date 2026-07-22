@@ -21,6 +21,7 @@ import {
   configureProgressBroadcast,
   countJudgeDispositions,
   countSeverityFromFindings,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   emitParkProgress,
@@ -434,6 +435,78 @@ describe("#1007 status renderer from progress feed + ledger", () => {
     });
     expect(structured.issues).toEqual([]);
     expect(renderFamilyStatusFromDir(ledgerDir)).toMatch(/no progress/i);
+  });
+
+  it("#1086 AC3: family-status aggregates beat rotation without worker logs", () => {
+    // Value-night / morning report surface: renderFamilyStatus + FromDir.
+    // Emits real progress API events (not pre-seeded snapshot rows).
+    const ledgerDir = tempLedger();
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "builder",
+      step: "S2",
+      rotation: 1,
+      beatKind: "plan",
+    });
+    let snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "builder",
+      latestBeatKind: "plan",
+      latestRotation: 1,
+    });
+
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "judge",
+      step: "S3",
+      rotation: 2,
+      verdict: "continue",
+    });
+    snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "judge",
+      latestBeatKind: null,
+      latestRotation: 2,
+      latestVerdict: "continue",
+    });
+
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "builder",
+      step: "S2",
+      rotation: 3,
+      beatKind: "construct",
+    });
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "judge",
+      step: "S3",
+      rotation: 4,
+      verdict: "converged",
+    });
+    snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "judge",
+      latestRotation: 4,
+      latestVerdict: "converged",
+    });
+
+    const text = renderFamilyStatusFromDir(ledgerDir);
+    expect(text).toMatch(/rotation=judge@4/);
   });
 
   it("#1017 R4: merge events without numeric issue do not poison snapshot", () => {

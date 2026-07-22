@@ -264,10 +264,20 @@ describe("#955 resumeFor session identity gate", () => {
   });
 
   it("identity match but resume-incapable seat → fresh (capability gate)", async () => {
-    // Seat matches session model (terra via normal route) but capability forced false.
+    // Seat matches session model (terra via normal route) but capability forced
+    // false for the coder slug only — leave verify/judge seat registry-true so
+    // this case stays a coder resume gate (judge establish fail-loud is covered
+    // in persist-seat-resume-capability-955).
     const backend = new ResumeIdentityBackend(parkedEscalationLedger("gpt-5.6-terra"));
     const mod = await import("../../src/modelRegistry.js");
-    const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
+    const spy = vi
+      .spyOn(mod, "resumeCapableForSlug")
+      .mockImplementation((slug: string) => {
+        if (slug === "gpt-5.6-terra") return false;
+        if (slug === "gpt-5.6-sol") return true;
+        if (slug === "grok-4.5") return true;
+        return false;
+      });
     try {
       const result = await runOrchestrator({ issueNumber: 95512, backend });
       expect(result.status).toBe("completed");

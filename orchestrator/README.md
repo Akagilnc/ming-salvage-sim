@@ -8,6 +8,17 @@ correctness, and cross-model review legs), verify/fix, family ship, and cleanup.
 The S0–S8 slice runner remains internal child machinery, not a second public
 entry or terminal-delivery topology.
 
+**Resident judge hub (ADR 0147 / #1081–#1086):** each child slice opens a
+verify-seat court at S1 (`judge_open_court`). Every builder beat — coder plan
+or construct (#1082), and every fixer beat (#1083) — dumb-relays back to that
+same judge session (S3/S6 resume; `forbidFreshRetry`). Plan-phase `continue`
+resumes S2 until a construct beat lands; `converged` dismisses the court;
+`escalate` parks for a human answer then resumes in place. Fresh outer-gate
+panel legs still run after pure-judge receive when the topology requires them.
+Operator truth for the child loop lives in the per-issue step ledger
+(`court_opened` / `court_dismissed`, plan|construct beat tags, progress
+`beat` events).
+
 This is the current legacy runtime. #863 tracks its replacement by one
 Canonical Delivery Flow; #896 replaces family-of-one normalization with a true
 standalone scene. Read live #869 for the exact target delivery order; executable
@@ -333,7 +344,7 @@ a roster id or registry data row.
 
 Presets (factory content of `config/route-presets.json`):
 
-| preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/landing | cmrReview legs |
+| preset | coder/coderFix | verify (judge; S1 open court + S3/S6 resume + verify) + cmr gates | ship/merger/fixer/cleanup/landing | cmrReview legs |
 | --- | --- | --- | --- | --- |
 | `normal` | gpt-5.6-terra | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
 | `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | sonnet | opus + agy + codex sol |
