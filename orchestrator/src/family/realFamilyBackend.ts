@@ -118,7 +118,11 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { findingIdentityKey } from "../findings.js";
-import { runExclusive } from "../gitMutex.js";
+import {
+  isGitMutexHeldInProcess,
+  runExclusive,
+  runExclusiveSync,
+} from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
@@ -732,6 +736,22 @@ export class RealFamilyBackend implements FamilyBackend {
 
   // ─────────────────────────── merge ───────────────────────────
 
+  /**
+   * #1103 H2 / #1105 R4: `git checkout` on a shared clone mutates HEAD / index
+   * under the common `.git`. When already inside {@link runExclusive}, the file
+   * lock is held — do not nest {@link runExclusiveSync} (fail-fast on in-process
+   * overlap). Otherwise take the sync lock (cross-process wait still allowed).
+   */
+  private checkoutSharedRepo(branch: string, repo: string = this.opts.workingRepo): void {
+    if (isGitMutexHeldInProcess(repo)) {
+      this.sh("git", ["checkout", branch], repo);
+      return;
+    }
+    runExclusiveSync(repo, () => {
+      this.sh("git", ["checkout", branch], repo);
+    });
+  }
+
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
     // #291 B7: serialise this git-MUTATING merge under the SAME per-clone mutex the
     // single-slice prepareWorktree uses (keyed on the dedicated clone). The spine
@@ -748,7 +768,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const repo = this.opts.workingRepo;
     // Pin the SHAs BEFORE the merge: the family base HEAD before, and the child
     // branch HEAD being merged in (the ancestor reconcile branch ② confirms).
-    this.sh("git", ["checkout", this.opts.familyBase], repo);
+    this.checkoutSharedRepo(this.opts.familyBase, repo);
     const familyHeadBefore = this.sh("git", ["rev-parse", "HEAD"], repo);
     const childHead = this.sh("git", ["rev-parse", child.childBranch], repo);
     const msg = `Merge child #${child.childIssue} (${child.childBranch}) into ${this.opts.familyBase}`;
@@ -1215,7 +1235,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // + tests; "final" runs the FULL suite (vitest run is already the full suite
     // here — wave can scope narrower in a richer config, but the family base must
     // be GREEN end-to-end before the integrated cmr / PR either way).
-    this.sh("git", ["checkout", request.familyBase], repo);
+    this.checkoutSharedRepo(request.familyBase, repo);
     try {
       await this.runVerifyCommands(request);
     } catch (err) {
@@ -1710,7 +1730,7 @@ export class RealFamilyBackend implements FamilyBackend {
         escalation: runnerSynthesizedFailureEscalation({ reason, diagnosis }),
       };
     }
-    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    this.checkoutSharedRepo(ctx.familyBase);
     if (ctx.waveVerifyFailure === undefined) {
       this.writeCmrFocusFile(ctx);
     }
@@ -2071,7 +2091,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
       // route-selected top-level agent over THIS checked-out base.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
       // FOCUS into the worker via a git-ignored focus file the prompt reads — the
       // skill can't reliably scope the family diff on its own (a stale local base
@@ -2278,7 +2298,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
@@ -2601,7 +2621,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       // verify/fixer need the bot-evidence landing; landing only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
@@ -3261,7 +3281,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
       // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
       // the repo default branch and misses a configured non-main target. Written

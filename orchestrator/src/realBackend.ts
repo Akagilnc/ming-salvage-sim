@@ -97,6 +97,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
+import { healBeforeWorktreeCut } from "./gitWorktreePreflight.js";
 import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
@@ -2635,6 +2636,23 @@ export class RealBackend implements Backend {
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
     // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
     const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
+    // #1103 H1: under the per-clone mutex, heal dir↔metadata wreckage + stale
+    // index.lock before Sandcastle createWorktree (prune alone is not enough
+    // when a timed-out cut left a directory with no worktree admin entry).
+    // #1105 R6 F1: quarantine under durable clone-root ledger (survives
+    // `.sandcastle/` wipe); clone-local default is last-resort only.
+    healBeforeWorktreeCut(
+      this.workingRepo,
+      branch,
+      (args) => this.sh("git", [...args], this.workingRepo),
+      {
+        quarantineBaseDir: join(
+          this.workingRepo,
+          `.ledger-${issueNumber}`,
+          "quarantine-orphans",
+        ),
+      },
+    );
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>

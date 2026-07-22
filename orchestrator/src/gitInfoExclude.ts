@@ -13,14 +13,15 @@
  */
 
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { shWithClock } from "./externalCall.js";
+import { runExclusiveSync } from "./gitMutex.js";
 
 /**
  * Directory trees the runner writes inside the dedicated iso clone:
@@ -59,15 +60,22 @@ export function appendGitInfoExclude(
   repoPath: string,
   pattern: string,
 ): void {
-  const abs = resolveGitInfoExcludePath(repoPath);
-  mkdirSync(dirname(abs), { recursive: true });
-  const existing = existsSync(abs) ? readFileSync(abs, "utf8") : "";
-  if (existing.split(/\r?\n/).includes(pattern)) return;
-  appendFileSync(
-    abs,
-    (existing.endsWith("\n") || existing === "" ? "" : "\n") + pattern + "\n",
-    "utf8",
-  );
+  // #1103 H3: shared `.git/info/exclude` is a read-modify-write on the clone's
+  // common dir — take the same cross-process gitMutex as other shared-.git writers.
+  runExclusiveSync(repoPath, () => {
+    const abs = resolveGitInfoExcludePath(repoPath);
+    mkdirSync(dirname(abs), { recursive: true });
+    const existing = existsSync(abs) ? readFileSync(abs, "utf8") : "";
+    if (existing.split(/\r?\n/).includes(pattern)) return;
+    const next =
+      existing +
+      (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+      pattern +
+      "\n";
+    // Full rewrite under the lock (not unlocked append) so concurrent writers
+    // cannot clobber each other's newly-added patterns.
+    writeFileSync(abs, next, "utf8");
+  });
 }
 
 /**
