@@ -1066,4 +1066,169 @@ describe("#1117/#1118 family court resume panel redispatch gate", () => {
     // Control unit: valid transports → no reburn (ensureFamilyCmrPanelEvidence).
     void priorTransports;
   });
+
+  it("process re-entry after park (escalationAnswer rerun jury) re-dispatches panels before judge", async () => {
+    // Models production R2–R4: prior cmr_reviewed escalate with sessionId, empty
+    // landing, human answer "rerun jury" → outer runVerifyCmr re-entry must fan
+    // out panel legs (not reopen pure court on silent empty landing).
+    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../../src/family/landing.js"
+    );
+    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
+      "../../helpers/cmr-panel-leg-dispatch.js"
+    );
+    const { skeletonReviewLoopWorkerResult } = await import(
+      "../../../src/reviewLoopOutcome.js"
+    );
+
+    const panelDispatchCounts: string[] = [];
+    const judgeLandings: Array<WorkerLandingPayload | undefined> = [];
+    const familyHead = "head-parked-no-transports";
+
+    const backend = {
+      ledger: [
+        {
+          status: "cmr_reviewed" as const,
+          event: "cmr_reviewed" as const,
+          phase: "final" as const,
+          cmrPass: "completeness" as const,
+          reason:
+            "fresh completeness jury transports are missing — no panelLegTransports",
+          familyHeadAfter: familyHead,
+          blockingFindingIdentityKeys: [] as string[],
+          sessionId: "judge-session-completeness-parked",
+          judgeStatus: "escalate" as const,
+          stopSummary: {
+            reason: "decision_gate_park" as const,
+            summary:
+              "fresh completeness jury transports are missing — no panelLegTransports",
+            repairHint:
+              "answer the family judge decision gate, then resume the family court in place",
+          },
+        },
+      ] as FamilyLedgerEntry[],
+      escalations: [] as FamilyEscalation[],
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead };
+      },
+      async resolveMergeConflict() {
+        throw new Error("unused");
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        this.ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return this.ledger;
+      },
+      async readFamilyHead() {
+        return familyHead;
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        // Outer resume must not thread judge resumeSessionId into panel legs.
+        if (isCmrPanelLegWorker(spec)) {
+          expect(ctx.resumeSessionId).toBeUndefined();
+          panelDispatchCounts.push(`${ctx.cmrPass ?? "?"}:${spec.model}`);
+          return (
+            completeCmrPanelLegWorker(spec) ?? {
+              kind: "failed",
+              reason: "panel fixture missing",
+            }
+          );
+        }
+        if (spec.kind === "cmr") {
+          judgeLandings.push(landing);
+          // Judge resume may carry ledger session; landing must still have
+          // fresh transports from this re-entry fan-out.
+          expect(landing?.panelLegTransports?.length).toBeGreaterThan(0);
+          expect(ctx.panelLegTransports?.length).toBeGreaterThan(0);
+          if (ctx.cmrPass === "completeness") {
+            expect(ctx.resumeSessionId).toBe(
+              "judge-session-completeness-parked",
+            );
+          }
+          return {
+            kind: "completed",
+            sessionId:
+              ctx.cmrPass === "completeness"
+                ? "judge-session-completeness-parked"
+                : "judge-session-correctness-1",
+            output: {
+              kind: "judge",
+              status: "converged",
+              successfulLegs: ["gpt-5.6-sol", "grok-4.5"],
+              evidencePaths: ["cmr/review-summary.json"],
+            },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase!,
+              pr: "https://github.com/test/repo/pull/1117",
+              prHead: familyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      },
+      async recordAborted() {},
+      async escalateFamily(esc: FamilyEscalation) {
+        this.escalations.push(esc);
+      },
+    };
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1117-process-resume",
+      familyBackend: backend,
+      familyHeadAfter: familyHead,
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "rerun jury — re-dispatch fresh completeness panel legs",
+        source: "human",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    // Completeness re-open after park must fan out (not zero panel dispatches).
+    expect(
+      panelDispatchCounts.some((s) => s.startsWith("completeness:")),
+    ).toBe(true);
+    expect(judgeLandings.length).toBeGreaterThan(0);
+    for (const landing of judgeLandings) {
+      expect(landing?.panelLegTransports?.length).toBeGreaterThan(0);
+    }
+    // Human answer must not park again for missing transports.
+    expect(
+      backend.escalations.some((e) =>
+        /transports are missing|zero successful panel legs/i.test(
+          `${e.reason} ${e.diagnosis}`,
+        ),
+      ),
+    ).toBe(false);
+  });
 });
