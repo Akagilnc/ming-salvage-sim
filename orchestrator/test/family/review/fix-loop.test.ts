@@ -35,7 +35,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
-import { judgeContinue, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
+import { completedJudge, judgeContinue, judgeToolchain, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
 import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
@@ -790,6 +790,18 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
     });
 
     if (spec.kind === "cmr") {
+      // #1110: mid-court red enters the shared verify triage court. This backend
+      // scripts a true-toolchain terminal so post-fix verify red still aborts
+      // before correctness re-review (no hard-die bypass, no accidental
+      // "converged" on the verify judge seat).
+      if (spec.promptFile === "wave_verify_judge.md") {
+        return completedJudge(
+          judgeToolchain(
+            "vitest red after correctness fix",
+            "post-fix full verify classified as toolchain",
+          ),
+        );
+      }
       if (ctx.cmrPass === "correctness" && this.correctnessReviewRound++ === 0) {
         return {
           kind: "completed",
@@ -2034,7 +2046,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ]);
   });
 
-  it("aborts before correctness re-review when the post-fix full verify is red", async () => {
+  it("aborts before correctness re-review when mid-court post-fix verify is toolchain-red (#1110)", async () => {
     const backend = new CorrectnessReviewFixRestartsBackend([
       { ok: true },
       { ok: false, errorPackage: { reason: "vitest red after correctness fix" } },
@@ -2062,13 +2074,19 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({
+        kind: "cmr",
+        promptFile: "wave_verify_judge.md",
+      }),
     ]);
     expect(backend.aborted).toEqual([
       expect.objectContaining({
         phase: "final",
         familyBase: "family/550-base",
         familyHeadAfter: "head-after-correctness-coder-fix",
-        errorPackage: { reason: "vitest red after correctness fix" },
+        errorPackage: {
+          reason: expect.stringContaining("final verify toolchain"),
+        },
       }),
     ]);
   });
