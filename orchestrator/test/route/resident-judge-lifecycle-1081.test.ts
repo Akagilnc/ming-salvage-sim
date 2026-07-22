@@ -495,6 +495,12 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         kind: "judge",
         status: "escalate",
       });
+      // #1080: creator identity for open-court resume gate (verify seat = normal route).
+      expect(s1?.modelSlug).toBe("gpt-5.6-sol");
+      const s1Disk = backend.ledgerWrites.find(
+        (e) => e.step === "S1" && e.output?.kind === "judge",
+      );
+      expect(s1Disk?.modelSlug).toBe("gpt-5.6-sol");
     });
   });
 
@@ -512,6 +518,8 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         {
           step: "S1",
           sessionId: COURT,
+          // Matching verify seat (normal route) — identity gate admits resume.
+          modelSlug: "gpt-5.6-sol",
           output: judgeEscalate(
             "slice authority fork",
             "owner must choose between AC and ADR before construction",
@@ -571,6 +579,93 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         answer: "proceed under ADR 0147 as sole authority",
       });
       // Court opened; S2 ran — not stuck re-parking on the original escalate.
+      expect(result.stepLedger.some((e) => e.event === "court_opened")).toBe(
+        true,
+      );
+      expect(backend.specs.some((s) => s.id === "S2")).toBe(true);
+    });
+  });
+
+  it("open-court escalate resume: model mismatch → fresh open + answer delivered (negative)", async () => {
+    // #1080: S1 escalate rows must carry modelSlug so the identity gate can
+    // refuse a cross-model resume (mirror #955 S2/S5 mismatch coverage).
+    await runReal(async () => {
+      const COURT = OPEN_COURT_SESSION;
+      const priorLedger: PersistentLedgerEntry[] = [
+        {
+          step: "S0",
+          sessionId: "run-uuid",
+          prompt_hash: "h0",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:00.000Z",
+        },
+        {
+          step: "S1",
+          sessionId: COURT,
+          // Parked under a different resume-capable model than normal verify.
+          modelSlug: "grok-4.5",
+          output: judgeEscalate(
+            "slice authority fork",
+            "owner must choose between AC and ADR before construction",
+          ),
+          prompt_hash: "h1",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:01.000Z",
+        },
+        {
+          step: "S8",
+          sessionId: "run-uuid",
+          prompt_hash: "h8",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:02.000Z",
+          handoffStatus: "parked",
+          escalationKind: "decision",
+        },
+        {
+          step: "S1",
+          event: "escalation_answered",
+          forStep: "S1",
+          answer: "proceed under ADR 0147 as sole authority",
+          source: "human",
+          sessionId: "run-uuid",
+          prompt_hash: "ha",
+          branchHEAD: "deadbeef",
+          ts: "2026-07-21T00:00:03.000Z",
+        },
+      ];
+      const FRESH_COURT = "sess-open-court-fresh-after-mismatch";
+      const backend = new LifecycleBackend(
+        [completedJudge(judgeConverged(), FRESH_COURT)],
+        {
+          kind: "completed",
+          output: judgeConverged(),
+          sessionId: FRESH_COURT,
+        },
+        {
+          resumeState: {
+            worktree: WORKTREE,
+            stateDir: "/resident/worktrees/.ledger-1081-esc-mismatch",
+            ledger: priorLedger,
+          },
+        },
+      );
+      const result = await runOrchestrator({ issueNumber: 10818, backend });
+      expect(result.status).toBe("completed");
+
+      const openSpec = backend.specs.find((s) => isJudgeOpenCourtSpec(s));
+      expect(openSpec).toBeDefined();
+      // Seat is normal-route verify (gpt-5.6-sol); parked session was grok —
+      // must not resume the foreign session.
+      expect(openSpec!.model).toBe("gpt-5.6-sol");
+      expect(openSpec!.session).toBe("fresh");
+      const openCtx = backend.ctxs[backend.specs.indexOf(openSpec!)];
+      expect(openCtx?.resumeSessionId).toBeUndefined();
+      // Answer still reaches the worker — only session continuity is dropped.
+      expect(openCtx?.escalationAnswer).toMatchObject({
+        event: "escalation_answered",
+        forStep: "S1",
+        answer: "proceed under ADR 0147 as sole authority",
+      });
       expect(result.stepLedger.some((e) => e.event === "court_opened")).toBe(
         true,
       );

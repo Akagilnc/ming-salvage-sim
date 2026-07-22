@@ -1321,6 +1321,21 @@ function isWorkerStep(s: unknown): s is WorkerStepId {
   return s === "S2" || s === "S3" || s === "S5" || s === "S6";
 }
 
+/**
+ * #955 / #1080: seat model recorded on ledger rows for resume identity.
+ * Worker seats use their StepSpec; S1 open-court runs the verify seat
+ * (same model binding as S3). Without this, S1 escalate parks never carry
+ * `modelSlug` and the open-court resume identity gate is dead.
+ */
+function modelSlugForLedgerStep(
+  s: SliceStepId,
+  specs: Readonly<Record<WorkerStepId, StepSpec>>,
+): string | undefined {
+  if (isWorkerStep(s)) return specs[s].model;
+  if (s === "S1") return specs.S3.model;
+  return undefined;
+}
+
 export function stepSpecsForRoute(
   route: Pick<ResolvedModelRoute, "slots">,
 ): Readonly<Record<WorkerStepId, StepSpec>> {
@@ -2397,8 +2412,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
-    // #955: record seat model on agent steps so resume identity is ledger truth.
-    const stepModelSlug = isWorkerStep(s) ? stepSpecs[s].model : undefined;
+    // #955 / #1080: record seat model on agent steps (incl. S1 open-court)
+    // so resume identity is ledger truth.
+    const stepModelSlug = modelSlugForLedgerStep(s, stepSpecs);
     const entry = buildPersistentEntry({
       step: s,
       output,
@@ -2694,15 +2710,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
     );
     if (failedStep !== "S8") {
-      // #955 r7: escalated agent rows must carry modelSlug (creator identity)
-      // for human-answer resume — same source as main-path emitLedger /
-      // in-memory ledger push (isWorkerStep → seat model). Without it, r5's
+      // #955 r7 / #1080: escalated agent rows must carry modelSlug (creator
+      // identity) for human-answer resume — same source as main-path emitLedger
+      // / in-memory ledger push (modelSlugForLedgerStep). Without it, r5's
       // identity gate falls back to the current seat and can false-match after
-      // Coder-Rec seat swaps. persistBestEffort → emitLedger already stamps
-      // modelSlug for worker steps; in-memory RunResult.stepLedger must match.
-      const escalatedModelSlug = isWorkerStep(failedStep)
-        ? stepSpecs[failedStep].model
-        : undefined;
+      // Coder-Rec seat swaps; S1 open-court escalate was similarly unstamped.
+      // persistBestEffort → emitLedger stamps the same helper; in-memory
+      // RunResult.stepLedger must match.
+      const escalatedModelSlug = modelSlugForLedgerStep(failedStep, stepSpecs);
       ledger.push({
         step: failedStep,
         ...(output !== undefined ? { output } : {}),
@@ -4669,7 +4684,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
     // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
     // (zero readers; dual-write already gone). #926 owns any roster consumption.
-    // #955: in-memory parity with emitLedger modelSlug (resume identity).
+    // #955 / #1080: in-memory parity with emitLedger modelSlug (resume identity),
+    // including S1 open-court escalate rows.
     //
     // #1081 / ADR 0147: fold court_dismissed into the SAME durable write as the
     // product-converge judge step (no two-write crash window that leaves a
@@ -4697,9 +4713,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       if (lastOutput?.kind === "coder") lastOutput = durableOutput;
       output = durableOutput;
     }
-    const inMemoryModelSlug = isWorkerStep(step)
-      ? stepSpecs[step].model
-      : undefined;
+    const inMemoryModelSlug = modelSlugForLedgerStep(step, stepSpecs);
     const dismissCourtOnThisWrite =
       isJudgeSeat({ step }) &&
       output !== undefined &&
