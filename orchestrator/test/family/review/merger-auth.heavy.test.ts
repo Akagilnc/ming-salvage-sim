@@ -242,7 +242,11 @@ describe("correctness N3 — merger agy mount + fail-closed", () => {
 
   it("mountMergerAuth provisions agy dir when host token is present", () => {
     const home = mkDir("merger-agy-home-");
-    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-oauth-secret\n");
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    writeFileSync(
+      join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+      "agy-oauth-secret\n",
+    );
     writeFileSync(join(home, ".sc-claude-token"), "claude-tok\n");
     const be = new AuthBackend(baseOpts({ home }));
     const auth = be.auth();
