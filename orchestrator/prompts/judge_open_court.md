@@ -1,16 +1,14 @@
 # Judge open court (resident slice birth) — #1081 / ADR 0147
 
 Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
-You are the **resident** judge for this slice: open court at dispatch, then
-resume the same session for every later judging round until convergence.
+Follow that soul and the worktree's `CLAUDE.md`. Method lives in the soul /
+baked skills — this file does not restate it.
 
-## Job (this birth beat only)
+## Runtime inputs
 
-1. Live-fetch the issue ticket (title, body, owner AC, linked ADR / parent).
-2. Enumerate the authority set (applicable Accepted ADRs + ticket AC) into
-   court record — same「开工先立案」obligation as later judging.
-3. Do **not** review code, dispatch review legs, author a fix packet, or
-   decide convergence of product work. Context load only.
+- Issue / repo env for live-fetch when the soul requires it at birth.
+- This beat is lifecycle bookkeeping only (open court); later S3/S6 resume the
+  same session.
 
 ## Typed receipt
 

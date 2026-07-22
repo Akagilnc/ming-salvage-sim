@@ -349,6 +349,29 @@ async function runFamilyVerifyOrAbort(input: {
 // (与 CMR 庭同构,不另立法: reuse worker_dispatched / aborted vocabulary).
 const WAVE_VERIFY_JUDGE_STEP = "wave-verify-judge";
 const WAVE_VERIFY_FIX_STEP = "wave-verify-fix";
+/** Durable handoff reason after post-fixer green observe (#1111 / ADR 0147). */
+const WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON =
+  "wave verify green after fixer beat — resident judge must receive before exit";
+
+/**
+ * Crash-resume: trailing wave-verify worker_dispatched is a fixer beat with no
+ * subsequent judge dispatch → pending resident-judge receive (same
+ * worker_dispatched vocabulary; no parallel event invent).
+ */
+function pendingWaveJudgeReceiveFromFamilyLedger(
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly workerStep?: string;
+  }>,
+): boolean {
+  for (let index = ledger.length - 1; index >= 0; index--) {
+    const entry = ledger[index]!;
+    if (entry.event !== "worker_dispatched") continue;
+    if (entry.workerStep === WAVE_VERIFY_JUDGE_STEP) return false;
+    if (entry.workerStep === WAVE_VERIFY_FIX_STEP) return true;
+  }
+  return false;
+}
 
 /**
  * #1027 S2 — record one wave-verify barrier abort (in-memory `recordAborted` +
@@ -897,9 +920,22 @@ async function runWaveVerifyJudgeCourt(input: {
         });
       lastObserve = reVerifyAfterFix;
       lastObserveFamilyHead = familyHeadBefore;
-      failureReason = reVerifyAfterFix.ok
-        ? "wave verify green after fixer beat — resident judge must receive before exit"
-        : (reVerifyAfterFix.errorPackage?.reason ?? "family verify failed");
+      if (reVerifyAfterFix.ok) {
+        // Persist before continue — process death must not skip the receive.
+        failureReason = WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON;
+        await familyBackend.appendFamilyLedger({
+          status: "worker_dispatched",
+          event: "worker_dispatched",
+          workerStep: WAVE_VERIFY_FIX_STEP,
+          reason: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
+          ...(familyHeadBefore !== undefined
+            ? { familyHeadAfter: familyHeadBefore }
+            : {}),
+        });
+      } else {
+        failureReason =
+          reVerifyAfterFix.errorPackage?.reason ?? "family verify failed";
+      }
       // ADR 0147: builder beat → resident judge (loop).
       continue;
     }
@@ -3554,7 +3590,24 @@ export async function runVerifyCmr(
       ...(runId !== undefined ? { runId } : {}),
       ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
     });
-    if (waveVerify.ok) return { ok: true, ran: true };
+    if (waveVerify.ok) {
+      // Green alone never skips a durable post-fixer judge receive (#1111).
+      const pendingReceive = pendingWaveJudgeReceiveFromFamilyLedger(
+        await familyBackend.readFamilyLedger(),
+      );
+      if (!pendingReceive) return { ok: true, ran: true };
+      return await runWaveVerifyJudgeCourt({
+        familyBase,
+        familyBackend,
+        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+        ...(runId !== undefined ? { runId } : {}),
+        ...(familyIssue !== undefined ? { familyIssue } : {}),
+        ...(modelRoute !== undefined ? { modelRoute } : {}),
+        ...scopedPoolFields,
+        ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+        initialFailure: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
+      });
+    }
     return await runWaveVerifyJudgeCourt({
       familyBase,
       familyBackend,

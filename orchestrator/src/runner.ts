@@ -3428,9 +3428,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ) {
           const openCourtSmoke = await ensureRouteSmoke();
           if (openCourtSmoke !== undefined) return openCourtSmoke;
-          const openModel = stepSpecs.S3.model;
+          let openModel = stepSpecs.S3.model;
           const openPool = relayBillingPoolForDispatch("S3");
-          const openResumeCapable = resumeCapableForSlug(openModel, openPool);
+          let openResumeCapable = resumeCapableForSlug(openModel, openPool);
           // Resume after open-court escalate park: re-enter the same judge
           // session with the human answer (mirror S2/S3/S5/S6 resumeFor +
           // escalationAnswerForStep). Never mint a silent orphan fresh court
@@ -3467,61 +3467,234 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
           const openSessionMode =
             typeof openResumeSessionId === "string" ? "resume" : "fresh";
-          const openHost = stepSpecToWorkerSpec(
-            stepSpecs.S3,
-            openSessionMode,
-            openPool,
-          ).host;
-          const openSpec = {
-            id: "S1" as const,
-            kind: "verify" as const,
-            role: "verify" as const,
-            host: openHost,
-            session: openSessionMode as "fresh" | "resume",
-            contextRetention: "clean" as const,
-            promptFile: JUDGE_OPEN_COURT_PROMPT_FILE,
-            maxIter: 1 as const,
-            model: openModel,
-            soul: "verify" as const,
-            toolchain: stepSpecs.S3.toolchain,
-          };
           let openResult: Awaited<
             ReturnType<typeof dispatchWorkerWithMonitor>
           >["result"];
-          try {
-            const dispatched = await dispatchWorkerWithMonitor(
-              backend,
-              openSpec,
-              {
-                runId,
-                worktree,
-                stateDir,
-                modelRoute,
-                ...(openPool !== undefined ? { billingPool: openPool } : {}),
-                ...(typeof openResumeSessionId === "string"
-                  ? { resumeSessionId: openResumeSessionId }
-                  : {}),
-                ...(openEscalationAnswer !== undefined
-                  ? { escalationAnswer: openEscalationAnswer }
-                  : {}),
-              },
-            );
-            openResult = dispatched.result;
-          } catch (err) {
-            return await errorTermination(
-              "S1",
-              err instanceof Error
-                ? err
-                : new Error(`open court dispatch threw: ${String(err)}`),
-              {
-                stopSummary: infraFailureStopSummary({
-                  summary: "resident judge open court failed at slice dispatch",
-                  repairHint:
-                    "inspect open-court worker failure and re-run the slice; " +
-                    "do not continue without a resident judge session",
+          // #1111: same dispatch wrap as S2/S3/S5/S6 — mechanical retry +
+          // monitor-handle persist + quota/capacity (not bare catch→failed).
+          openCourtDispatch: for (;;) {
+            // Re-read verify seat after any in-loop baton (capacity/quota relay).
+            openModel = stepSpecs.S3.model;
+            const openDispatchPool = relayBillingPoolForDispatch("S3");
+            openResumeCapable = resumeCapableForSlug(openModel, openDispatchPool);
+            const openSpec = {
+              id: "S1" as const,
+              kind: "verify" as const,
+              role: "verify" as const,
+              host: stepSpecToWorkerSpec(
+                stepSpecs.S3,
+                openSessionMode,
+                openDispatchPool,
+              ).host,
+              session: openSessionMode as "fresh" | "resume",
+              contextRetention: "clean" as const,
+              promptFile: JUDGE_OPEN_COURT_PROMPT_FILE,
+              maxIter: 1 as const,
+              model: openModel,
+              soul: "verify" as const,
+              toolchain: stepSpecs.S3.toolchain,
+            };
+            const openDispatchCtx = {
+              runId,
+              worktree,
+              stateDir,
+              modelRoute,
+              ...(openDispatchPool !== undefined
+                ? { billingPool: openDispatchPool }
+                : {}),
+              ...(typeof openResumeSessionId === "string"
+                ? { resumeSessionId: openResumeSessionId }
+                : {}),
+              ...(openEscalationAnswer !== undefined
+                ? { escalationAnswer: openEscalationAnswer }
+                : {}),
+            };
+            try {
+              openResult = await withMechanicalRetry(
+                openSpec,
+                openDispatchCtx,
+                async (s, c) => {
+                  const outcome = await dispatchWorkerWithMonitor(
+                    backend,
+                    s,
+                    c,
+                    undefined,
+                    {
+                      onMonitorHandleSpawned: async (handle) => {
+                        stepMonitorHandle = handle;
+                        if (isValidStepId(s.id)) {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
+                        }
+                      },
+                    },
+                  );
+                  if (outcome.monitorHandle !== undefined) {
+                    stepMonitorHandle = outcome.monitorHandle;
+                  }
+                  await outcome.telemetryEnvironmentStamp;
+                  return outcome.result;
+                },
+                durableMechanicalRetryOptions("S1", {
+                  rethrowOnExhaustion: true,
+                  // Resume open-court must not silent-fresh (#1081); fresh birth
+                  // still retries fresh when resumeSessionId is absent.
+                  forbidFreshRetry: typeof openResumeSessionId === "string",
                 }),
-              },
-            );
+              );
+              if (openResult.kind === "completed") {
+                completeMechanicalRetryInvocation("S1");
+              }
+              break openCourtDispatch;
+            } catch (err) {
+              if (isQuotaWaitForResetError(err)) {
+                const currentPool =
+                  currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+                if (!canRelayInProcess()) {
+                  try {
+                    return await parkQuotaWaitForReset({
+                      step: "S1",
+                      err,
+                      ledger,
+                      stateDir,
+                      sessionId,
+                      backend,
+                      resolveBranchHEAD,
+                      hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+                      issue: issueNumber,
+                    });
+                  } catch (writeErr) {
+                    return await errorTermination(
+                      "S1",
+                      writeErr instanceof Error
+                        ? writeErr
+                        : new Error(String(writeErr)),
+                    );
+                  }
+                }
+                let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+                try {
+                  outcome = await parkOrRelayQuotaWall({
+                    step: "S1",
+                    err,
+                    ledger,
+                    stateDir,
+                    sessionId,
+                    backend,
+                    resolveBranchHEAD,
+                    hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+                    worktreePath: worktree?.path,
+                    // Verify seat owns open-court model (S3 slot), not coder.
+                    currentModelId: modelIdForWallStep("S3"),
+                    currentPool,
+                    rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                    pools: resolveRelayPools(
+                      currentPool,
+                      err.disposition.resetAt,
+                      true,
+                    ),
+                    now: relayNow(),
+                    issue: issueNumber,
+                  });
+                } catch (writeErr) {
+                  return await errorTermination(
+                    "S1",
+                    writeErr instanceof Error
+                      ? writeErr
+                      : new Error(String(writeErr)),
+                  );
+                }
+                if (outcome.kind === "park") {
+                  return outcome.result;
+                }
+                if (outcome.relayBrief !== undefined) {
+                  activeRelayBrief = outcome.relayBrief;
+                }
+                {
+                  const applied = applyRelayBaton(outcome.nextBaton, "S3");
+                  if (applied.kind === "stop") {
+                    return await stopForCoderRecTightRoutePolicy(
+                      applied.escalation,
+                    );
+                  }
+                }
+                continue openCourtDispatch;
+              }
+              if (isCapacityRelayError(err)) {
+                if (!canRelayInProcess()) {
+                  return await errorTermination("S1", err);
+                }
+                const { currentPool, pools } = resolveResourceFailurePool({
+                  modelRef: modelRefForWallStep("S3"),
+                  capacity: true,
+                });
+                const handoff = await applyResourceFailureHandoff({
+                  trigger: "capacity",
+                  state_summary:
+                    "open-court verify seat at capacity; drift preserved",
+                  reason: err instanceof Error ? err.message : String(err),
+                  currentModelId: modelIdForWallStep("S3"),
+                  currentPool,
+                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+                  pools,
+                  now: relayNow(),
+                  step: "S3",
+                });
+                if (
+                  handoff.kind !== "relay" ||
+                  handoff.ledgerEntry === undefined
+                ) {
+                  return await errorTermination("S1", err);
+                }
+                try {
+                  await persistRelayBatonHandoff({
+                    entry: handoff.ledgerEntry,
+                    step: "S1",
+                    ledger,
+                    stateDir,
+                    sessionId,
+                    backend,
+                    resolveBranchHEAD,
+                    hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+                    persistClass: "capacity",
+                  });
+                } catch (writeErr) {
+                  return await errorTermination(
+                    "S1",
+                    writeErr instanceof Error
+                      ? writeErr
+                      : new Error(String(writeErr)),
+                  );
+                }
+                activeRelayBrief = renderEphemeralRelayBrief(
+                  handoff.ledgerEntry,
+                );
+                completeMechanicalRetryInvocation("S1");
+                {
+                  const applied = applyRelayBaton(handoff.nextBaton, "S3");
+                  if (applied.kind === "stop") {
+                    return await stopForCoderRecTightRoutePolicy(
+                      applied.escalation,
+                    );
+                  }
+                }
+                continue openCourtDispatch;
+              }
+              return await errorTermination(
+                "S1",
+                err instanceof Error
+                  ? err
+                  : new Error(`open court dispatch threw: ${String(err)}`),
+                {
+                  stopSummary: infraFailureStopSummary({
+                    summary:
+                      "resident judge open court failed at slice dispatch",
+                    repairHint:
+                      "inspect open-court worker failure and re-run the slice; " +
+                      "do not continue without a resident judge session",
+                  }),
+                },
+              );
+            }
           }
           // Legal open-court escalate (same judgeStationReceiptSchema as S3/S6)
           // must park via the global decision-gate edge — never swallow into
