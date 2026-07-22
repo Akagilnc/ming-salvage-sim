@@ -942,22 +942,30 @@ def classify_cli_action_intent(
     has_pending_draft: bool = False,
     pending_summaries: Optional[List[str]] = None,
     llm_config: Any = None,
-) -> Dict[str, Any]:
+) -> List[Dict[str, Any]]:
     """召对动作 typed 判断：只读皇帝本条消息，不读大臣回话。
 
-    这条调用可与大臣回话并发；后续落地只从大臣回话取文本，不再串行跑多个
-    post-reply extractor。失败时保守返回无动作，避免阻断召对。"""
+    输出契约（#515）：动作候选**列表**（单动作 = 长度 1；认不出/失败 = []）。
+    枚举与 kind map 唯一真源 = ming_sim.action_clusters 登记表。
+    这条调用可与大臣回话并发；后续落地只从大臣回话取文本。LLM 软判坏 shape → []。
+    """
+    from ming_sim.action_clusters import (
+        classifier_action_types_prompt,
+        candidates_from_classifier_payload,
+    )
+
     orders_brief = "；".join(
         f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
         for o in (active_orders or [])
     ) or "（无）"
     pending_brief = "；".join(pending_summaries or []) or "（无）"
+    action_enum = classifier_action_types_prompt()
     prompt = (
         "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
         "判断本轮是否属于一个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
         "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
         "{\n"
-        '  "动作类型": "无|确认|密令动作|调教|任免|拟旨",\n'
+        f'  "动作类型": "{action_enum}",\n'
         '  "确认": "应允|拒绝|无",\n'
         '  "密令动作": "无|更新|提交核议|催办|记进展",\n'
         '  "目标密令编号": 0,\n'
@@ -983,45 +991,10 @@ def classify_cli_action_intent(
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
+        return []
     obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
-        obj = {}
-
-    def _enum(value: object, allowed: set[str], default: str) -> str:
-        v = str(value or default).strip()
-        return v if v in allowed else default
-
-    def _int(value: object) -> int:
-        try:
-            return int(value or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    action_type = _enum(
-        obj.get("动作类型"), {"无", "确认", "密令动作", "调教", "任免", "拟旨"}, "无")
-    return {
-        "kind": {
-            "无": "none",
-            "确认": "confirmation",
-            "密令动作": "secret",
-            "调教": "cultivate",
-            "任免": "appointment",
-            "拟旨": "draft",
-        }[action_type],
-        "confirmation": _enum(obj.get("确认"), {"应允", "拒绝", "无"}, "无"),
-        "secret_action": _enum(
-            obj.get("密令动作"), {"无", "更新", "提交核议", "催办", "记进展"}, "无"),
-        "order_id": _int(obj.get("目标密令编号")),
-        # Align with extract_minister_actions: no formal title hard-cap.
-        "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or "").strip()[:500],
-        "deadline_months": max(0, min(_int(obj.get("期限月数")), 36)),
-        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:30],
-        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:30],
-        "appoint_action": _enum(obj.get("任免动作"), {"无", "任命", "罢免"}, "无"),
-        "name": str(obj.get("姓名") or "").strip()[:20],
-        "office": str(obj.get("官职") or "").strip()[:40],
-    }
+    # 列表契约：对象或 list 均走登记表 soft 归一；坏 shape / 无 → []。
+    return candidates_from_classifier_payload(obj, soft=True)
 
 
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
