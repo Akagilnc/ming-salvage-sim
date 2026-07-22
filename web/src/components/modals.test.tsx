@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatModal, EdictModal, ReportModal } from "./modals";
-import type { BudgetAccount, GameState, Minister, PendingActionFailure } from "../types";
+import type { BudgetAccount, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,6 +49,9 @@ function renderModal(props: {
   onRetryReply?: () => void;
   extractionPendingCount?: number;
   onRetryExtraction?: () => void;
+  suggestions?: Suggestion[];
+  onInput?: (text?: string) => void;
+  onSend?: (text?: string) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -60,7 +63,7 @@ function renderModal(props: {
         portraitPrefix={props.portraitPrefix}
         busy={props.busy ?? ""}
         chat={props.chat ?? []}
-        suggestions={[]}
+        suggestions={props.suggestions ?? []}
         pendingUserMessage=""
         streamingMinisterMessage=""
         chatNotice=""
@@ -72,8 +75,8 @@ function renderModal(props: {
         secretOrders={[]}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
-        onInput={() => {}}
-        onSend={() => {}}
+        onInput={props.onInput ?? (() => {})}
+        onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
         onRetryExtraction={props.onRetryExtraction}
@@ -89,6 +92,7 @@ function renderModal(props: {
   // Register for centralised teardown (afterEach) — no inline cleanup, so a failing
   // assertion can never skip unmount and leak a root into the next test.
   mountedRoots.push({ root, host });
+  return { host, root };
 }
 
 function renderReportModal(props: { report: string }) {
@@ -270,6 +274,59 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).toContain("密令落库失败");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(button).toBeTruthy();
+  });
+});
+
+describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
+  /** Production suggestions_for payload after ADR 0042 / #527 cut. */
+  const PREFIX_SUGGESTIONS: Suggestion[] = [
+    { label: "拟旨", text: "拟旨如下：", prefix: true },
+    { label: "下密令", text: "密令如下：", prefix: true },
+  ];
+
+  it("renders only the two prefix labels from the real suggestions payload", () => {
+    const { host } = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      suggestions: PREFIX_SUGGESTIONS,
+    });
+    const hitl = host.querySelector(".hitl-bar");
+    expect(hitl).toBeTruthy();
+    const labels = Array.from(hitl!.querySelectorAll("button")).map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["拟旨", "下密令"]);
+    for (const inquiry of ["问在办事项", "问阻力", "查钱粮", "查驻军", "密查"]) {
+      expect(labels).not.toContain(inquiry);
+    }
+  });
+
+  it("prefix click fills composer via onInput and does not call onSend", () => {
+    const onInput = vi.fn();
+    const onSend = vi.fn();
+    const { host } = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      suggestions: PREFIX_SUGGESTIONS,
+      onInput,
+      onSend,
+    });
+    const draftBtn = Array.from(host.querySelectorAll(".hitl-bar button")).find(
+      (b) => b.textContent?.trim() === "拟旨",
+    ) as HTMLButtonElement | undefined;
+    expect(draftBtn).toBeTruthy();
+    act(() => {
+      draftBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onInput).toHaveBeenCalledWith("拟旨如下：");
+    expect(onSend).not.toHaveBeenCalled();
+
+    const secretBtn = Array.from(host.querySelectorAll(".hitl-bar button")).find(
+      (b) => b.textContent?.trim() === "下密令",
+    ) as HTMLButtonElement | undefined;
+    act(() => {
+      secretBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onInput).toHaveBeenCalledWith("密令如下：");
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
 
