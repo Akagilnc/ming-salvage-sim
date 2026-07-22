@@ -62,6 +62,11 @@ import {
   getProgressBroadcastConfig,
 } from "./progressBroadcast.js";
 import {
+  clonePathFromSandcastleWorktree,
+  healBeforeWorktreeCut,
+} from "./gitWorktreePreflight.js";
+import { runExclusive } from "./gitMutex.js";
+import {
   withMechanicalRetry,
   type MechanicalRetryOptions,
 } from "./dispatchRetry.js";
@@ -2075,6 +2080,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): MechanicalRetryOptions => ({
     ...options,
     attemptsAlreadyUsed: mechanicalRedispatchAttemptsFor(step),
+    healWorktreeConsistency: async (ctx) => {
+      await options.healWorktreeConsistency?.(ctx);
+      const handle = ctx.worktree ?? worktree;
+      if (handle === undefined) return;
+      const clone = clonePathFromSandcastleWorktree(handle.path);
+      if (clone === null) return;
+      await runExclusive(clone, () => {
+        // #1105 R6 F1: same durable-ledger quarantine as prepareWorktreeLocked.
+        healBeforeWorktreeCut(clone, handle.branch, undefined, {
+          quarantineBaseDir: join(
+            clone,
+            `.ledger-${issueNumber}`,
+            "quarantine-orphans",
+          ),
+        });
+      });
+      // Sandcastle path is deterministic per branch — rebuild keeps the same
+      // path so the in-flight dispatchCtx.worktree handle stays valid.
+      worktree = await backend.prepareWorktree(issueNumber, sliceBase);
+    },
     onAttempt: async (attempt) => {
       await options.onAttempt?.(attempt);
       const marker: LedgerEntry = {
