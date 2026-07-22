@@ -17,7 +17,7 @@ import {
   requireResidentJudgeResume,
   usesJudgeReceiptChannel,
 } from "../../src/judgeStation.js";
-import { runOrchestrator } from "../../src/runner.js";
+import { runOrchestrator, sliceQuotaWaitPending } from "../../src/runner.js";
 import type {
   Backend,
   DispatchContext,
@@ -294,6 +294,40 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         seatResumeCapable: true,
       }).kind,
     ).toBe("fail");
+  });
+
+  it("sliceQuotaWaitPending: dual-field court_dismissed+converge clears prior quota park", () => {
+    // Counterexample from correctness court: quota wall on S6, then atomic
+    // fold converge+dismiss. Park must clear — not leave S6 still-pending so
+    // re-feed re-enters a dismissed court and errorTerminates forever.
+    expect(
+      sliceQuotaWaitPending([
+        { step: "S6", event: "quota_wait_for_reset" },
+        {
+          step: "S6",
+          event: "court_dismissed",
+          output: { kind: "judge", status: "converged" },
+        },
+      ]),
+    ).toBeUndefined();
+    // Negative: bare quota park with no later executable progress stays pending.
+    expect(
+      sliceQuotaWaitPending([{ step: "S6", event: "quota_wait_for_reset" }]),
+    ).toBe("S6");
+    // Negative: pure bookkeeping dismiss without topology output does NOT clear.
+    expect(
+      sliceQuotaWaitPending([
+        { step: "S6", event: "quota_wait_for_reset" },
+        { step: "S6", event: "court_dismissed" },
+      ]),
+    ).toBe("S6");
+    // Positive: classic event-less agent row still clears (regression).
+    expect(
+      sliceQuotaWaitPending([
+        { step: "S5", event: "quota_wait_for_reset" },
+        { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+      ]),
+    ).toBeUndefined();
   });
 
   it("rebuild heal: court_opened + product converge without dismiss → dismissed", () => {
