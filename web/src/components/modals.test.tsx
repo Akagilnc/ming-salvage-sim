@@ -284,48 +284,75 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
     { label: "下密令", text: "密令如下：", prefix: true },
   ];
 
-  it("renders only the two prefix labels from the real suggestions payload", () => {
-    const { host } = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      suggestions: PREFIX_SUGGESTIONS,
-    });
-    const hitl = host.querySelector(".hitl-bar");
-    expect(hitl).toBeTruthy();
-    const labels = Array.from(hitl!.querySelectorAll("button")).map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["拟旨", "下密令"]);
-    for (const inquiry of ["问在办事项", "问阻力", "查钱粮", "查驻军", "密查"]) {
-      expect(labels).not.toContain(inquiry);
-    }
-  });
+  /**
+   * Stateful harness: ChatModal is controlled; parent must re-render `input`
+   * after onInput so textarea.value is observable (finding 527-prefix-input-observable).
+   */
+  function renderStatefulPrefixChat(onSend: (text?: string) => void) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
 
-  it("prefix click fills composer via onInput and does not call onSend", () => {
-    const onInput = vi.fn();
-    const onSend = vi.fn();
-    const { host } = renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      suggestions: PREFIX_SUGGESTIONS,
-      onInput,
-      onSend,
-    });
-    const draftBtn = Array.from(host.querySelectorAll(".hitl-bar button")).find(
-      (b) => b.textContent?.trim() === "拟旨",
-    ) as HTMLButtonElement | undefined;
-    expect(draftBtn).toBeTruthy();
+    function Harness() {
+      const [input, setInput] = React.useState("");
+      return (
+        <ChatModal
+          minister={MINISTER_MOCK}
+          portraitPrefix="minister_"
+          busy=""
+          chat={[]}
+          suggestions={PREFIX_SUGGESTIONS}
+          pendingUserMessage=""
+          streamingMinisterMessage=""
+          chatNotice=""
+          chatFailures={[]}
+          canUndoLastChat={false}
+          composerHint=""
+          input={input}
+          error=""
+          secretOrders={[]}
+          onInput={(value) => setInput(value ?? "")}
+          onSend={onSend}
+          onRetryFailure={() => {}}
+          onUndo={() => {}}
+          onHint={() => {}}
+          onFavorite={() => {}}
+          onOpenEdict={() => {}}
+          onClose={() => {}}
+        />
+      );
+    }
+
     act(() => {
-      draftBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      root.render(<Harness />);
     });
-    expect(onInput).toHaveBeenCalledWith("拟旨如下：");
+    mountedRoots.push({ root, host });
+    return { host, root };
+  }
+
+  it("renders both prefix buttons; click fills textarea; never auto-sends", () => {
+    const onSend = vi.fn();
+    const { host } = renderStatefulPrefixChat(onSend);
+
+    const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
+    const labels = hitlButtons.map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["拟旨", "下密令"]);
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+
+    const draftBtn = hitlButtons.find((b) => b.textContent?.trim() === "拟旨") as HTMLButtonElement;
+    act(() => {
+      draftBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(textarea.value).toBe("拟旨如下：");
     expect(onSend).not.toHaveBeenCalled();
 
-    const secretBtn = Array.from(host.querySelectorAll(".hitl-bar button")).find(
-      (b) => b.textContent?.trim() === "下密令",
-    ) as HTMLButtonElement | undefined;
+    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
     act(() => {
-      secretBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(onInput).toHaveBeenCalledWith("密令如下：");
+    expect(textarea.value).toBe("密令如下：");
     expect(onSend).not.toHaveBeenCalled();
   });
 });
