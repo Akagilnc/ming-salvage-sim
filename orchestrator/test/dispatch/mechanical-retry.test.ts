@@ -167,6 +167,39 @@ describe("#598 withMechanicalRetry", () => {
     expect(result.reason).toMatch(/\(after 2 dispatch attempts\)$/);
   });
 
+  it("NEGATIVE: healWorktreeConsistency throw funnels into failed channel (#1105 R7 F2)", async () => {
+    const wreckage =
+      "fatal: not a git repository: /x/.git/worktrees/feat-issue-1105";
+    const onFailures: unknown[] = [];
+    const result = await withMechanicalRetry(
+      coderSpec(),
+      {
+        worktree: {
+          branch: "feat/issue-1105",
+          base: "main",
+          path: "/x/.sandcastle/worktrees/feat-issue-1105",
+        },
+      },
+      async () => ({ kind: "failed", reason: wreckage }),
+      {
+        sleepMs: async () => undefined,
+        healWorktreeConsistency: async () => {
+          throw new Error("prepareWorktree boom");
+        },
+        onFailure: async (outcome) => {
+          onFailures.push(outcome);
+        },
+      },
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind !== "failed") throw new Error("expected failed");
+    expect(result.reason).toContain("worktree consistency heal failed");
+    expect(result.reason).toContain("prepareWorktree boom");
+    expect(result.reason).toMatch(/\(after 1 dispatch attempts\)$/);
+    // Must not escape withMechanicalRetry as a raw throw.
+    expect(onFailures.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("re-entry with attemptsAlreadyUsed>0 sleeps the next 15s slot before first dispatch (#934 ID-004)", async () => {
     // Durable crash re-entry: attempts 1–2 already recorded; the next process
     // must still honor interval[1] (attempt 3) rather than skip sleep because

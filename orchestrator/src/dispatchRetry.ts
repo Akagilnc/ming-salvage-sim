@@ -153,6 +153,15 @@ function worktreeConsistencyMessage(outcome: DispatchOutcome): string | undefine
   return undefined;
 }
 
+function healFailureResult(err: unknown): Extract<WorkerResult, { kind: "failed" }> {
+  return {
+    kind: "failed",
+    reason: `worktree consistency heal failed: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  };
+}
+
 /**
  * Total process-root dispatch attempts for one fixed position (1 initial +
  * 5 retries) when invocation transport/crash/signal/SO extraction fails and
@@ -299,6 +308,26 @@ export async function withMechanicalRetry(
   // #1105 A6: worktree consistency wreckage is deterministic — heal once, allow
   // one post-heal attempt, then stop (same short-circuit shape as #1092).
   let worktreeConsistencyHealDone = false;
+  /** #1105 R7 F2: heal throw → failed channel (never escape withMechanicalRetry). */
+  const runConsistencyHeal = async (
+    useCtx: DispatchContext,
+    attempt: number,
+  ): Promise<"healed" | "heal-failed" | "skip"> => {
+    if (worktreeConsistencyHealDone || !opts?.healWorktreeConsistency) {
+      return "skip";
+    }
+    try {
+      await opts.healWorktreeConsistency(useCtx);
+      worktreeConsistencyHealDone = true;
+      return "healed";
+    } catch (healErr) {
+      worktreeConsistencyHealDone = true;
+      last = healFailureResult(healErr);
+      lastAttemptThrew = false;
+      await opts?.onFailure?.({ result: last }, attempt);
+      return "heal-failed";
+    }
+  };
   for (
     let attempt = attemptsAlreadyUsed + 1;
     attempt <= MAX_DISPATCH_ATTEMPTS;
@@ -366,11 +395,8 @@ export async function withMechanicalRetry(
         thrownMsg !== undefined &&
         isWorktreeConsistencyFailure(thrownMsg)
       ) {
-        if (!worktreeConsistencyHealDone && opts?.healWorktreeConsistency) {
-          await opts.healWorktreeConsistency(useCtx);
-          worktreeConsistencyHealDone = true;
-          continue;
-        }
+        const heal = await runConsistencyHeal(useCtx, attempt);
+        if (heal === "healed") continue;
         break;
       }
       continue;
@@ -397,11 +423,8 @@ export async function withMechanicalRetry(
       failedMsg !== undefined &&
       isWorktreeConsistencyFailure(failedMsg)
     ) {
-      if (!worktreeConsistencyHealDone && opts?.healWorktreeConsistency) {
-        await opts.healWorktreeConsistency(useCtx);
-        worktreeConsistencyHealDone = true;
-        continue;
-      }
+      const heal = await runConsistencyHeal(useCtx, attempt);
+      if (heal === "healed") continue;
       break;
     }
   }
