@@ -77,9 +77,12 @@ export async function dispatchFamilyWorkerOrAbort(
     );
     // #1081 / #1085 / ADR 0147: family/wave resident-judge seats share the
     // same resume continuity rule as per-slice (runner.ts isJudgeSeat gate).
-    // A resumed pure court (kind cmr, id S3) must not silent-fresh on process
-    // failure. Panel legs also carry id S3 but never resume — flag is inert.
-    const residentJudgeSeat = isJudgeSeat({ id: spec.id });
+    // A resumed pure court (kind "cmr", id S3) must not silent-fresh on
+    // process failure. Panel legs also carry id S3 but are kind "reviewer"
+    // with session "fresh" — they must keep the full process-root budget
+    // (#1080 R3: do not treat leaked resumeSessionId as judge continuity).
+    const residentJudgeSeat =
+      isJudgeSeat({ id: spec.id }) && spec.kind === "cmr";
     return await withMechanicalRetry(
       spec,
       ctx,

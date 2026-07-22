@@ -821,6 +821,132 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
   });
 });
 
+describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId", () => {
+  it("outer-gate panel fan-out strips judge resume even after a prior court open", async () => {
+    // After coder-fix, pure-judge receive soft-accepts and re-opens with panels
+    // while the pure court itself resumes. Legs must stay session:"fresh" with
+    // no resumeSessionId — else forbidFreshRetry collapses their retry budget.
+    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
+    const { buildExplicitLandingLiveHooks } = await import(
+      "../../../src/family/landing.js"
+    );
+    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
+      "../../helpers/cmr-panel-leg-dispatch.js"
+    );
+    const {
+      completedJudge,
+      judgeContinue,
+      judgeConverged,
+      sampleFinding,
+    } = await import("../../helpers/judge-fixtures.js");
+
+    const legResumes: Array<string | undefined> = [];
+    const judgeResumes: Array<string | undefined> = [];
+    let correctnessOpens = 0;
+    const finding = sampleFinding("panel resume leak", "pl.ts:1");
+
+    const backend = {
+      ledger: [] as FamilyLedgerEntry[],
+      escalations: [] as FamilyEscalation[],
+      resolveLandingLiveHooks(input: {
+        prUrl: string;
+        convergedHeadOid: string;
+        familyBase: string;
+      }) {
+        return buildExplicitLandingLiveHooks({
+          prUrl: input.prUrl,
+          headOid: input.convergedHeadOid,
+          remoteBranchName: input.familyBase,
+        });
+      },
+      async mergeChildIntoFamilyBase() {
+        return { familyHead: "head-1" };
+      },
+      async resolveMergeConflict() {
+        throw new Error("unused");
+      },
+      async appendFamilyLedger(entry: FamilyLedgerEntry) {
+        this.ledger.push(entry);
+      },
+      async readFamilyLedger() {
+        return this.ledger;
+      },
+      async readFamilyHead() {
+        return "head-1";
+      },
+      async runFamilyVerify() {
+        return { ok: true };
+      },
+      async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (isCmrPanelLegWorker(spec)) {
+          legResumes.push(ctx.resumeSessionId);
+          return (
+            completeCmrPanelLegWorker(spec) ?? {
+              kind: "failed",
+              reason: "panel leg fixture missing",
+            }
+          );
+        }
+        if (spec.kind === "cmr") {
+          judgeResumes.push(ctx.resumeSessionId);
+          if (ctx.cmrPass === "completeness") {
+            return completedJudge(judgeConverged(), "sess-comp-1080-r3");
+          }
+          correctnessOpens += 1;
+          if (correctnessOpens === 1) {
+            return completedJudge(
+              judgeContinue([finding]),
+              "sess-corr-1080-r3",
+            );
+          }
+          return completedJudge(judgeConverged(), "sess-corr-1080-r3");
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+            sessionId: "sess-fix-1080-r3",
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase!,
+              pr: "https://github.com/test/repo/pull/1080",
+              prHead: "head-1",
+              status: "pr_opened",
+            },
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      },
+      async recordAborted() {},
+      async escalateFamily(esc: FamilyEscalation) {
+        this.escalations.push(esc);
+      },
+    };
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1080-r3-panel-resume",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    void result;
+    // Outer-gate reopen must have fanned panels after a pure-court resume existed.
+    expect(judgeResumes.some((r) => r === "sess-corr-1080-r3")).toBe(true);
+    expect(legResumes.length).toBeGreaterThan(0);
+    // Load-bearing: no panel leg ever carries the pure-court resume id.
+    expect(legResumes.every((r) => r === undefined)).toBe(true);
+  });
+});
+
 describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
   it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
     const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
