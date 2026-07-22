@@ -312,39 +312,6 @@ function reholdRepairSeatFromFamilyLedger(
   };
 }
 
-async function runFamilyVerifyOrAbort(input: {
-  readonly phase: VerifyCmrPhase;
-  readonly familyBase: string;
-  readonly familyBackend: FamilyBackend;
-  readonly familyHeadAfter?: string;
-  readonly runId?: string;
-  readonly familyIssue?: number;
-}): Promise<VerifyCmrResult | undefined> {
-  const { phase, familyBase, familyBackend, familyHeadAfter } = input;
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
-    phase,
-    familyBase,
-    ...(input.runId !== undefined ? { runId: input.runId } : {}),
-    ...(input.familyIssue !== undefined ? { issue: input.familyIssue } : {}),
-  });
-  if (verify.ok) return undefined;
-
-  const reason = verify.errorPackage?.reason ?? "family verify failed";
-  await familyBackend.recordAborted?.({
-    phase,
-    familyBase,
-    errorPackage: verify.errorPackage ?? { reason },
-    familyHeadAfter,
-  });
-  await recordDurableAbort(familyBackend, {
-    phase,
-    reason,
-    familyHeadAfter,
-    stopSummary: familyVerifyFailureStopSummary(reason),
-  });
-  return stageGate("verify_failed");
-}
-
 // #1027 S2 / ADR 0145 — ledger workerStep tags for the wave-verify triage court
 // (与 CMR 庭同构,不另立法: reuse worker_dispatched / aborted vocabulary).
 const WAVE_VERIFY_JUDGE_STEP = "wave-verify-judge";
@@ -373,13 +340,22 @@ function pendingWaveJudgeReceiveFromFamilyLedger(
   return false;
 }
 
+/** Human-facing label for the verify-red judge court (scope is a parameter). */
+function familyVerifyCourtLabel(phase: VerifyCmrPhase): string {
+  if (phase === "correctness_checkpoint") return "correctness_checkpoint verify";
+  if (phase === "final") return "final verify";
+  return "wave verify";
+}
+
 /**
- * #1027 S2 — record one wave-verify barrier abort (in-memory `recordAborted` +
- * durable ledger) and return the stage-named red. One seam so the toolchain
- * terminal, the unusable/route-failure terminal, and the fixer-failure terminal
- * all record identically (mirrors {@link runFamilyVerifyOrAbort}).
+ * #1027 S2 / #1107 — record one family-verify barrier abort (in-memory
+ * `recordAborted` + durable ledger) and return the stage-named red. One seam so
+ * the toolchain terminal, the unusable/route-failure terminal, and the
+ * fixer-failure terminal all record identically across wave / checkpoint / final
+ * (mirrors the shared verify→court glue {@link runFamilyVerifyThroughCourt}).
  */
 async function recordWaveVerifyAbort(input: {
+  readonly phase: VerifyCmrPhase;
   readonly familyBase: string;
   readonly familyBackend: FamilyBackend;
   readonly familyHeadAfter?: string;
@@ -387,15 +363,15 @@ async function recordWaveVerifyAbort(input: {
   readonly errorPackage?: FamilyVerifyErrorPackage;
   readonly stopSummary?: StopSummary;
 }): Promise<VerifyCmrResult> {
-  const { familyBase, familyBackend, familyHeadAfter, reason } = input;
+  const { phase, familyBase, familyBackend, familyHeadAfter, reason } = input;
   await familyBackend.recordAborted?.({
-    phase: "wave",
+    phase,
     familyBase,
     errorPackage: input.errorPackage ?? { reason },
     familyHeadAfter,
   });
   await recordDurableAbort(familyBackend, {
-    phase: "wave",
+    phase,
     reason,
     familyHeadAfter,
     stopSummary: input.stopSummary ?? familyVerifyFailureStopSummary(reason),
@@ -404,12 +380,13 @@ async function recordWaveVerifyAbort(input: {
 }
 
 /**
- * #1027 S2 — record a wave-verify worker escalation (judge or fixer). A
- * runner-synthesized startup failure is stage death (`verify_failed`); a real
+ * #1027 S2 / #1107 — record a family-verify worker escalation (judge or fixer).
+ * A runner-synthesized startup failure is stage death (`verify_failed`); a real
  * worker-authored decision-gate raise leaves `failedStatus` unset so the spine
  * escalates for a human answer (通道③ 转运). Mirrors the CMR court's split.
  */
 async function recordWaveVerifyEscalation(input: {
+  readonly phase: VerifyCmrPhase;
   readonly familyBackend: FamilyBackend;
   readonly familyHeadAfter?: string;
   readonly seat: "judge" | "fixer";
@@ -418,22 +395,21 @@ async function recordWaveVerifyEscalation(input: {
   readonly diagnosis: string;
   readonly synthesizedFailure: boolean;
 }): Promise<VerifyCmrResult> {
-  const { familyBackend, familyHeadAfter } = input;
-  const summary = `wave verify ${input.seat} round ${input.round}: ${input.reason} — ${input.diagnosis}`;
+  const { phase, familyBackend, familyHeadAfter } = input;
+  const label = familyVerifyCourtLabel(phase);
+  const summary = `${label} ${input.seat} round ${input.round}: ${input.reason} — ${input.diagnosis}`;
   const heads =
     familyHeadAfter !== undefined ? { actualFamilyHead: familyHeadAfter } : {};
   const stopSummary = input.synthesizedFailure
     ? stageFailureStopSummary({
         status: "verify_failed",
         summary,
-        repairHint:
-          "repair the wave-verify worker startup/authentication failure, then rerun the family wave",
+        repairHint: `repair the ${label} worker startup/authentication failure, then rerun the family barrier`,
         ...(Object.keys(heads).length > 0 ? { metadata: { heads } } : {}),
       })
     : decisionGateParkStopSummary({
         summary,
-        repairHint:
-          "answer the wave-verify worker's decision gate, then resume it in place",
+        repairHint: `answer the ${label} worker's decision gate, then resume it in place`,
         heads,
       });
   await familyBackend.escalateFamily?.({
@@ -442,10 +418,10 @@ async function recordWaveVerifyEscalation(input: {
     familyHeadAfter,
     stopSummary,
     escalationKind: input.synthesizedFailure ? "failure" : "decision",
-    phase: "wave",
+    phase,
   });
   await recordDurableAbort(familyBackend, {
-    phase: "wave",
+    phase,
     reason: summary,
     familyHeadAfter,
     stopSummary,
@@ -464,6 +440,10 @@ interface WaveVerifyFixerOutcome {
   readonly familyHeadAfter?: string;
 }
 
+interface VerifyJudgeCourtResult extends VerifyCmrResult {
+  readonly familyHeadAfter?: string;
+}
+
 /**
  * #1027 S2 / #1085 — dispatch ONE wave-verify coder-fix round with the
  * judge-authored repair packet (ADR 0138 verbatim body). Reuses the family
@@ -476,6 +456,7 @@ interface WaveVerifyFixerOutcome {
  * the seat is resume-capable (isomorphic with CMR #979).
  */
 async function runWaveVerifyFixerRound(input: {
+  readonly phase: VerifyCmrPhase;
   readonly familyBase: string;
   readonly familyBackend: FamilyBackend;
   readonly runId?: string;
@@ -492,7 +473,8 @@ async function runWaveVerifyFixerRound(input: {
   /** #1085 — prior wave-fixer session in this court (process-local resume). */
   readonly resumeSessionId?: string;
 }): Promise<WaveVerifyFixerOutcome & { readonly sessionId?: string }> {
-  const { familyBase, familyBackend, runId, familyIssue, round } = input;
+  const { phase, familyBase, familyBackend, runId, familyIssue, round } = input;
+  const label = familyVerifyCourtLabel(phase);
   const fixPool = billingPoolForFamilyWorker({
     ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
     ...(input.billingPoolSlots !== undefined
@@ -504,7 +486,7 @@ async function runWaveVerifyFixerRound(input: {
     status: "worker_dispatched",
     event: "worker_dispatched",
     workerStep: WAVE_VERIFY_FIX_STEP,
-    reason: `wave verify fixer round ${round}: dispatch coder-fix`,
+    reason: `${label} fixer round ${round}: dispatch coder-fix`,
   });
   const provisionalFixSpec = familyCoderFixWorkerSpec(input.resolvedRoute);
   const seatResumeCapable = resumeCapableForSlug(
@@ -565,6 +547,7 @@ async function runWaveVerifyFixerRound(input: {
     return withSession(
       withHead(
         await recordWaveVerifyEscalation({
+          phase,
           familyBackend,
           ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
           seat: "fixer",
@@ -582,10 +565,11 @@ async function runWaveVerifyFixerRound(input: {
     return withSession(
       withHead(
         await recordWaveVerifyAbort({
+          phase,
           familyBase,
           familyBackend,
           ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-          reason: `wave verify fixer worker failed at round ${round}: ${fixResult.reason}`,
+          reason: `${label} fixer worker failed at round ${round}: ${fixResult.reason}`,
         }),
       ),
     );
@@ -597,6 +581,7 @@ async function runWaveVerifyFixerRound(input: {
     return withSession(
       withHead(
         await recordWaveVerifyEscalation({
+          phase,
           familyBackend,
           ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
           seat: "fixer",
@@ -617,9 +602,11 @@ async function runWaveVerifyFixerRound(input: {
 }
 
 /**
- * #1027 S2 / ADR 0145 / #1085 ADR 0147 — the wave-verify triage judge court.
+ * #1027 S2 / ADR 0145 / #1085 / #1107 — the family-verify triage judge court.
  *
- * Entered ONLY after a red family wave verify. Owner FINAL 2026-07-20: the
+ * Entered after a red family verify at ANY barrier scope (`wave` /
+ * `correctness_checkpoint` / `final`). Owner 07-22: one mechanism, scope is a
+ * parameter — not a layered second control shape. Owner FINAL 2026-07-20: the
  * runner does ZERO verify-kind classification — a red is handed uniformly to the
  * judge. Routing uses the **shared** resident-judge hub table
  * ({@link hubNextFromFamilyClosureAction}) — same language as per-slice and
@@ -636,6 +623,7 @@ async function runWaveVerifyFixerRound(input: {
  * runner round cap.
  */
 async function runWaveVerifyJudgeCourt(input: {
+  readonly phase: VerifyCmrPhase;
   readonly familyBase: string;
   readonly familyBackend: FamilyBackend;
   readonly familyHeadAfter?: string;
@@ -646,9 +634,10 @@ async function runWaveVerifyJudgeCourt(input: {
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly initialFailure: string;
-}): Promise<VerifyCmrResult> {
-  const { familyBase, familyBackend, runId, familyIssue, escalationAnswer } =
+}): Promise<VerifyJudgeCourtResult> {
+  const { phase, familyBase, familyBackend, runId, familyIssue, escalationAnswer } =
     input;
+  const label = familyVerifyCourtLabel(phase);
 
   // Resolve the dispatch route. Production family runs pass the startup-smoked
   // route; standalone unit tests predate that envelope, so smoke one here. A
@@ -662,8 +651,9 @@ async function runWaveVerifyJudgeCourt(input: {
         cliVersion: "standalone-wave-verify-test",
       })));
   } catch (err) {
-    const reason = `wave verify triage route failure: ${err instanceof Error ? err.message : String(err)}`;
+    const reason = `${label} triage route failure: ${err instanceof Error ? err.message : String(err)}`;
     return await recordWaveVerifyAbort({
+      phase,
       familyBase,
       familyBackend,
       ...(input.familyHeadAfter !== undefined
@@ -702,7 +692,7 @@ async function runWaveVerifyJudgeCourt(input: {
       status: "worker_dispatched",
       event: "worker_dispatched",
       workerStep: WAVE_VERIFY_JUDGE_STEP,
-      reason: `wave verify triage judge round ${round} for: ${failureReason}`,
+      reason: `${label} triage judge round ${round} for: ${failureReason}`,
     });
     const judgeSpec = waveVerifyJudgeWorkerSpec(
       resolvedRoute,
@@ -714,6 +704,7 @@ async function runWaveVerifyJudgeCourt(input: {
       modelRoute: resolvedRoute,
       ...(judgePool !== undefined ? { billingPool: judgePool } : {}),
       waveVerifyFailure: failureReason,
+      phase,
       ...(judgeSessionId !== undefined ? { resumeSessionId: judgeSessionId } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
@@ -725,6 +716,7 @@ async function runWaveVerifyJudgeCourt(input: {
     );
     if (judgeResult.kind === "escalated") {
       return await recordWaveVerifyEscalation({
+        phase,
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
         seat: "judge",
@@ -738,10 +730,11 @@ async function runWaveVerifyJudgeCourt(input: {
     }
     if (judgeResult.kind !== "completed") {
       return await recordWaveVerifyAbort({
+        phase,
         familyBase,
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
-        reason: `wave verify triage judge worker failed at round ${round}: ${judgeResult.reason}`,
+        reason: `${label} triage judge worker failed at round ${round}: ${judgeResult.reason}`,
       });
     }
     if (
@@ -765,11 +758,12 @@ async function runWaveVerifyJudgeCourt(input: {
     if (hubNext === "toolchain") {
       if (closure.action !== "toolchain") {
         throw new Error(
-          `wave verify: hub toolchain without toolchain action (${closure.action})`,
+          `${label}: hub toolchain without toolchain action (${closure.action})`,
         );
       }
-      const reason = `wave verify toolchain: ${closure.reason} — ${closure.diagnosis}`;
+      const reason = `${label} toolchain: ${closure.reason} — ${closure.diagnosis}`;
       return await recordWaveVerifyAbort({
+        phase,
         familyBase,
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
@@ -792,6 +786,7 @@ async function runWaveVerifyJudgeCourt(input: {
         );
       }
       return await recordWaveVerifyEscalation({
+        phase,
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
         seat: "judge",
@@ -805,11 +800,12 @@ async function runWaveVerifyJudgeCourt(input: {
     if (hubNext === "fail_loud") {
       if (closure.action !== "unusable") {
         throw new Error(
-          `wave verify: hub fail_loud without unusable action (${closure.action})`,
+          `${label}: hub fail_loud without unusable action (${closure.action})`,
         );
       }
-      const reason = `wave verify triage judge round ${round}: ${closure.reason}`;
+      const reason = `${label} triage judge round ${round}: ${closure.reason}`;
       return await recordWaveVerifyAbort({
+        phase,
         familyBase,
         familyBackend,
         ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
@@ -818,7 +814,7 @@ async function runWaveVerifyJudgeCourt(input: {
           status: "verify_failed",
           summary: reason,
           repairHint:
-            "unusable wave-verify judge envelope after seat-side typed SO re-ask; " +
+            `unusable ${label} judge envelope after seat-side typed SO re-ask; ` +
             "re-open the same judge seat or repair the seat receipt contract — " +
             "do not route bad shape through coder-fix",
         }),
@@ -843,8 +839,9 @@ async function runWaveVerifyJudgeCourt(input: {
         const reason =
           err instanceof Error
             ? err.message
-            : "wave verify judge continue missing fixPacketBody (ADR 0138)";
+            : `${label} judge continue missing fixPacketBody (ADR 0138)`;
         return await recordWaveVerifyAbort({
+          phase,
           familyBase,
           familyBackend,
           ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
@@ -853,7 +850,7 @@ async function runWaveVerifyJudgeCourt(input: {
             status: "verify_failed",
             summary: reason,
             repairHint:
-              "wave-verify judge status:continue must author a non-empty fixPacketBody; " +
+              `${label} judge status:continue must author a non-empty fixPacketBody; ` +
               "runner transports it verbatim and will not pack bare findings",
           }),
         });
@@ -864,9 +861,10 @@ async function runWaveVerifyJudgeCourt(input: {
         closure.blockingIdentityKeys.length === 0
       ) {
         const reason =
-          `wave verify judge continue with 0 live findings ` +
+          `${label} judge continue with 0 live findings ` +
           `(court contract drift; empty continue must not spin coder-fix)`;
         return await recordWaveVerifyAbort({
+          phase,
           familyBase,
           familyBackend,
           ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
@@ -875,12 +873,13 @@ async function runWaveVerifyJudgeCourt(input: {
             status: "verify_failed",
             summary: reason,
             repairHint:
-              "wave-verify judge status:continue requires non-empty live identity keys; " +
+              `${label} judge status:continue requires non-empty live identity keys; ` +
               "do not empty-spin coder-fix",
           }),
         });
       }
       const fixOutcome = await runWaveVerifyFixerRound({
+        phase,
         familyBase,
         familyBackend,
         ...(runId !== undefined ? { runId } : {}),
@@ -913,7 +912,7 @@ async function runWaveVerifyJudgeCourt(input: {
       // Observe re-verify for the next judge resume (fact, not exit authority).
       const reVerifyAfterFix: FamilyVerifyResult =
         await familyBackend.runFamilyVerify({
-          phase: "wave",
+          phase,
           familyBase,
           ...(runId !== undefined ? { runId } : {}),
           ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
@@ -951,7 +950,7 @@ async function runWaveVerifyJudgeCourt(input: {
       const reVerify: FamilyVerifyResult = headStable
         ? lastObserve!
         : await familyBackend.runFamilyVerify({
-            phase: "wave",
+            phase,
             familyBase,
             ...(runId !== undefined ? { runId } : {}),
             ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
@@ -965,12 +964,18 @@ async function runWaveVerifyJudgeCourt(input: {
           status: "worker_dispatched",
           event: "worker_dispatched",
           workerStep: WAVE_VERIFY_JUDGE_STEP,
-          reason: `wave verify converged after ${round} round(s)`,
+          reason: `${label} converged after ${round} round(s)`,
           ...(familyHeadBefore !== undefined
             ? { familyHeadAfter: familyHeadBefore }
             : {}),
         });
-        return { ok: true, ran: true };
+        return {
+          ok: true,
+          ran: true,
+          ...(familyHeadBefore !== undefined
+            ? { familyHeadAfter: familyHeadBefore }
+            : {}),
+        };
       }
       failureReason = reVerify.errorPackage?.reason ?? "family verify failed";
       continue;
@@ -982,6 +987,83 @@ async function runWaveVerifyJudgeCourt(input: {
       `wave verify triage judge round ${round}: unhandled hub next ${String(_never)}`,
     );
   }
+}
+
+/**
+ * #1107 / #1110 P1 — one verify→court glue for every family-verify call site
+ * (entry barrier + mid-court after CMR fixer). Green verify returns ok immediately;
+ * red enters the shared {@link runWaveVerifyJudgeCourt} (phase = scope). No second
+ * isomorphic court; no hard-die bypass.
+ */
+async function runFamilyVerifyThroughCourt(input: {
+  readonly phase: VerifyCmrPhase;
+  readonly familyBase: string;
+  readonly familyBackend: FamilyBackend;
+  readonly familyHeadAfter?: string;
+  readonly runId?: string;
+  readonly familyIssue?: number;
+  readonly modelRoute?: ResolvedModelRoute;
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  readonly escalationAnswer?: EscalationAnswerPayload;
+}): Promise<VerifyJudgeCourtResult> {
+  const { phase, familyBase, familyBackend, familyHeadAfter, runId, familyIssue } =
+    input;
+  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
+    phase,
+    familyBase,
+    ...(runId !== undefined ? { runId } : {}),
+    ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
+  });
+  if (verify.ok) {
+    // #1111 / ADR 0147: a crash after the post-fixer green observation must
+    // still resume the resident judge for builder-beat receipt. The same court
+    // serves every verify phase; phase is scope, not a second mechanism.
+    const pendingReceive = pendingWaveJudgeReceiveFromFamilyLedger(
+      await familyBackend.readFamilyLedger(),
+    );
+    if (pendingReceive) {
+      return await runWaveVerifyJudgeCourt({
+        phase,
+        familyBase,
+        familyBackend,
+        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+        ...(runId !== undefined ? { runId } : {}),
+        ...(familyIssue !== undefined ? { familyIssue } : {}),
+        ...(input.modelRoute !== undefined ? { modelRoute: input.modelRoute } : {}),
+        ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
+        ...(input.billingPoolSlots !== undefined
+          ? { billingPoolSlots: input.billingPoolSlots }
+          : {}),
+        ...(input.escalationAnswer !== undefined
+          ? { escalationAnswer: input.escalationAnswer }
+          : {}),
+        initialFailure: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
+      });
+    }
+    return {
+      ok: true,
+      ran: true,
+      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    };
+  }
+  return await runWaveVerifyJudgeCourt({
+    phase,
+    familyBase,
+    familyBackend,
+    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    ...(input.modelRoute !== undefined ? { modelRoute: input.modelRoute } : {}),
+    ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
+    ...(input.billingPoolSlots !== undefined
+      ? { billingPoolSlots: input.billingPoolSlots }
+      : {}),
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
+    initialFailure: verify.errorPackage?.reason ?? "family verify failed",
+  });
 }
 
 interface CmrRouteLegEvidence {
@@ -3442,22 +3524,30 @@ async function runCorrectnessCourtLoop(input: {
         resolvedRoute,
       };
     }
-    const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
+    // #1110 P1: mid-court re-verify after CMR fixer uses the same verify→court
+    // mechanism (not a hard-die bypass).
+    const verifyAfterFix = await runFamilyVerifyThroughCourt({
       phase,
       familyBase,
       familyBackend,
       familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
       runId,
       familyIssue,
+      modelRoute: resolvedRoute,
+      ...scopedPoolFields,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (verifyAfterFixFailed !== undefined) {
+    if (!verifyAfterFix.ok) {
       return {
-        result: verifyAfterFixFailed,
-        familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+        result: verifyAfterFix,
+        familyHeadAfter:
+          verifyAfterFix.familyHeadAfter ??
+          correctness.restartFinalBarrier.familyHeadAfter,
         resolvedRoute,
       };
     }
     correctnessFamilyHeadAfter =
+      verifyAfterFix.familyHeadAfter ??
       correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
@@ -3558,7 +3648,6 @@ export async function runVerifyCmr(
     familyBackend,
     llmResolvedChildren,
     escalationAnswer,
-    familyHeadAfter,
     familyIssue,
     moduleContext,
     priorCmrFindingIdentityKeys,
@@ -3568,68 +3657,34 @@ export async function runVerifyCmr(
     billingPoolSlots,
     runId,
   } = input;
+  let familyHeadAfter = input.familyHeadAfter;
   const scopedPoolFields = {
     ...(billingPool !== undefined ? { billingPool } : {}),
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
   };
 
-  // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
-  //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is
-  //    not silently dropped, and return `{ok:false}` (decision 3④/5).
-  //    #939: verify is a required capability on FamilyBackend (type-level) —
-  //    no optional success no-op path. ──
-  // The wave barrier is verify-only (decision 3④); cmr + PR are the end-of-run
-  // (decision 3⑤/⑥). #1027 S2 / ADR 0145: a GREEN wave verify clears the wave; a
-  // RED wave verify is handed UNIFORMLY to the triage judge court (owner FINAL
-  // 2026-07-20: runner does zero verify-kind classification). #961 incremental IC
-  // checkpoints are a separate phase (correctness court only — see below).
-  if (phase === "wave") {
-    const waveVerify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
-      phase,
-      familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
-    });
-    if (waveVerify.ok) {
-      // Green alone never skips a durable post-fixer judge receive (#1111).
-      const pendingReceive = pendingWaveJudgeReceiveFromFamilyLedger(
-        await familyBackend.readFamilyLedger(),
-      );
-      if (!pendingReceive) return { ok: true, ran: true };
-      return await runWaveVerifyJudgeCourt({
-        familyBase,
-        familyBackend,
-        ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-        ...(runId !== undefined ? { runId } : {}),
-        ...(familyIssue !== undefined ? { familyIssue } : {}),
-        ...(modelRoute !== undefined ? { modelRoute } : {}),
-        ...scopedPoolFields,
-        ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-        initialFailure: WAVE_VERIFY_PENDING_JUDGE_RECEIVE_REASON,
-      });
-    }
-    return await runWaveVerifyJudgeCourt({
-      familyBase,
-      familyBackend,
-      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-      ...(runId !== undefined ? { runId } : {}),
-      ...(familyIssue !== undefined ? { familyIssue } : {}),
-      ...(modelRoute !== undefined ? { modelRoute } : {}),
-      ...scopedPoolFields,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      initialFailure: waveVerify.errorPackage?.reason ?? "family verify failed",
-    });
-  }
-
-  const verifyFailed = await runFamilyVerifyOrAbort({
+  // ── verify (all phases: "wave", "correctness_checkpoint", "final") ──
+  // #1107 / #1110: one mechanism — green continues (except a durable pending
+  // judge receipt); red enters the shared court.
+  const verifyCourt = await runFamilyVerifyThroughCourt({
     phase,
     familyBase,
     familyBackend,
-    familyHeadAfter,
-    runId,
-    familyIssue,
+    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    ...(modelRoute !== undefined ? { modelRoute } : {}),
+    ...scopedPoolFields,
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   });
-  if (verifyFailed !== undefined) return verifyFailed;
+  if (!verifyCourt.ok) {
+    return verifyCourt;
+  }
+  familyHeadAfter = verifyCourt.familyHeadAfter ?? familyHeadAfter;
+
+  if (phase === "wave") {
+    return { ok: true, ran: true };
+  }
 
   // ── integrated cmr 承重闸 (decision 3⑥ / #961 checkpoint): only AFTER green verify.
   // #940 / ID-012: production/test contract guarantees CMR capability via the
@@ -3811,19 +3866,23 @@ export async function runVerifyCmr(
       }
       break;
     }
-    // After fix, re-verify before re-opening the court (parity with correctness).
-    const verifyAfterCompletenessFix = await runFamilyVerifyOrAbort({
+    // #1110 P1: mid-court re-verify after completeness fixer — same court glue.
+    const verifyAfterCompletenessFix = await runFamilyVerifyThroughCourt({
       phase,
       familyBase,
       familyBackend,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
       runId,
       familyIssue,
+      modelRoute: resolvedRoute,
+      ...scopedPoolFields,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (verifyAfterCompletenessFix !== undefined) {
+    if (!verifyAfterCompletenessFix.ok) {
       return verifyAfterCompletenessFix;
     }
     completenessFamilyHeadAfter =
+      verifyAfterCompletenessFix.familyHeadAfter ??
       completeness.restartFinalBarrier.familyHeadAfter;
     completenessPriorKeysByPass =
       completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;

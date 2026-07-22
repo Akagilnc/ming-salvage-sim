@@ -73,7 +73,7 @@ function createCmrE2eHome(): string {
   const e2eHome = mkdtempSync(join(homedir(), ".sc-orchestrator-e2e-"));
   cleanups.push(e2eHome);
   copyLiveAuthFile(e2eHome, ".codex/auth.json");
-  copyLiveAuthFile(e2eHome, ".sc-agy-oauth-token");
+  copyLiveAuthFile(e2eHome, ".gemini/antigravity-cli/antigravity-oauth-token");
   copyLiveAuthFile(e2eHome, ".sc-claude-token");
   return e2eHome;
 }

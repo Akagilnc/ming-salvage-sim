@@ -99,6 +99,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
+import { healBeforeWorktreeCut } from "./gitWorktreePreflight.js";
 import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
@@ -697,8 +698,8 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 /**
  * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
- * runtime config INSIDE the worker container (#335 / #905). Host file
- * `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
+ * runtime config INSIDE the worker container (#335 / #905). The host LIVE
+ * token {@link agyHostTokenPath} is copied into a per-run dir mounted HERE as
  * `antigravity-oauth-token`. Writable (NOT read-only): the agy CLI writes
  * cache/log/state under its config dir. Host-mirrored auth-mount pattern
  * matches codex (`SANDBOX_CODEX_DIR`) / grok (`SANDBOX_GROK_DIR`).
@@ -706,6 +707,16 @@ export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
 /** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
 export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+/**
+ * Host LIVE source for the agy OAuth token — the antigravity CLI's own token
+ * file, read directly with NO manual `.sc-agy-oauth-token` sync copy. That
+ * snapshot went stale and silently degraded agy legs for weeks (#1106; same
+ * family as the claude stale-snapshot fix #1099). Single authoritative path —
+ * used by both {@link provisionAgyAuthDir} and the bare-ping availability probe.
+ */
+export function agyHostTokenPath(home: string): string {
+  return join(home, ".gemini", "antigravity-cli", AGY_TOKEN_FILENAME);
+}
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -847,7 +858,7 @@ export function provisionAgyAuthDir(
   try {
     mkdirSync(root, { recursive: true, mode: 0o700 });
     tempAgyDir = mkdtempSync(join(root, prefix));
-    const src = join(home, ".sc-agy-oauth-token");
+    const src = agyHostTokenPath(home);
     // C8: blank/whitespace-only token must NOT yield a defined agyDir that
     // skips fail-closed preflight — copy then reject empty bodies.
     const body = readFileSync(src, "utf8");
@@ -2310,7 +2321,7 @@ export class RealBackend implements Backend {
     const grok = existsSync(join(home, ".grok", "auth.json"));
     let agy = false;
     try {
-      const tok = readFileSync(join(home, ".sc-agy-oauth-token"), "utf8").trim();
+      const tok = readFileSync(agyHostTokenPath(home), "utf8").trim();
       agy = tok.length > 0;
     } catch {
       agy = false;
@@ -2666,6 +2677,23 @@ export class RealBackend implements Backend {
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
     // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
     const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
+    // #1103 H1: under the per-clone mutex, heal dir↔metadata wreckage + stale
+    // index.lock before Sandcastle createWorktree (prune alone is not enough
+    // when a timed-out cut left a directory with no worktree admin entry).
+    // #1105 R6 F1: quarantine under durable clone-root ledger (survives
+    // `.sandcastle/` wipe); clone-local default is last-resort only.
+    healBeforeWorktreeCut(
+      this.workingRepo,
+      branch,
+      (args) => this.sh("git", [...args], this.workingRepo),
+      {
+        quarantineBaseDir: join(
+          this.workingRepo,
+          `.ledger-${issueNumber}`,
+          "quarantine-orphans",
+        ),
+      },
+    );
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>

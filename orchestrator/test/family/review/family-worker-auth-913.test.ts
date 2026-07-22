@@ -59,7 +59,11 @@ function seedFullHostAuth(home: string): void {
   writeFileSync(join(home, ".codex", "AGENTS.md"), "# HOST OWNER AGENTS — must not leak\n");
   mkdirSync(join(home, ".grok"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), '{"tokens":{"grok":"g"}}\n');
-  writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-oauth-secret\n");
+  mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+  writeFileSync(
+    join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+    "agy-oauth-secret\n",
+  );
   writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
 }
 
