@@ -178,10 +178,9 @@ describe("#955 persistent seat resume capability gate", () => {
       // Negative: establish failed before any fix/re-judge round.
       expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
       expect(backend.specs.some((s) => s.id === "S6")).toBe(false);
-      // Negative: no silent-fresh S3 resident judge under an incapable seat.
-      expect(
-        backend.specs.some((s) => s.id === "S3" && s.session === "fresh"),
-      ).toBe(false);
+      // Negative: establish refused before any S3 dispatch (fresh or resume).
+      // AC#3 / requireResidentJudgeResume: incapable seat → fail, never mint.
+      expect(backend.specs.some((s) => s.id === "S3")).toBe(false);
     } finally {
       spy.mockRestore();
     }
