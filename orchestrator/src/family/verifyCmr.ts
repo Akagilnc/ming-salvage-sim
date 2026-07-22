@@ -311,39 +311,6 @@ function reholdRepairSeatFromFamilyLedger(
   };
 }
 
-async function runFamilyVerifyOrAbort(input: {
-  readonly phase: VerifyCmrPhase;
-  readonly familyBase: string;
-  readonly familyBackend: FamilyBackend;
-  readonly familyHeadAfter?: string;
-  readonly runId?: string;
-  readonly familyIssue?: number;
-}): Promise<VerifyCmrResult | undefined> {
-  const { phase, familyBase, familyBackend, familyHeadAfter } = input;
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
-    phase,
-    familyBase,
-    ...(input.runId !== undefined ? { runId: input.runId } : {}),
-    ...(input.familyIssue !== undefined ? { issue: input.familyIssue } : {}),
-  });
-  if (verify.ok) return undefined;
-
-  const reason = verify.errorPackage?.reason ?? "family verify failed";
-  await familyBackend.recordAborted?.({
-    phase,
-    familyBase,
-    errorPackage: verify.errorPackage ?? { reason },
-    familyHeadAfter,
-  });
-  await recordDurableAbort(familyBackend, {
-    phase,
-    reason,
-    familyHeadAfter,
-    stopSummary: familyVerifyFailureStopSummary(reason),
-  });
-  return stageGate("verify_failed");
-}
-
 // #1027 S2 / ADR 0145 — ledger workerStep tags for the wave-verify triage court
 // (与 CMR 庭同构,不另立法: reuse worker_dispatched / aborted vocabulary).
 const WAVE_VERIFY_JUDGE_STEP = "wave-verify-judge";
@@ -361,7 +328,7 @@ function familyVerifyCourtLabel(phase: VerifyCmrPhase): string {
  * `recordAborted` + durable ledger) and return the stage-named red. One seam so
  * the toolchain terminal, the unusable/route-failure terminal, and the
  * fixer-failure terminal all record identically across wave / checkpoint / final
- * (mirrors {@link runFamilyVerifyOrAbort}).
+ * (mirrors the shared verify→court glue {@link runFamilyVerifyThroughCourt}).
  */
 async function recordWaveVerifyAbort(input: {
   readonly phase: VerifyCmrPhase;
@@ -844,6 +811,58 @@ async function runWaveVerifyJudgeCourt(input: {
     }
     failureReason = reVerify.errorPackage?.reason ?? "family verify failed";
   }
+}
+
+/**
+ * #1107 / #1110 P1 — one verify→court glue for every family-verify call site
+ * (entry barrier + mid-court after CMR fixer). Green verify returns ok immediately;
+ * red enters the shared {@link runWaveVerifyJudgeCourt} (phase = scope). No second
+ * isomorphic court; no hard-die bypass.
+ */
+async function runFamilyVerifyThroughCourt(input: {
+  readonly phase: VerifyCmrPhase;
+  readonly familyBase: string;
+  readonly familyBackend: FamilyBackend;
+  readonly familyHeadAfter?: string;
+  readonly runId?: string;
+  readonly familyIssue?: number;
+  readonly modelRoute?: ResolvedModelRoute;
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  readonly escalationAnswer?: EscalationAnswerPayload;
+}): Promise<VerifyJudgeCourtResult> {
+  const { phase, familyBase, familyBackend, familyHeadAfter, runId, familyIssue } =
+    input;
+  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
+    phase,
+    familyBase,
+    ...(runId !== undefined ? { runId } : {}),
+    ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
+  });
+  if (verify.ok) {
+    return {
+      ok: true,
+      ran: true,
+      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    };
+  }
+  return await runWaveVerifyJudgeCourt({
+    phase,
+    familyBase,
+    familyBackend,
+    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    ...(input.modelRoute !== undefined ? { modelRoute: input.modelRoute } : {}),
+    ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
+    ...(input.billingPoolSlots !== undefined
+      ? { billingPoolSlots: input.billingPoolSlots }
+      : {}),
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
+    initialFailure: verify.errorPackage?.reason ?? "family verify failed",
+  });
 }
 
 interface CmrRouteLegEvidence {
@@ -3250,22 +3269,30 @@ async function runCorrectnessCourtLoop(input: {
         resolvedRoute,
       };
     }
-    const verifyAfterFixFailed = await runFamilyVerifyOrAbort({
+    // #1110 P1: mid-court re-verify after CMR fixer uses the same verify→court
+    // mechanism (not a hard-die bypass).
+    const verifyAfterFix = await runFamilyVerifyThroughCourt({
       phase,
       familyBase,
       familyBackend,
       familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
       runId,
       familyIssue,
+      modelRoute: resolvedRoute,
+      ...scopedPoolFields,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (verifyAfterFixFailed !== undefined) {
+    if (!verifyAfterFix.ok) {
       return {
-        result: verifyAfterFixFailed,
-        familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+        result: verifyAfterFix,
+        familyHeadAfter:
+          verifyAfterFix.familyHeadAfter ??
+          correctness.restartFinalBarrier.familyHeadAfter,
         resolvedRoute,
       };
     }
     correctnessFamilyHeadAfter =
+      verifyAfterFix.familyHeadAfter ??
       correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
@@ -3380,31 +3407,22 @@ export async function runVerifyCmr(
   };
 
   // ── verify (all phases: "wave", "correctness_checkpoint", "final") ──
-  const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify({
+  // #1107 / #1110: one mechanism — green continues; red enters the shared court.
+  const verifyCourt = await runFamilyVerifyThroughCourt({
     phase,
     familyBase,
+    familyBackend,
+    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
     ...(runId !== undefined ? { runId } : {}),
-    ...(familyIssue !== undefined ? { issue: familyIssue } : {}),
+    ...(familyIssue !== undefined ? { familyIssue } : {}),
+    ...(modelRoute !== undefined ? { modelRoute } : {}),
+    ...scopedPoolFields,
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   });
-
-  if (!verify.ok) {
-    const judgeCourtResult = await runWaveVerifyJudgeCourt({
-      phase,
-      familyBase,
-      familyBackend,
-      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-      ...(runId !== undefined ? { runId } : {}),
-      ...(familyIssue !== undefined ? { familyIssue } : {}),
-      ...(modelRoute !== undefined ? { modelRoute } : {}),
-      ...scopedPoolFields,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      initialFailure: verify.errorPackage?.reason ?? "family verify failed",
-    });
-    if (!judgeCourtResult.ok) {
-      return judgeCourtResult;
-    }
-    familyHeadAfter = judgeCourtResult.familyHeadAfter ?? familyHeadAfter;
+  if (!verifyCourt.ok) {
+    return verifyCourt;
   }
+  familyHeadAfter = verifyCourt.familyHeadAfter ?? familyHeadAfter;
 
   if (phase === "wave") {
     return { ok: true, ran: true };
@@ -3578,19 +3596,23 @@ export async function runVerifyCmr(
       completenessFamilyHeadAfter = completeness.familyHeadAfter;
       break;
     }
-    // After fix, re-verify before re-opening the court (parity with correctness).
-    const verifyAfterCompletenessFix = await runFamilyVerifyOrAbort({
+    // #1110 P1: mid-court re-verify after completeness fixer — same court glue.
+    const verifyAfterCompletenessFix = await runFamilyVerifyThroughCourt({
       phase,
       familyBase,
       familyBackend,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
       runId,
       familyIssue,
+      modelRoute: resolvedRoute,
+      ...scopedPoolFields,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (verifyAfterCompletenessFix !== undefined) {
+    if (!verifyAfterCompletenessFix.ok) {
       return verifyAfterCompletenessFix;
     }
     completenessFamilyHeadAfter =
+      verifyAfterCompletenessFix.familyHeadAfter ??
       completeness.restartFinalBarrier.familyHeadAfter;
     completenessPriorKeysByPass =
       completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
