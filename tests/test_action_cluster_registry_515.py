@@ -31,9 +31,9 @@ from ming_sim.action_clusters import (
     classifier_json_fields_prompt,
     cluster_by_kind,
     get_materializer,
-    inject_scripted_candidates,
     materialize_clusters_ordered,
     normalize_intent_candidates,
+    normalize_one_candidate,
     primary_intent,
     validate_action_candidate_shape,
 )
@@ -72,7 +72,11 @@ def test_registry_row_carries_handler_and_fields_prompt_from_specs():
 
 
 def test_registry_rows_generate_shape_contract_matrix():
-    from ming_sim.action_clusters import all_field_specs, normalize_one_candidate
+    # 从 ACTION_CLUSTERS 汇集 FieldSpec（不经公共派生索引 API）
+    specs_by_name = {}
+    for c in ACTION_CLUSTERS:
+        for f in c.fields:
+            specs_by_name.setdefault(f.name, f)
 
     for c in ACTION_CLUSTERS:
         if c.kind == "none":
@@ -87,7 +91,7 @@ def test_registry_rows_generate_shape_contract_matrix():
                 base[f.name] = 1
             else:
                 base[f.name] = "x"
-        got = inject_scripted_candidates(base)
+        got = candidates_from_classifier_payload(base, soft=False)
         assert len(got) == 1 and got[0]["kind"] == c.kind
         for f in c.fields:
             if not f.allowed:
@@ -95,21 +99,23 @@ def test_registry_rows_generate_shape_contract_matrix():
             bad = dict(base)
             bad[f.name] = "__not_in_enum__"
             with pytest.raises(ActionCandidateShapeError):
-                inject_scripted_candidates(bad)
+                candidates_from_classifier_payload(bad, soft=False)
 
     # 共享 superset：enum 字段挂在别 kind 上仍 out-of-enum 拒
-    enum_specs = [s for s in all_field_specs().values() if s.allowed]
+    enum_specs = [s for s in specs_by_name.values() if s.allowed]
     assert enum_specs, "catalog must expose at least one enum FieldSpec"
-    host_kind = next(c.kind for c in ACTION_CLUSTERS if c.kind not in ("none",) and c.kind != "confirmation")
+    host_kind = next(
+        c.kind for c in ACTION_CLUSTERS if c.kind not in ("none",) and c.kind != "confirmation"
+    )
     for spec in enum_specs:
         payload = {"kind": host_kind, spec.name: "__not_in_enum__"}
         ok, reason = validate_action_candidate_shape(payload)
         assert ok is False and "out of enum" in reason
         with pytest.raises(ActionCandidateShapeError):
-            inject_scripted_candidates(payload)
+            candidates_from_classifier_payload(payload, soft=False)
 
     # 整数上限取自 FieldSpec.int_hi（非名称特判）
-    int_specs = [s for s in all_field_specs().values() if s.as_int and s.int_hi < 10**9]
+    int_specs = [s for s in specs_by_name.values() if s.as_int and s.int_hi < 10**9]
     assert int_specs, "catalog must expose a clamped int FieldSpec"
     for spec in int_specs:
         over = normalize_one_candidate(
@@ -124,7 +130,8 @@ def test_strict_shape_rejects_unknown_kind_and_out_of_enum_subfield():
     with pytest.raises(ActionCandidateShapeError):
         assert_action_candidate_shape({"动作类型": "拨帑"})
     with pytest.raises(ActionCandidateShapeError):
-        inject_scripted_candidates({"kind": "appointment", "appoint_action": "流放"})
+        candidates_from_classifier_payload(
+            {"kind": "appointment", "appoint_action": "流放"}, soft=False)
 
 
 def test_soft_llm_path_degrades_bad_shape_to_empty_list():
@@ -209,10 +216,10 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
     })
     sess = _bind_apply(db, state, content)
     before = _count_pending(db, state.turn)
-    scripted = inject_scripted_candidates({
+    scripted = candidates_from_classifier_payload({
         "kind": "appointment", "appoint_action": "任命",
         "name": "测试候选人甲", "office": "陕西巡抚",
-    })
+    }, soft=False)
     out = sess.apply_cli_conversation_actions(
         minister, "着测试候选人甲为陕西巡抚。", "臣遵旨拟任。",
         has_directive=False, secret_order_id=None, preclassified_intent=scripted,
