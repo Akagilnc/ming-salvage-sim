@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_DISPATCH_ATTEMPTS,
+  isWorktreeConsistencyFailure,
   retryProcessCrash,
   withMechanicalRetry,
 } from "../../src/dispatchRetry.js";
@@ -122,6 +123,81 @@ describe("#598 withMechanicalRetry", () => {
 
     expect(result).toEqual(COMPLETED);
     expect(delays).toEqual([15_000, 15_000]);
+  });
+
+  it("#1105 A6: worktree consistency failure heals once then short-circuits (#1092 shape)", async () => {
+    expect(
+      isWorktreeConsistencyFailure(
+        "fatal: not a git repository: /tmp/iso/.git/worktrees/feat-issue-1084",
+      ),
+    ).toBe(true);
+    expect(isWorktreeConsistencyFailure("connection reset by peer")).toBe(false);
+
+    let calls = 0;
+    let heals = 0;
+    const wreckage =
+      "fatal: not a git repository: /x/.git/worktrees/feat-issue-1084";
+    const result = await withMechanicalRetry(
+      coderSpec(),
+      {
+        worktree: {
+          branch: "feat/issue-1084",
+          base: "main",
+          path: "/x/.sandcastle/worktrees/feat-issue-1084",
+        },
+      },
+      async () => {
+        calls += 1;
+        return { kind: "failed", reason: wreckage };
+      },
+      {
+        sleepMs: async () => undefined,
+        healWorktreeConsistency: async () => {
+          heals += 1;
+        },
+      },
+    );
+    expect(result.kind).toBe("failed");
+    // Attempt 1 fails → heal → attempt 2 fails → stop (not 6).
+    expect(calls).toBe(2);
+    expect(heals).toBe(1);
+    if (result.kind !== "failed") throw new Error("expected failed");
+    expect(result.reason).toContain("not a git repository");
+    // #1105 R4 F-P2: exhaustion suffix must reflect real attempts (2), not MAX.
+    expect(result.reason).toMatch(/\(after 2 dispatch attempts\)$/);
+  });
+
+  it("NEGATIVE: healWorktreeConsistency throw funnels into failed channel (#1105 R7 F2)", async () => {
+    const wreckage =
+      "fatal: not a git repository: /x/.git/worktrees/feat-issue-1105";
+    const onFailures: unknown[] = [];
+    const result = await withMechanicalRetry(
+      coderSpec(),
+      {
+        worktree: {
+          branch: "feat/issue-1105",
+          base: "main",
+          path: "/x/.sandcastle/worktrees/feat-issue-1105",
+        },
+      },
+      async () => ({ kind: "failed", reason: wreckage }),
+      {
+        sleepMs: async () => undefined,
+        healWorktreeConsistency: async () => {
+          throw new Error("prepareWorktree boom");
+        },
+        onFailure: async (outcome) => {
+          onFailures.push(outcome);
+        },
+      },
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind !== "failed") throw new Error("expected failed");
+    expect(result.reason).toContain("worktree consistency heal failed");
+    expect(result.reason).toContain("prepareWorktree boom");
+    expect(result.reason).toMatch(/\(after 1 dispatch attempts\)$/);
+    // Must not escape withMechanicalRetry as a raw throw.
+    expect(onFailures.length).toBeGreaterThanOrEqual(1);
   });
 
   it("re-entry with attemptsAlreadyUsed>0 sleeps the next 15s slot before first dispatch (#934 ID-004)", async () => {

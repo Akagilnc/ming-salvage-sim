@@ -53,6 +53,7 @@ import type {
 import {
   completedJudge,
   judgeContinue,
+  judgeConverged,
   judgeToolchain,
   liveCmrJudgeContinue,
   legacyCmrScriptToWorkerOutput,
@@ -123,6 +124,7 @@ class CapableFamilyBackend implements FamilyBackend {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
       pr?: (req: TestShipRequest) => TestShipResult;
+      readFamilyHead?: (familyBase: string) => string;
       worker?: (spec: WorkerSpec, ctx: DispatchContext) => WorkerResult | Promise<WorkerResult>;
     } = {},
   ) {}
@@ -143,7 +145,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async readFamilyHead(familyBase: string): Promise<string> {
     this.readFamilyHeadCalls.push(familyBase);
-    return this.currentFamilyHead;
+    return this.script.readFamilyHead?.(familyBase) ?? this.currentFamilyHead;
   }
 
   // ── #296 verify/cmr/PR capabilities (optional methods) ──
@@ -337,6 +339,14 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
           reason: "Error: Cannot find module 'tsx'",
         },
       }),
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("Error: Cannot find module 'tsx'", "install dependency"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
     });
 
     const result = await runVerifyCmr({
@@ -356,11 +366,10 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
         status: "aborted",
         event: "aborted",
         phase: "final",
-        reason: "Error: Cannot find module 'tsx'",
-        familyHeadAfter: "head-before-final-verify",
+        reason: expect.stringContaining("Cannot find module 'tsx'"),
         stopSummary: expect.objectContaining({
           reason: "verify_failed",
-          repairHint: expect.stringContaining("install or restore"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
         }),
       }),
     );
@@ -377,6 +386,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let verifyCalls = 0;
     let judgeCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
+    const judgePhases: Array<DispatchContext["phase"]> = [];
     const backend = new CapableFamilyBackend({
       // #1 initial wave verify (red) → court; #2 re-verify after fix (green
       // observe). exit_loop reuses that observe when HEAD unchanged (#1085 F1)
@@ -387,11 +397,12 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
           ? { ok: true }
           : { ok: false, errorPackage: { reason: "cross-slice seam red: 7 failing" } };
       },
-      worker: (spec) => {
+      worker: (spec, ctx) => {
         if (spec.kind === "cmr") {
           judgeCalls += 1;
           // #1085: after builder beat the hub resumes judge — second call
           // must exit_loop (converged); green alone never skips the hub.
+          judgePhases.push(ctx.phase);
           return completedJudge(
             judgeCalls === 1
               ? judgeContinue([sampleFinding("seam regression", "a.ts:9")])
@@ -418,6 +429,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     // Initial red + post-fix green observe (exit reuses observe; no double-run).
     expect(verifyCalls).toBe(2);
     expect(judgeCalls).toBe(2);
+    expect(judgePhases).toEqual(["wave", "wave"]);
     expect(coderDispatches).toHaveLength(1);
     expect(coderDispatches[0]?.kind).toBe("coder");
     // Ledger records the wave triage + fix rounds (与 CMR 庭同构).
@@ -482,6 +494,795 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     // initial + red-after-exit + green-after-fix (final exit reuses observe)
     expect(verifyCalls).toBe(3);
     expect(backend.aborted).toEqual([]);
+  });
+
+  it("checkpoint positive red → judge continue → coder-fix → mechanical re-verify green → continue to correctness court", async () => {
+    let verifyCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const coderIssues: Array<number | undefined> = [];
+    const verifyJudgePhases: Array<DispatchContext["phase"]> = [];
+    const backend = new CapableFamilyBackend({
+      verify: (req) => {
+        verifyCalls += 1;
+        return verifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "correctness checkpoint red: test failure" } };
+      },
+      worker: (spec, ctx) => {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgePhases.push(ctx.phase);
+            return completedJudge(
+              verifyJudgePhases.length === 1
+                ? judgeContinue([sampleFinding("checkpoint finding", "src/a.ts:1")])
+                : judgeConverged(),
+            );
+          }
+          return completedJudge(judgeConverged());
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          coderIssues.push(ctx.familyIssue);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "correctness_checkpoint",
+      familyBase: "family/checkpoint-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-cp-1",
+      familyIssue: 1107,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(2);
+    expect(backend.verifyCalls[0]?.phase).toBe("correctness_checkpoint");
+    expect(backend.verifyCalls[1]?.phase).toBe("correctness_checkpoint");
+    expect(backend.verifyCalls.map((call) => call.issue)).toEqual([1107, 1107]);
+    expect(verifyJudgePhases).toEqual([
+      "correctness_checkpoint",
+      "correctness_checkpoint",
+    ]);
+    expect(coderDispatches).toHaveLength(1);
+    expect(coderIssues).toEqual([1107]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "correctness_checkpoint",
+        familyHeadAfter: "head-1",
+      }),
+    );
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("checkpoint real toolchain red → stageGate verify_failed (no coder fix)", async () => {
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: false, errorPackage: { reason: "MODULE_NOT_FOUND in correctness checkpoint" } }),
+      worker: (spec) => {
+        if (spec.kind === "coder") coderDispatches.push(spec);
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("MODULE_NOT_FOUND", "missing dep during checkpoint verify"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "correctness_checkpoint",
+      familyBase: "family/checkpoint-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-cp-1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("correctness_checkpoint");
+    expect(backend.aborted[0]?.familyBase).toBe("family/checkpoint-base");
+    // Phase-aware abort label: must not be wave/final mis-tagged.
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      "correctness_checkpoint verify toolchain",
+    );
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "correctness_checkpoint",
+        reason: expect.stringContaining("correctness_checkpoint verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          summary: expect.stringContaining("correctness_checkpoint verify toolchain"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
+    expect(coderDispatches).toEqual([]);
+  });
+
+  it("final verify positive red → judge continue → coder-fix → mechanical re-verify green → continue to CMR courts & ship", async () => {
+    let verifyCalls = 0;
+    const coderDispatches: WorkerSpec[] = [];
+    const verifyJudgePhases: Array<DispatchContext["phase"]> = [];
+    const backend: CapableFamilyBackend = new CapableFamilyBackend({
+      verify: () => {
+        verifyCalls += 1;
+        return verifyCalls >= 2
+          ? { ok: true }
+          : { ok: false, errorPackage: { reason: "final verify red: test failure" } };
+      },
+      worker: (spec, ctx): WorkerResult | Promise<WorkerResult> => {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgePhases.push(ctx.phase);
+            return completedJudge(
+              verifyJudgePhases.length === 1
+                ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
+                : judgeConverged(),
+            );
+          }
+          return completedJudge(judgeConverged());
+        }
+        if (spec.kind === "coder") {
+          coderDispatches.push(spec);
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+        if (spec.kind === "ship") {
+          backend.prCalls.push({ familyBase: "family/291-base" });
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: "family/291-base",
+              pr: "https://github.com/test/repo/pull/291",
+              prHead: "head-1",
+              status: "pr_opened",
+            },
+          };
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-final-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(2);
+    expect(backend.verifyCalls[0]?.phase).toBe("final");
+    expect(backend.verifyCalls[1]?.phase).toBe("final");
+    expect(verifyJudgePhases).toEqual(["final", "final"]);
+    expect(coderDispatches).toHaveLength(1);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toEqual([
+      expect.objectContaining({ familyHeadAfter: "head-1" }),
+      expect.objectContaining({ familyHeadAfter: "head-1" }),
+    ]);
+    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("final verify real toolchain red → stageGate verify_failed (no coder fix, no ship)", async () => {
+    const coderDispatches: WorkerSpec[] = [];
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: false, errorPackage: { reason: "MODULE_NOT_FOUND in final verify" } }),
+      worker: (spec) => {
+        if (spec.kind === "coder") coderDispatches.push(spec);
+        if (spec.kind === "cmr") {
+          return completedJudge(
+            judgeToolchain("MODULE_NOT_FOUND", "missing dep during final verify"),
+          );
+        }
+        throw new Error(`unexpected worker dispatch: ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/final-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-final-1",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("final");
+    expect(backend.aborted[0]?.familyBase).toBe("family/final-base");
+    expect(backend.aborted[0]?.errorPackage.reason).toContain("final verify toolchain");
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: expect.stringContaining("final verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          summary: expect.stringContaining("final verify toolchain"),
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
+    expect(coderDispatches).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+  });
+
+  // #1110 P1 / ADR 0145: mid-court re-verify after a CMR fixer is the same
+  // family-verify mechanism (phase = scope). Red must enter the shared court —
+  // not runFamilyVerifyOrAbort hard-die. Semantic choice: start the verify
+  // triage court (not "resume CMR continue") because the red is a verify-barrier
+  // fact that may be toolchain, and green re-verify is the hard precondition
+  // before re-opening any CMR court.
+  it("mid-court after correctness fixer: red → verify triage continue → fixer → green → re-open CMR & ship", async () => {
+    const correctnessKey =
+      "correctness|src/mid-court.ts:1|mid-court regression after cmr fix";
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "mid-court regression after cmr fix",
+      location: "src/mid-court.ts:1",
+      suggested_fix: "repair the regression the CMR fixer introduced",
+      action: "fix_now",
+    };
+    let verifyCalls = 0;
+    let verifyJudgeCalls = 0;
+    let coderDispatchCount = 0;
+    let verifyFixHeadObserved = false;
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      readFamilyHead: () => {
+        if (backend.currentFamilyHead !== "head-after-verify-fix") {
+          return backend.currentFamilyHead;
+        }
+        if (!verifyFixHeadObserved) {
+          verifyFixHeadObserved = true;
+          return backend.currentFamilyHead;
+        }
+        throw new Error("later HEAD observation unavailable — use propagated HEAD");
+      },
+      verify: () => {
+        verifyCalls += 1;
+        // #1 initial final verify green → enter CMR.
+        // #2 mid-court after CMR fixer red → shared verify court.
+        // #3 court mechanical re-verify green → resume correctness court.
+        if (verifyCalls === 2) {
+          return {
+            ok: false,
+            errorPackage: { reason: "mid-court verify red after cmr fixer" },
+          };
+        }
+        return { ok: true };
+      },
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          };
+        }
+        if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            claimedFixedFindingIdentityKeys: [correctnessKey],
+          };
+        }
+        return {
+          converged: false,
+          findingsCount: 1,
+          reason: "correctness found a mid-court seam bug",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          findings: [finding],
+          ...CMR_EVIDENCE,
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgeCalls += 1;
+            return completedJudge(
+              verifyJudgeCalls === 1
+                ? judgeContinue([
+                    sampleFinding("mid-court verify finding", "src/mid-court.ts:1"),
+                  ])
+                : judgeConverged(),
+            );
+          }
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/1110-mid-court",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: cmrScriptToWorkerOutput(cmr),
+          };
+        }
+        if (spec.kind === "coder") {
+          coderDispatchCount += 1;
+          // First coder = CMR fixer; second = verify-court fixer after mid-court red.
+          if (coderDispatchCount === 1) {
+            backend.currentFamilyHead = "head-after-cmr-fix";
+          } else if (coderDispatchCount === 2) {
+            backend.currentFamilyHead = "head-after-verify-fix";
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "ship") {
+          backend.prCalls.push({
+            familyBase: ctx.familyBase ?? "family/1110-mid-court",
+          });
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/1110-mid-court",
+              pr: "https://github.com/test/repo/pull/1110",
+              prHead: backend.currentFamilyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+    backend.currentFamilyHead = "head-before-cmr-fix";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1110-mid-court",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-cmr-fix",
+      familyIssue: 1110,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(3);
+    expect(verifyJudgeCalls).toBe(2);
+    expect(coderDispatchCount).toBe(2);
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).toContain("wave-verify-fix");
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
+      "correctness",
+      "correctness",
+      "correctness",
+    ]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "final",
+        familyHeadAfter: "head-after-verify-fix",
+      }),
+    );
+    expect(backend.prCalls).toEqual([{ familyBase: "family/1110-mid-court" }]);
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("mid-court after correctness fixer: real toolchain red → verify_failed (verify-court fixer zero-spin)", async () => {
+    const finding: Finding = {
+      severity: "medium",
+      category: "correctness",
+      claim_quote: "toolchain red after cmr fix",
+      location: "src/mid-court-toolchain.ts:1",
+      suggested_fix: "irrelevant — mid-court verify is toolchain",
+      action: "fix_now",
+    };
+    let verifyCalls = 0;
+    let coderDispatchCount = 0;
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      verify: () => {
+        verifyCalls += 1;
+        // Initial green; mid-court after CMR fixer stays red (toolchain).
+        if (verifyCalls === 1) return { ok: true };
+        return {
+          ok: false,
+          errorPackage: { reason: "MODULE_NOT_FOUND mid-court after cmr fixer" },
+        };
+      },
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          };
+        }
+        return {
+          converged: false,
+          findingsCount: 1,
+          reason: "correctness finding before mid-court toolchain red",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          findings: [finding],
+          ...CMR_EVIDENCE,
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            return completedJudge(
+              judgeToolchain(
+                "MODULE_NOT_FOUND",
+                "missing dep during mid-court re-verify",
+              ),
+            );
+          }
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/1110-mid-toolchain",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: cmrScriptToWorkerOutput(cmr),
+          };
+        }
+        if (spec.kind === "coder") {
+          coderDispatchCount += 1;
+          backend.currentFamilyHead = "head-after-cmr-fix-toolchain";
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "ship") {
+          throw new Error("ship must not run after mid-court toolchain abort");
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1110-mid-toolchain",
+      familyBackend: backend,
+      familyHeadAfter: "head-before",
+      familyIssue: 1110,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    // Only the CMR fixer spun; verify-court toolchain = zero verify-fixer.
+    expect(coderDispatchCount).toBe(1);
+    expect(backend.ledger.map((e) => e.workerStep)).toContain("wave-verify-judge");
+    expect(backend.ledger.map((e) => e.workerStep)).not.toContain("wave-verify-fix");
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("final");
+    expect(backend.aborted[0]?.errorPackage.reason).toContain("final verify toolchain");
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: expect.stringContaining("final verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
+    expect(backend.prCalls).toEqual([]);
+    // Correctness never re-opens after toolchain mid-court abort.
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
+      "correctness",
+    ]);
+    expect(verifyCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  // #1110 FIX3 / ADR 0145: completeness mid-court is the same family-verify
+  // mechanism as the correctness mid-court cases above — phase is scope only.
+  // Completeness fixer then mechanical re-verify red must enter the shared
+  // verify triage court (not hard-die), then fixer → green → resume CMR.
+  it("mid-court after completeness fixer: red → verify triage continue → fixer → green → re-open CMR & ship", async () => {
+    const completenessKey =
+      "completeness|src/mid-court-completeness.ts:1|mid-court regression after completeness fix";
+    const finding: Finding = {
+      severity: "medium",
+      category: "completeness",
+      claim_quote: "mid-court regression after completeness fix",
+      location: "src/mid-court-completeness.ts:1",
+      suggested_fix: "repair the regression the completeness fixer introduced",
+      action: "fix_now",
+    };
+    let verifyCalls = 0;
+    let verifyJudgeCalls = 0;
+    let coderDispatchCount = 0;
+    let verifyFixHeadObserved = false;
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      readFamilyHead: () => {
+        if (
+          backend.currentFamilyHead !==
+          "head-after-completeness-verify-fix"
+        ) {
+          return backend.currentFamilyHead;
+        }
+        if (!verifyFixHeadObserved) {
+          verifyFixHeadObserved = true;
+          return backend.currentFamilyHead;
+        }
+        throw new Error("later HEAD observation unavailable — use propagated HEAD");
+      },
+      verify: () => {
+        verifyCalls += 1;
+        // #1 initial final verify green → enter CMR.
+        // #2 mid-court after completeness fixer red → shared verify court.
+        // #3 court mechanical re-verify green → resume completeness court.
+        if (verifyCalls === 2) {
+          return {
+            ok: false,
+            errorPackage: {
+              reason: "mid-court verify red after completeness fixer",
+            },
+          };
+        }
+        return { ok: true };
+      },
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          if (req.priorCmrFindingIdentityKeys?.includes(completenessKey)) {
+            return {
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              claimedFixedFindingIdentityKeys: [completenessKey],
+            };
+          }
+          return {
+            converged: false,
+            findingsCount: 1,
+            reason: "completeness found a mid-court seam bug",
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            findings: [finding],
+            ...CMR_EVIDENCE,
+          };
+        }
+        return {
+          converged: true,
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            verifyJudgeCalls += 1;
+            return completedJudge(
+              verifyJudgeCalls === 1
+                ? judgeContinue([
+                    sampleFinding(
+                      "mid-court completeness verify finding",
+                      "src/mid-court-completeness.ts:1",
+                    ),
+                  ])
+                : judgeConverged(),
+            );
+          }
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/1110-mid-court-completeness",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: cmrScriptToWorkerOutput(cmr),
+          };
+        }
+        if (spec.kind === "coder") {
+          coderDispatchCount += 1;
+          // First coder = completeness CMR fixer; second = verify-court fixer
+          // after mid-court red.
+          if (coderDispatchCount === 1) {
+            backend.currentFamilyHead = "head-after-completeness-fix";
+          } else if (coderDispatchCount === 2) {
+            backend.currentFamilyHead = "head-after-completeness-verify-fix";
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "ship") {
+          backend.prCalls.push({
+            familyBase: ctx.familyBase ?? "family/1110-mid-court-completeness",
+          });
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/1110-mid-court-completeness",
+              pr: "https://github.com/test/repo/pull/1110",
+              prHead: backend.currentFamilyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+    backend.currentFamilyHead = "head-before-completeness-fix";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1110-mid-court-completeness",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-completeness-fix",
+      familyIssue: 1110,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(verifyCalls).toBe(3);
+    expect(verifyJudgeCalls).toBe(2);
+    expect(coderDispatchCount).toBe(2);
+    const steps = backend.ledger.map((e) => e.workerStep);
+    expect(steps).toContain("wave-verify-judge");
+    expect(steps).toContain("wave-verify-fix");
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
+      "completeness",
+      "completeness",
+      "correctness",
+    ]);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "cmr_passed",
+        phase: "final",
+        familyHeadAfter: "head-after-completeness-verify-fix",
+      }),
+    );
+    expect(backend.prCalls).toEqual([
+      { familyBase: "family/1110-mid-court-completeness" },
+    ]);
+    expect(backend.aborted).toEqual([]);
+  });
+
+  it("mid-court after completeness fixer: real toolchain red → verify_failed (verify-court fixer zero-spin)", async () => {
+    const finding: Finding = {
+      severity: "medium",
+      category: "completeness",
+      claim_quote: "toolchain red after completeness fix",
+      location: "src/mid-court-completeness-toolchain.ts:1",
+      suggested_fix: "irrelevant — mid-court verify is toolchain",
+      action: "fix_now",
+    };
+    let verifyCalls = 0;
+    let coderDispatchCount = 0;
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      verify: () => {
+        verifyCalls += 1;
+        // Initial green; mid-court after completeness fixer stays red (toolchain).
+        if (verifyCalls === 1) return { ok: true };
+        return {
+          ok: false,
+          errorPackage: {
+            reason: "MODULE_NOT_FOUND mid-court after completeness fixer",
+          },
+        };
+      },
+      cmr: (req) => {
+        if (req.cmrPass === "completeness") {
+          return {
+            converged: false,
+            findingsCount: 1,
+            reason: "completeness finding before mid-court toolchain red",
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            findings: [finding],
+            ...CMR_EVIDENCE,
+          };
+        }
+        throw new Error("correctness must not open after completeness mid-court toolchain abort");
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          if (spec.promptFile === "wave_verify_judge.md") {
+            return completedJudge(
+              judgeToolchain(
+                "MODULE_NOT_FOUND",
+                "missing dep during completeness mid-court re-verify",
+              ),
+            );
+          }
+          const cmr = await backend.runIntegratedCmr({
+            familyBase:
+              ctx.familyBase ?? "family/1110-mid-completeness-toolchain",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: cmrScriptToWorkerOutput(cmr),
+          };
+        }
+        if (spec.kind === "coder") {
+          coderDispatchCount += 1;
+          backend.currentFamilyHead = "head-after-completeness-fix-toolchain";
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "ship") {
+          throw new Error(
+            "ship must not run after completeness mid-court toolchain abort",
+          );
+        }
+        return dispatchReviewLoopThroughAdmission(backend, spec, ctx);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1110-mid-completeness-toolchain",
+      familyBackend: backend,
+      familyHeadAfter: "head-before",
+      familyIssue: 1110,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
+    // Only the completeness CMR fixer spun; verify-court toolchain = zero
+    // verify-fixer.
+    expect(coderDispatchCount).toBe(1);
+    expect(backend.ledger.map((e) => e.workerStep)).toContain("wave-verify-judge");
+    expect(backend.ledger.map((e) => e.workerStep)).not.toContain(
+      "wave-verify-fix",
+    );
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.phase).toBe("final");
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      "final verify toolchain",
+    );
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        event: "aborted",
+        phase: "final",
+        reason: expect.stringContaining("final verify toolchain"),
+        stopSummary: expect.objectContaining({
+          reason: "verify_failed",
+          repairHint: expect.stringContaining("toolchain/dependency"),
+        }),
+      }),
+    );
+    expect(backend.prCalls).toEqual([]);
+    // Completeness never re-opens; correctness never opens after toolchain
+    // mid-court abort.
+    expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual(["completeness"]);
+    expect(verifyCalls).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -1399,27 +2200,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       cmrPass: "correctness",
       familyHeadAfter: "head-after-correctness-fix",
     }));
-  });
-
-  it("RED full verify → ok:false, ran:true, aborted event, and NO cmr / NO PR (verify gates cmr)", async () => {
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: false, errorPackage: { reason: "vitest: 3 failed" } }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    expect(result.ok).toBe(false);
-    expect(result.ran).toBe(true);
-    expect(backend.aborted).toHaveLength(1);
-    expect(backend.aborted[0]?.phase).toBe("final");
-    // cmr only runs on GREEN verify; a red final verify never reaches cmr or PR.
-    expect(backend.cmrCalls).toEqual([]);
-    expect(backend.prCalls).toEqual([]);
-    // online review r2 (codex P1): NO `shipped` marker on a failed barrier — only a
-    // real opened PR persists it, so a resume re-runs the barrier (does not skip).
-    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
   it("ESCALATED cmr worker → durable final aborted entry includes the cmr pass before escalate", async () => {

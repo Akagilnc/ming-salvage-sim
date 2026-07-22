@@ -118,7 +118,11 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { findingIdentityKey } from "../findings.js";
-import { runExclusive } from "../gitMutex.js";
+import {
+  isGitMutexHeldInProcess,
+  runExclusive,
+  runExclusiveSync,
+} from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
@@ -372,7 +376,7 @@ export interface RealFamilyBackendOptions {
   readonly familyBaseStartHead?: string;
   /**
    * Override $HOME for the cmr worker's auth-source paths (`~/.codex/auth.json`,
-   * `~/.sc-agy-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
+   * `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
    * Tests inject a fixture home so the auth copy/mount is exercised without the
    * real host credentials.
    */
@@ -732,6 +736,22 @@ export class RealFamilyBackend implements FamilyBackend {
 
   // ─────────────────────────── merge ───────────────────────────
 
+  /**
+   * #1103 H2 / #1105 R4: `git checkout` on a shared clone mutates HEAD / index
+   * under the common `.git`. When already inside {@link runExclusive}, the file
+   * lock is held — do not nest {@link runExclusiveSync} (fail-fast on in-process
+   * overlap). Otherwise take the sync lock (cross-process wait still allowed).
+   */
+  private checkoutSharedRepo(branch: string, repo: string = this.opts.workingRepo): void {
+    if (isGitMutexHeldInProcess(repo)) {
+      this.sh("git", ["checkout", branch], repo);
+      return;
+    }
+    runExclusiveSync(repo, () => {
+      this.sh("git", ["checkout", branch], repo);
+    });
+  }
+
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
     // #291 B7: serialise this git-MUTATING merge under the SAME per-clone mutex the
     // single-slice prepareWorktree uses (keyed on the dedicated clone). The spine
@@ -748,7 +768,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const repo = this.opts.workingRepo;
     // Pin the SHAs BEFORE the merge: the family base HEAD before, and the child
     // branch HEAD being merged in (the ancestor reconcile branch ② confirms).
-    this.sh("git", ["checkout", this.opts.familyBase], repo);
+    this.checkoutSharedRepo(this.opts.familyBase, repo);
     const familyHeadBefore = this.sh("git", ["rev-parse", "HEAD"], repo);
     const childHead = this.sh("git", ["rev-parse", child.childBranch], repo);
     const msg = `Merge child #${child.childIssue} (${child.childBranch}) into ${this.opts.familyBase}`;
@@ -965,8 +985,9 @@ export class RealFamilyBackend implements FamilyBackend {
           resolved: false,
           reason:
             "merger worker cannot start without agy OAuth token — the merger slot is " +
-            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
-            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "agy-family; host agy OAuth token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir reads the live antigravity-cli token). " +
+            "Without it the worker fails to start " +
             "and never resolves; returning a structured non-resolve here keeps " +
             "resolveMergeConflict's loud-throw semantics.",
         };
@@ -1215,7 +1236,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // + tests; "final" runs the FULL suite (vitest run is already the full suite
     // here — wave can scope narrower in a richer config, but the family base must
     // be GREEN end-to-end before the integrated cmr / PR either way).
-    this.sh("git", ["checkout", request.familyBase], repo);
+    this.checkoutSharedRepo(request.familyBase, repo);
     try {
       await this.runVerifyCommands(request);
     } catch (err) {
@@ -1710,7 +1731,7 @@ export class RealFamilyBackend implements FamilyBackend {
         escalation: runnerSynthesizedFailureEscalation({ reason, diagnosis }),
       };
     }
-    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    this.checkoutSharedRepo(ctx.familyBase);
     if (ctx.waveVerifyFailure === undefined) {
       this.writeCmrFocusFile(ctx);
     }
@@ -1981,9 +2002,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // predicate refuses (this file ~877-895). So escalate (verifyCmr routes it as
     // not-passed续跑) rather than checking out the base + spinning the container only
     // to review the wrong scope.
-    // #1027 S2 / ADR 0145: the wave-verify triage judge presides over the verify
-    // FAILURE, not a diff — there is no cut-SHA scope to pin, so this guard does
-    // not apply to it (its focus is ctx.waveVerifyFailure, written below).
+    // ADR 0145: the family-verify triage judge presides over the phase-scoped
+    // verify FAILURE, not a diff — there is no cut-SHA scope to pin.
     if (
       this.opts.familyBaseStartHead === undefined &&
       ctx.waveVerifyFailure === undefined
@@ -2071,7 +2091,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
       // route-selected top-level agent over THIS checked-out base.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
       // FOCUS into the worker via a git-ignored focus file the prompt reads — the
       // skill can't reliably scope the family diff on its own (a stale local base
@@ -2079,9 +2099,9 @@ export class RealFamilyBackend implements FamilyBackend {
       // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
-      // #1027 S2 / ADR 0145: the wave-verify triage judge focuses on the verify
-      // FAILURE (a cross-slice-seam red), not a diff scope. Same judge decode +
-      // review-leg machinery; only the focus content differs.
+      // ADR 0145: the family-verify triage judge focuses on the phase-scoped
+      // verify FAILURE, not a diff scope. Same judge decode + review-leg
+      // machinery; only the focus content differs.
       if (ctx.waveVerifyFailure !== undefined) {
         this.writeWaveVerifyFocusFile(ctx);
       } else {
@@ -2278,7 +2298,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
@@ -2601,7 +2621,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       // verify/fixer need the bot-evidence landing; landing only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
@@ -2883,34 +2903,32 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(target, body, "utf8");
   }
 
-  /**
-   * #1027 S2 / ADR 0145 — write the wave-verify triage judge focus file.
-   *
-   * The wave-verify judge presides over a red family wave verify (child slices
-   * green in isolation, red only once merged onto the family base). Its material
-   * is the verify FAILURE, pinned verbatim here (the runner carries it on
-   * {@link DispatchContext.waveVerifyFailure}; method for triage lives in the
-   * versioned wave-verify judge prompt/soul — #1068). Shares CMR_FOCUS_FILENAME
-   * so the same in-container judge seat reads one focus path.
-   */
+  /** ADR 0145 — write the phase-scoped family-verify judge focus file. */
   protected writeWaveVerifyFocusFile(ctx: DispatchContext): void {
     const failure = ctx.waveVerifyFailure ?? "";
+    const phase = ctx.phase ?? "wave";
+    const accidentScope =
+      phase === "wave"
+        ? "after the current wave's child slices merged"
+        : phase === "correctness_checkpoint"
+          ? "at the correctness checkpoint"
+          : "at the final family verification barrier";
     const answerBlock =
       ctx.escalationAnswer !== undefined
         ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
             ctx.escalationAnswer,
             null,
             2,
-          )}\n\`\`\`\n\nRetry the previously paused wave-verify triage with this answer in force.`
+          )}\n\`\`\`\n\nRetry the previously paused family-verify triage with this answer in force.`
         : "";
     const body =
-      `# Wave-verify triage — the red family verify to classify (machine-generated; #1027 S2)\n\n` +
-      `The family base full verify (typecheck + tests) went RED after merging the\n` +
-      `child slices. Classify this red and return the shared typed judge verdict:\n` +
+      `# Family-verify triage — ${phase} (machine-generated; ADR 0145)\n\n` +
+      `The family base verify (typecheck + tests) went RED ${accidentScope}.\n` +
+      `Classify this phase-scoped red and return the shared typed judge verdict:\n` +
       `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
-      `cross-slice-seam regression) or \`toolchain\` (an environment/toolchain red\n` +
-      `the runner falls back to verify_failed on). Convergence is the deterministic\n` +
-      `green re-verify receipt — never your word alone.\n\n` +
+      `code regression within this phase scope) or \`toolchain\` (an environment/\n` +
+      `toolchain red the runner falls back to verify_failed on). Convergence is the\n` +
+      `deterministic green re-verify receipt — never your word alone.\n\n` +
       `## Verify failure output\n\n\`\`\`\n${failure}\n\`\`\`${answerBlock}\n`;
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -3261,7 +3279,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
       // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
       // the repo default branch and misses a configured non-main target. Written

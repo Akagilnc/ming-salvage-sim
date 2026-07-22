@@ -126,6 +126,43 @@ function isEisdirClassFailedResult(result: WorkerResult): boolean {
 }
 
 /**
+ * #1103 / #1105 A6 — deterministic worktree consistency wreckage.
+ * Matches `fatal: not a git repository: …/.git/worktrees/…` (and Sandcastle
+ * resident paths). Re-dispatch without heal burns the full process-root budget
+ * on the same orphan dir (#1084 six-hit).
+ */
+export function isWorktreeConsistencyFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  if (!lower.includes("not a git repository")) return false;
+  return (
+    lower.includes(".git/worktrees/") ||
+    lower.includes(".sandcastle/worktrees/") ||
+    /[/\\]worktrees[/\\]/.test(lower)
+  );
+}
+
+function worktreeConsistencyMessage(outcome: DispatchOutcome): string | undefined {
+  if ("kind" in outcome && outcome.kind === "thrown") {
+    return outcome.error instanceof Error
+      ? outcome.error.message
+      : String(outcome.error);
+  }
+  if ("result" in outcome && outcome.result.kind === "failed") {
+    return outcome.result.reason;
+  }
+  return undefined;
+}
+
+function healFailureResult(err: unknown): Extract<WorkerResult, { kind: "failed" }> {
+  return {
+    kind: "failed",
+    reason: `worktree consistency heal failed: ${
+      err instanceof Error ? err.message : String(err)
+    }`,
+  };
+}
+
+/**
  * Total process-root dispatch attempts for one fixed position (1 initial +
  * 5 retries) when invocation transport/crash/signal/SO extraction fails and
  * no durable outcome exists yet (#934 ID-004 / #937).
@@ -220,6 +257,14 @@ export interface MechanicalRetryOptions {
    * surface the failure immediately (loud error package abort upstream).
    */
   readonly forbidFreshRetry?: boolean;
+  /**
+   * #1105 A6 / #1092-style deterministic class: before the next attempt after a
+   * worktree consistency failure, clear wreckage and rebuild the resident
+   * worksite. Invoked at most once per withMechanicalRetry invocation.
+   */
+  readonly healWorktreeConsistency?: (
+    ctx: DispatchContext,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -259,22 +304,51 @@ export async function withMechanicalRetry(
   let last: WorkerResult | undefined;
   let lastError: unknown;
   let lastAttemptThrew = false;
+  // Absolute attempt index of the last dispatch actually performed (for the
+  // exhaustion suffix — heal/resume short-circuits must not report MAX).
+  let attemptsPerformed = attemptsAlreadyUsed;
   // #1092: SO parse failure on a resumed session is deterministic (YAML habit /
   // missing schema on hot resume). After the first such failure, allow exactly
   // one fresh attempt then stop — do not burn the remaining process-root budget
   // on six identical resume retries.
   let resumeSoParseFailed = false;
+  // #1105 A6: worktree consistency wreckage is deterministic — heal once, allow
+  // one post-heal attempt, then stop (same short-circuit shape as #1092).
+  let worktreeConsistencyHealDone = false;
+  /** #1105 R7 F2: heal throw → failed channel (never escape withMechanicalRetry). */
+  const runConsistencyHeal = async (
+    useCtx: DispatchContext,
+    attempt: number,
+  ): Promise<"healed" | "heal-failed" | "skip"> => {
+    if (worktreeConsistencyHealDone || !opts?.healWorktreeConsistency) {
+      return "skip";
+    }
+    try {
+      await opts.healWorktreeConsistency(useCtx);
+      worktreeConsistencyHealDone = true;
+      return "healed";
+    } catch (healErr) {
+      worktreeConsistencyHealDone = true;
+      last = healFailureResult(healErr);
+      lastAttemptThrew = false;
+      await opts?.onFailure?.({ result: last }, attempt);
+      return "heal-failed";
+    }
+  };
   for (
     let attempt = attemptsAlreadyUsed + 1;
     attempt <= MAX_DISPATCH_ATTEMPTS;
     attempt++
   ) {
+    attemptsPerformed = attempt;
     const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
     const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
     const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
     const attemptHadResume = typeof useCtx.resumeSessionId === "string";
     // #934 ID-004/006 / #937: process-root redispatch preserves the current
     // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
+    // #1105 A6 is the narrow exception: worktree consistency heal clears orphan
+    // dir↔metadata wreckage before the next attempt (not a broad Git reset).
     // Sleep binds to absolute attempt index (not first-in-this-process): a
     // durable re-entry with attemptsAlreadyUsed>0 must still honor the 15s
     // interval before the next dispatch (five 15s slots across six attempts).
@@ -327,6 +401,15 @@ export async function withMechanicalRetry(
         // One fresh attempt after resume SO parse-fail already ran — stop.
         break;
       }
+      const thrownMsg = worktreeConsistencyMessage({ kind: "thrown", error: err });
+      if (
+        thrownMsg !== undefined &&
+        isWorktreeConsistencyFailure(thrownMsg)
+      ) {
+        const heal = await runConsistencyHeal(useCtx, attempt);
+        if (heal === "healed") continue;
+        break;
+      }
       continue;
     }
     const capacityError =
@@ -350,16 +433,26 @@ export async function withMechanicalRetry(
     if (resumeSoParseFailed && !attemptHadResume) {
       break;
     }
+    const failedMsg = worktreeConsistencyMessage({ result });
+    if (
+      failedMsg !== undefined &&
+      isWorktreeConsistencyFailure(failedMsg)
+    ) {
+      const heal = await runConsistencyHeal(useCtx, attempt);
+      if (heal === "healed") continue;
+      break;
+    }
   }
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.
   if (opts?.rethrowOnExhaustion === true && lastAttemptThrew) throw lastError;
   // #934 ID-004 / #937: exhaustion is the phase's canonical failed edge —
   // attempt count only (no relay-candidate / baton handoff vocabulary).
-  const attempts = MAX_DISPATCH_ATTEMPTS;
+  // #1105 R4 F-P2: report attempts actually performed (heal short-circuit = 2,
+  // not always MAX_DISPATCH_ATTEMPTS).
   return {
     ...(last as Extract<WorkerResult, { reason: string }>),
-    reason: `${(last as { reason: string }).reason} (after ${attempts} dispatch attempts)`,
+    reason: `${(last as { reason: string }).reason} (after ${attemptsPerformed} dispatch attempts)`,
   };
 }
 
