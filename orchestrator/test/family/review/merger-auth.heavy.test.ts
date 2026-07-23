@@ -35,7 +35,6 @@ import {
 import {
   SANDBOX_AGY_DIR,
   SANDBOX_CODEX_DIR,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../../../src/realBackend.js";
 import type { ConflictResolveRequest } from "../../../src/family/types.js";
@@ -161,13 +160,11 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
     const be = new CfgBackend(baseOpts());
     const cfg = be.cfg({ claudeToken: "merger-tok-xyz" });
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("merger-tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("merger");
   });
   it("omits the env var when the token is absent (the REQUIRE gate is the runMergerAgent preflight)", () => {
     const be = new CfgBackend(baseOpts());
     const cfg = be.cfg({});
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("merger");
   });
   it("marks the merger container as an orchestrator-spawned, non-interactive session", () => {
     const be = new CfgBackend(baseOpts());

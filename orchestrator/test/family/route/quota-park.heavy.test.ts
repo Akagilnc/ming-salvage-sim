@@ -680,12 +680,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
           models: ["grok-4.5"],
         },
         {
-          id: "cursor",
-          status: "dead",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: [] as string[],
-        },
-        {
           id: "zai",
           status: "dead",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,

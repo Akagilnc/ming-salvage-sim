@@ -2,7 +2,7 @@
 # Build the Ming orchestrator worker image (#332 2a → #333 2b full pack;
 # ADR 0026 / ADR 0016 bake).
 #
-# 2a (#332) baked the /tdd closure + coder soul so the coder worker could run.
+# 2a (#332) introduced the /tdd closure for coder workers.
 # 2b (#333) EXTENDS that to the FULL coherent dev-skill pack so the cmr / ship /
 # review / fix / merger workers can each invoke their skill — including each
 # skill's internal-call closure (a missing internally-invoked skill breaks the

@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  cmrPanelLegPromptFile,
+  CMR_PANEL_LEG_PROMPT_FILE,
   cmrPanelLegWorkerSpec,
   dispatchFamilyCmrPanelLegs,
   legTransportFromPanelLegResult,
@@ -32,7 +32,6 @@ import {
 import { cmrWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
 import { provisionWorkerAuth } from "../../../src/realBackend.js";
 import { successfulLegsFromTransports } from "../../../src/legPaper.js";
-import { buildJudgeReviewLegPrompt } from "../../../src/judgeStation.js";
 import { workerHostForModel } from "../../../src/dispatchWorker.js";
 import type { CmrAuth } from "../../../src/family/realFamilyBackend.js";
 import type {
@@ -49,10 +48,9 @@ import type {
 const here = dirname(fileURLToPath(import.meta.url));
 const soulsDir = join(here, "..", "..", "..", "image", "souls");
 const promptsDir = join(here, "..", "..", "..", "prompts");
-const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
 
 describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", () => {
-  it("freezes each cmrReview leg as a fresh READ-ONLY reviewer worker", () => {
+  it("freezes each correctness leg under the explicit single-lens soul", () => {
     const legs: WorkerCmrReviewLeg[] = [
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
@@ -67,7 +65,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       const spec = cmrPanelLegWorkerSpec(leg, "correctness");
       expect(spec.kind).toBe("reviewer");
       expect(spec.role).toBe("reviewer");
-      expect(spec.soul).toBe("READ-ONLY");
+      expect(spec.soul).toBe("cmr-correctness");
       expect(spec.session).toBe("fresh");
       expect(spec.contextRetention).toBe("clean");
       expect(spec.model).toBe(leg.slug);
@@ -75,7 +73,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       expect(spec.host).toBe(expectedHost[leg.slug]);
       expect(spec.maxIter).toBe(1);
       expect(spec.skill).toBeUndefined();
-      expect(spec.promptFile).toBe(cmrPanelLegPromptFile("correctness"));
+      expect(spec.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
     }
     const hosts = new Set(
       legs.map((leg) => cmrPanelLegWorkerSpec(leg, "correctness").host),
@@ -83,12 +81,6 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
     expect(hosts.size).toBe(legs.length);
   });
 
-  it("leg prompt prepends full reviewer soul (same helper as single-slice)", () => {
-    const body = "Review the family base diff for completeness.";
-    const prompt = buildJudgeReviewLegPrompt(reviewerSoul, body);
-    expect(prompt.startsWith(reviewerSoul.trim())).toBe(true);
-    expect(prompt).toContain(body);
-  });
 });
 
 describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
@@ -176,9 +168,9 @@ describe("#1094 family CMR round dispatches N leg workers then the judge", () =>
     });
     expect(dispatched.sort()).toEqual(
       [
-        "reviewer:agy:READ-ONLY",
-        "reviewer:gpt-5.6-sol:READ-ONLY",
-        "reviewer:opus:READ-ONLY",
+        "reviewer:agy:cmr-correctness",
+        "reviewer:gpt-5.6-sol:cmr-correctness",
+        "reviewer:opus:cmr-correctness",
       ].sort(),
     );
     expect(
@@ -315,8 +307,8 @@ describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
   });
 });
 
-describe("#1094 R2 F8 — pass-distinct lens prompts", () => {
-  it("completeness and correctness legs key distinct authoritative prompt sources", () => {
+describe("#1094 R2 F8 — pass-distinct routing souls", () => {
+  it("selects one explicit lens soul behind the shared task prompt", () => {
     const completeness = cmrPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
       "completeness",
@@ -325,22 +317,10 @@ describe("#1094 R2 F8 — pass-distinct lens prompts", () => {
       { family: "codex", slug: "gpt-5.6-sol" },
       "correctness",
     );
-    expect(completeness.promptFile).toBe("cmr_panel_leg_completeness.md");
-    expect(correctness.promptFile).toBe("cmr_panel_leg_correctness.md");
-    expect(completeness.promptFile).not.toBe(correctness.promptFile);
-
-    const cBody = readFileSync(
-      join(promptsDir, completeness.promptFile),
-      "utf8",
-    );
-    const kBody = readFileSync(
-      join(promptsDir, correctness.promptFile),
-      "utf8",
-    );
-    expect(cBody).toMatch(/Clause–Wire–Exercise/);
-    expect(cBody).not.toMatch(/Trace–Break–Prove/);
-    expect(kBody).toMatch(/Trace–Break–Prove/);
-    expect(kBody).not.toMatch(/Clause–Wire–Exercise/);
+    expect(completeness.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
+    expect(correctness.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
+    expect(completeness.soul).toBe("cmr-completeness");
+    expect(correctness.soul).toBe("cmr-correctness");
   });
 });
 
@@ -376,27 +356,6 @@ describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the f
   });
 });
 
-describe("#1094 F5 — pass-keyed panel-leg prompts are the authoritative sources", () => {
-  it("versioned panel-leg prompts load and prepend reviewer soul", () => {
-    for (const pass of ["completeness", "correctness"] as const) {
-      const promptPath = join(promptsDir, cmrPanelLegPromptFile(pass));
-      expect(existsSync(promptPath)).toBe(true);
-      const md = readFileSync(promptPath, "utf8");
-      expect(md).toMatch(/Fresh eyes only/i);
-      expect(md).toMatch(/Do not call another model/i);
-      expect(md).toMatch(/Do not repair, commit, or push/i);
-      expect(md).toMatch(/ADR 0141/i);
-      const composed = buildJudgeReviewLegPrompt(
-        reviewerSoul,
-        `${md.trim()}\n\nPanel leg slug: gpt-5.6-sol.\n`,
-      );
-      expect(composed.startsWith(reviewerSoul.trim())).toBe(true);
-      expect(composed).toContain("Fresh eyes only");
-      expect(composed).toContain("Panel leg slug: gpt-5.6-sol");
-    }
-  });
-});
-
 describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
   it("mounts only THIS leg's provider auth (isomorphic to single-slice reviewer)", async () => {
     const { RealFamilyBackend } = await import(
@@ -406,7 +365,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       SANDBOX_CODEX_DIR,
       SANDBOX_AGY_DIR,
       SANDBOX_GROK_DIR,
-      SANDBOX_SOUL_ENV,
       SANDBOX_OUTCOME_PATH_ENV,
     } = await import("../../../src/realBackend.js");
 
@@ -449,7 +407,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
-      expect(codex.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
       expect(codex.env[SANDBOX_OUTCOME_PATH_ENV]).toBeUndefined();
 
       const agy = be.legConfig(
@@ -548,6 +505,7 @@ describe("#1094 R2 F1 — judge cmrSandboxConfig mounts OWN family credential on
       public cfg(auth: CmrAuth, model: string) {
         return this.cmrSandboxConfig(auth, {
           model,
+          soul: "verify",
           host: workerHostForModel(model),
         });
       }
@@ -660,7 +618,7 @@ describe("#1094 R3 F1 — relayed pool mounts the executing provider credential"
       public cfg(auth: CmrAuth, model: string, billingPool?: string) {
         return this.cmrSandboxConfig(
           auth,
-          { model, host: workerHostForModel(model) },
+          { model, soul: "verify", host: workerHostForModel(model) },
           undefined,
           billingPool !== undefined ? { billingPool } : undefined,
         );
@@ -1120,8 +1078,8 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
   });
 });
 
-describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () => {
-  it("reads completeness promptFile even when ctx.cmrPass is correctness", async () => {
+describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
+  it("keeps the completeness Soul when ctx.cmrPass is correctness", async () => {
     const { execFileSync } = await import("node:child_process");
     const { RealFamilyBackend, CMR_FOCUS_FILENAME } = await import(
       "../../../src/family/realFamilyBackend.js"
@@ -1129,7 +1087,6 @@ describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () =>
 
     const root = mkdtempSync(join(tmpdir(), "1094-r3-f5-"));
     const ledger = mkdtempSync(join(tmpdir(), "1094-r3-f5-ledger-"));
-    let capturedPrompt = "";
     try {
       execFileSync("git", ["init"], { cwd: root });
       execFileSync("git", ["config", "user.email", "t@t"], { cwd: root });
@@ -1171,7 +1128,6 @@ describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () =>
           commits: never[];
           branch: string;
         }> {
-          capturedPrompt = readFileSync(options.promptFile!, "utf8");
           return {
             stdout: "P1: lens authority must follow spec.promptFile.\n",
             iterations: [],
@@ -1191,20 +1147,18 @@ describe("#1094 R3 F5 — lens follows spec.promptFile (not ctx.cmrPass)", () =>
         soulsDir,
         imageName: "img",
       });
-      // Spec pinned to completeness lens; ctx deliberately disagrees.
+      // The spec Soul pins completeness; ctx deliberately disagrees.
       const spec = cmrPanelLegWorkerSpec(
         { family: "codex", slug: "gpt-5.6-sol" },
         "completeness",
       );
-      expect(spec.promptFile).toBe("cmr_panel_leg_completeness.md");
+      expect(spec.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
+      expect(spec.soul).toBe("cmr-completeness");
       const result = await be.runLeg(spec, {
         familyBase: "main",
         cmrPass: "correctness",
       });
       expect(result.kind).toBe("completed");
-      expect(capturedPrompt).toMatch(/Clause–Wire–Exercise/);
-      expect(capturedPrompt).not.toMatch(/Trace–Break–Prove/);
-      expect(capturedPrompt).toMatch(/CMR pass: completeness/);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(ledger, { recursive: true, force: true });

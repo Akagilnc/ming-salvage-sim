@@ -42,9 +42,6 @@ const MODEL_PROVIDERS: ReadonlySet<string> = new Set([
   "claudeCode",
   "codex",
   "agy",
-  "copilot",
-  "cursor",
-  "pi",
   "grok",
 ]);
 
@@ -56,9 +53,6 @@ export type ModelDataProvider =
   | "claudeCode"
   | "codex"
   | "agy"
-  | "copilot"
-  | "cursor"
-  | "pi"
   | "grok";
 
 export interface ModelDataRosterEntry {

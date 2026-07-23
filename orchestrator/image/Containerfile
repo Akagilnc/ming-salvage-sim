@@ -1,6 +1,6 @@
 # Ming orchestrator worker image — 2b full pack (#333, ADR 0026 / ADR 0016 bake).
 #
-# 2a (#332) baked the minimal /tdd closure + coder soul so the coder worker runs.
+# 2a (#332) introduced the minimal /tdd closure for coder workers.
 # 2b (#333) EXTENDS 2a to the FULL coherent dev-skill pack +
 # the multi-model review CLIs (codex already in base, + agy/Gemini installed here),
 # so the cmr / ship / review / fix / merger workers can each invoke their skill
@@ -121,9 +121,12 @@ RUN set -eux; \
     curl -fsSL https://antigravity.google/cli/install.sh | bash; \
     test -x "$HOME/.local/bin/agy"
 USER root
+# Version probe may need auth; binary presence is the build gate.
 RUN set -eux; \
     ln -sf /home/agent/.local/bin/agy /usr/local/bin/agy; \
-    agy --version 2>/dev/null || true   # version probe may need auth; presence is the gate
+    agy --version 2>/dev/null || true; \
+    mkdir -p /home/agent/.gemini; \
+    chown agent /home/agent/.gemini
 
 # grok (SuperGrok CLI, Linux; #807). Installer writes under the invoking user's
 # ~/.grok/{bin,downloads}/ — run as `agent`, then symlink onto PATH for all users.

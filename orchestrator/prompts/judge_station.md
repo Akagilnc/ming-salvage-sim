@@ -1,9 +1,5 @@
 # Judge station (S3 establish / S6 resume) — #925 / #1081–#1083 hub
 
-Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
-Follow that soul and the worktree's `CLAUDE.md`. Method lives in the soul /
-baked skills — this file does not restate it.
-
 ## Runtime inputs
 
 - Landing / fix-findings transport from the runner (`$ORCHESTRATOR_FIX_FINDINGS_PATH`
@@ -33,9 +29,11 @@ password. Finish inside the single iteration (`maxIterations=1`).
   legal). `converged` only on full withdraw (全撤). Never invent a second
   pre-review status token. Never dispatch fresh review legs on a plan beat.
 - Dispatch **fresh** review legs only after accepting construction (never
-  resume a prior leg session). Prepend the full `reviewer.md` soul text at
-  the head of every leg prompt. Fresh findings return here for disposition —
-  never straight to the fixer.
+  resume a prior leg session). Each leg must load the reviewer Soul from the
+  live-mounted `/home/agent/.orchestrator/souls/reviewer.md` through that CLI's
+  provider-native instruction channel; keep its task prompt separate and never
+  concatenate, copy, or rewrite the Soul body into it. Fresh findings return
+  here for disposition — never straight to the fixer.
 
 ### Converged (no further fix rounds)
 

@@ -7,17 +7,8 @@
  * 3. escalateTermination agent rows must carry modelSlug (creator identity).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RealBackend } from "../../src/realBackend.js";
-import {
-  resumeCapableForSlug,
-  resolveModelSlugForPool,
-} from "../../src/modelRegistry.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
@@ -27,135 +18,10 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
-  StepSpec,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
-import type * as sc from "@ai-hero/sandcastle";
-import {
-  CODER_RECEIPT_TAG,
-} from "../../src/stationReceiptContracts.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const realPromptsDir = join(here, "..", "..", "prompts");
-const realSoulsDir = join(here, "..", "..", "image", "souls");
-
-// ── Finding 1: receipt pool binding ─────────────────────────────────────────
-
-describe("#955 r7 receipt maxRetries binds (slug, pool)", () => {
-  const RESUME_CAPABLE_SLUG = "gpt-5.6-sol";
-  /** Registry pool that rewrites codex → cursor (not resume-capable). */
-  const NON_RESUME_POOL = "cursor" as const;
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("registry truth: resume-capable slug + cursor pool → incapable provider", () => {
-    expect(resumeCapableForSlug(RESUME_CAPABLE_SLUG)).toBe(true);
-    expect(resolveModelSlugForPool(RESUME_CAPABLE_SLUG, NON_RESUME_POOL).provider).toBe(
-      "cursor",
-    );
-    expect(resumeCapableForSlug(RESUME_CAPABLE_SLUG, NON_RESUME_POOL)).toBe(false);
-  });
-
-  it("runStep entry: resume-capable slug + cursor billingPool → maxRetries=0", async () => {
-    class CaptureBackend extends RealBackend {
-      public agentOptions: Array<Parameters<typeof sc.run>[0]> = [];
-
-      protected override cloneDirExists(): boolean {
-        return true;
-      }
-
-      protected override sh(file: string, args: string[]): string {
-        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
-          return ".git";
-        }
-        if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
-          return "a".repeat(40);
-        }
-        if (file === "git" && args[0] === "rev-list" && args[1] === "--count") {
-          return "0";
-        }
-        return "";
-      }
-
-      protected override async preflightToolchainTool(): Promise<void> {}
-
-      protected override async runAgentSandbox(
-        options: Parameters<typeof sc.run>[0],
-      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        this.agentOptions.push(options);
-        return {
-          branch: "feat/r7",
-          stdout: "ok",
-          commits: [],
-          iterations: [{}],
-          output: {
-            station: "coder",
-            status: "completed",
-            committed: true,
-            commitsAdded: 1,
-          },
-        } as Awaited<ReturnType<typeof sc.run>>;
-      }
-    }
-
-    const home = mkdtempSync(join(tmpdir(), "r7-955-home-"));
-    const backend = new CaptureBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 95571,
-      repo: "owner/name",
-      imageName: "ming-worker:test",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      home,
-    });
-
-    const coderSpec: StepSpec = {
-      id: "S2",
-      role: "coder",
-      promptFile: "coder_implement.md",
-      model: RESUME_CAPABLE_SLUG,
-      maxIter: 1,
-      soul: "coder",
-      toolchain: ["python", "node", "npm", "typescript"],
-    };
-
-    // Control: no pool → resume-capable provider keeps maxRetries budget.
-    try {
-      await backend.runStep(coderSpec, {
-        branch: "feat/r7",
-        base: "main",
-        path: "/tmp/worktree/r7-no-pool",
-      });
-      expect(backend.agentOptions[0]!.output).toMatchObject({
-        tag: CODER_RECEIPT_TAG,
-        maxRetries: 2,
-      });
-
-      // Under test: same slug, pool rewrites provider to non-resume-capable.
-      await backend.runStep(
-        coderSpec,
-        {
-          branch: "feat/r7",
-          base: "main",
-          path: "/tmp/worktree/r7-cursor-pool",
-        },
-        { billingPool: NON_RESUME_POOL },
-      );
-      expect(backend.agentOptions[1]!.output).toMatchObject({
-        tag: CODER_RECEIPT_TAG,
-        maxRetries: 0,
-      });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
 // ── Finding 2: rebuild skips audit event rows ───────────────────────────────
 
 const WORKTREE: WorktreeHandle = {
