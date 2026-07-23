@@ -42,7 +42,7 @@ import type {
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import type { FamilyStageFailureStatus } from "../../../src/family/familyTerminal.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 
 class ChildBackend implements Backend {
@@ -304,7 +304,7 @@ describe("#922 stage-named family terminals (status === stopSummary.reason)", ()
       // #1094 F3: complete panel legs so missing CMR fails as cmr_failed
       // (not zero-successful-transport escalate).
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         return {
           kind: "failed",

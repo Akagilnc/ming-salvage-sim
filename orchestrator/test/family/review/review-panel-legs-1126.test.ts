@@ -1,19 +1,14 @@
 /**
- * #1126 CR R1 — review-panel dispatch is scope-neutral; single vs family differ
- * only by ReviewLegScope → prompt/soul. Seat control is a typed outcome, never
- * a Symbol thrown through Promise.allSettled.
+ * #1126 — typed seat_control contract for review-panel dispatch (scope-neutral).
+ * Axis prompt selection is covered by runOrchestrator tracer
+ * (single-slice-review-legs-1126.test.ts).
  *
- * Seam: public cmrPanelLegs.ts API only.
+ * Seam: public reviewPanelLegs.ts API only.
  */
 
 import { describe, expect, it } from "vitest";
 
-import {
-  CODE_REVIEW_LEG_PROMPT_FILE,
-  CMR_PANEL_LEG_PROMPT_FILE,
-  cmrPanelLegWorkerSpec,
-  dispatchReviewPanelLegs,
-} from "../../../src/family/cmrPanelLegs.js";
+import { dispatchReviewPanelLegs } from "../../../src/family/reviewPanelLegs.js";
 import type { WorkerCmrReviewLeg, WorkerResult } from "../../../src/types.js";
 
 const OK: WorkerResult = {
@@ -22,38 +17,9 @@ const OK: WorkerResult = {
     kind: "reviewer",
     findingsCount: 0,
     findings: [],
-    rawStdout: "Standards+Spec review paper",
+    rawStdout: "family panel review paper",
   },
 };
-
-describe("#1126 review panel legs — scope selects task prompt", () => {
-  it("single scope pins code-review task + READ-ONLY; family keeps CMR task + lens soul", () => {
-    const leg: WorkerCmrReviewLeg = {
-      family: "codex",
-      slug: "gpt-5.6-sol",
-    };
-    const single = cmrPanelLegWorkerSpec(leg, {
-      kind: "single",
-      judgeStep: "S3",
-    });
-    const family = cmrPanelLegWorkerSpec(leg, {
-      kind: "family",
-      pass: "correctness",
-    });
-
-    expect(single).toMatchObject({
-      id: "S3",
-      promptFile: CODE_REVIEW_LEG_PROMPT_FILE,
-      soul: "READ-ONLY",
-    });
-    expect(family).toMatchObject({
-      id: "S3",
-      promptFile: CMR_PANEL_LEG_PROMPT_FILE,
-      soul: "cmr-correctness",
-    });
-    expect(single.promptFile).not.toBe(family.promptFile);
-  });
-});
 
 describe("#1126 review panel legs — typed seat control (no throw adapter)", () => {
   it("returns seat_control after all siblings settle; does not reject the round", async () => {
@@ -64,7 +30,7 @@ describe("#1126 review panel legs — typed seat control (no throw adapter)", ()
     let settled = 0;
     const round = await dispatchReviewPanelLegs({
       legs,
-      scope: { kind: "single", judgeStep: "S6" },
+      scope: { kind: "family", pass: "correctness" },
       dispatch: async (spec) => {
         settled += 1;
         await new Promise((r) => setTimeout(r, 5));

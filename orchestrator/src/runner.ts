@@ -182,7 +182,11 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
-import { dispatchReviewPanelLegs } from "./family/cmrPanelLegs.js";
+import {
+  classifyPanelRoundPapers,
+  dispatchReviewPanelLegs,
+  omitJudgeBoundDispatchFields,
+} from "./family/reviewPanelLegs.js";
 import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
@@ -4551,20 +4555,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   scanCoderPlanPhase(ledger).planPhase;
                 if (!inPlanPhase) {
                   const judgeStep = step === "S3" ? "S3" : "S6";
-                  const {
-                    billingPool: _judgePool,
-                    resumeSessionId: _judgeResume,
-                    ...reviewLegCtx
-                  } = dispatchCtx;
-                  void _judgePool;
-                  void _judgeResume;
+                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+                  const reviewLegs = [
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "standards" as const,
+                    },
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "spec" as const,
+                    },
+                  ];
                   const reviewRound = await dispatchReviewPanelLegs({
-                    legs: [
-                      {
-                        slug: workerSpec.model,
-                        family: modelFamilyForSlug(workerSpec.model),
-                      },
-                    ],
+                    legs: reviewLegs,
                     scope: { kind: "single", judgeStep },
                     dispatch: async (reviewSpec) => {
                       const protocol = await dispatchSeatWithProtocol({
@@ -4603,6 +4608,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       new Error(
                         `fresh reviewer ${step} stopped without a dispatch result`,
                       ),
+                    );
+                  }
+                  const papers = classifyPanelRoundPapers({
+                    declared: reviewLegs,
+                    transports: reviewRound.transports,
+                    courtLabel: `single-slice review ${judgeStep}`,
+                  });
+                  if (papers.kind === "zero_success") {
+                    return await escalateTermination(
+                      step,
+                      {
+                        reason: papers.reason,
+                        diagnosis: papers.diagnosis,
+                      },
+                      typeof result.sessionId === "string"
+                        ? result.sessionId
+                        : undefined,
+                      "decision",
+                      undefined,
+                      decisionGateParkStopSummary({
+                        summary: `${papers.reason} — ${papers.diagnosis}`,
+                        repairHint:
+                          "restore at least one Standards/Spec panel-leg transport so the resident judge has review evidence, then resume the same judge seat",
+                      }),
                     );
                   }
                   singleSlicePanelTransports = reviewRound.transports;

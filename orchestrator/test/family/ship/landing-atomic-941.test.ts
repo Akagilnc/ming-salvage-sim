@@ -60,7 +60,7 @@ import {
 } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 import type { PrReviewSnapshot } from "../../../src/botPolling.js";
 import type {
   Backend,
@@ -181,7 +181,7 @@ class DispatchCapableBackend implements FamilyBackend {
     return { ok: true };
   }
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     return this.onDispatch(spec);
   }
@@ -1827,7 +1827,7 @@ describe("family/914 CR R1 Std M1 — landing decision-park ledger (one authorit
         return { ok: true };
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {

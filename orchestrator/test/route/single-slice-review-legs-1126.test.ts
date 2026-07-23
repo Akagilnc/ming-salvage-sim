@@ -4,6 +4,10 @@
  * request; papers land back to the same judge session; judge worker fans out
  * zero nested CLIs.
  *
+ * CR R2: Runner owns Standards + Spec as two same-model fresh workers (never one
+ * worker that re-runs /code-review). Zero successful transports must park before
+ * judge (same class as #1094), never M6 contract_drift.
+ *
  * Seam: public runOrchestrator / Backend.dispatchWorker only.
  */
 
@@ -14,9 +18,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  CODE_REVIEW_LEG_PROMPT_FILE,
+  CODE_REVIEW_SPEC_LEG_PROMPT_FILE,
+  CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE,
   isReviewPanelLegPromptFile,
-} from "../../src/family/cmrPanelLegs.js";
+} from "../../src/family/reviewPanelLegs.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
@@ -29,8 +34,9 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 import {
-  completeCmrPanelLegWorker,
-} from "../helpers/cmr-panel-leg-dispatch.js";
+  completeReviewPanelLegWorker,
+  isReviewPanelLegWorker,
+} from "../helpers/review-panel-leg-dispatch.js";
 import {
   completedJudge,
   judgeContinue,
@@ -39,21 +45,29 @@ import {
   openCourtWorkerResultIfMatch,
 } from "../helpers/judge-fixtures.js";
 
+const SLICE_BASE = "origin/codex/issue-1126-base";
+
 function makeScratchWorktree(): WorktreeHandle {
   const path = mkdtempSync(join(tmpdir(), "slice-legs-1126-"));
   return {
     branch: "feat/orchestrator/issue-1126",
-    base: "main",
+    base: SLICE_BASE,
     path,
   };
 }
 
+type PanelLegMode = "ok" | "fail";
+
 class SliceReviewLegBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   readonly landings: Array<WorkerLandingPayload | undefined> = [];
+  readonly legContexts: DispatchContext[] = [];
   private judgeVisits = 0;
 
-  constructor(private readonly worktree: WorktreeHandle) {}
+  constructor(
+    private readonly worktree: WorktreeHandle,
+    private readonly panelLegMode: PanelLegMode = "ok",
+  ) {}
 
   async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
@@ -93,8 +107,30 @@ class SliceReviewLegBackend implements Backend {
     const openCourt = openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION);
     if (openCourt !== undefined) return openCourt;
 
-    const panelLeg = completeCmrPanelLegWorker(spec, "SLICE_REVIEW_PAPER_1126");
-    if (panelLeg !== undefined) return panelLeg;
+    if (isReviewPanelLegWorker(spec)) {
+      this.legContexts.push(ctx);
+      if (this.panelLegMode === "fail") {
+        // Completed but empty stdout → ADR 0141 absent paper (not process crash).
+        return {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findingsCount: 0,
+            findings: [],
+            rawStdout: "",
+          },
+        };
+      }
+      return (
+        completeReviewPanelLegWorker(
+          spec,
+          `SLICE_REVIEW_PAPER_1126:${spec.promptFile}`,
+        ) ?? {
+          kind: "failed",
+          reason: "panel leg fixture missing",
+        }
+      );
+    }
 
     if (spec.kind === "coder") {
       return {
@@ -116,7 +152,6 @@ class SliceReviewLegBackend implements Backend {
           ? ctx.resumeSessionId
           : OPEN_COURT_SESSION;
       if (this.judgeVisits === 1) {
-        // Typed continue request: empty dispositions → Runner must fan out legs.
         return completedJudge(
           judgeContinue([], {
             fixPacketBody: "request fresh review legs after construction",
@@ -124,7 +159,6 @@ class SliceReviewLegBackend implements Backend {
           sessionId,
         );
       }
-      // Second visit must carry landed paper and resume the same session.
       expect(landing?.panelLegTransports?.length ?? 0).toBeGreaterThan(0);
       expect(ctx.resumeSessionId).toBe(OPEN_COURT_SESSION);
       return completedJudge(judgeConverged(), sessionId);
@@ -138,6 +172,12 @@ function isJudgeSeatKind(spec: WorkerSpec): boolean {
   return spec.id === "S3" || spec.id === "S6";
 }
 
+function panelReviewers(specs: ReadonlyArray<WorkerSpec>): WorkerSpec[] {
+  return specs.filter(
+    (s) => s.kind === "reviewer" && isReviewPanelLegPromptFile(s.promptFile),
+  );
+}
+
 describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -145,43 +185,79 @@ describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
     vi.stubEnv("ORCHESTRATOR_REPO", "test/repo");
   });
 
-  it("construct continue requests fresh legs; Runner dispatches; same judge resumes with paper", async () => {
+  it("Runner dispatches Standards+Spec as two same-model fresh legs; judge resumes with both papers", async () => {
     vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
-    const backend = new SliceReviewLegBackend(makeScratchWorktree());
+    const worktree = makeScratchWorktree();
+    const backend = new SliceReviewLegBackend(worktree);
     const result = await runOrchestrator({ issueNumber: 1126, backend });
 
     expect(result.status).toBe("completed");
 
+    const reviewers = panelReviewers(backend.specs);
+    expect(reviewers).toHaveLength(2);
+    expect(new Set(reviewers.map((r) => r.promptFile))).toEqual(
+      new Set([
+        CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE,
+        CODE_REVIEW_SPEC_LEG_PROMPT_FILE,
+      ]),
+    );
+    expect(reviewers[0]?.model).toBe(reviewers[1]?.model);
+    for (const leg of reviewers) {
+      expect(leg).toMatchObject({
+        role: "reviewer",
+        session: "fresh",
+        contextRetention: "clean",
+        soul: "READ-ONLY",
+      });
+      expect(leg.promptFile).not.toBe("cmr_panel_leg.md");
+    }
+
+    expect(backend.legContexts).toHaveLength(2);
+    for (const ctx of backend.legContexts) {
+      expect(ctx.worktree?.base).toBe(SLICE_BASE);
+    }
+
+    const judgeAfterLegs = backend.landings.find(
+      (l) => (l?.panelLegTransports?.length ?? 0) > 0,
+    );
+    expect(judgeAfterLegs?.panelLegTransports).toHaveLength(2);
+    const transportIds = (judgeAfterLegs?.panelLegTransports ?? []).map(
+      (t) => t.slug,
+    );
+    expect(new Set(transportIds).size).toBe(2);
+
     const sequence = backend.specs.map((s) => `${s.id}:${s.kind}`);
     const s2 = sequence.indexOf("S2:coder");
     expect(s2).toBeGreaterThanOrEqual(0);
-    expect(sequence.slice(s2 + 1, s2 + 4)).toEqual([
+    expect(sequence.slice(s2 + 1, s2 + 5)).toEqual([
       "S3:verify",
+      "S3:reviewer",
       "S3:reviewer",
       "S3:verify",
     ]);
 
-    const leg = backend.specs.find(
-      (s) => s.kind === "reviewer" && isReviewPanelLegPromptFile(s.promptFile),
-    );
-    expect(leg).toMatchObject({
-      role: "reviewer",
-      session: "fresh",
-      contextRetention: "clean",
-      // #1126 CR R1: single-slice must get per-slice /code-review task, not Family CMR.
-      promptFile: CODE_REVIEW_LEG_PROMPT_FILE,
-      soul: "READ-ONLY",
-    });
-    expect(leg?.promptFile).not.toBe("cmr_panel_leg.md");
-
-    const judgeSpecs = backend.specs.filter(
-      (s) => s.id === "S3" && s.kind === "verify",
-    );
-    expect(judgeSpecs).toHaveLength(2);
-    // Judge worker itself never appears as a nested CLI fan-out owner —
-    // only Runner-dispatched first-class workers show up on this seam.
     expect(
-      backend.specs.filter((s) => s.kind === "reviewer"),
+      backend.specs.filter((s) => s.id === "S3" && s.kind === "verify"),
+    ).toHaveLength(2);
+  });
+
+  it("zero successful panel legs park before judge — never M6 contract_drift", async () => {
+    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
+    const backend = new SliceReviewLegBackend(makeScratchWorktree(), "fail");
+    const result = await runOrchestrator({ issueNumber: 1126, backend });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).not.toBe("contract_drift");
+    expect(result.stopSummary?.summary ?? "").toMatch(/zero successful|panel leg/i);
+
+    const reviewers = panelReviewers(backend.specs);
+    expect(reviewers.length).toBeGreaterThanOrEqual(1);
+
+    expect(
+      backend.specs.filter((s) => s.id === "S3" && s.kind === "verify"),
     ).toHaveLength(1);
+    expect(
+      backend.landings.some((l) => (l?.panelLegTransports?.length ?? 0) > 0),
+    ).toBe(false);
   });
 });

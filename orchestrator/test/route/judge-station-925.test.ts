@@ -65,7 +65,7 @@ import {
   OPEN_COURT_SESSION,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
-import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 import {
   DispatchRecordingResumeBackend,
   entry,
@@ -152,7 +152,7 @@ class JudgeBackend implements Backend {
     if (openCourt !== undefined) return openCourt;
 
     // #1126 / #1094: Runner-dispatched panel legs are not the judge seat.
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
 
     if (spec.kind === "coder") {
