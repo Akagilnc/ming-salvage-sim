@@ -187,7 +187,6 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
         file === "claude" ||
         file === "agy" ||
         file === "grok" ||
-        file === "cursor" ||
         file === "agent"
       ) {
         return "cli-test-version";

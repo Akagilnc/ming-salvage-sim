@@ -50,11 +50,10 @@ describe("#905 modelRegistry route rename", () => {
       model: "grok-4.5",
     });
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe("grok");
-    // #905: no cursor / opencode transit for this model, regardless of pool.
-    expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe("grok");
-    expect(resolveModelSlugForPool("grok-4.5", "zai").provider).toBe("grok");
+    expect(() => resolveModelSlugForPool("grok-4.5", "zai")).toThrow(
+      /no executable provider binding/,
+    );
     expect(agentForSlug("grok-4.5").name).toBe("grok");
-    expect(agentForSlug("grok-4.5", "cursor").name).toBe("grok");
   });
 
   it("has zero registry entries with provider opencode (incl. glm-5.2 / opencode-grok slugs)", () => {
@@ -261,16 +260,13 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
 });
 
 describe("#905 residual opencode eviction + zai fail-closed", () => {
-  it("does not bind empty cursor/zai pools (no silent rewrite surface)", () => {
-    expect(POOL_DISPATCH_BINDINGS.cursor).toBeUndefined();
+  it("does not dispatch the quota-observable zai pool", () => {
     expect(POOL_DISPATCH_BINDINGS.zai).toBeUndefined();
-    expect(resolveModelSlugForPool("gpt-5.6-sol", "cursor")).toEqual(
-      resolveModelSlug("gpt-5.6-sol"),
+    expect(() => resolveModelSlugForPool("sonnet", "zai")).toThrow(
+      /no executable provider binding/,
     );
-    // Non-pinned slug stays on its registry provider under zai — no rewrite.
-    expect(resolveModelSlugForPool("sonnet", "zai")).toEqual(resolveModelSlug("sonnet"));
-    expect(resolveModelSlugForPool("gpt-5.6-terra", "zai")).toEqual(
-      resolveModelSlug("gpt-5.6-terra"),
+    expect(() => resolveModelSlugForPool("gpt-5.6-terra", "zai")).toThrow(
+      /no executable provider binding/,
     );
   });
 
