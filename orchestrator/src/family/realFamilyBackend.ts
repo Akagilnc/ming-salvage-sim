@@ -2111,19 +2111,24 @@ export class RealFamilyBackend implements FamilyBackend {
       // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
       // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
       // Trigger on ctx keys OR landing refuseRecords OR priorJudgeVerdicts.
-      // #1094: also land when runner-dispatched panel-leg transports are present
-      // so the pure judge court can read prose evidence.
+      // #1094 / #1117 / #1119: land when panel transports OR host skip reasons
+      // are present so the pure court never opens on a silent empty file while
+      // .cmr-route.json still declares legs (cold-start resume deadlock).
       const needsFixFindingsLanding =
         (landing?.refuseRecords !== undefined &&
           landing.refuseRecords.length > 0) ||
         (landing?.panelLegTransports !== undefined &&
           landing.panelLegTransports.length > 0) ||
+        (landing?.panelLegSkippedLegs !== undefined &&
+          landing.panelLegSkippedLegs.length > 0) ||
         (ctx.refusedFindingIdentityKeys !== undefined &&
           ctx.refusedFindingIdentityKeys.length > 0) ||
         (ctx.priorJudgeVerdicts !== undefined &&
           ctx.priorJudgeVerdicts.length > 0) ||
         (ctx.panelLegTransports !== undefined &&
-          ctx.panelLegTransports.length > 0);
+          ctx.panelLegTransports.length > 0) ||
+        (ctx.panelLegSkippedLegs !== undefined &&
+          ctx.panelLegSkippedLegs.length > 0);
       const fixFindingsLanding = needsFixFindingsLanding
         ? this.writeFamilyFixFindingsFile(ctx, landing)
         : undefined;
@@ -2421,13 +2426,25 @@ export class RealFamilyBackend implements FamilyBackend {
           ctx.priorJudgeVerdicts.length > 0
             ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
             : {}),
-          // #1094: runner-dispatched panel-leg prose for the pure judge court.
+          // #1094 / #1117 / #1119: runner-dispatched panel-leg prose + host skip
+          // reasons for the pure judge court (cold resume must not open empty
+          // while route still declares legs).
           ...((landing?.panelLegTransports ?? ctx.panelLegTransports) !==
             undefined &&
           (landing?.panelLegTransports ?? ctx.panelLegTransports)!.length > 0
             ? {
                 panelLegTransports:
                   landing?.panelLegTransports ?? ctx.panelLegTransports,
+              }
+            : {}),
+          ...((landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs) !==
+            undefined &&
+          (landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs)!.length > 0
+            ? {
+                skippedLegs:
+                  landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
+                runtimeSkipReasons:
+                  landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
               }
             : {}),
         },
@@ -3107,6 +3124,18 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({
         hostPath: outcomeLanding.path,
         sandboxPath: outcomeLanding.sandboxPath,
+      });
+    }
+    // #1117 / #1119: bind-mount fix-findings (parity with single-slice) so a
+    // cold-resumed pure court always sees fresh panelLegTransports / skip
+    // reasons even when session resume reuses conversation state over the
+    // worktree (temp files from the prior process are gone).
+    if (fixFindingsLanding !== undefined) {
+      ensureRegularFileForBindMount(fixFindingsLanding.path);
+      mounts.push({
+        hostPath: fixFindingsLanding.path,
+        sandboxPath: fixFindingsLanding.sandboxPath,
+        readonly: true,
       });
     }
     // Executing-provider credential only (#1094 R3 F1) — not registry-row family,
