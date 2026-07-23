@@ -73,8 +73,11 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
-import { successfulLegsFromTransports } from "../legPaper.js";
+import {
+  createPanelCourtSession,
+  ensureFamilyCmrPanelEvidence,
+  type PanelCourtSession,
+} from "./cmrPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2482,6 +2485,11 @@ async function runIntegratedCmrPass(input: {
    * First open of a pass keeps panels (flag false).
    */
   readonly receiveBuilderBeat?: boolean;
+  /**
+   * #1117 / #1118 — lifecycle-scoped panel court session for this barrier loop.
+   * Owned by the caller; invalidated on builder beat.
+   */
+  readonly panelCourtSession?: PanelCourtSession;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2503,7 +2511,12 @@ async function runIntegratedCmrPass(input: {
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
     receiveBuilderBeat = false,
+    panelCourtSession: panelCourtSessionInput,
   } = input;
+  // Barrier-owned session preferred; fallback local session only for isolated
+  // single-open callers (never a module-global cache).
+  const panelCourtSession =
+    panelCourtSessionInput ?? createPanelCourtSession();
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -2623,16 +2636,30 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
-    // #1094: runner dispatches panel legs as first-class workers BEFORE the
-    // pure judge court. Judge never spawns nested model CLIs.
-    // #1085 / #1080 / ADR 0147: after a builder beat, this open skips panel
-    // fan-out so pure judge receives first. Soft-accept of that receive
-    // returns needsFreshOuterGate so the caller re-opens WITH panels before
-    // the court may close (never a permanent latch that starves outer gate).
+    // #1094 / #1117: runner dispatches panel legs BEFORE the pure judge court.
+    // Judge never spawns nested model CLIs. #1085 / ADR 0147: after a builder
+    // beat this open skips panel fan-out (pure receive); soft-accept returns
+    // needsFreshOuterGate so the caller re-opens WITH panels.
     const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
+    // #1117 / #1118: opening identity — same opening may reuse valid evidence;
+    // escalationAnswer / new opening / head change force reburn.
+    const panelOpening =
+      frozenLegs.length > 0
+        ? panelCourtSession.resolve({
+            cmrPass: pass,
+            ...(resolvedFamilyHeadAfter !== undefined
+              ? { familyHeadAfter: resolvedFamilyHeadAfter }
+              : {}),
+            ...(runId !== undefined ? { runId } : {}),
+            escalationAnswerPresent: escalationAnswer !== undefined,
+          })
+        : { openingId: "", existing: undefined as undefined };
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
+    // Skip prep when reusing valid same-opening transports (no reburn).
+    const willFanOut =
+      frozenLegs.length > 0 && panelOpening.existing === undefined;
     if (
-      frozenLegs.length > 0 &&
+      willFanOut &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
     ) {
       const prep = await familyBackend.prepareFamilyCmrPanelRound(dispatchCtx);
@@ -2675,18 +2702,16 @@ async function runIntegratedCmrPass(input: {
         };
       }
     }
-    const panelRound = await dispatchFamilyCmrPanelLegs({
+    const panelRound = await ensureFamilyCmrPanelEvidence({
       legs: frozenLegs,
       cmrPass: pass,
-      // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
-      // binding is for the cmr court slot (quota relay). Cross-vendor panel
-      // legs keep their own registry providers (or none).
+      openingId: panelOpening.openingId,
+      ...(panelOpening.existing !== undefined
+        ? { existing: panelOpening.existing }
+        : {}),
+      // #1094 R3 F2: legs must NOT inherit the judge's billingPool.
+      // #1080 / #1117: legs always fresh — strip pure-court resumeSessionId.
       dispatch: (legSpec) => {
-        // #1094 R3 F2: legs must NOT inherit the judge billingPool.
-        // #1080 R3: panel legs are always fresh (cmrPanelLegWorkerSpec session:
-        // "fresh") — strip the pure-court resumeSessionId so a transient leg
-        // failure keeps its full process-root retry budget and is never
-        // misclassified as a resident-judge resume (forbidFreshRetry).
         const {
           billingPool: _judgePool,
           resumeSessionId: _judgeResume,
@@ -2707,71 +2732,57 @@ async function runIntegratedCmrPass(input: {
         );
       },
     });
-    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
-    // (not judge prose cargo). Empty array after a real fan-out still wins.
+    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary.
     const hostSkippedLegs = panelRound.skippedLegs;
-    // #1094 R3 F3: pure court with declared legs but ZERO successful transports
-    // must not converge — escalate (decision park) with skippedLegs reasons.
-    // One or more successful legs → optional-leg degrade still never blocks.
-    const successfulPanelLegs = successfulLegsFromTransports(
-      panelRound.transports,
-    );
-    if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
-      const reason = `family integrated cmr ${pass}: zero successful panel legs`;
-      const diagnosis =
-        hostSkippedLegs.length > 0
-          ? hostSkippedLegs
-              .map((leg) => `${leg.slug}: ${leg.reason}`)
-              .join("; ")
-          : "all declared panel legs failed or produced no legal review paper";
-      reviewRoundResult = {
-        kind: "escalated",
-        escalation: { reason, diagnosis },
-      };
-      const stopSummary = decisionGateParkStopSummary({
-        summary: `${reason} — ${diagnosis}`,
-        repairHint:
-          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
-        heads:
-          resolvedFamilyHeadAfter !== undefined
-            ? { actualFamilyHead: resolvedFamilyHeadAfter }
-            : undefined,
+    // #1117 / #1118: always land transports + skip reasons and open pure court
+    // (even zero successful paper). Runner does not early-park before the judge;
+    // JudgeVerdictStatus is the sole closer (ADR 0132 / 0147).
+    if (frozenLegs.length > 0) {
+      panelCourtSession.record({
+        openingId: panelRound.openingId,
+        cmrPass: pass,
+        ...(resolvedFamilyHeadAfter !== undefined
+          ? { familyHeadAfter: resolvedFamilyHeadAfter }
+          : {}),
+        ...(runId !== undefined ? { runId } : {}),
+        transports: panelRound.transports,
+        skippedLegs: hostSkippedLegs,
       });
-      await persistFinalReviewRound("accepted", async () => {
-        await recordCmrReviewed(familyBackend, {
-          phase: ledgerPhase,
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          blockingFindingIdentityKeys: [],
-          judgeStatus: "escalate",
-          stopSummary,
-        });
-        await familyBackend.escalateFamily?.({
-          reason,
-          diagnosis,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          stopSummary,
-          escalationKind: "decision",
-        });
-      });
-      return {
-        result: { ok: false, ran: true },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        resolvedRoute: activeRoute,
-      };
     }
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
-      panelLegTransports: panelRound.transports.map((t) => ({
-        slug: t.slug,
-        exitCode: t.exitCode,
-        stdout: t.stdout,
-      })),
+      ...(panelRound.transports.length > 0
+        ? {
+            panelLegTransports: panelRound.transports.map((t) => ({
+              slug: t.slug,
+              exitCode: t.exitCode,
+              stdout: t.stdout,
+            })),
+          }
+        : {}),
+      ...(hostSkippedLegs.length > 0
+        ? {
+            panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
+              slug: leg.slug,
+              reason: leg.reason,
+            })),
+          }
+        : {}),
+      ...(panelRound.openingId.length > 0
+        ? { panelCourtOpeningId: panelRound.openingId }
+        : {}),
     };
     const judgeDispatchCtx: DispatchContext = {
       ...dispatchCtx,
-      panelLegTransports: panelLanding.panelLegTransports,
+      ...(panelLanding.panelLegTransports !== undefined
+        ? { panelLegTransports: panelLanding.panelLegTransports }
+        : {}),
+      ...(panelLanding.panelLegSkippedLegs !== undefined
+        ? { panelLegSkippedLegs: panelLanding.panelLegSkippedLegs }
+        : {}),
+      ...(panelLanding.panelCourtOpeningId !== undefined
+        ? { panelCourtOpeningId: panelLanding.panelCourtOpeningId }
+        : {}),
     };
     const cmrResult = await dispatchOrAbort(
       familyBackend,
@@ -3452,6 +3463,8 @@ async function runCorrectnessCourtLoop(input: {
   // receive soft-accepts (needsFreshOuterGate), clear it so the next open
   // re-fans panels (ADR 0147 independent outer gate; 收敛仍需 fresh 过目).
   let receiveBuilderBeat = false;
+  // #1117 / #1118: panel court session for this correctness loop only.
+  const correctnessPanelCourt = createPanelCourtSession();
 
   while (true) {
     const correctness = await runIntegratedCmrPass({
@@ -3470,6 +3483,7 @@ async function runCorrectnessCourtLoop(input: {
       allowCoderFix: true,
       ledgerPhase,
       receiveBuilderBeat,
+      panelCourtSession: correctnessPanelCourt,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
@@ -3548,6 +3562,8 @@ async function runCorrectnessCourtLoop(input: {
         ? { correctness: nextRefuseRecords }
         : {};
     // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
+    // #1117: invalidate panel memo so outer-gate / post-builder open reburns.
+    correctnessPanelCourt.invalidate();
     receiveBuilderBeat = true;
   }
 }
@@ -3803,6 +3819,8 @@ export async function runVerifyCmr(
   // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
   // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
   let completenessReceiveBuilderBeat = false;
+  // #1117 / #1118: panel court session for this completeness loop only.
+  const completenessPanelCourt = createPanelCourtSession();
   for (;;) {
     const completeness = await runIntegratedCmrPass({
       pass: "completeness",
@@ -3821,6 +3839,7 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       receiveBuilderBeat: completenessReceiveBuilderBeat,
+      panelCourtSession: completenessPanelCourt,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
@@ -3884,6 +3903,8 @@ export async function runVerifyCmr(
         ? { completeness: nextRefuseRecords }
         : {};
     // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
+    // #1117: invalidate panel memo so outer-gate reburns after builder.
+    completenessPanelCourt.invalidate();
     completenessReceiveBuilderBeat = true;
   }
   // Correctness court shares the same loop machine as #961 checkpoint

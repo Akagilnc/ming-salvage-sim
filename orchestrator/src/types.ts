@@ -1047,6 +1047,18 @@ export interface WorkerLandingPayload {
     readonly exitCode: number;
     readonly stdout: string | null | undefined;
   }>;
+  /**
+   * #1117 / #1118 — host-mechanical panel-leg skip reasons landed with the
+   * pure court so resume never supplies a silent empty landing when legs fail.
+   */
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
+  /**
+   * #1117 / #1118 — runner-owned panel court opening id stamped on this landing.
+   */
+  readonly panelCourtOpeningId?: string;
 }
 
 /**
@@ -1222,6 +1234,18 @@ export interface DispatchContext {
     readonly exitCode: number;
     readonly stdout: string | null | undefined;
   }>;
+  /**
+   * #1117 / #1118 — host skip reasons paired with panel transports (runtime
+   * degrade evidence for the pure court; never a silent empty landing).
+   */
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
+  /**
+   * #1117 / #1118 — panel court opening id for this pure-court dispatch.
+   */
+  readonly panelCourtOpeningId?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
