@@ -220,6 +220,17 @@ export interface CmrFixCommittedRecord {
    * Absent when the provider surfaced no id.
    */
   readonly sessionId?: string;
+  /**
+   * #1119 — refused finding keys when this builder beat was a legal refuse.
+   * Cold-start pure receive reloads these from the fix row (not process memory).
+   */
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  /**
+   * #1119 — opaque refuseRecords cargo for judge re-ruling after cold resume.
+   */
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -438,6 +449,15 @@ export async function recordCmrFixCommitted(
     typeof record.sessionId === "string" && record.sessionId.trim().length > 0
       ? record.sessionId.trim()
       : undefined;
+  const refusedKeys =
+    record.refusedFindingIdentityKeys !== undefined &&
+    record.refusedFindingIdentityKeys.length > 0
+      ? record.refusedFindingIdentityKeys
+      : undefined;
+  const refuseRecords =
+    record.refuseRecords !== undefined && record.refuseRecords.length > 0
+      ? record.refuseRecords
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "cmr_fix_committed",
@@ -450,6 +470,11 @@ export async function recordCmrFixCommitted(
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       // #979: durable fixer-chain session continuity (ledger sole truth).
       ...(sessionId !== undefined ? { sessionId } : {}),
+      // #1119: refuse traffic + opaque cargo for cold-start pure receive.
+      ...(refusedKeys !== undefined
+        ? { refusedFindingIdentityKeys: refusedKeys }
+        : {}),
+      ...(refuseRecords !== undefined ? { refuseRecords } : {}),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -473,6 +498,67 @@ export async function recordCmrFixCommitted(
         }),
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * #1119 — cold-start recovery of pending pure-judge receive after a builder beat.
+ *
+ * Structured lifecycle only (no reason/answer prose parse): among same-pass
+ * same-barrier court rows (`cmr_fix_committed` / `cmr_reviewed` / `cmr_passed`),
+ * the newest decides. A trailing `cmr_fix_committed` means the builder finished
+ * but the resident judge has not yet produced a court outcome → pure receive
+ * first (ADR 0147), then fresh outer gate. Not the #1111 WHO-debt layer.
+ */
+export function pendingBuilderReceiveFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  pass: IntegratedCmrPass,
+  phase: "final" | "correctness_checkpoint" = "final",
+): {
+  readonly pending: boolean;
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
+  readonly familyHeadAfter?: string;
+} {
+  const barrierPhase = cmrBarrierPhaseOf(phase);
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const status = entry.status ?? entry.event;
+    if (
+      status !== "cmr_fix_committed" &&
+      status !== "cmr_reviewed" &&
+      status !== "cmr_passed"
+    ) {
+      continue;
+    }
+    if (entry.cmrPass !== pass) continue;
+    if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
+    if (status === "cmr_fix_committed") {
+      const refused =
+        Array.isArray(entry.refusedFindingIdentityKeys) &&
+        entry.refusedFindingIdentityKeys.length > 0
+          ? entry.refusedFindingIdentityKeys
+          : undefined;
+      const records =
+        Array.isArray(entry.refuseRecords) && entry.refuseRecords.length > 0
+          ? entry.refuseRecords
+          : undefined;
+      return {
+        pending: true,
+        ...(refused !== undefined
+          ? { refusedFindingIdentityKeys: refused }
+          : {}),
+        ...(records !== undefined ? { refuseRecords: records } : {}),
+        ...(typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim().length > 0
+          ? { familyHeadAfter: entry.familyHeadAfter.trim() }
+          : {}),
+      };
+    }
+    return { pending: false };
+  }
+  return { pending: false };
 }
 
 /**
