@@ -503,11 +503,15 @@ export async function recordCmrFixCommitted(
 /**
  * #1119 — cold-start recovery of pending pure-judge receive after a builder beat.
  *
- * Structured lifecycle only (no reason/answer prose parse): among same-pass
- * same-barrier court rows (`cmr_fix_committed` / `cmr_reviewed` / `cmr_passed`),
- * the newest decides. A trailing `cmr_fix_committed` means the builder finished
- * but the resident judge has not yet produced a court outcome → pure receive
- * first (ADR 0147), then fresh outer gate. Not the #1111 WHO-debt layer.
+ * Structured lifecycle only (no reason/answer prose parse). Newest same-pass
+ * same-barrier row among:
+ *   - `cmr_fix_committed` → pending pure receive
+ *   - `cmr_reviewed` / `cmr_passed` → not pending
+ *   - `worker_dispatched` with `cmrPass` + `phase` set (soft-accept pure-receive
+ *     completion marker; advisory git telemetry lacks these fields and is skipped)
+ * → not pending (outer gate may reuse same-generation durable evidence)
+ *
+ * Not the #1111 WHO-debt layer.
  */
 export function pendingBuilderReceiveFromFamilyLedger(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
@@ -528,9 +532,19 @@ export function pendingBuilderReceiveFromFamilyLedger(
     if (
       status !== "cmr_fix_committed" &&
       status !== "cmr_reviewed" &&
-      status !== "cmr_passed"
+      status !== "cmr_passed" &&
+      status !== "worker_dispatched"
     ) {
       continue;
+    }
+    // Soft-accept pure-receive completion: structured cmrPass+phase only
+    // (never parse reason prose). Git/advisory worker_dispatched rows omit
+    // these and fall through.
+    if (status === "worker_dispatched") {
+      if (entry.cmrPass !== pass) continue;
+      if (entry.phase === undefined) continue;
+      if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
+      return { pending: false };
     }
     if (entry.cmrPass !== pass) continue;
     if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;

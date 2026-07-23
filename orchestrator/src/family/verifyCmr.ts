@@ -1651,8 +1651,10 @@ async function runCmrCoderFix(input: {
 }
 
 /**
- * #1119 — advance court generation + clear transports at the builder-beat
- * durable boundary (`cmr_fix_committed`). Lifecycle-structured; no prose parse.
+ * #1119 — advance court generation + clear transports (idempotent tombstone).
+ * Used at builder-beat completion and pure-receive soft-accept. Lifecycle-
+ * structured; no prose parse. Re-applying after transports already cleared
+ * still bumps generation so a partial prior write cannot revive old 卷面.
  */
 async function invalidatePanelEvidenceAfterBuilderBeat(input: {
   readonly familyBackend: FamilyBackend;
@@ -1667,6 +1669,8 @@ async function invalidatePanelEvidenceAfterBuilderBeat(input: {
   if (typeof familyBackend.writeFamilyPanelLegEvidence !== "function") return;
   const prior = await familyBackend.readFamilyPanelLegEvidence(pass);
   const gen = courtGenerationFromDurableEvidence(prior);
+  // Idempotent: always write tombstone without transports (never leave stale
+  // paper when invalidation runs after a successful fix-row append).
   await familyBackend.writeFamilyPanelLegEvidence(pass, {
     ...(familyHeadAfter !== undefined && familyHeadAfter.trim().length > 0
       ? { familyHeadAfter: familyHeadAfter.trim() }
@@ -2708,10 +2712,14 @@ async function runIntegratedCmrPass(input: {
       durablePanelEvidence,
       panelEvidenceScope,
     );
-    const existingPanelTransports =
-      refuseReopenLanding?.panelLegTransports ??
-      dispatchCtx.panelLegTransports ??
-      durableTransportsForCourt;
+    // #1119: pure builder-receive never carries panel transports — even when
+    // durable invalidation lagged the cmr_fix_committed write (two-write
+    // crash window). Builder cargo = refuse keys/records only (ADR 0147).
+    const existingPanelTransports = receivingBuilderBeat
+      ? undefined
+      : (refuseReopenLanding?.panelLegTransports ??
+        dispatchCtx.panelLegTransports ??
+        durableTransportsForCourt);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep when reusing valid transports (no reburn).
     const willFanOut =
@@ -3121,21 +3129,20 @@ async function runIntegratedCmrPass(input: {
     // panels. Permanent latch + zero outer-gate was the family/1080 defect.
     if (receivingBuilderBeat) {
       finalReviewRoundDisposition = "accepted";
-      // Advance court generation + clear transports so the outer-gate re-open
-      // cannot reuse pre-builder 卷面 when HEAD is unchanged (refuse/no-op).
-      // Structured lifecycle only — never parse judge/escalation free prose.
-      if (typeof familyBackend.writeFamilyPanelLegEvidence === "function") {
-        await familyBackend.writeFamilyPanelLegEvidence(pass, {
-          ...(postWorkerFamilyHead !== undefined
-            ? { familyHeadAfter: postWorkerFamilyHead }
-            : resolvedFamilyHeadAfter !== undefined
-              ? { familyHeadAfter: resolvedFamilyHeadAfter }
-              : {}),
-          ledgerPhase,
-          routeFingerprint,
-          courtGeneration: courtGeneration + 1,
-        });
-      }
+      // 1) Generation tombstone (idempotent if fix-boundary already advanced).
+      // 2) Structured pure-receive completion on existing worker_dispatched
+      //    vocabulary with cmrPass+phase (pendingBuilderReceiveFromFamilyLedger
+      //    recognizes it; no reason-prose parse, no new status enum).
+      // Crash after (1) before (2): cold resume redoes pure receive (no panels).
+      // Crash after (2) with outer evidence already written: no-reburn same gen.
+      await invalidatePanelEvidenceAfterBuilderBeat({
+        familyBackend,
+        pass,
+        ledgerPhase,
+        routeFingerprint,
+        familyHeadAfter:
+          postWorkerFamilyHead ?? resolvedFamilyHeadAfter,
+      });
       await familyBackend.appendFamilyLedger({
         status: "worker_dispatched",
         event: "worker_dispatched",
