@@ -15,8 +15,9 @@ const familyBackend: FamilyBackend = {
   async appendFamilyLedger() {
     throw new Error("family backend should not run");
   },
+  // #1125: terminal normalizer reads ledger authority; empty is legal pre-work.
   async readFamilyLedger() {
-    throw new Error("family backend should not run");
+    return [];
   },
   async runFamilyVerify() {
     throw new Error("family backend should not run");

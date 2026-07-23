@@ -142,6 +142,20 @@ class RecordingFamilyBackend implements FamilyBackend {
   }
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
     this.escalationCalls.push(escalation);
+    // Durable ledger authority (same shape as production recordFamilyEscalated).
+    this.ledger.push({
+      status: "escalated",
+      event: "escalated",
+      phase: escalation.phase ?? "wave",
+      escalationKind: escalation.escalationKind,
+      reason: escalation.reason,
+      ...(escalation.familyHeadAfter !== undefined
+        ? { familyHeadAfter: escalation.familyHeadAfter }
+        : {}),
+      ...(escalation.stopSummary !== undefined
+        ? { stopSummary: escalation.stopSummary }
+        : {}),
+    } as FamilyLedgerEntry);
   }
 }
 
@@ -491,7 +505,16 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     );
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
 
-    // Second run: must stay failed (not re-park as unanswered decision).
+    // Second run: durable failure authority; backend must not re-dispatch.
+    class NoDispatchBackend extends OkChildBackend {
+      override async runStep(): Promise<StepOutput> {
+        throw new Error("dispatch forbidden on failure-authority replay");
+      }
+      override async prepareWorktree(): Promise<WorktreeHandle> {
+        throw new Error("dispatch forbidden on failure-authority replay");
+      }
+    }
+    const firstChildren = result.children;
     const second = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
@@ -502,11 +525,15 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         ],
       },
       familyBackend,
-      singleSliceBackend: new SiblingCrashBackend(new Set([11])),
+      singleSliceBackend: new NoDispatchBackend(),
       familyBase: "family/938-base",
     });
     expect(second.status).toBe("failed");
     expect(second.stopSummary?.reason).not.toBe("decision_gate_park");
+    // Cargo from durable trackedStatus must match first terminal children.
+    expect(second.children.map((c) => ({ issue: c.issue, status: c.status }))).toEqual(
+      firstChildren.map((c) => ({ issue: c.issue, status: c.status })),
+    );
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {

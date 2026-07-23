@@ -762,6 +762,117 @@ describe("#1125 — unanswered park dispatch + terminal normalization", () => {
     }
   });
 
+  it("mixed admission: #528 ledger park outside epic does not block #1123 dispatch", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      parkRow(516, {
+        reason: "answered later",
+        diagnosis: "was parked then answered",
+        sessionId: "sess-516",
+      }),
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        childIssue: 516,
+        answer: "field X is optional; proceed",
+        source: "human",
+      } as FamilyLedgerEntry,
+      parkRow(528, {
+        reason: "admission skipped park",
+        diagnosis: "still on ledger but not admitted",
+      }),
+    );
+    singleSliceBackend.childLedgers.set(516, [
+      {
+        step: "S2",
+        sessionId: "sess-516",
+        output: { kind: "coder", committed: false, commitsAdded: 0, escalate: STUCK },
+      } as PersistentLedgerEntry,
+    ]);
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 516, blockedBy: [] },
+          { issue: 1123, blockedBy: [] },
+        ],
+        admissionSkipped: [
+          {
+            issue: 528,
+            reason: "missing_ready_for_agent",
+            message: "family admission skipped child #528",
+          },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-admission-skip",
+    });
+    const dispatched = new Set(singleSliceBackend.runStepCalls.map((c) => c.issue));
+    expect(dispatched.has(1123)).toBe(true);
+    expect(dispatched.has(528)).toBe(false);
+    expect(result.children.some((c) => c.issue === 528)).toBe(false);
+    expect(result.status).toBe("completed");
+  });
+
+  it("residual child emits vocal skip warning with issue + reason token", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      parkRow(11, { reason: "open", diagnosis: "no answer" }),
+    );
+    const { warnings, restore } = captureWarnings();
+    try {
+      const result = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 1125,
+          children: [
+            { issue: 11, blockedBy: [] },
+            { issue: 12, blockedBy: [11] },
+          ],
+        },
+        familyBackend,
+        singleSliceBackend,
+        familyBase: "family/1125-skip-log",
+      });
+      expect(result.status).toBe("parked");
+      expect(result.children.find((c) => c.issue === 12)?.status).toBe("skipped");
+      expect(
+        warnings.some(
+          (w) =>
+            w.includes("#12") &&
+            w.includes("skipped:") &&
+            w.includes("unanswered_sibling_park_residual"),
+        ),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("readFamilyLedger throw fails loud (ADR 0005)", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.readFamilyLedger = async () => {
+      throw new Error("ledger corrupt");
+    };
+    await expect(
+      runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 1125,
+          children: [{ issue: 10, blockedBy: [] }],
+        },
+        familyBackend,
+        singleSliceBackend,
+        familyBase: "family/1125-ledger-throw",
+      }),
+    ).rejects.toThrow(/ledger corrupt/);
+  });
+
   it("quota park preserves preexisting unanswered park cargo (single normalize)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const now = new Date("2026-07-14T12:00:00.000Z");
