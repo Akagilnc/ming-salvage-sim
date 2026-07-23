@@ -30,34 +30,17 @@ import type {
 } from "../types.js";
 import type { IntegratedCmrPass } from "./types.js";
 
-/** Completeness-pass panel-leg prompt (Clause–Wire–Exercise). */
-export const CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE =
-  "cmr_panel_leg_completeness.md";
-/** Correctness-pass panel-leg prompt (Trace–Break–Prove). */
-export const CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE =
-  "cmr_panel_leg_correctness.md";
+export const CMR_PANEL_LEG_PROMPT_FILE = "cmr_panel_leg.md";
 
-/**
- * One authoritative prompt source per CMR pass lens — no shared duplicate body.
- */
-export function cmrPanelLegPromptFile(pass: IntegratedCmrPass): string {
-  return pass === "completeness"
-    ? CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
-    : CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE;
-}
-
-/** True when promptFile is one of the pass-keyed panel-leg lens sources. */
+/** True when promptFile is the family panel-leg task source. */
 export function isCmrPanelLegPromptFile(promptFile: string): boolean {
-  return (
-    promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE ||
-    promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
-  );
+  return promptFile === CMR_PANEL_LEG_PROMPT_FILE;
 }
 
 /**
  * Declarative WorkerSpec for one route-selected CMR panel leg.
  * Fresh / clean / READ-ONLY — never resume a prior leg session.
- * Prompt is keyed by {@link IntegratedCmrPass} (pass-distinct lenses).
+ * The pass selects an explicit routing Soul; the task prompt is shared.
  */
 export function cmrPanelLegWorkerSpec(
   leg: WorkerCmrReviewLeg,
@@ -73,10 +56,11 @@ export function cmrPanelLegWorkerSpec(
     host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "clean",
-    promptFile: cmrPanelLegPromptFile(pass),
+    promptFile: CMR_PANEL_LEG_PROMPT_FILE,
     maxIter: 1,
     model,
-    soul: "READ-ONLY",
+    soul:
+      pass === "completeness" ? "cmr-completeness" : "cmr-correctness",
     toolchain: [],
   };
 }

@@ -1397,13 +1397,11 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     return { backend };
   }
 
-  it("#905: production CMR dispatch does not inject GLM_KEY or mount opencode auth", async () => {
+  it("#905: explicit unbound zai dispatch fails loudly", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend } = await dispatch("zai");
-    expect(backend.config?.env.GLM_KEY).toBeUndefined();
-    expect(
-      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
-    ).toBe(false);
+    await expect(dispatch("zai")).rejects.toThrow(
+      /no executable provider binding/,
+    );
   });
 
   it("#905: non-zai production dispatch also has no opencode transport", async () => {

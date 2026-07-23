@@ -122,6 +122,8 @@ export type HandoffStatus = "completed" | "parked" | "failed";
  * - `"fixer"`: finding-fix soul for S5.
  * - `"READ-ONLY"`: reviewer soul with a provider-level READ-ONLY instruction
  *   constraint (not an OS-level mount — same image, separate `run()`).
+ * - `"cmr-completeness"` / `"cmr-correctness"`: single-leg family panel
+ *   reviewers routed to one canonical baked CMR lens.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
@@ -129,6 +131,8 @@ export type HandoffStatus = "completed" | "parked" | "failed";
 export type WorkerSoul =
   | "coder"
   | "READ-ONLY"
+  | "cmr-completeness"
+  | "cmr-correctness"
   | "ship"
   | "verify"
   | "fixer"

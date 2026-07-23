@@ -103,8 +103,7 @@ import {
   type LegTransport,
 } from "../legPaper.js";
 import {
-  CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE,
-  CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE,
+  CMR_PANEL_LEG_PROMPT_FILE,
   panelLegCompletedResult,
 } from "./cmrPanelLegs.js";
 
@@ -377,9 +376,7 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
-    // #1094: pass-distinct panel-leg prompts (one authoritative source per lens).
-    "cmr_panel_leg_completeness.md",
-    "cmr_panel_leg_correctness.md",
+    CMR_PANEL_LEG_PROMPT_FILE,
     // #1068 added a thin wave-verify triage judge promptFile
     // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
     // construction-time inventory the same as the integrated CMR prompts.
@@ -1796,22 +1793,13 @@ export class RealFamilyBackend implements FamilyBackend {
               `(pinned review scope) — ${detail}`,
           };
         }
-        // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
-        // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
         const promptTemplate = readFileSync(
           join(this.opts.promptsDir, spec.promptFile),
           "utf8",
         );
-        const passLabel =
-          spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
-            ? "completeness"
-            : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
-              ? "correctness"
-              : spec.promptFile;
         const taskBody =
           `${promptTemplate.trim()}\n\n` +
           `Panel leg slug: ${spec.model}.\n` +
-          `CMR pass: ${passLabel}.\n` +
           `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
           `(or the assigned clone scope) and emit prose review on stdout.`;
         const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");

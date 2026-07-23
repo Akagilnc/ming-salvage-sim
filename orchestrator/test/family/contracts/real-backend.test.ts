@@ -578,8 +578,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
       new Set([
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
-        "cmr_panel_leg_completeness.md",
-        "cmr_panel_leg_correctness.md",
+        "cmr_panel_leg.md",
         "wave_verify_judge.md",
         "coder_fix.md",
         "family_ship.md",
