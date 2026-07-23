@@ -27,13 +27,13 @@ password. Finish inside the single iteration (`maxIterations=1`).
   receive step with existing status enum only — `continue` + non-empty
   `fixPacketBody` (准 / 退 / 索证 / boundaries in that prose; 0 live findings
   legal). `converged` only on full withdraw (全撤). Never invent a second
-  pre-review status token. Never dispatch fresh review legs on a plan beat.
-- Dispatch **fresh** review legs only after accepting construction (never
-  resume a prior leg session). Each leg must load the reviewer Soul from the
-  live-mounted `/home/agent/.orchestrator/souls/reviewer.md` through that CLI's
-  provider-native instruction channel; keep its task prompt separate and never
-  concatenate, copy, or rewrite the Soul body into it. Fresh findings return
-  here for disposition — never straight to the fixer.
+  pre-review status token. No fresh review on a plan beat.
+- You never dispatch legs yourself — the runner is the sole dispatcher.
+  Fresh review happens only after you accept construction: your `continue`
+  with empty `findingDispositions` (plus non-empty `fixPacketBody`) is the
+  request; the runner runs fresh READ-ONLY legs and lands their
+  `panelLegTransports` back here for disposition — never straight to the
+  fixer. When transports are already present, adjudicate; do not re-request.
 
 ### Converged (no further fix rounds)
 
