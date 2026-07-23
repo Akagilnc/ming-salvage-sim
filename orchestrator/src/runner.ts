@@ -181,7 +181,9 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
-import { resumeCapableForSlug } from "./modelRegistry.js";
+import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
+import { dispatchFamilyCmrPanelLegs } from "./family/cmrPanelLegs.js";
+import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
 } from "./types.js";
@@ -4174,6 +4176,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
+          let singleSlicePanelTransports:
+            | ReadonlyArray<LegTransport>
+            | undefined;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -4327,10 +4332,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : {}),
                     }
                   : undefined;
-              const landingPayload =
+              const landingPayloadBase =
                 planLanding !== undefined || fixLanding !== undefined
                   ? { ...(fixLanding ?? {}), ...(planLanding ?? {}) }
                   : undefined;
+              // #1126: Runner-landed single-slice review paper (same seam as family).
+              const landingPayload: WorkerLandingPayload | undefined =
+                singleSlicePanelTransports !== undefined &&
+                singleSlicePanelTransports.length > 0
+                  ? {
+                      ...(landingPayloadBase ?? {}),
+                      panelLegTransports: singleSlicePanelTransports,
+                    }
+                  : landingPayloadBase;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (`failed` / throw, including StructuredOutputError after
               // Sandcastle maxRetries exhaust) with a fresh worker at the same
@@ -4519,6 +4533,93 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 break;
               }
               result = seatProtocol.result;
+              // #1126: empty continue (0 dispositions) after construction is the
+              // typed request for Runner-owned fresh review legs — same #1094
+              // dispatchFamilyCmrPanelLegs mechanism, scope=single. No durable
+              // ledger events; papers land back on this same judge session.
+              if (
+                isJudgeSeat({ step }) &&
+                result.kind === "completed" &&
+                result.output !== undefined &&
+                result.output.kind === "judge" &&
+                result.output.status === "continue" &&
+                (result.output.findingDispositions?.length ?? 0) === 0 &&
+                singleSlicePanelTransports === undefined
+              ) {
+                const inPlanPhase =
+                  shouldRunCoderPlanPhase() &&
+                  scanCoderPlanPhase(ledger).planPhase;
+                if (!inPlanPhase) {
+                  const judgeStep = step === "S3" ? "S3" : "S6";
+                  let reviewLegControl:
+                    | Exclude<
+                        SeatDispatchProtocolOutcome,
+                        { kind: "dispatched" }
+                      >
+                    | undefined;
+                  const reviewLegControlSignal = Symbol("review-leg-control");
+                  try {
+                    const {
+                      billingPool: _judgePool,
+                      resumeSessionId: _judgeResume,
+                      ...reviewLegCtx
+                    } = dispatchCtx;
+                    void _judgePool;
+                    void _judgeResume;
+                    const reviewRound = await dispatchFamilyCmrPanelLegs({
+                      legs: [
+                        {
+                          slug: workerSpec.model,
+                          family: modelFamilyForSlug(workerSpec.model),
+                        },
+                      ],
+                      scope: { kind: "single", judgeStep },
+                      dispatch: async (reviewSpec) => {
+                        const protocol = await dispatchSeatWithProtocol({
+                          step,
+                          wallStep: step,
+                          spec: reviewSpec,
+                          ctx: reviewLegCtx,
+                          retryOpts: durableMechanicalRetryOptions(step),
+                          capacityStateSummary:
+                            "fresh reviewer checkpoint at capacity; drift preserved",
+                          setMonitorHandle: (handle) => {
+                            stepMonitorHandle = handle;
+                          },
+                        });
+                        if (protocol.kind === "dispatched") {
+                          return protocol.result;
+                        }
+                        reviewLegControl = protocol;
+                        throw reviewLegControlSignal;
+                      },
+                    });
+                    singleSlicePanelTransports = reviewRound.transports;
+                    if (typeof result.sessionId === "string") {
+                      resumeSessionId = result.sessionId;
+                      judgeSessionId = result.sessionId;
+                      judgeSessionModel = stepSpecs[step].model;
+                    }
+                    continue;
+                  } catch (err) {
+                    if (err !== reviewLegControlSignal) throw err;
+                  }
+                  if (reviewLegControl?.kind === "terminal") {
+                    return reviewLegControl.result;
+                  }
+                  if (reviewLegControl?.kind === "relay") {
+                    continue orchestratorStepLoop;
+                  }
+                  if (reviewLegControl?.kind === "stay_put_break") {
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `fresh reviewer ${step} stopped without a dispatch result`,
+                      ),
+                    );
+                  }
+                }
+              }
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
