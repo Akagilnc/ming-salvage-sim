@@ -422,7 +422,10 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
     expect(collect).toMatchObject({ legId: dispatch?.legId, terminal: "completed" });
     expect(mergerSpec).toMatchObject({ model: "agy", soul: "merger" });
     expect(
-      runOptions?.agent.buildPrintCommand({ prompt: "TASK_SENTINEL" } as never)
+      runOptions?.agent.buildPrintCommand({
+        prompt: "TASK_SENTINEL",
+        dangerouslySkipPermissions: false,
+      })
         .command,
     ).toContain("TASK_SENTINEL");
     expect(mergerMounts).toContainEqual({

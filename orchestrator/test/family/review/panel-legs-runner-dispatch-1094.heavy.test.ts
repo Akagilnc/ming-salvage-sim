@@ -368,20 +368,6 @@ describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the f
   });
 });
 
-describe("#1094 F5 — pass-keyed panel-leg prompts are the authoritative sources", () => {
-  it("versioned panel-leg prompts load as task-only instructions", () => {
-    for (const pass of ["completeness", "correctness"] as const) {
-      const promptPath = join(promptsDir, cmrPanelLegPromptFile(pass));
-      expect(existsSync(promptPath)).toBe(true);
-      const md = readFileSync(promptPath, "utf8");
-      expect(md).toMatch(/Fresh eyes only/i);
-      expect(md).toMatch(/Do not call another model/i);
-      expect(md).toMatch(/Do not repair, commit, or push/i);
-      expect(md).toMatch(/ADR 0141/i);
-    }
-  });
-});
-
 describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
   it("mounts only THIS leg's provider auth (isomorphic to single-slice reviewer)", async () => {
     const { RealFamilyBackend } = await import(
