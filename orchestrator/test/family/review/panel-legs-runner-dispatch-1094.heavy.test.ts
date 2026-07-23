@@ -947,8 +947,8 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
   });
 });
 
-describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
-  it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
+describe("#1094 R3 F3 / #1118 — zero successful panel legs still open pure court", () => {
+  it("lands skip reasons, opens judge, judge escalates (no runner direct-stop)", async () => {
     const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
@@ -956,11 +956,9 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     const { isCmrPanelLegWorker } = await import(
       "../../helpers/cmr-panel-leg-dispatch.js"
     );
-    const { legacyCmrScriptToWorkerOutput } = await import(
-      "../../helpers/judge-fixtures.js"
-    );
 
     let judgeDispatched = 0;
+    let sawSkip = false;
     const backend = {
       ledger: [] as FamilyLedgerEntry[],
       escalations: [] as FamilyEscalation[],
@@ -996,6 +994,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       async dispatchWorker(
         spec: WorkerSpec,
         ctx: DispatchContext,
+        landing?: import("../../../src/types.js").WorkerLandingPayload,
       ): Promise<WorkerResult> {
         if (isCmrPanelLegWorker(spec)) {
           return {
@@ -1005,15 +1004,18 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
         }
         if (spec.kind === "cmr") {
           judgeDispatched += 1;
-          // Would have converged on empty evidence — host must not reach here.
+          const skips =
+            landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs ?? [];
+          if (skips.length > 0) sawSkip = true;
+          // #1118: judge is the sole closer — escalate on empty paper.
           return {
             kind: "completed",
-            output: legacyCmrScriptToWorkerOutput({
-              converged: true,
-              successfulLegs: [],
-              evidencePaths: ["cmr/review-summary.json"],
-              findings: [],
-            }),
+            output: {
+              kind: "judge",
+              status: "escalate",
+              reason: `family integrated cmr ${ctx.cmrPass ?? "?"}: zero successful panel legs`,
+              diagnosis: skips.map((s) => `${s.slug}: ${s.reason}`).join("; "),
+            },
           };
         }
         void ctx;
@@ -1032,7 +1034,8 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     });
 
     expect(result.ok).toBe(false);
-    expect(judgeDispatched).toBe(0);
+    expect(judgeDispatched).toBeGreaterThan(0);
+    expect(sawSkip).toBe(true);
     expect(
       backend.ledger.some((e) => e.status === "cmr_passed"),
     ).toBe(false);
