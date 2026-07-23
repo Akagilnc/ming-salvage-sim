@@ -2,18 +2,19 @@
  * #1117 / #1118 — integrated court resume re-dispatches fresh panel legs.
  *
  * Load-bearing cases enter through runFamily (production spine). Durable cargo
- * owner = FamilyBackend.read/writeFamilyPanelLegEvidence with full court
- * identity (phase + route fingerprint + generation + HEAD).
+ * owner = FamilyBackend.read/writeFamilyPanelLegEvidence with court identity
+ * (HEAD + ledgerPhase + declared panel-leg roster only).
  *
  * Authority: #1118 AC; ADR 0130/0132/0141/0147.
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { parseFamilyPanelLegEvidence } from "../../../src/family/cmrPanelLegs.js";
+import { panelLegsRosterFingerprint } from "../../../src/family/cmrPanelLegs.js";
 import type {
   FamilyBackend,
   FamilyEpic,
@@ -42,8 +43,9 @@ import {
 import { completedJudge, judgeConverged } from "../../helpers/judge-fixtures.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import {
-  modelRouteFingerprint,
+  cmrReviewLegs,
   resolveActiveModelRoute,
+  type ResolvedModelRoute,
 } from "../../../src/modelRoutes.js";
 
 const LEGAL_PANEL_STDOUT =
@@ -54,14 +56,14 @@ const EPIC: FamilyEpic = {
   children: [{ issue: 1118, blockedBy: [] }],
 };
 
-function defaultRouteFingerprint(): string {
-  return modelRouteFingerprint(resolveActiveModelRoute());
+function defaultPanelLegsFingerprint(): string {
+  return panelLegsRosterFingerprint(cmrReviewLegs());
 }
 
 function legalTransports(stdout: string = LEGAL_PANEL_STDOUT) {
   return [
     { slug: "gpt-5.6-sol", exitCode: 0, stdout },
-    { slug: "grok-4.5", exitCode: 0, stdout },
+    { slug: "opus", exitCode: 0, stdout },
   ];
 }
 
@@ -71,10 +73,23 @@ function fullIdentityEvidence(
   return {
     familyHeadAfter: FAMILY_HEAD,
     ledgerPhase: "final",
-    routeFingerprint: defaultRouteFingerprint(),
-    courtGeneration: 0,
+    panelLegsFingerprint: defaultPanelLegsFingerprint(),
     panelLegTransports: legalTransports(),
     ...overrides,
+  };
+}
+
+function routeWithCoderShipShift(base: ResolvedModelRoute): ResolvedModelRoute {
+  // Shift only coder/ship slots — cmrReview roster stays identical so durable
+  // panel evidence must still reuse (#1118 AC2: identity is panel-roster only).
+  return {
+    ...base,
+    slots: {
+      ...base.slots,
+      coder: "sonnet",
+      coderFix: "sonnet",
+      ship: "gpt-5.6-terra",
+    },
   };
 }
 
@@ -320,10 +335,10 @@ describe("#1118 runFamily resume panel evidence", () => {
     expect(durable?.panelLegTransports?.length).toBeGreaterThan(0);
     expect(durable?.familyHeadAfter).toBe(FAMILY_HEAD);
     expect(durable?.ledgerPhase).toBe("final");
-    expect(durable?.routeFingerprint).toBe(defaultRouteFingerprint());
+    expect(durable?.panelLegsFingerprint).toBe(defaultPanelLegsFingerprint());
   });
 
-  it("control: full court identity match → zero panel reburn; judge gets original 卷面", async () => {
+  it("control: full identity match → zero panel reburn; judge gets original 卷面", async () => {
     const priorTransports = legalTransports(
       "PRIOR durable completeness panel paper\n## Findings\nnone",
     );
@@ -351,6 +366,69 @@ describe("#1118 runFamily resume panel evidence", () => {
     }
   });
 
+  it("AC2: coder/ship route shift with same panel roster → still reuses (no reburn)", async () => {
+    const priorTransports = legalTransports(
+      "ROSTER-STABLE paper under coder/ship shift\n## Findings\nnone",
+    );
+    const base = resolveActiveModelRoute();
+    const shifted = routeWithCoderShipShift(base);
+    // Sanity: panel roster identity is unchanged by the slot shift.
+    expect(panelLegsRosterFingerprint(shifted.legCollections.cmrReview)).toBe(
+      panelLegsRosterFingerprint(base.legCollections.cmrReview),
+    );
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: mergedOnlyLedger(),
+      seedEvidence: {
+        completeness: fullIdentityEvidence({
+          panelLegTransports: priorTransports,
+        }),
+        correctness: fullIdentityEvidence({
+          panelLegTransports: priorTransports,
+        }),
+      },
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-coder-ship-shift",
+      admittedRoute: { route: shifted, dropped: [] },
+    });
+    expect(backend.panelDispatches).toEqual([]);
+    for (const landing of backend.judgeLandings) {
+      expect(landing?.panelLegTransports).toEqual(priorTransports);
+    }
+  });
+
+  it("AC2: declared panel roster change → must fresh reburn", async () => {
+    const staleRosterPaper = legalTransports(
+      "OLD-roster paper — declared legs fingerprint no longer matches",
+    );
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: mergedOnlyLedger(),
+      seedEvidence: {
+        completeness: fullIdentityEvidence({
+          panelLegsFingerprint: "stale-panel-roster-fingerprint",
+          panelLegTransports: staleRosterPaper,
+        }),
+        correctness: fullIdentityEvidence({
+          panelLegsFingerprint: "stale-panel-roster-fingerprint",
+          panelLegTransports: staleRosterPaper,
+        }),
+      },
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-roster-mismatch",
+    });
+    expect(backend.panelDispatches.length).toBeGreaterThan(0);
+    for (const landing of backend.judgeLandings) {
+      expect(landing?.panelLegTransports).not.toEqual(staleRosterPaper);
+    }
+  });
+
   it("P1: checkpoint-scoped durable must not free-skip final (same HEAD)", async () => {
     const checkpointPaper = legalTransports(
       "CHECKPOINT-only correctness paper — must not serve final",
@@ -358,8 +436,6 @@ describe("#1118 runFamily resume panel evidence", () => {
     const backend = new ResumeSpineFamilyBackend({
       seedLedger: mergedOnlyLedger(),
       seedEvidence: {
-        // Completeness has no durable → will fan-out (ok).
-        // Correctness seeded as checkpoint-only at same HEAD → final must reburn.
         correctness: fullIdentityEvidence({
           ledgerPhase: "correctness_checkpoint",
           panelLegTransports: checkpointPaper,
@@ -376,39 +452,9 @@ describe("#1118 runFamily resume panel evidence", () => {
       backend.panelDispatches.filter((s) => s.startsWith("correctness:")).length,
     ).toBeGreaterThan(0);
     const correctnessLanding = backend.judgeLandings.find((l) =>
-      l?.panelLegTransports?.some((t) => t.slug === "gpt-5.6-sol"),
+      (l?.panelLegTransports?.length ?? 0) > 0,
     );
-    // Must not hand the pure court the checkpoint-only paper.
     expect(correctnessLanding?.panelLegTransports).not.toEqual(checkpointPaper);
-  });
-
-  it("P1: same HEAD but route/legs fingerprint mismatch → fresh reburn", async () => {
-    const staleRosterPaper = legalTransports(
-      "OLD-roster paper — slug set no longer matches route",
-    );
-    const backend = new ResumeSpineFamilyBackend({
-      seedLedger: mergedOnlyLedger(),
-      seedEvidence: {
-        completeness: fullIdentityEvidence({
-          routeFingerprint: "stale-route-fingerprint-not-current",
-          panelLegTransports: staleRosterPaper,
-        }),
-        correctness: fullIdentityEvidence({
-          routeFingerprint: "stale-route-fingerprint-not-current",
-          panelLegTransports: staleRosterPaper,
-        }),
-      },
-    });
-    await runFamily({
-      epic: EPIC,
-      familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1118-roster-mismatch",
-    });
-    expect(backend.panelDispatches.length).toBeGreaterThan(0);
-    for (const landing of backend.judgeLandings) {
-      expect(landing?.panelLegTransports).not.toEqual(staleRosterPaper);
-    }
   });
 
   it("stale durable head → reburn (never re-stamp old cargo as current head)", async () => {
@@ -441,7 +487,6 @@ describe("#1118 runFamily resume panel evidence", () => {
   });
 
   it("negative: all legs fail → skip reasons land on pure court (zero silent empty)", async () => {
-    // #1118: zero-success still opens pure judge with skip reasons (ADR 0132).
     const backend = new ResumeSpineFamilyBackend({
       seedLedger: mergedOnlyLedger(),
       failAllPanelLegs: true,
@@ -469,16 +514,43 @@ describe("#1118 runFamily resume panel evidence", () => {
     const durable = backend.readFamilyPanelLegEvidence("completeness");
     expect(durable?.panelLegSkippedLegs?.length).toBeGreaterThan(0);
     expect(durable?.ledgerPhase).toBe("final");
-    expect(durable?.routeFingerprint).toBe(defaultRouteFingerprint());
+    expect(durable?.panelLegsFingerprint).toBe(defaultPanelLegsFingerprint());
+  });
+
+  it("malformed durable (no legal transports after shape gate) → runFamily fans out", async () => {
+    // Production shape gate drops wrong-type transports; identity alone is not
+    // enough for reuse — missing legal paper forces fan-out (external behavior).
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: mergedOnlyLedger(),
+      seedEvidence: {
+        completeness: {
+          familyHeadAfter: FAMILY_HEAD,
+          ledgerPhase: "final",
+          panelLegsFingerprint: defaultPanelLegsFingerprint(),
+          // no panelLegTransports — same as post-parse wrong-shape sidecar
+        },
+        correctness: {
+          familyHeadAfter: FAMILY_HEAD,
+          ledgerPhase: "final",
+          panelLegsFingerprint: defaultPanelLegsFingerprint(),
+        },
+      },
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-malformed-fanout",
+    });
+    expect(backend.panelDispatches.length).toBeGreaterThan(0);
+    expect(backend.judgeLandings.length).toBeGreaterThan(0);
   });
 });
 
 describe("#1118 RealFamilyBackend durable evidence shape-safe parse", () => {
-  it("malformed / wrong-shape sidecar → undefined (fan-out), never throw on .map", async () => {
+  it("wrong-shape sidecar via RealFamilyBackend → no reusable transports (no throw)", async () => {
     const { RealFamilyBackend, FAMILY_PANEL_LEG_EVIDENCE_PREFIX } =
       await import("../../../src/family/realFamilyBackend.js");
-    const { fileURLToPath } = await import("node:url");
-    const { dirname } = await import("node:path");
     const here = dirname(fileURLToPath(import.meta.url));
     const promptsDir = join(here, "..", "..", "..", "prompts");
     const soulsDir = join(here, "..", "..", "..", "image", "souls");
@@ -495,7 +567,6 @@ describe("#1118 RealFamilyBackend durable evidence shape-safe parse", () => {
       imageName: "ming-orchestrator-coder:latest",
     });
 
-    // Wrong-shape: panelLegTransports is an object, not an array.
     const path = join(
       ledgerDir,
       `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-completeness.json`,
@@ -505,29 +576,13 @@ describe("#1118 RealFamilyBackend durable evidence shape-safe parse", () => {
       JSON.stringify({
         familyHeadAfter: FAMILY_HEAD,
         ledgerPhase: "final",
-        routeFingerprint: "x",
-        courtGeneration: 0,
+        panelLegsFingerprint: "x",
         panelLegTransports: { slug: "not-an-array" },
       }) + "\n",
       "utf8",
     );
     const evidence = await backend.readFamilyPanelLegEvidence("completeness");
-    // Shape-safe: returns parsed identity without inventing a cast array.
+    // External entry: wrong-shape transports are not reusable arrays.
     expect(evidence?.panelLegTransports).toBeUndefined();
-    // Pure parser rejects non-object garbage.
-    expect(parseFamilyPanelLegEvidence(null)).toBeUndefined();
-    expect(parseFamilyPanelLegEvidence("not-json-object")).toBeUndefined();
-    expect(parseFamilyPanelLegEvidence([])).toBeUndefined();
-    // Wrong-type transports array elements are dropped; no throw.
-    const partial = parseFamilyPanelLegEvidence({
-      familyHeadAfter: FAMILY_HEAD,
-      panelLegTransports: [
-        { slug: "ok", exitCode: 0, stdout: "paper" },
-        { slug: 1, exitCode: "x" },
-      ],
-    });
-    expect(partial?.panelLegTransports).toEqual([
-      { slug: "ok", exitCode: 0, stdout: "paper" },
-    ]);
   });
 });

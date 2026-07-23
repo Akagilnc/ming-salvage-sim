@@ -75,9 +75,9 @@ import {
 } from "./dispatchFamilyWorker.js";
 import {
   admissibleDurablePanelLegTransports,
-  courtGenerationFromDurableEvidence,
   ensureFamilyCmrPanelEvidence,
   hasValidPanelLegTransports,
+  panelLegsRosterFingerprint,
   skippedLegsFromTransports,
 } from "./cmrPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
@@ -2487,12 +2487,6 @@ async function runIntegratedCmrPass(input: {
    * First open of a pass keeps panels (flag false).
    */
   readonly receiveBuilderBeat?: boolean;
-  /**
-   * #1118 — force panel reburn even when durable same-head transports exist.
-   * Set for the independent fresh outer gate after a pure-judge builder receive
-   * (ADR 0147) so claimed-fixed re-review cannot silently reuse pre-fix 卷面.
-   */
-  readonly forcePanelReburn?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2514,9 +2508,9 @@ async function runIntegratedCmrPass(input: {
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
     receiveBuilderBeat = false,
-    forcePanelReburn = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
+  // Ledger cmr_passed still uses full route fingerprint (pass-skip identity).
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
     familyBackend,
@@ -2637,31 +2631,28 @@ async function runIntegratedCmrPass(input: {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
     // #1094 / #1117 / #1118: one panel-evidence gate before pure judge.
     // Judge never spawns nested model CLIs. #1085 / ADR 0147: after a builder
-    // beat this open skips panel fan-out (pure receive); soft-accept returns
-    // needsFreshOuterGate so the caller re-opens WITH panels (forcePanelReburn).
+    // beat this open skips panel fan-out (pure receive); soft-accept clears
+    // durable transports so the outer-gate re-open fans out (no generation
+    // counter / no forcePanelReburn flag).
     const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // Production cargo owner = FamilyBackend durable store (ledgerDir), plus any
-    // in-process landing/ctx transports. Never optional VerifyCmrInput test seams.
-    // Full court identity (phase + route/leg fingerprint + generation + head) —
-    // not HEAD-only — so checkpoint≠final, roster change, and builder refuse
-    // cannot silently reuse stale 卷面. forcePanelReburn / escalationAnswer still
-    // read generation so fan-out writes stamp the same (or advanced) gen.
+    // in-process landing/ctx transports. Identity = head + ledgerPhase +
+    // declared panel-leg roster only (not full model route). escalationAnswer
+    // and missing legal transports force fan-out.
+    const panelLegsFingerprint = panelLegsRosterFingerprint(frozenLegs);
     const durablePanelEvidence =
       typeof familyBackend.readFamilyPanelLegEvidence === "function"
         ? await familyBackend.readFamilyPanelLegEvidence(pass)
         : undefined;
-    const courtGeneration =
-      courtGenerationFromDurableEvidence(durablePanelEvidence);
     const panelEvidenceScope = {
       ...(resolvedFamilyHeadAfter !== undefined
         ? { familyHeadAfter: resolvedFamilyHeadAfter }
         : {}),
       ledgerPhase,
-      routeFingerprint,
-      courtGeneration,
+      panelLegsFingerprint,
     };
     const durableTransportsForCourt =
-      forcePanelReburn || escalationAnswer !== undefined
+      escalationAnswer !== undefined
         ? undefined
         : admissibleDurablePanelLegTransports(
             durablePanelEvidence,
@@ -2779,9 +2770,9 @@ async function runIntegratedCmrPass(input: {
     };
     // Persist durable 卷面 under ledgerDir so resume reuses valid transports
     // (or observes host skip reasons) without process-temp injection seams.
-    // Stamp full court identity so reuse cannot cross phase/roster/generation.
-    // Pure-receive opens (frozenLegs empty) do not refresh durable — builder
-    // soft-accept advances generation; the outer-gate open rewrites transports.
+    // Stamp head + phase + declared panel roster only. Pure-receive opens
+    // (frozenLegs empty) do not refresh durable — builder soft-accept clears
+    // transports; the outer-gate open rewrites them after fan-out.
     if (
       !receivingBuilderBeat &&
       frozenLegs.length > 0 &&
@@ -2794,8 +2785,7 @@ async function runIntegratedCmrPass(input: {
           ? { familyHeadAfter: resolvedFamilyHeadAfter }
           : {}),
         ledgerPhase,
-        routeFingerprint,
-        courtGeneration,
+        panelLegsFingerprint,
         ...(panelLanding.panelLegTransports !== undefined
           ? { panelLegTransports: panelLanding.panelLegTransports }
           : {}),
@@ -3019,9 +3009,9 @@ async function runIntegratedCmrPass(input: {
     // panels. Permanent latch + zero outer-gate was the family/1080 defect.
     if (receivingBuilderBeat) {
       finalReviewRoundDisposition = "accepted";
-      // Advance court generation + clear transports so the outer-gate re-open
-      // cannot reuse pre-builder 卷面 when HEAD is unchanged (refuse/no-op).
-      // Structured lifecycle only — never parse judge/escalation free prose.
+      // Clear durable transports so the outer-gate re-open cannot reuse
+      // pre-builder 卷面 when HEAD is unchanged (refuse/no-op). No generation
+      // counter — missing legal transports is the sole reburn signal here.
       if (typeof familyBackend.writeFamilyPanelLegEvidence === "function") {
         await familyBackend.writeFamilyPanelLegEvidence(pass, {
           ...(postWorkerFamilyHead !== undefined
@@ -3030,8 +3020,9 @@ async function runIntegratedCmrPass(input: {
               ? { familyHeadAfter: resolvedFamilyHeadAfter }
               : {}),
           ledgerPhase,
-          routeFingerprint,
-          courtGeneration: courtGeneration + 1,
+          // Roster of the court that last wrote transports is unknown on pure
+          // receive (frozenLegs empty); omit fingerprint so admissibility fails
+          // closed until the outer-gate open rewrites after fan-out.
         });
       }
       await familyBackend.appendFamilyLedger({
@@ -3506,9 +3497,8 @@ async function runCorrectnessCourtLoop(input: {
   // That flag is a one-shot for the immediate receive step only — when pure
   // receive soft-accepts (needsFreshOuterGate), clear it so the next open
   // re-fans panels (ADR 0147 independent outer gate; 收敛仍需 fresh 过目).
+  // Builder soft-accept clears durable transports; missing legal paper fans out.
   let receiveBuilderBeat = false;
-  // Outer-gate reopen must reburn even if durable same-head 卷面 still exists.
-  let forcePanelReburn = false;
 
   while (true) {
     const correctness = await runIntegratedCmrPass({
@@ -3527,7 +3517,6 @@ async function runCorrectnessCourtLoop(input: {
       allowCoderFix: true,
       ledgerPhase,
       receiveBuilderBeat,
-      forcePanelReburn,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
@@ -3539,10 +3528,8 @@ async function runCorrectnessCourtLoop(input: {
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
     });
-    // Consume one-shot flags: only the immediate post-builder open skips panels;
-    // only the immediate outer-gate reopen forces reburn.
+    // Consume one-shot: only the immediate post-builder open skips panels.
     receiveBuilderBeat = false;
-    forcePanelReburn = false;
     if (!correctness.result.ok) {
       return {
         result: correctness.result,
@@ -3560,7 +3547,6 @@ async function runCorrectnessCourtLoop(input: {
         if (correctness.familyHeadAfter !== undefined) {
           correctnessFamilyHeadAfter = correctness.familyHeadAfter;
         }
-        forcePanelReburn = true;
         continue;
       }
       return {
@@ -3864,7 +3850,6 @@ export async function runVerifyCmr(
   // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
   // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
   let completenessReceiveBuilderBeat = false;
-  let completenessForcePanelReburn = false;
   for (;;) {
     const completeness = await runIntegratedCmrPass({
       pass: "completeness",
@@ -3883,7 +3868,6 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       receiveBuilderBeat: completenessReceiveBuilderBeat,
-      forcePanelReburn: completenessForcePanelReburn,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
@@ -3895,9 +3879,8 @@ export async function runVerifyCmr(
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
     });
-    // Consume one-shot flags.
+    // Consume one-shot: only the immediate post-builder open skips panels.
     completenessReceiveBuilderBeat = false;
-    completenessForcePanelReburn = false;
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
     if (completeness.resolvedRoute !== undefined) {
@@ -3909,7 +3892,6 @@ export async function runVerifyCmr(
       }
       // Pure receive soft-accepted → re-open with panels (outer gate).
       if (completeness.needsFreshOuterGate === true) {
-        completenessForcePanelReburn = true;
         continue;
       }
       break;
