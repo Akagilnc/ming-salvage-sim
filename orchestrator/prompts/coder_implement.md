@@ -6,6 +6,13 @@ Runtime issue inputs are `ORCHESTRATOR_ISSUE_NUMBER` (or `ISSUE_NUMBER`) and
 `.orchestrator-fix-findings.json`, when present, carries the runner transports
 `builderBeat`, `fixPacketBody`, and `builderPlanBody`.
 
+Cargo ABI:
+
+- Fresh/`builderBeat:"plan"`, or a re-plan after verdict:
+  `beat:"plan"`, non-empty `planBody`, `committed:false`, `commitsAdded:0`.
+- Construction after `builderBeat:"after_plan_verdict"`:
+  `beat:"construct"` with `committed` and `commitsAdded` matching git state.
+
 Do not use `.orchestrator-snapshot.json` as execution input.
 
 If `ORCHESTRATOR_RELAY_BRIEF` is set, read that ephemeral baton handoff brief
