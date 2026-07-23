@@ -475,6 +475,10 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     expect(familyBackend.escalationCalls[0]?.escalationKind).toBe("decision");
+    // Failure authority supersedes decision for replay (latest escalated row).
+    expect(
+      familyBackend.escalationCalls.some((c) => c.escalationKind === "failure"),
+    ).toBe(true);
     // Durable + public share one stopSummary object shape (reason/summary/…).
     expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
     expect(result.diagnostics ?? []).toEqual(
@@ -486,6 +490,23 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       ]),
     );
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
+
+    // Second run: must stay failed (not re-park as unanswered decision).
+    const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new SiblingCrashBackend(new Set([11])),
+      familyBase: "family/938-base",
+    });
+    expect(second.status).toBe("failed");
+    expect(second.stopSummary?.reason).not.toBe("decision_gate_park");
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {
