@@ -1,8 +1,7 @@
 # Family ship worker entrypoint
 
-Then read `.ship-focus.md` at the repo root. It is required and pins the family
-base branch, PR target base, and repo. Invoke the baked `gstack-ship` skill with
-those runner parameters.
+Read `.ship-focus.md` at the repo root. It is required and pins the family base
+branch, PR target base, and repo.
 
 ## Required output
 

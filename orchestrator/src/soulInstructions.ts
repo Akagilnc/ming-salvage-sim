@@ -16,6 +16,9 @@ const SOUL_FILE: Readonly<Record<WorkerSoul, string>> = {
   landing: "landing.md",
   merger: "merger.md",
 };
+export const EXECUTABLE_SOUL_FILES: ReadonlyArray<string> = Object.freeze([
+  ...new Set(Object.values(SOUL_FILE)),
+]);
 
 export function soulFileName(soul: WorkerSoul): string {
   return SOUL_FILE[soul];

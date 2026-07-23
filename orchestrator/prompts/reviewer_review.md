@@ -1,11 +1,8 @@
 # Reviewer worker entrypoint
 
-Follow the worktree's `CLAUDE.md`. The runner only schedules
-you. Method is Matt
-`/code-review` over the **current full slice diff** (not a leftover checklist).
-Fixed point: `origin/main` if available, otherwise `main`. This worker is
-read-only on the reviewed tree — do not commit review drafts. Snapshot files
-such as `.orchestrator-snapshot.json` are not execution input.
+Review scope is the **current full slice diff** (not a leftover checklist).
+Fixed point: `origin/main` if available, otherwise `main`. Snapshot files such
+as `.orchestrator-snapshot.json` are not execution input.
 
 ## Required output
 
@@ -67,4 +64,3 @@ Escalation:
 ```text
 <review>{"findingsCount":0,"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
 ```
-
