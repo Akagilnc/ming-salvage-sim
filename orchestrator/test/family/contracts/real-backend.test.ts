@@ -29,7 +29,6 @@ import {
   familyEscalationState,
   MAX_DISPATCH_ATTEMPTS,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   soulsMount,
   ConflictResolveRequest,
   FamilyVerifyRequest,

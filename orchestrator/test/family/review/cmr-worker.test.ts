@@ -43,7 +43,6 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
@@ -959,7 +958,6 @@ describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-
   it("injects the judge Claude token + cmr soul + ORCHESTRATOR_REPO (no nested legs)", () => {
     const cfg = cfgBackend().config(auth);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("verify");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
@@ -1008,7 +1006,6 @@ describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-
     expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
-    expect(none.env[SANDBOX_SOUL_ENV]).toBe("verify");
   });
 
   it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {

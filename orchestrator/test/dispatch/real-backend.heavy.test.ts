@@ -40,7 +40,6 @@ import {
   soulsDirError,
   REQUIRED_SOUL_FILES,
   resolveModelSlug,
-  soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,

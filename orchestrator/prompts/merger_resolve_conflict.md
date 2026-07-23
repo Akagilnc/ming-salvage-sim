@@ -1,12 +1,6 @@
 # Merger worker entrypoint — resolve one family-merge conflict
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/merger.md
-```
-
-Then follow that soul and the worktree's `CLAUDE.md ## Skill routing`. The runner
+Follow the worktree's `CLAUDE.md ## Skill routing`. The runner
 only schedules you: it attempted a deterministic `git merge --no-ff` of a reviewed
 child slice into the family base, hit a conflict, and left the markers in the
 working tree — resolve **this one in-progress merge** and return. The

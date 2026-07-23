@@ -1,12 +1,6 @@
 # Coder worker entrypoint
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/coder.md
-```
-
-Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
+Follow the worktree's `CLAUDE.md`. The runner only schedules
 you; the issue is live truth. Use `ORCHESTRATOR_ISSUE_NUMBER` (or `ISSUE_NUMBER`)
 and `ORCHESTRATOR_REPO` to fetch the current issue title, body, comments, and authors
 with `gh issue view "$ISSUE_NUMBER" --repo "$ORCHESTRATOR_REPO" --json number,title,state,author,body,labels,comments`

@@ -1,8 +1,6 @@
 # Judge open court (resident slice birth) — #1081 / ADR 0147
 
-Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
-Follow that soul and the worktree's `CLAUDE.md`. Method lives in the soul /
-baked skills — this file does not restate it.
+Follow the worktree's `CLAUDE.md`.
 
 ## Runtime inputs
 

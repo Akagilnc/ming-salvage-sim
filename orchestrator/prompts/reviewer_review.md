@@ -1,13 +1,7 @@
 # Reviewer worker entrypoint
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/reviewer.md
-```
-
-Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you; review character belongs to the role soul (live-mounted). Method is Matt
+Follow the worktree's `CLAUDE.md`. The runner only schedules
+you. Method is Matt
 `/code-review` over the **current full slice diff** (not a leftover checklist).
 Fixed point: `origin/main` if available, otherwise `main`. This worker is
 read-only on the reviewed tree — do not commit review drafts. Snapshot files
@@ -73,5 +67,4 @@ Escalation:
 ```text
 <review>{"findingsCount":0,"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
 ```
-
 
