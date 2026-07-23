@@ -242,17 +242,22 @@ export const POOL_DISPATCH_BINDINGS: Readonly<
   // #807: SuperGrok pool runs the real `grok` CLI (custom AgentProvider), not
   // sandcastle's `sc.pi()` (different product / flag contract / auth home).
   "grok-build": "grok",
-  // cursor/zai intentionally absent — no live registry slug; no rewrite.
+  // zai is quota-observable but has no executable provider binding.
   "codex-5h": "codex",
   claude: "claudeCode",
 };
+
+export function isExecutableBillingPool(
+  pool: BillingPoolDispatchId,
+): boolean {
+  return POOL_DISPATCH_BINDINGS[pool] !== undefined;
+}
 
 export function isBillingPoolDispatchId(
   value: string | undefined,
 ): value is BillingPoolDispatchId {
   return (
     value === "grok-build" ||
-    value === "cursor" ||
     value === "zai" ||
     value === "codex-5h" ||
     value === "claude"
@@ -265,13 +270,16 @@ export function resolveModelSlugForPool(
   pool?: BillingPoolDispatchId,
 ): ModelSlugRegistryEntry {
   const base = resolveModelSlug(slug);
-  // #905: grok-4.5 always stays on the SuperGrok CLI — never cursor/opencode transit.
+  if (pool === undefined) return base;
+  const binding = POOL_DISPATCH_BINDINGS[pool];
+  if (binding === undefined) {
+    throw new Error(`billing pool ${pool} has no executable provider binding`);
+  }
+  // #905: grok-4.5 always stays on the SuperGrok CLI — never opencode transit.
   if (slug === "grok-4.5") {
     return { provider: "grok", model: base.model } as ModelSlugRegistryEntry;
   }
-  // Absent binding (retired/empty pool) → fail-closed: keep registry provider.
-  const binding = pool === undefined ? undefined : POOL_DISPATCH_BINDINGS[pool];
-  if (binding === undefined || binding === base.provider) return base;
+  if (binding === base.provider) return base;
   return { provider: binding, model: base.model } as ModelSlugRegistryEntry;
 }
 

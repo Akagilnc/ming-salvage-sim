@@ -2,9 +2,9 @@
  * #686 / ADR 0124 — route pool table: pool = quota/billing boundary,
  * orthogonal to the #767 Coder-Rec model roster.
  *
- * Pools (grok-build / cursor / zai / codex-5h / claude) track额度 + resetAt +
+ * Pools (grok-build / zai / codex-5h / claude) track额度 + resetAt +
  * configurable park threshold T. Models are products that may live in
- * multiple pools (实证: grok-4.5 on grok-build then Cursor).
+ * multiple pools.
  *
  * #789 — `claude` is the Anthropic / Claude Code billing boundary that serves
  * roster backups sonnet-5 / haiku-4.5. #920 removed pool-separation filtering
@@ -19,12 +19,14 @@ import {
   lookupCoderRosterEntry,
   type CoderRosterEntry,
 } from "./coderRoster.js";
-import { providerForModelSlug } from "./modelRegistry.js";
+import {
+  isExecutableBillingPool,
+  providerForModelSlug,
+} from "./modelRegistry.js";
 
 /** Quota / billing boundary ids (ADR 0124). */
 export type BillingPoolId =
   | "grok-build"
-  | "cursor"
   | "zai"
   | "codex-5h"
   | "claude";
@@ -96,8 +98,6 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
     case "grok":
     case "grok-build":
       return "grok-build";
-    case "cursor":
-      return "cursor";
     case "codex":
     case "codex-5h":
       return "codex-5h";
@@ -109,8 +109,10 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
       // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
       // relay lookup until a dedicated billing row exists.
       return "zai";
-    default:
+    case "unknown":
       return "grok-build";
+    default:
+      throw new Error(`unknown quota pool: ${pool}`);
   }
 }
 
@@ -118,9 +120,8 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
 export const DEFAULT_POOL_MODELS: Readonly<
   Record<BillingPoolId, ReadonlyArray<string>>
 > = {
-  // #905: grok-4.5 only on SuperGrok / grok-build — no cursor/zai transit.
+  // #905: grok-4.5 only on SuperGrok / grok-build — no zai transit.
   "grok-build": ["grok-4.5"],
-  cursor: [],
   zai: [],
   "codex-5h": [
     "terra@med",
@@ -152,8 +153,6 @@ function billingPoolFromProvider(
       return "claude";
     case "grok":
       return "grok-build";
-    case "cursor":
-      return "cursor";
     default:
       // agy — no dedicated billing-pool id here.
       return undefined;
@@ -218,7 +217,6 @@ export function buildDefaultBillingPools(input: {
   const t = input.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS;
   const ids: BillingPoolId[] = [
     "grok-build",
-    "cursor",
     "zai",
     "codex-5h",
     "claude",
@@ -344,6 +342,7 @@ function livePoolsForModel(
   return pools.filter(
     (p) =>
       p.status === "live" &&
+      isExecutableBillingPool(p.id) &&
       (excludePool === undefined || p.id !== excludePool) &&
       poolServesModel(p, modelId, slug),
   );

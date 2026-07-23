@@ -221,12 +221,6 @@ function liveBatonRelayPools(resetAt: Date) {
       models: ["grok-4.5"],
     },
     {
-      id: "cursor",
-      status: "dead" as const,
-      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-      models: [] as string[],
-    },
-    {
       id: "zai",
       status: "dead" as const,
       parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
