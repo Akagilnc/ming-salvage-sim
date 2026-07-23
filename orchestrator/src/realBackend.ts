@@ -111,9 +111,9 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { agyPrintInvocation } from "./agyAgent.js";
-import { agySoulRulesMount } from "./soulInstructions.js";
 import {
   agentForSlug,
+  agySoulMountForSlug,
   resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
@@ -2974,12 +2974,16 @@ export class RealBackend implements Backend {
     }
     // #905: agy OAuth — same CMR seam (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
-    if (
-      typeof spec.model === "string" &&
-      modelFamilyForSlug(spec.model) === "agy" &&
-      typeof spec.soul === "string"
-    ) {
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, spec.soul as StepSoul));
+    if (typeof spec.model === "string" && typeof spec.soul === "string") {
+      const soulMount = agySoulMountForSlug(
+        spec.model,
+        isBillingPoolDispatchId(options?.billingPool)
+          ? options.billingPool
+          : undefined,
+        spec.soul as StepSoul,
+        this.opts.soulsDir,
+      );
+      if (soulMount !== undefined) mounts.push(soulMount);
     }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.

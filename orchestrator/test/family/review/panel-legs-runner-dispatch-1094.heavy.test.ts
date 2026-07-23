@@ -32,7 +32,6 @@ import {
 import { cmrWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
 import { provisionWorkerAuth } from "../../../src/realBackend.js";
 import { successfulLegsFromTransports } from "../../../src/legPaper.js";
-import { buildJudgeReviewLegPrompt } from "../../../src/judgeStation.js";
 import { workerHostForModel } from "../../../src/dispatchWorker.js";
 import type { CmrAuth } from "../../../src/family/realFamilyBackend.js";
 import type {
@@ -49,7 +48,6 @@ import type {
 const here = dirname(fileURLToPath(import.meta.url));
 const soulsDir = join(here, "..", "..", "..", "image", "souls");
 const promptsDir = join(here, "..", "..", "..", "prompts");
-const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
 
 describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", () => {
   it("freezes each cmrReview leg as a fresh READ-ONLY reviewer worker", () => {
@@ -83,12 +81,6 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
     expect(hosts.size).toBe(legs.length);
   });
 
-  it("leg prompt prepends full reviewer soul (same helper as single-slice)", () => {
-    const body = "Review the family base diff for completeness.";
-    const prompt = buildJudgeReviewLegPrompt(reviewerSoul, body);
-    expect(prompt.startsWith(reviewerSoul.trim())).toBe(true);
-    expect(prompt).toContain(body);
-  });
 });
 
 describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
@@ -377,7 +369,7 @@ describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the f
 });
 
 describe("#1094 F5 — pass-keyed panel-leg prompts are the authoritative sources", () => {
-  it("versioned panel-leg prompts load and prepend reviewer soul", () => {
+  it("versioned panel-leg prompts load as task-only instructions", () => {
     for (const pass of ["completeness", "correctness"] as const) {
       const promptPath = join(promptsDir, cmrPanelLegPromptFile(pass));
       expect(existsSync(promptPath)).toBe(true);
@@ -386,13 +378,6 @@ describe("#1094 F5 — pass-keyed panel-leg prompts are the authoritative source
       expect(md).toMatch(/Do not call another model/i);
       expect(md).toMatch(/Do not repair, commit, or push/i);
       expect(md).toMatch(/ADR 0141/i);
-      const composed = buildJudgeReviewLegPrompt(
-        reviewerSoul,
-        `${md.trim()}\n\nPanel leg slug: gpt-5.6-sol.\n`,
-      );
-      expect(composed.startsWith(reviewerSoul.trim())).toBe(true);
-      expect(composed).toContain("Fresh eyes only");
-      expect(composed).toContain("Panel leg slug: gpt-5.6-sol");
     }
   });
 });
