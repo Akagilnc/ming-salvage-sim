@@ -567,3 +567,53 @@ replacement Actions and Sandcastle controls land.
 | `parked: completeness target is not a clean committed snapshot` | untracked runtime droppings in the iso clone | quarantine by `mv` (see Target hygiene), answer the gate, re-ignite |
 | startup smoke `CLI version changed from X to Y` on an optional leg | host↔container CLI version drift invalidating the recorded smoke | re-ignition refreshes the recorded version; an OPTIONAL leg blocking launch is #846-class degrade debt |
 | every slice in a wave red on the SAME test | inherited baseline defect fanned out N ways — each fixer repairs it independently, merger later reconciles N same-shape patches | pre-fix the family base first (#1006 gate); container-env-only reds exist (GitHub-CI-green ≠ container-green, e.g. `/dev/stdin` os error 6) |
+
+---
+
+## 领航员运维手册(2026-07-23,交接版)
+
+> 本章给接棒的 runner(人或 AI)。上文是机器的设计文;本章是**开机器的人**的操作规程。判卷法理真源=`image/souls/verify.md`(判前必重读,含裁 park/立票);宪法=容器全局 CLAUDE.md 三句话+一套机制(scope 是参数,无庭际分层);基本架构=**runner 按信封起容器、递信息;worker 永不起 worker;判官经 typed 判词向 runner 要腿**(法-码残差见 #1126:切片庭腿派发迁 runner 前,prompt 跟机器不跟法)。
+
+### 点火
+
+```bash
+cd ~/.sc-orchestrator && PATH="$HOME/.sc-orchestrator/bin:$PATH" \
+  ORCHESTRATOR_ROUTE=w3-blitz \
+  ORCHESTRATOR_ROUTE_PRESETS_PATH=$HOME/.sc-orchestrator/route-presets.json \
+  ORCHESTRATOR_MODEL_DATA_PATH=$HOME/.sc-orchestrator/model-data.json \
+  ORCHESTRATOR_SMOKE_IDLE_SECONDS=180 \
+  caffeinate -i node launch-<epic>.mjs
+```
+
+- launcher 模板=复制既有 `launch-*.mjs` 改 `epicIssue`/`familyBase`/`ledgerDir` 三处;epic 必须是**直接挂着 ready-for-agent 子票**的那张(方向票→PRD→切片层级里选 PRD 层,#471/#513 踩过)。
+- **同一 ORCH 树的 launcher 严禁并发起飞**:每个 launcher 都重建共享 `dist/`,并发=swap 竞态双爆(ERR_MODULE_NOT_FOUND,07-23 实证)。串行法:先起 A,`grep "admission route preflight" A.log` 出现后再起 B(参考 scratchpad 牧羊人脚本形状)。
+- 点火战报第一时间引 `model route lineup` 原文核对阵容;派单型号唯一真源=owner 现役口令,runner 零自改权。
+
+### grok 凭证(#1115 机制化前的人肉规程)
+
+- access 凭证寿命 **6 小时**(auth.json `expires_at`);副本制(每 worker 抄一份,无回写)+ 多副本各自刷新会互杀令牌线 → **全系统只许宿主一个刷新者**。
+- 过夜/长跑前让 owner `grok login --device-code` 现场新登;挂护航脚本:每 3 分钟剥新副本 `refresh_token` + 临期宿主单点续期(轻量 `grok --single` 触发隐式刷新)+ 新 `key`/`expires_at` 原子写进各在飞副本。脚本形状见 session scratchpad `grok-night-guard.sh`。
+- 掉登录症状=worker `provider auth death` park;复燃=owner 重登 → 杀旧 launcher → 重点火(driver 依法不拿死凭证重派)。
+
+### park 处置(铁律)
+
+1. park 行在 `family-ledger.jsonl`(`child_decision_parked`/家族级 `escalated`),**上报 owner 必引 reason+diagnosis 原文全文**,禁转述禁截断(监控管道会截,回台账取原文)。
+2. 人类唯一合理回答=「重试」的 park(瞬断/限流/腿哑火)不上抛,runner 自决复燃。
+3. 应答行(append-only 写进 family-ledger.jsonl):
+   - 家族级:`{"status":"escalation_answered","event":"escalation_answered","phase":"final","answer":"…","source":"human"}`(**不带 childIssue**)
+   - 子级:`{"status":"escalation_answered","event":"escalation_answered","childIssue":<N>,"answer":"…","source":"human"}`
+   落行后重跑同一 launcher=原地复庭。
+
+### #936 fail-closed(工地/台账不匹配)
+
+症状:`resident family worksite exists without readable ledger`。已知成因:失败 run 不写 `family-ledger.jsonl`(只留 start-head+progress)。处置三步:**审计开箱**(每个 git 找 unpushed/dirty,grep/文件名不算证据)→ **搬隔离**(`mv` 到 `quarantine-*`,永不 rm 未审内容;`quarantine-iso-497-preW1freeze` owner 令永不删)→ 重点火。
+
+### 修复工作流(手派全禁)
+
+PR/bot 冒 code finding → **立子票挂对应 epic(native sub-issue + ready-for-agent)→ 重跑 family,admission 自动收编**。票面只写 finding+不变式+验收,修法不写(已拍决策除外)。诊断腿(`/diagnosing-bugs`,只诊不修)是唯一手派例外,逐次经 owner 批。admission 认原生 blocked_by(OPEN 外部 blocker 自动跳过该子票)。landing Action(#941)管 bot 轮询→终判→merge→关票→清理——**别手抢它的活**。
+
+### 当前战线快照(2026-07-23 13:00,易过期)
+
+- 在飞:1117-r3(#1118/#1119,整合庭陪审 resume 修复)、1124-r2(#1125,决策门双接缝,owner 已批)。**跑完即全面暂停**(owner 令,额度不足)。
+- 压队:两舰落 main → 513 复飞(#516/#523/#525 已有 C 裁决应答在台账+#1123 丢旨修复)→ PR #1120 收环 → 1115 复燃(凭证根治)→ PR #1121 CI 终绿即 merge。
+- 挂账:#1102 #1104 #1108 #1113 #1126 #526;依赖族 6 片(#517/518/520/521/524/528)等 #474 的 #571→#560。
