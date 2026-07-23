@@ -778,6 +778,13 @@ export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0];
  */
 export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
 
+/**
+ * Build the souls mount spec. Hardcodes the sandbox path once.
+ * ALWAYS returns readonly:true so container workers cannot mutate the host
+ * souls truth source (host souls/*.md are the single source of truth).
+ * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
+ * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
+ */
 export function soulsMount(soulsDir: string): {
   hostPath: string;
   sandboxPath: string;
@@ -790,13 +797,6 @@ export function soulsMount(soulsDir: string): {
   };
 }
 
-/**
- * Build the souls mount spec. Hardcodes the sandbox path once.
- * ALWAYS returns readonly:true so container workers cannot mutate the host
- * souls truth source (host souls/*.md are the single source of truth).
- * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
- * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
- */
 /**
  * #911 — container home environment file (worker-facing CLAUDE.md).
  * Live-mounted at Claude's user config path; same freshness discipline as souls

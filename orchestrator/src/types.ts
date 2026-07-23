@@ -118,7 +118,8 @@ export type HandoffStatus = "completed" | "parked" | "failed";
 /**
  * Soul identifier injected into the sandbox for a step.
  *
- * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
+ * - `"coder"`: implementation soul for S2.
+ * - `"fixer"`: finding-fix soul for S5.
  * - `"READ-ONLY"`: reviewer soul with a provider-level READ-ONLY instruction
  *   constraint (not an OS-level mount — same image, separate `run()`).
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
