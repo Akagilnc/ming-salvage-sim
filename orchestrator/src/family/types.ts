@@ -552,6 +552,24 @@ export type FamilyCmrPanelRoundPrep =
     };
 
 /**
+ * #1119 — durable panel-leg evidence under the family ledgerDir (cold-start
+ * resume truth). Survives process exit; temp worktree fix-findings do not.
+ * Head-scoped: reuse only when familyHeadAfter still matches the current court.
+ */
+export type FamilyPanelLegEvidence = {
+  readonly familyHeadAfter?: string;
+  readonly panelLegTransports?: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
+};
+
+/**
  * THE family seam (parallel to the single-slice {@link Backend}): the family
  * spine reaches the outside world (git merge into the family base, the verify
  * hook) only through this injected interface, so the whole spine is verifiable
@@ -638,6 +656,24 @@ export interface FamilyBackend {
   prepareFamilyCmrPanelRound?(
     ctx: DispatchContext,
   ): FamilyCmrPanelRoundPrep | Promise<FamilyCmrPanelRoundPrep>;
+  /**
+   * #1119 — read durable panel-leg evidence for one integrated CMR pass
+   * (ledgerDir sibling; cold-start resume truth). Missing/unreadable → undefined.
+   */
+  readFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+  ):
+    | FamilyPanelLegEvidence
+    | undefined
+    | Promise<FamilyPanelLegEvidence | undefined>;
+  /**
+   * #1119 — persist panel-leg transports and/or runtime skip reasons for one
+   * pass so cold re-entry can reuse valid 卷面 or observe host skip reasons.
+   */
+  writeFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): void | Promise<void>;
   /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.

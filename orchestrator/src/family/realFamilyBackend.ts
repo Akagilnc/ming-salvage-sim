@@ -244,8 +244,10 @@ import type {
   FamilyBackend,
   FamilyEscalation,
   FamilyLedgerEntry,
+  FamilyPanelLegEvidence,
   FamilyVerifyRequest,
   FamilyVerifyResult,
+  IntegratedCmrPass,
   IntegratedCmrRequest,
   IntegratedCmrResult,
   MergeRequest,
@@ -273,6 +275,12 @@ export const CMR_FOCUS_FILENAME = ".cmr-focus.md";
 export const CMR_ROUTE_FILENAME = ".cmr-route.json";
 /** Runner-owned family coder-fix findings file, written transiently in the family base. */
 export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
+/**
+ * #1119 — durable panel-leg evidence filename under ledgerDir (sibling of the
+ * family ledger). Cold-start resume truth; not cleaned with process-temp
+ * worktree fix-findings.
+ */
+export const FAMILY_PANEL_LEG_EVIDENCE_PREFIX = "panel-leg-evidence";
 
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
@@ -629,6 +637,48 @@ export class RealFamilyBackend implements FamilyBackend {
       JSON.stringify(entry) + "\n",
       "utf8",
     );
+  }
+
+  /**
+   * #1119 — durable panel evidence path under ledgerDir (per integrated pass).
+   */
+  protected panelLegEvidencePath(pass: IntegratedCmrPass): string {
+    return join(
+      this.opts.ledgerDir,
+      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
+    );
+  }
+
+  async readFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+  ): Promise<FamilyPanelLegEvidence | undefined> {
+    const path = this.panelLegEvidencePath(pass);
+    let raw: string;
+    try {
+      raw = readFileSync(path, "utf8");
+    } catch (err) {
+      if (isFileNotFound(err)) return undefined;
+      throw new Error(
+        `readFamilyPanelLegEvidence: failed to read ${path} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed === null || typeof parsed !== "object") return undefined;
+      return parsed as FamilyPanelLegEvidence;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): Promise<void> {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const path = this.panelLegEvidencePath(pass);
+    writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   }
 
   private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {

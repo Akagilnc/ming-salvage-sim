@@ -2636,9 +2636,30 @@ async function runIntegratedCmrPass(input: {
     const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // Existing landing/ctx transports (valid → no reburn). Cold resume after
     // park with empty landing forces fan-out again (AC #1118 / #1119).
+    // Durable ledgerDir evidence is cold-start recoverable (process temps are not).
+    // Head-scoped: only reuse when durable row still matches this court head.
+    const durablePanelEvidence =
+      typeof familyBackend.readFamilyPanelLegEvidence === "function"
+        ? await familyBackend.readFamilyPanelLegEvidence(pass)
+        : undefined;
+    const durableHead =
+      typeof durablePanelEvidence?.familyHeadAfter === "string"
+        ? durablePanelEvidence.familyHeadAfter.trim()
+        : "";
+    const currentHead =
+      typeof resolvedFamilyHeadAfter === "string"
+        ? resolvedFamilyHeadAfter.trim()
+        : "";
+    const durableTransportsForHead =
+      durableHead.length > 0 &&
+      currentHead.length > 0 &&
+      durableHead === currentHead
+        ? durablePanelEvidence?.panelLegTransports
+        : undefined;
     const existingPanelTransports =
       refuseReopenLanding?.panelLegTransports ??
-      dispatchCtx.panelLegTransports;
+      dispatchCtx.panelLegTransports ??
+      durableTransportsForHead;
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep when reusing valid transports (no reburn).
     const willFanOut =
@@ -2744,6 +2765,43 @@ async function runIntegratedCmrPass(input: {
     const successfulPanelLegs = successfulLegsFromTransports(
       panelRound.transports,
     );
+    // Canonical landing cargo for transports + host skip reasons (shared by the
+    // zero-success durable write and the pure-judge open path).
+    const panelLanding: WorkerLandingPayload = {
+      ...(refuseReopenLanding ?? {}),
+      panelLegTransports: panelRound.transports.map((t) => ({
+        slug: t.slug,
+        exitCode: t.exitCode,
+        stdout: t.stdout,
+      })),
+      ...(hostSkippedLegs.length > 0
+        ? {
+            panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
+              slug: leg.slug,
+              reason: leg.reason,
+            })),
+          }
+        : {}),
+    };
+    // #1119: persist durable evidence under ledgerDir BEFORE any terminal so
+    // cold re-entry can reuse valid 卷面 or observe runtime skip reasons.
+    if (
+      typeof familyBackend.writeFamilyPanelLegEvidence === "function" &&
+      (panelLanding.panelLegTransports !== undefined ||
+        panelLanding.panelLegSkippedLegs !== undefined)
+    ) {
+      await familyBackend.writeFamilyPanelLegEvidence(pass, {
+        ...(resolvedFamilyHeadAfter !== undefined
+          ? { familyHeadAfter: resolvedFamilyHeadAfter }
+          : {}),
+        ...(panelLanding.panelLegTransports !== undefined
+          ? { panelLegTransports: panelLanding.panelLegTransports }
+          : {}),
+        ...(panelLanding.panelLegSkippedLegs !== undefined
+          ? { panelLegSkippedLegs: panelLanding.panelLegSkippedLegs }
+          : {}),
+      });
+    }
     if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
       const reason = `family integrated cmr ${pass}: zero successful panel legs`;
       const diagnosis =
@@ -2791,22 +2849,6 @@ async function runIntegratedCmrPass(input: {
     }
     // Land transports + host skip reasons so the pure court never sees a silent
     // empty fix-findings file (production deadlock: cold resume without evidence).
-    const panelLanding: WorkerLandingPayload = {
-      ...(refuseReopenLanding ?? {}),
-      panelLegTransports: panelRound.transports.map((t) => ({
-        slug: t.slug,
-        exitCode: t.exitCode,
-        stdout: t.stdout,
-      })),
-      ...(hostSkippedLegs.length > 0
-        ? {
-            panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
-              slug: leg.slug,
-              reason: leg.reason,
-            })),
-          }
-        : {}),
-    };
     const judgeDispatchCtx: DispatchContext = {
       ...dispatchCtx,
       panelLegTransports: panelLanding.panelLegTransports,
