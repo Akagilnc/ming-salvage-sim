@@ -182,7 +182,7 @@ export function familyCoderFixWorkerSpec(
     // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
-    soul: "coder",
+    soul: "fixer",
     toolchain: IMAGE_TOOLCHAIN,
   };
 }
