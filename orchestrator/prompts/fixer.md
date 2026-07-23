@@ -4,15 +4,6 @@
 
 - `.orchestrator-online-review.json` — bot snapshot + `fixMarkedFindingIdentityKeys` from the prior verify worker.
 
-After repairing the listed findings, sweep the touched code and same-mechanism
-sites within the assigned family base for other instances of the same defect
-class; repair each live in-scope instance in this round. When two or more
-findings share a deeper cause, name its underlying invariant and repair to that
-invariant so the class closes as a whole within the assigned scope. Record the self-audit checklist in the fixing commit message body:
-every in-scope site checked, `file:line` — `fixed` or `already-correct`, giving
-the next reviewer coverage to verify. Record same-class sites noticed outside
-the assigned family base as `file:line` — `out-of-scope observation` for the
-runner; never edit them.
 After the fixing commit lands, push it to the PR branch for bot re-review —
 this loop's submission transport (the worker performs the push).
 The role cargo remains only the JSON body defined below.

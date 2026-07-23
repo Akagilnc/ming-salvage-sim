@@ -10,18 +10,23 @@ import {
 } from "../../src/soulInstructions.js";
 
 const task = "TASK_SENTINEL";
+const commandOptions = (resumeSession?: string) => ({
+  prompt: task,
+  dangerouslySkipPermissions: false,
+  ...(resumeSession !== undefined ? { resumeSession } : {}),
+});
 const commandFor = (
   slug: string,
   soul: Parameters<typeof agentForSlug>[2],
   pool?: Parameters<typeof agentForSlug>[1],
 ) => agentForSlug(slug, pool, soul)
-  .buildPrintCommand({ prompt: task } as never);
+  .buildPrintCommand(commandOptions());
 
 describe("real providers load the selected soul outside the task prompt", () => {
   it("Codex places developer_instructions before exec, including resume", () => {
     const agent = agentForSlug("gpt-5.6-terra", undefined, "fixer");
     for (const resumeSession of [undefined, "session-1"]) {
-      const command = agent.buildPrintCommand({ prompt: task, resumeSession } as never);
+      const command = agent.buildPrintCommand(commandOptions(resumeSession));
       expect(command.command).toContain(
         `-c developer_instructions="$(cat ${sandboxSoulPath("fixer")})"`,
       );
