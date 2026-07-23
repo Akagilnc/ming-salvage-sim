@@ -1862,7 +1862,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
     expect(result).toEqual({ ok: true, ran: true });
     // Completeness already passed; only correctness re-runs at the advanced head.
+    // #1119: trailing cmr_fix_committed → pure receive then fresh outer gate
+    // (two correctness opens; ADR 0147 builder→resident receive order).
     expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "correctness" },
       { familyBase: "family/291-base", cmrPass: "correctness" },
     ]);
   });

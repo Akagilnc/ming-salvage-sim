@@ -340,6 +340,19 @@ export interface FamilyLedgerEntry {
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
   /**
+   * #1119 — legal refuse traffic keys on `cmr_fix_committed` when the coder-fix
+   * beat refused findings. Structured lifecycle cargo for cold-start pure
+   * receive (not free-prose parse). Same keys project onto DispatchContext.
+   */
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  /**
+   * #1119 — opaque refuseRecords cargo on `cmr_fix_committed` (judge re-ruling
+   * material). Durable crash-resume twin of process-local refuseRecordsByPass.
+   */
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
+  /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
    * merger from {@link MergeResult.conflictResolvedByLlm} onto the DURABLE ledger
@@ -557,8 +570,9 @@ export type FamilyCmrPanelRoundPrep =
  *
  * Court-generation scoped (not HEAD-only): reuse requires matching
  * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, and
- * legal transports. Builder soft-accept advances generation (clears transports)
- * so post-fix outer gates cannot reuse pre-fix 卷面 when HEAD is unchanged.
+ * legal transports. Generation advances at builder-beat completion
+ * (`cmr_fix_committed` boundary) so cold crash before pure receive cannot
+ * reuse pre-builder 卷面; soft-accept may advance again as belt-and-suspenders.
  */
 export type FamilyPanelLegEvidence = {
   readonly familyHeadAfter?: string;
@@ -568,7 +582,8 @@ export type FamilyPanelLegEvidence = {
   readonly routeFingerprint?: string;
   /**
    * Court evidence generation. Cold resume of the same generation may no-reburn;
-   * builder-beat soft-accept advances generation so the outer gate reburns.
+   * advanced when the builder beat lands (`cmr_fix_committed`) so outer gates
+   * after refuse/no-op reburn even if HEAD is unchanged.
    */
   readonly courtGeneration?: number;
   readonly panelLegTransports?: ReadonlyArray<{

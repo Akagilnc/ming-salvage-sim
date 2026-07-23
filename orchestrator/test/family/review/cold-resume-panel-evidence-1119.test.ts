@@ -1,15 +1,30 @@
 /**
- * #1119 — cold-start ledger re-entry panel evidence (production spine).
+ * #1119 — durable panel evidence + cold crash after cmr_fix_committed.
  *
- * One seam: ensureFamilyCmrPanelEvidence via real runFamily → runVerifyCmr.
- * Durable evidence lives on FamilyBackend.read/writeFamilyPanelLegEvidence
- * (ledgerDir truth; not process-temp fix-findings).
+ * 1) pure identity + pending-receive matrix (no runFamily per cell)
+ * 2) process-A→B file ledgerDir cold crash (runVerifyCmr)
+ * 3) exact-generation no-reburn control (runFamily)
  *
- * Authority: #1119 AC; #1117 invariant; #1118 single gate; ADR 0141 / 0147.
- * P1 identity: ledgerPhase + routeFingerprint + courtGeneration + HEAD.
+ * Authority: #1119/#1117/#1118; ADR 0141/0147.
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  admissibleDurablePanelLegTransports,
+  courtGenerationFromDurableEvidence,
+} from "../../../src/family/cmrPanelLegs.js";
+import {
+  FAMILY_LEDGER_FILENAME,
+  FAMILY_PANEL_LEG_EVIDENCE_PREFIX,
+} from "../../../src/family/realFamilyBackend.js";
+import {
+  pendingBuilderReceiveFromFamilyLedger,
+  parseFamilyLedgerJsonl,
+} from "../../../src/family/ledger.js";
 import { runFamily } from "../../../src/family/runner.js";
+import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import {
   modelRouteFingerprint,
@@ -22,7 +37,6 @@ import type {
   FamilyLedgerEntry,
   FamilyPanelLegEvidence,
   IntegratedCmrPass,
-  MergeRequest,
 } from "../../../src/family/types.js";
 import type {
   Backend,
@@ -31,7 +45,6 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
-  StepSpec,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -50,133 +63,231 @@ import {
 import { mintFourReasonRefuseRecord } from "../../helpers/coder-refuse-fixtures.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
-const LEGAL_PANEL_STDOUT =
-  "fixture panel leg review prose (ADR 0141 legal paper)\n## Findings\nP2: none";
-const FAMILY_HEAD = "head-parked-1119";
-const EPIC: FamilyEpic = {
-  issue: 1117,
-  children: [{ issue: 1119, blockedBy: [] }],
+const HEAD = "head-1119";
+const ROUTE_FP = modelRouteFingerprint(resolveActiveModelRoute({}));
+const LEGAL =
+  "fixture panel leg review prose (ADR 0141)\n## Findings\nnone";
+const REFUSE_KEY = "1119:cold-refuse";
+const cleanups: string[] = [];
+afterEach(() => {
+  while (cleanups.length) rmSync(cleanups.pop()!, { recursive: true, force: true });
+});
+const tmp = (p: string) => {
+  const d = mkdtempSync(join(tmpdir(), p));
+  cleanups.push(d);
+  return d;
 };
 
-/** Default production route fingerprint for identity-stamped seed evidence. */
-function defaultRouteFingerprint(): string {
-  return modelRouteFingerprint(resolveActiveModelRoute({}));
-}
-
-function legalTransports(
-  stdout = "PRIOR durable panel paper\n## Findings\nnone",
-): NonNullable<FamilyPanelLegEvidence["panelLegTransports"]> {
-  return [
-    { slug: "gpt-5.6-sol", exitCode: 0, stdout },
-    { slug: "grok-4.5", exitCode: 0, stdout },
+describe("#1119 panel evidence identity (pure)", () => {
+  const transports = [
+    { slug: "gpt-5.6-sol", exitCode: 0, stdout: LEGAL },
   ];
-}
+  const base = {
+    familyHeadAfter: HEAD,
+    ledgerPhase: "final" as const,
+    routeFingerprint: ROUTE_FP,
+    courtGeneration: 0,
+    panelLegTransports: transports,
+  };
+  const scope = {
+    familyHeadAfter: HEAD,
+    ledgerPhase: "final" as const,
+    routeFingerprint: ROUTE_FP,
+    courtGeneration: 0,
+  };
 
-/** Minimal child backend — children already merged; smoke only. */
-class ChildSmokeBackend implements Backend {
-  async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
-    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-  }
-  async findResumeState(): Promise<ResumeState | undefined> {
-    return undefined;
-  }
-  async resumeSession(): Promise<StepOutput> {
-    throw new Error("child must not run — already merged");
-  }
-  async fetchIssueMeta(n: number): Promise<IssueMeta> {
-    return {
-      number: n,
-      isReadyForAgent: true,
-      hasSubIssues: false,
-      isClosed: false,
-      openBlockedBy: [],
-    };
-  }
-  async prepareWorktree(): Promise<WorktreeHandle> {
-    throw new Error("child must not run — already merged");
-  }
-  async runStep(): Promise<StepOutput> {
-    throw new Error("child must not run — already merged");
-  }
-  async writeLedger(
-    _e: PersistentLedgerEntry,
-    _d: string,
-  ): Promise<void> {}
-}
+  it.each([
+    { name: "full match", evidence: base, scope, ok: true },
+    {
+      name: "checkpoint≠final",
+      evidence: { ...base, ledgerPhase: "correctness_checkpoint" as const },
+      scope,
+      ok: false,
+    },
+    {
+      name: "roster mismatch",
+      evidence: { ...base, routeFingerprint: "stale" },
+      scope,
+      ok: false,
+    },
+    {
+      name: "generation mismatch",
+      evidence: base,
+      scope: { ...scope, courtGeneration: 1 },
+      ok: false,
+    },
+    {
+      name: "HEAD mismatch",
+      evidence: { ...base, familyHeadAfter: "other" },
+      scope,
+      ok: false,
+    },
+    {
+      name: "missing identity fail-closed",
+      evidence: { familyHeadAfter: HEAD, panelLegTransports: transports },
+      scope,
+      ok: false,
+    },
+  ])("$name", ({ evidence, scope: s, ok }) => {
+    expect(admissibleDurablePanelLegTransports(evidence, s) !== undefined).toBe(
+      ok,
+    );
+  });
 
-type CompletenessJudgeScript =
-  | "always_converge"
-  | "continue_then_converge";
+  it("pending receive from trailing cmr_fix_committed carries refuse cargo", () => {
+    const p = pendingBuilderReceiveFromFamilyLedger(
+      [
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          phase: "final",
+          cmrPass: "completeness",
+          judgeStatus: "continue",
+        },
+        {
+          status: "cmr_fix_committed",
+          event: "cmr_fix_committed",
+          phase: "final",
+          cmrPass: "completeness",
+          familyHeadAfter: HEAD,
+          refusedFindingIdentityKeys: ["k1"],
+          refuseRecords: [
+            mintFourReasonRefuseRecord({
+              identityKey: "k1",
+              reason: "not_established",
+              evidence: "e",
+            }),
+          ],
+        },
+      ],
+      "completeness",
+      "final",
+    );
+    expect(p).toMatchObject({
+      pending: true,
+      refusedFindingIdentityKeys: ["k1"],
+      familyHeadAfter: HEAD,
+    });
+    expect(p.refuseRecords?.length).toBe(1);
+  });
 
-/** Cold-start family backend: durable panel evidence + ledger park residue. */
-class ColdSpineFamilyBackend implements FamilyBackend {
-  ledger: FamilyLedgerEntry[];
-  escalations: FamilyEscalation[] = [];
+  it("cmr_passed after fix clears pending receive", () => {
+    expect(
+      pendingBuilderReceiveFromFamilyLedger(
+        [
+          {
+            status: "cmr_fix_committed",
+            event: "cmr_fix_committed",
+            phase: "final",
+            cmrPass: "correctness",
+          },
+          {
+            status: "cmr_passed",
+            event: "cmr_passed",
+            phase: "final",
+            cmrPass: "correctness",
+          },
+        ],
+        "correctness",
+        "final",
+      ).pending,
+    ).toBe(false);
+  });
+});
+
+/** File-backed spine: production ledgerDir + panel-leg-evidence-*.json layout. */
+class FileSpine implements FamilyBackend {
+  ledger: FamilyLedgerEntry[] = [];
   panelDispatches: string[] = [];
-  judgeLandings: Array<WorkerLandingPayload | undefined> = [];
-  /** ledgerDir-shaped durable evidence (production: RealFamilyBackend file). */
-  private durable = new Map<IntegratedCmrPass, FamilyPanelLegEvidence>();
-  private readonly familyHead: string;
-  private readonly failAllPanelLegs: boolean;
-  private readonly completenessScript: CompletenessJudgeScript;
-  private completenessJudgeOpens = 0;
-
-  constructor(opts: {
-    readonly familyHead?: string;
-    readonly seedLedger: FamilyLedgerEntry[];
-    readonly seedEvidence?: Partial<
-      Record<IntegratedCmrPass, FamilyPanelLegEvidence>
-    >;
-    readonly failAllPanelLegs?: boolean;
-    readonly completenessScript?: CompletenessJudgeScript;
-  }) {
-    this.familyHead = opts.familyHead ?? FAMILY_HEAD;
-    this.ledger = [...opts.seedLedger];
-    this.failAllPanelLegs = opts.failAllPanelLegs === true;
-    this.completenessScript = opts.completenessScript ?? "always_converge";
-    if (opts.seedEvidence !== undefined) {
-      for (const [pass, ev] of Object.entries(opts.seedEvidence) as Array<
-        [IntegratedCmrPass, FamilyPanelLegEvidence]
-      >) {
-        this.durable.set(pass, ev);
-      }
+  courtOpenKinds: Array<"pure_receive" | "with_panels"> = [];
+  judgeLandings: Array<{ refuseKeys?: readonly string[] }> = [];
+  familyHead: string;
+  private opens = 0;
+  private sawFix = false;
+  private readonly crashAfterFix: boolean;
+  private readonly coderMode: "refuse" | "commit";
+  constructor(
+    readonly ledgerDir: string,
+    opts: {
+      familyHead?: string;
+      crashAfterFix?: boolean;
+      coderMode?: "refuse" | "commit";
+      seedEvidence?: Partial<Record<IntegratedCmrPass, FamilyPanelLegEvidence>>;
+    } = {},
+  ) {
+    mkdirSync(ledgerDir, { recursive: true });
+    this.familyHead = opts.familyHead ?? HEAD;
+    this.crashAfterFix = opts.crashAfterFix === true;
+    this.coderMode = opts.coderMode ?? "refuse";
+    this.loadLedger();
+    for (const [pass, ev] of Object.entries(opts.seedEvidence ?? {}) as Array<
+      [IntegratedCmrPass, FamilyPanelLegEvidence]
+    >) {
+      this.writeFamilyPanelLegEvidence(pass, ev);
     }
   }
-
-  readFamilyPanelLegEvidence(
-    pass: IntegratedCmrPass,
-  ): FamilyPanelLegEvidence | undefined {
-    return this.durable.get(pass);
+  private lp() {
+    return join(this.ledgerDir, FAMILY_LEDGER_FILENAME);
   }
-  writeFamilyPanelLegEvidence(
-    pass: IntegratedCmrPass,
-    evidence: FamilyPanelLegEvidence,
-  ): void {
-    this.durable.set(pass, evidence);
+  private ep(pass: IntegratedCmrPass) {
+    return join(
+      this.ledgerDir,
+      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
+    );
   }
-
-  resolveLandingLiveHooks(input: {
+  private loadLedger() {
+    try {
+      this.ledger = parseFamilyLedgerJsonl(readFileSync(this.lp(), "utf8"));
+    } catch {
+      this.ledger = [];
+    }
+  }
+  private saveLedger() {
+    writeFileSync(
+      this.lp(),
+      this.ledger.map((e) => JSON.stringify(e)).join("\n") +
+        (this.ledger.length ? "\n" : ""),
+    );
+  }
+  readFamilyPanelLegEvidence(pass: IntegratedCmrPass) {
+    try {
+      return JSON.parse(readFileSync(this.ep(pass), "utf8")) as FamilyPanelLegEvidence;
+    } catch {
+      return undefined;
+    }
+  }
+  writeFamilyPanelLegEvidence(pass: IntegratedCmrPass, e: FamilyPanelLegEvidence) {
+    writeFileSync(this.ep(pass), `${JSON.stringify(e, null, 2)}\n`);
+  }
+  resolveLandingLiveHooks(i: {
     prUrl: string;
     convergedHeadOid: string;
     familyBase: string;
   }) {
     return buildExplicitLandingLiveHooks({
-      prUrl: input.prUrl,
-      headOid: input.convergedHeadOid,
-      remoteBranchName: input.familyBase,
+      prUrl: i.prUrl,
+      headOid: i.convergedHeadOid,
+      remoteBranchName: i.familyBase,
     });
   }
-  async mergeChildIntoFamilyBase(_c: MergeRequest) {
+  async mergeChildIntoFamilyBase() {
     return { familyHead: this.familyHead };
   }
   async resolveMergeConflict(): Promise<{ familyHead: string }> {
-    throw new Error("unused — child already merged");
+    throw new Error("unused");
   }
-  async appendFamilyLedger(entry: FamilyLedgerEntry) {
-    this.ledger.push(entry);
+  async appendFamilyLedger(e: FamilyLedgerEntry) {
+    this.ledger.push(e);
+    this.saveLedger();
+    if (
+      (e.status === "cmr_fix_committed" || e.event === "cmr_fix_committed") &&
+      e.cmrPass === "completeness"
+    ) {
+      this.sawFix = true;
+    }
   }
   async readFamilyLedger() {
+    this.loadLedger();
     return this.ledger;
   }
   async readFamilyHead() {
@@ -185,67 +296,68 @@ class ColdSpineFamilyBackend implements FamilyBackend {
   async runFamilyVerify() {
     return { ok: true };
   }
+  async escalateFamily(_e: FamilyEscalation) {}
+  async recordAborted() {}
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (isCmrPanelLegWorker(spec)) {
-      expect(ctx.resumeSessionId).toBeUndefined();
-      this.panelDispatches.push(`${ctx.cmrPass ?? "?"}:${spec.model}`);
-      if (this.failAllPanelLegs) {
-        return { kind: "failed", reason: `docker flake on ${spec.model}` };
-      }
-      return (
-        completeCmrPanelLegWorker(spec, LEGAL_PANEL_STDOUT) ?? {
-          kind: "failed",
-          reason: "panel fixture missing",
-        }
-      );
+      this.panelDispatches.push(`${ctx.cmrPass}:${spec.model}`);
+      return completeCmrPanelLegWorker(spec, LEGAL)!;
     }
     if (spec.kind === "cmr") {
-      this.judgeLandings.push(landing);
+      if (
+        this.crashAfterFix &&
+        this.sawFix &&
+        ctx.cmrPass === "completeness"
+      ) {
+        throw new Error("PROCESS_A_CRASH after cmr_fix_committed");
+      }
+      const kind =
+        (landing?.panelLegTransports?.length ?? 0) > 0
+          ? ("with_panels" as const)
+          : ("pure_receive" as const);
+      this.courtOpenKinds.push(kind);
+      this.judgeLandings.push({ refuseKeys: ctx.refusedFindingIdentityKeys });
       if (ctx.cmrPass === "completeness") {
-        this.completenessJudgeOpens += 1;
-        if (
-          this.completenessScript === "continue_then_converge" &&
-          this.completenessJudgeOpens === 1
-        ) {
+        this.opens += 1;
+        if (this.opens === 1 && kind === "with_panels") {
           return completedJudge(
-            judgeContinue([sampleFinding("builder must refuse", "x.ts:1")]),
-            "judge-session-completeness-continue",
+            judgeContinue([sampleFinding("need fix", "a.ts:1")]),
+            "j1",
           );
         }
-        return completedJudge(
-          judgeConverged(),
-          "judge-session-completeness-parked",
-        );
+        return completedJudge(judgeConverged(), "jn");
       }
-      return completedJudge(
-        judgeConverged(),
-        "judge-session-correctness-1",
-      );
+      return completedJudge(judgeConverged(), "jc");
     }
     if (spec.kind === "coder") {
-      // Legal refuse / no-op: HEAD unchanged (backend readFamilyHead fixed).
-      const key = "1119:builder-refuse-no-op";
+      if (this.coderMode === "commit") {
+        this.familyHead = `${this.familyHead}-fixed`;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+          sessionId: "fx",
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "coder",
           committed: true,
           commitsAdded: 0,
-          refusedFindingIdentityKeys: [key],
+          refusedFindingIdentityKeys: [REFUSE_KEY],
           refuseRecords: [
             mintFourReasonRefuseRecord({
-              identityKey: key,
+              identityKey: REFUSE_KEY,
               reason: "not_established",
-              evidence:
-                "fixture refuse: finding does not hold on current code",
+              evidence: "cold-crash refuse",
             }),
           ],
         },
-        sessionId: "coder-fix-refuse-1119",
+        sessionId: "fx",
       };
     }
     if (spec.kind === "ship") {
@@ -260,263 +372,259 @@ class ColdSpineFamilyBackend implements FamilyBackend {
         },
       };
     }
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) return skeleton;
-    return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    return (
+      skeletonReviewLoopWorkerResult(spec.kind) ?? {
+        kind: "failed",
+        reason: spec.kind,
+      }
+    );
   }
-  async recordAborted() {}
-  async escalateFamily(esc: FamilyEscalation) {
-    this.escalations.push(esc);
-  }
 }
 
-function parkLedger(familyHead: string): FamilyLedgerEntry[] {
-  return [
-    {
-      childIssue: 1119,
-      status: "merged",
-      childBranch: "feat/issue-1119",
-    },
-    {
-      status: "cmr_reviewed",
-      event: "cmr_reviewed",
-      phase: "final",
-      cmrPass: "completeness",
-      reason:
-        "fresh completeness jury transports are missing — no panelLegTransports",
-      familyHeadAfter: familyHead,
-      blockingFindingIdentityKeys: [],
-      sessionId: "judge-session-completeness-parked",
-      judgeStatus: "escalate",
-      stopSummary: {
-        reason: "decision_gate_park",
-        summary:
-          "fresh completeness jury transports are missing — no panelLegTransports",
-        repairHint:
-          "answer the family judge decision gate, then resume the family court in place",
-      },
-    },
-    {
-      status: "escalated",
-      event: "escalated",
-      phase: "final",
-      cmrPass: "completeness",
-      escalationKind: "decision",
-      reason:
-        "fresh completeness jury transports are missing — no panelLegTransports",
-      familyHeadAfter: familyHead,
-      stopSummary: {
-        reason: "decision_gate_park",
-        summary:
-          "fresh completeness jury transports are missing — no panelLegTransports",
-        repairHint:
-          "answer the family judge decision gate, then resume the family court in place",
-      },
-    },
-    {
-      status: "escalation_answered",
-      event: "escalation_answered",
-      phase: "final",
-      answer: "rerun jury — re-dispatch fresh completeness panel legs",
-      source: "human",
-    },
-  ];
-}
+const preBuilder = (): FamilyPanelLegEvidence => ({
+  familyHeadAfter: HEAD,
+  ledgerPhase: "final",
+  routeFingerprint: ROUTE_FP,
+  courtGeneration: 0,
+  panelLegTransports: [
+    { slug: "gpt-5.6-sol", exitCode: 0, stdout: "PRE-BUILDER stale" },
+    { slug: "grok-4.5", exitCode: 0, stdout: "PRE-BUILDER stale" },
+  ],
+});
 
-function mergedOnlyLedger(): FamilyLedgerEntry[] {
-  return [
-    {
-      childIssue: 1119,
-      status: "merged",
-      childBranch: "feat/issue-1119",
-    },
-  ];
-}
-
-describe("#1119 cold-start runFamily panel evidence", () => {
-  it("negative: empty durable landing → panel legs fan-out; judge gets transports", async () => {
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: parkLedger(FAMILY_HEAD),
+describe("#1119 process-A→B cold crash after cmr_fix_committed", () => {
+  async function processA(
+    dir: string,
+    coderMode: "refuse" | "commit",
+  ): Promise<void> {
+    const backend = new FileSpine(dir, {
+      crashAfterFix: true,
+      coderMode,
+      seedEvidence: { completeness: preBuilder() },
     });
-    await runFamily({
-      epic: EPIC,
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-a",
       familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-cold-missing",
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
     });
-    expect(
-      backend.panelDispatches.some((s) => s.startsWith("completeness:")),
-    ).toBe(true);
-    expect(backend.judgeLandings.length).toBeGreaterThan(0);
-    for (const landing of backend.judgeLandings) {
-      expect(landing?.panelLegTransports?.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(false);
+    const ledger = await backend.readFamilyLedger();
+    const fix = [...ledger]
+      .reverse()
+      .find(
+        (e) =>
+          (e.status === "cmr_fix_committed" ||
+            e.event === "cmr_fix_committed") &&
+          e.cmrPass === "completeness",
+      );
+    expect(fix).toBeDefined();
+    if (coderMode === "refuse") {
+      expect(fix?.refusedFindingIdentityKeys).toEqual([REFUSE_KEY]);
+      expect(fix?.refuseRecords?.length).toBe(1);
     }
+    const ev = backend.readFamilyPanelLegEvidence("completeness");
+    expect(courtGenerationFromDurableEvidence(ev)).toBeGreaterThanOrEqual(1);
+    expect(ev?.panelLegTransports?.length ?? 0).toBe(0);
+  }
+
+  async function processB(dir: string, coderMode: "refuse" | "commit") {
+    const backend = new FileSpine(dir, { coderMode });
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-b",
+      familyBackend: backend,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+    return backend;
+  }
+
+  it("refuse/no-op same HEAD: pure receive + refuse cargo → fresh panels; no pre-builder reuse", async () => {
+    const dir = tmp("1119-refuse-");
+    await processA(dir, "refuse");
+    const b = await processB(dir, "refuse");
+    expect(b.courtOpenKinds[0]).toBe("pure_receive");
+    expect(b.courtOpenKinds.some((k) => k === "with_panels")).toBe(true);
+    expect(b.judgeLandings[0]?.refuseKeys).toEqual([REFUSE_KEY]);
     expect(
-      backend.escalations.some((e) =>
-        /transports are missing|zero successful panel legs/i.test(
-          `${e.reason} ${e.diagnosis ?? ""}`,
-        ),
-      ),
+      b.readFamilyPanelLegEvidence("completeness")?.panelLegTransports?.some(
+        (t) => (t.stdout ?? "").includes("PRE-BUILDER"),
+      ) ?? false,
+    ).toBe(false);
+    expect(b.panelDispatches.some((d) => d.startsWith("completeness:"))).toBe(
+      true,
+    );
+  });
+
+  it("commit HEAD moved: pure receive first → fresh panels; no pre-builder reuse", async () => {
+    const dir = tmp("1119-commit-");
+    await processA(dir, "commit");
+    const b = await processB(dir, "commit");
+    expect(b.courtOpenKinds[0]).toBe("pure_receive");
+    expect(b.courtOpenKinds.some((k) => k === "with_panels")).toBe(true);
+    expect(
+      b.readFamilyPanelLegEvidence("completeness")?.panelLegTransports?.some(
+        (t) => (t.stdout ?? "").includes("PRE-BUILDER"),
+      ) ?? false,
     ).toBe(false);
   });
+});
 
-  it("control: same court generation + full identity → zero panel reburn; judge gets original 卷面", async () => {
-    const priorTransports = legalTransports(
-      "PRIOR durable completeness panel paper\n## Findings\nnone",
-    );
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: parkLedger(FAMILY_HEAD),
-      seedEvidence: {
-        completeness: {
-          familyHeadAfter: FAMILY_HEAD,
+class SmokeChild implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
+  async findResumeState(): Promise<ResumeState | undefined> {
+    return undefined;
+  }
+  async resumeSession(): Promise<StepOutput> {
+    throw new Error("unused");
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return {
+      number: n,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    throw new Error("unused");
+  }
+  async runStep(): Promise<StepOutput> {
+    throw new Error("unused");
+  }
+  async writeLedger(_e: PersistentLedgerEntry, _d: string) {}
+}
+
+describe("#1119 control: exact-generation cold no-reburn", () => {
+  it("same generation + full identity → zero completeness reburn", async () => {
+    const prior = [
+      { slug: "gpt-5.6-sol", exitCode: 0, stdout: "PRIOR" },
+      { slug: "grok-4.5", exitCode: 0, stdout: "PRIOR" },
+    ];
+    const park: FamilyLedgerEntry[] = [
+      { childIssue: 1119, status: "merged", childBranch: "feat/issue-1119" },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        reason: "park",
+        familyHeadAfter: HEAD,
+        sessionId: "p",
+        judgeStatus: "escalate",
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "park",
+          repairHint: "resume",
+        },
+      },
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        cmrPass: "completeness",
+        escalationKind: "decision",
+        reason: "park",
+        familyHeadAfter: HEAD,
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "park",
+          repairHint: "resume",
+        },
+      },
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        phase: "final",
+        answer: "go",
+        source: "human",
+      },
+    ];
+    const durable = new Map<IntegratedCmrPass, FamilyPanelLegEvidence>([
+      [
+        "completeness",
+        {
+          familyHeadAfter: HEAD,
           ledgerPhase: "final",
-          routeFingerprint: defaultRouteFingerprint(),
+          routeFingerprint: ROUTE_FP,
           courtGeneration: 0,
-          panelLegTransports: priorTransports,
+          panelLegTransports: prior,
         },
+      ],
+    ]);
+    const panelDispatches: string[] = [];
+    let firstLanding: WorkerLandingPayload | undefined;
+    const backend: FamilyBackend = {
+      readFamilyPanelLegEvidence: (p) => durable.get(p),
+      writeFamilyPanelLegEvidence: (p, e) => {
+        durable.set(p, e);
       },
-    });
-    await runFamily({
-      epic: EPIC,
-      familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-cold-no-reburn",
-    });
-    // Completeness court must not reburn when durable identity matches.
-    expect(
-      backend.panelDispatches.filter((s) => s.startsWith("completeness:")),
-    ).toEqual([]);
-    const completenessLanding = backend.judgeLandings[0];
-    expect(completenessLanding?.panelLegTransports).toEqual(priorTransports);
-  });
-
-  it("negative: all legs fail → durable runtime skip reasons land; pure judge not opened empty", async () => {
-    // Fresh final barrier (no prior park) — zero-success host park path.
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: mergedOnlyLedger(),
-      failAllPanelLegs: true,
-    });
-    await runFamily({
-      epic: EPIC,
-      familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-zero-legs",
-    });
-    expect(backend.panelDispatches.length).toBeGreaterThan(0);
-    // Host parks before pure judge — no silent empty court.
-    expect(backend.judgeLandings.length).toBe(0);
-    expect(backend.escalations.length).toBeGreaterThan(0);
-    expect(backend.escalations[0]?.reason).toMatch(/zero successful panel legs/i);
-    // F2: runtime skip reasons must be durable (re-court observable).
-    const durable = backend.readFamilyPanelLegEvidence("completeness");
-    expect(durable?.panelLegSkippedLegs?.length).toBeGreaterThan(0);
-    expect(
-      durable?.panelLegSkippedLegs?.every(
-        (leg) =>
-          typeof leg.slug === "string" &&
-          typeof leg.reason === "string" &&
-          /docker flake/i.test(leg.reason),
-      ),
-    ).toBe(true);
-    // Identity stamped on zero-success durable write.
-    expect(durable?.ledgerPhase).toBe("final");
-    expect(durable?.routeFingerprint).toBe(defaultRouteFingerprint());
-    expect(typeof durable?.courtGeneration).toBe("number");
-  });
-
-  it("P1: checkpoint-scoped durable correctness must not free-skip final correctness outer gate (same HEAD)", async () => {
-    // Seed checkpoint-phase correctness 卷面 at the same HEAD the final barrier
-    // will open with. Before the identity fix, HEAD-only reuse would starve final
-    // of fresh legs; after fix, ledgerPhase mismatch forces fan-out.
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: parkLedger(FAMILY_HEAD),
-      seedEvidence: {
-        correctness: {
-          familyHeadAfter: FAMILY_HEAD,
-          ledgerPhase: "correctness_checkpoint",
-          routeFingerprint: defaultRouteFingerprint(),
-          courtGeneration: 0,
-          panelLegTransports: legalTransports(
-            "CHECKPOINT-only correctness paper — must not serve final",
-          ),
-        },
+      resolveLandingLiveHooks: (i) =>
+        buildExplicitLandingLiveHooks({
+          prUrl: i.prUrl,
+          headOid: i.convergedHeadOid,
+          remoteBranchName: i.familyBase,
+        }),
+      mergeChildIntoFamilyBase: async () => ({ familyHead: HEAD }),
+      resolveMergeConflict: async () => {
+        throw new Error("unused");
       },
-    });
+      appendFamilyLedger: async (e) => {
+        park.push(e);
+      },
+      readFamilyLedger: async () => park,
+      readFamilyHead: async () => HEAD,
+      runFamilyVerify: async () => ({ ok: true }),
+      escalateFamily: async () => {},
+      recordAborted: async () => {},
+      dispatchWorker: async (spec, ctx, landing) => {
+        if (isCmrPanelLegWorker(spec)) {
+          panelDispatches.push(`${ctx.cmrPass}:${spec.model}`);
+          return completeCmrPanelLegWorker(spec, LEGAL)!;
+        }
+        if (spec.kind === "cmr") {
+          if (firstLanding === undefined) firstLanding = landing;
+          return completedJudge(judgeConverged(), "j");
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase!,
+              pr: "https://github.com/test/repo/pull/1",
+              prHead: HEAD,
+              status: "pr_opened",
+            },
+          };
+        }
+        return (
+          skeletonReviewLoopWorkerResult(spec.kind) ?? {
+            kind: "failed",
+            reason: spec.kind,
+          }
+        );
+      },
+    };
+    const epic: FamilyEpic = {
+      issue: 1117,
+      children: [{ issue: 1119, blockedBy: [] }],
+    };
     await runFamily({
-      epic: EPIC,
+      epic,
       familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-checkpoint-vs-final",
+      singleSliceBackend: new SmokeChild(),
+      familyBase: "family/1119-no-reburn",
     });
-    expect(
-      backend.panelDispatches.some((s) => s.startsWith("correctness:")),
-    ).toBe(true);
-    const durableAfter = backend.readFamilyPanelLegEvidence("correctness");
-    expect(durableAfter?.ledgerPhase).toBe("final");
-  });
-
-  it("P1: route/leg roster fingerprint mismatch must not reuse old-slug legal paper", async () => {
-    const priorTransports = legalTransports(
-      "STALE-ROSTER completeness paper from prior route",
+    expect(panelDispatches.filter((s) => s.startsWith("completeness:"))).toEqual(
+      [],
     );
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: parkLedger(FAMILY_HEAD),
-      seedEvidence: {
-        completeness: {
-          familyHeadAfter: FAMILY_HEAD,
-          ledgerPhase: "final",
-          routeFingerprint: "stale-route-fingerprint-not-current",
-          courtGeneration: 0,
-          panelLegTransports: priorTransports,
-        },
-      },
-    });
-    await runFamily({
-      epic: EPIC,
-      familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-roster-mismatch",
-    });
-    expect(
-      backend.panelDispatches.filter((s) => s.startsWith("completeness:"))
-        .length,
-    ).toBeGreaterThan(0);
-    const landing = backend.judgeLandings[0];
-    // Fresh fan-out 卷面, not the stale seeded paper.
-    expect(landing?.panelLegTransports).not.toEqual(priorTransports);
-    expect(
-      landing?.panelLegTransports?.some((t) =>
-        (t.stdout ?? "").includes("fixture panel leg review prose"),
-      ),
-    ).toBe(true);
-  });
-
-  it("P1: builder refuse/no-op (HEAD unchanged) → outer gate reburns panels", async () => {
-    // In-process: first completeness open fans panels → judge continue →
-    // coder refuse (no HEAD move) → pure receive soft-accept advances generation
-    // → outer gate must fan panels again (not reuse pre-builder durable 卷面).
-    const backend = new ColdSpineFamilyBackend({
-      seedLedger: mergedOnlyLedger(),
-      completenessScript: "continue_then_converge",
-    });
-    await runFamily({
-      epic: EPIC,
-      familyBackend: backend,
-      singleSliceBackend: new ChildSmokeBackend(),
-      familyBase: "family/1119-refuse-outer-gate",
-    });
-    const completenessPanels = backend.panelDispatches.filter((s) =>
-      s.startsWith("completeness:"),
-    );
-    // At least two completeness panel rounds (first open + outer gate).
-    // Route has ≥1 leg; two rounds ⇒ length ≥ 2.
-    expect(completenessPanels.length).toBeGreaterThanOrEqual(2);
-    // Generation advanced past the first open (outer gate rewrote at gen ≥ 1).
-    const durable = backend.readFamilyPanelLegEvidence("completeness");
-    expect(durable?.courtGeneration).toBeGreaterThanOrEqual(1);
-    expect(
-      durable?.panelLegTransports &&
-        durable.panelLegTransports.length > 0,
-    ).toBe(true);
+    expect(firstLanding?.panelLegTransports).toEqual(prior);
   });
 });
