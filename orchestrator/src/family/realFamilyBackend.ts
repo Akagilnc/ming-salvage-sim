@@ -228,7 +228,6 @@ import type {
   OnlineReviewFindingDisposition,
   OnlineReviewThreadReply,
   PriorFindingDisposition,
-  StepSoul,
   VerifyResult,
   VerifyWorkerTerminalState,
   WorkerLandingPayload,
@@ -280,14 +279,6 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * infers the repo default branch and cannot honor a non-main integration target.
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-
-/**
- * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
- * DEDICATED ship soul (not the coder soul): the ship worker's discipline is
- * delivery via `gstack-ship` — stop at PR, deferred findings → tracker (issue /
- * TODOS.md) never the PR body — not the coder's TDD build loop.
- */
-const SHIP_SOUL: StepSoul = "ship";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {

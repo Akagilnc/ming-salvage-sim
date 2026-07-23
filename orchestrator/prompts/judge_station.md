@@ -29,8 +29,11 @@ password. Finish inside the single iteration (`maxIterations=1`).
   legal). `converged` only on full withdraw (全撤). Never invent a second
   pre-review status token. Never dispatch fresh review legs on a plan beat.
 - Dispatch **fresh** review legs only after accepting construction (never
-  resume a prior leg session). Fresh findings return here for disposition —
-  never straight to the fixer.
+  resume a prior leg session). Each leg must load the reviewer Soul from the
+  live-mounted `/home/agent/.orchestrator/souls/reviewer.md` through that CLI's
+  provider-native instruction channel; keep its task prompt separate and never
+  concatenate, copy, or rewrite the Soul body into it. Fresh findings return
+  here for disposition — never straight to the fixer.
 
 ### Converged (no further fix rounds)
 
