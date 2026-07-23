@@ -237,22 +237,6 @@ export function barePingArgv(
           "bypassPermissions",
         ],
       };
-    case "cursor":
-      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
-      return {
-        file: "agent",
-        args: ["-p", prompt, "--model", model, "--print"],
-      };
-    case "copilot":
-      return {
-        file: "copilot",
-        args: ["-p", prompt, "--model", model],
-      };
-    case "pi":
-      return {
-        file: "pi",
-        args: ["-p", prompt, "--mode", "json", "--model", model],
-      };
   }
 }
 export {
@@ -1877,9 +1861,8 @@ export interface RealBackendOptions {
   readonly imageName: string;
   /**
    * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
-   * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
-   * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
-   * are reviewer workers, and S5 is the coder-fix worker.
+   * `judge_station.md` for S3/S6 and `coder_fix.md` for S5).
+   * ADR 0147 keeps S3/S6 on the resident judge; S5 is the fixer worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
    * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option
@@ -2254,9 +2237,7 @@ export class RealBackend implements Backend {
     const command =
       provider === "claudeCode"
         ? "claude"
-        : provider === "cursor"
-          ? "agent"
-          : provider;
+        : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {

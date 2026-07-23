@@ -2850,8 +2850,8 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
         : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
-    // #711: runner only carries prior-round data — method for synthesis lives in
-    // versioned cmr souls (cmr_completeness / cmr_correctness).
+    // #711: runner only carries prior-round data. Method lives in the
+    // live-mounted verify soul; pass scope lives in the selected CMR prompt.
     const priorRoundBlock =
       ctx.priorRoundFindings !== undefined && ctx.priorRoundFindings.length > 0
         ? `\n\nPrior integrated-CMR rounds from the family ledger (#711):\n\n\`\`\`json\n${JSON.stringify(

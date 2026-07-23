@@ -36,9 +36,6 @@ export type ModelProviderFactory =
   | "codex"
   /** #905: real agy (Antigravity / Gemini) CLI via custom AgentProvider. */
   | "agy"
-  | "copilot"
-  | "cursor"
-  | "pi"
   /** #807: real SuperGrok CLI via custom AgentProvider (not sc.pi). */
   | "grok";
 
@@ -68,18 +65,12 @@ export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "claudeCode",
   "codex",
   "agy",
-  "copilot",
-  "cursor",
-  "pi",
   "grok",
 ] as const satisfies ReadonlyArray<ModelProviderFactory>;
 
 type ModelProviderOptions =
   | sc.ClaudeCodeOptions
   | sc.CodexOptions
-  | sc.CopilotOptions
-  | sc.CursorOptions
-  | sc.PiOptions
   | AgyAgentOptions
   | GrokAgentOptions;
 
@@ -87,9 +78,6 @@ export type ModelSlugRegistryEntry =
   | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
   | { readonly provider: "codex"; readonly model: string; readonly options?: sc.CodexOptions }
   | { readonly provider: "agy"; readonly model: string; readonly options?: AgyAgentOptions }
-  | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
-  | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
-  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions }
   | { readonly provider: "grok"; readonly model: string; readonly options?: GrokAgentOptions };
 
 type ModelSlugRegistryRow = ModelSlugRegistryEntry & {
@@ -116,11 +104,6 @@ const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFa
   // #905: real Antigravity/Gemini CLI — optional-leg degrade when dead; never
   // substitute opencode/grok under the agy name.
   agy: (model, options) => agyAgent(model, options as AgyAgentOptions | undefined),
-  copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
-  cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
-  // Kept for sandcastle-native `pi` CLI (distinct product). grok-build pool does
-  // NOT use this — see POOL_DISPATCH_BINDINGS + grokAgent (#807 owner ruling).
-  pi: (model, options) => sc.pi(model, options as sc.PiOptions | undefined),
   grok: (model, options) => grokAgent(model, options as GrokAgentOptions | undefined),
 };
 
@@ -148,7 +131,7 @@ function unknownSlugError(slug: string): Error {
  * Map an opaque config registry row onto the typed registry entry the
  * provider factories consume. Provider membership is fail-closed solely by
  * loadModelData/parseRegistryRow (MODEL_PROVIDERS whitelist) — do not re-check
- * here; ModelDataProvider and MODEL_PROVIDER_FACTORIES share the same 7 keys.
+ * here; ModelDataProvider and MODEL_PROVIDER_FACTORIES share the same keys.
  */
 function rowFromConfigData(data: ModelDataRegistryRow): ModelSlugRegistryRow {
   const provider = data.provider;
@@ -190,30 +173,6 @@ function rowFromConfigData(data: ModelDataRegistryRow): ModelSlugRegistryRow {
         family,
         ...(data.strongLeg === true ? { strongLeg: true } : {}),
       };
-    case "copilot":
-      return {
-        provider,
-        model: data.model,
-        options: options as sc.CopilotOptions,
-        family,
-        ...(data.strongLeg === true ? { strongLeg: true } : {}),
-      };
-    case "cursor":
-      return {
-        provider,
-        model: data.model,
-        options: options as sc.CursorOptions,
-        family,
-        ...(data.strongLeg === true ? { strongLeg: true } : {}),
-      };
-    case "pi":
-      return {
-        provider,
-        model: data.model,
-        options: options as sc.PiOptions,
-        family,
-        ...(data.strongLeg === true ? { strongLeg: true } : {}),
-      };
     case "grok":
       return {
         provider,
@@ -251,12 +210,6 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
     case "codex":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "agy":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "copilot":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "cursor":
-      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "pi":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "grok":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
@@ -363,7 +316,6 @@ export function modelIdForSlug(slug: string): string {
 const RESUME_CAPABLE_PROVIDERS: ReadonlySet<string> = new Set([
   "claudeCode",
   "codex",
-  "pi",
   // #955: grokAgent implements the sandcastle sessionStorage contract.
   "grok",
 ]);

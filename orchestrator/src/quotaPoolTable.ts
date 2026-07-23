@@ -155,7 +155,7 @@ function billingPoolFromProvider(
     case "cursor":
       return "cursor";
     default:
-      // agy / copilot / pi — no dedicated billing-pool id here.
+      // agy — no dedicated billing-pool id here.
       return undefined;
   }
 }
