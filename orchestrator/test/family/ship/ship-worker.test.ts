@@ -421,7 +421,7 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
 // `claude-sonnet-4-5` (a hardcoded constant), bypassing modelIdForSlug AND diverging
 // from the verified `sonnet → claude-sonnet-5` mapping `familyShipWorkerSpec().model`
 // resolves to. The pure `agentForSpec` seam is the load-bearing point both runs build
-// their agent through — assert it directly (mirrors how modelIdForSlug/soulForStep are
+// their agent through — assert it directly (mirrors how modelIdForSlug is
 // the testable seams on the single-slice path).
 describe("#336 family workers — model id is spec-derived via modelIdForSlug (cmr S336 r7 P1)", () => {
   class SeamBackend extends RealFamilyBackend {
