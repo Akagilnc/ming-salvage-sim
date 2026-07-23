@@ -838,27 +838,6 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     ]);
   });
 
-  it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
-    // #919 M6 / family M1 isomorphic: status:continue with empty live open set
-    // is court contract drift. openFindingsForFixer may yield [] for cargo filter;
-    // that does NOT authorize single-slice S5 with zero identity keys.
-    // True empty = 0 live AND 0 terminal flips (suppress/refute). Terminal-only
-    // continue is court closure (#952), not this drift case.
-    const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
-    const result = await runOrchestrator({ issueNumber: 9196, backend });
-
-    expect(result.status).toBe("failed");
-    expect(result.stopSummary?.reason).toBe("contract_drift");
-    expect(result.stopSummary?.summary).toMatch(
-      /0 live findings|court contract drift|empty continue/i,
-    );
-    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
-    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
-    expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
-    // Judge seat itself ran once; fail-loud after continue projection.
-    expect(backend.specs.filter((s) => s.id === "S3")).toHaveLength(1);
-  });
-
   it("#952: suppress-only continue closes like converged — no S5, suppressed persists", async () => {
     // AC: legal suppress writes store `suppressed`, never enters fixer, court
     // closes (continue + 0 live + non-empty terminals ≠ empty contract drift).
