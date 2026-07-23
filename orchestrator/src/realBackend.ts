@@ -718,15 +718,8 @@ export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
 export function agyHostTokenPath(home: string): string {
   return join(home, ".gemini", "antigravity-cli", AGY_TOKEN_FILENAME);
 }
-/** Where the baked dev skills are mounted inside the container. */
+/** Where the image-provided dev skills are available inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
-/**
- * Env var the v0.1 one-image-two-roles profile reads to ACTIVATE the role's
- * baked soul (ship-pre 256 r1). Both souls are baked into the single image; this
- * tells the entrypoint which one this `run()` is under (#244 "role 决定注哪份
- * soul"). NOT an OS-level readonly mount — the reviewer's READ-ONLY stays a
- * prompt/soul soft constraint (ADR 0017 §4).
- */
 /** The issue number handed to the worker; prompt/soul live-fetch the issue via gh. */
 export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 /** A short alias for tools/skills that conventionally read ISSUE_NUMBER. */
@@ -799,8 +792,7 @@ export function soulsMount(soulsDir: string): {
 /**
  * Build the souls mount spec. Hardcodes the sandbox path once.
  * ALWAYS returns readonly:true so container workers cannot mutate the host
- * souls truth source (the image's baked souls are no longer present; host
- * souls/*.md are the single source of truth).
+ * souls truth source (host souls/*.md are the single source of truth).
  * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
  * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
  */
@@ -1218,38 +1210,6 @@ export function checkOwnGitDir(
   return { ok: own, commonDir: trimmed };
 }
 
-// ── model slug → agent provider selection (role decides soul/CLI) ───────────
-
-// ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
-
-/**
- * Select the soul a step runs under, consuming {@link StepSpec.soul} so the
- * contract field is NOT dead (ship-pre 256 r1, role-soul wiring).
- *
- * v0.1 = ONE image, TWO roles (ADR 0017 §4 + PRD #244): BOTH the coder soul and
- * the READ-ONLY reviewer soul are BAKED INTO the single profile image
- * ("烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束"), and the soul is SELECTED
- * AT RUNTIME by `role` ("role 决定注哪份 soul ... runner 凭 StepSpec.role 选
- * coder/reviewer soul", issue body). The reviewer's READ-ONLY is a prompt/soul
- * SOFT constraint, NOT an OS-level readonly mount — same image, separate fresh
- * `run()` context (ADR 0017 §4 + Consequences; the runtime hard read-only mount
- * is explicitly deferred to a two-image split, issue body line 108).
- *
- * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
- * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
- * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
- * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
- * run.
- *
- * Why this closes the finding: previously `spec.soul` was declared in the
- * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
- * Backend (`grep spec.soul` = no hit) — a dead contract field. Now it is read
- * and asserted at the step's run-setup, so the v0.1 "role 决定注哪份 soul"
- * selection is realised and the field can no longer drift unnoticed.
- *
- * Pure (a check on the role/soul pair): unit-tested without a container.
- */
 // ── per-step session id extraction (#256 seam extension) ─────────────────────
 
 /** Minimal slice of Sandcastle's RunResult this Backend reads. */

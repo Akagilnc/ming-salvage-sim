@@ -119,19 +119,21 @@ export type HandoffStatus = "completed" | "parked" | "failed";
  * Soul identifier injected into the sandbox for a step.
  *
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
- * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
- *   (prompt-level, not an OS-level mount — same image, separate `run()`).
+ * - `"READ-ONLY"`: reviewer soul with a provider-level READ-ONLY instruction
+ *   constraint (not an OS-level mount — same image, separate `run()`).
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
  */
-export type StepSoul =
+export type WorkerSoul =
   | "coder"
   | "READ-ONLY"
   | "ship"
   | "verify"
   | "fixer"
-  | "landing";
+  | "landing"
+  | "merger";
+export type StepSoul = WorkerSoul;
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -142,8 +144,8 @@ export type ToolchainEntry = string;
 
 /**
  * A single agent step (ADR 0018): one `sandbox.run()` driven entirely by the
- * runner. `role` selects which soul to inject (v0.1 one image, two roles);
- * `promptFile` is a versioned file — prompts are never assembled inline.
+ * runner. `soul` is the worker instruction selector; `promptFile` is a
+ * versioned task file — prompts are never assembled inline.
  *
  * #247 wired `id`, `role`, `promptFile`. #253 filled `model` / `maxIter` /
  * `soul` / `toolchain`. #928 retired `completionSignal` — completion is clean
@@ -152,7 +154,7 @@ export type ToolchainEntry = string;
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
   readonly id: StepId;
-  /** Selects the soul to inject. */
+  /** Coarse scheduling role; soul selection is explicit in {@link StepSpec.soul}. */
   readonly role: StepRole;
   /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 决定#4). */
   readonly promptFile: string;
@@ -182,8 +184,8 @@ export interface StepSpec {
   /**
    * Which soul to inject into the sandbox for this step (#253).
    * `"coder"` = full dev-discipline soul;
-   * `"READ-ONLY"` = reviewer soul, soft-constraint READ-ONLY baked into soul
-   * (not an OS-level readonly mount — same image, separate `run()` context).
+   * `"READ-ONLY"` = reviewer soul with a provider-level READ-ONLY instruction
+   * constraint (not an OS-level readonly mount).
    *
    * The worker invocation consumes this field directly and activates the
    * selected live-mounted soul through the provider's native instruction layer.

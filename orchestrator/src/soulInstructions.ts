@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import type * as sc from "@ai-hero/sandcastle";
-import type { StepSoul } from "./types.js";
+import type { WorkerSoul } from "./types.js";
 import { shellEscape } from "./shellEscape.js";
 
-export type WorkerSoul = StepSoul | "merger";
+export type { WorkerSoul } from "./types.js";
 export const SANDBOX_SOULS_DIR = "/home/agent/.orchestrator/souls";
 export const AGY_SOUL_RULES_FILE = "/home/agent/.gemini/GEMINI.md";
 

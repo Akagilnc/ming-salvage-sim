@@ -18,7 +18,6 @@ import {
   vi,
   sc,
   discoverSubprojects,
-  MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
   MergerAuth,

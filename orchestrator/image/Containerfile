@@ -1,6 +1,6 @@
 # Ming orchestrator worker image — 2b full pack (#333, ADR 0026 / ADR 0016 bake).
 #
-# 2a (#332) baked the minimal /tdd closure + coder soul so the coder worker runs.
+# 2a (#332) introduced the minimal /tdd closure for coder workers.
 # 2b (#333) EXTENDS 2a to the FULL coherent dev-skill pack +
 # the multi-model review CLIs (codex already in base, + agy/Gemini installed here),
 # so the cmr / ship / review / fix / merger workers can each invoke their skill

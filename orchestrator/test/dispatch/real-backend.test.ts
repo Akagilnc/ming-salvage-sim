@@ -458,8 +458,6 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
   });
 });
 
-// ─── model slug → CLI (role decides soul/model) ──────────────────────────────
-
 describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () => {
   it("is a far-future value that never fires in practice (sandcastle has no disable sentinel)", () => {
     // ONE WEEK in seconds. sandcastle multiplies idleTimeoutSeconds by 1e3, and the

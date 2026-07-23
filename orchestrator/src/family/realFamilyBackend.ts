@@ -406,16 +406,22 @@ export function mergerModel(route?: ResolvedModelRoute): string {
   return route?.slots.merger ?? modelForSlot("merger");
 }
 
-/**
- * The baked soul the merger agent runs under (F28 / ADR 0022: the conflict
- * fallback follows the "one mirror new soul" model). This is a THIRD baked soul
- * value alongside the step souls — it is deliberately NOT a {@link StepSoul},
- * because the merger is not an S0–S8 single-slice step driven by `soulForStep`
- * (which maps a step's `role` → "coder"/"READ-ONLY"). The merger has its own
- * activation path is the same live-mounted, provider-native instruction seam as
- * every other worker; it is not a child-runner step driven by `soulForStep`.
- */
-export const MERGER_SOUL = "merger";
+function mergerWorkerSpec(model: string): WorkerSpec {
+  return {
+    id: "S1",
+    kind: "merge",
+    role: "coder",
+    host: workerHostForModel(model),
+    session: "fresh",
+    contextRetention: "clean",
+    skill: "resolving-merge-conflicts",
+    promptFile: MERGER_CONFLICT_PROMPT,
+    maxIter: 1,
+    model,
+    soul: "merger",
+    toolchain: [],
+  };
+}
 
 export class RealFamilyBackend implements FamilyBackend {
   private verificationStampTail: Promise<void> = Promise.resolve();
@@ -997,20 +1003,7 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const telemetrySpec: WorkerSpec = {
-          id: "S1",
-          kind: "merge",
-          role: "coder",
-          host: workerHostForModel(model),
-          session: "fresh",
-          contextRetention: "clean",
-          skill: "resolving-merge-conflicts",
-          promptFile: MERGER_CONFLICT_PROMPT,
-          maxIter: 1,
-          model,
-          soul: "coder",
-          toolchain: [],
-        };
+        const telemetrySpec = mergerWorkerSpec(model);
         const telemetryCtx: DispatchContext = {
           familyBase: this.opts.familyBase,
           familyIssue: req.childIssue,
@@ -1034,8 +1027,12 @@ export class RealFamilyBackend implements FamilyBackend {
             name: `merger-resolve-${req.childIssue}`,
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.mergerSandbox(auth, outcomeLanding, model),
-            agent: agentForSlug(model, undefined, MERGER_SOUL),
+            sandbox: this.mergerSandbox(auth, outcomeLanding, telemetrySpec),
+            agent: agentForSlug(
+              telemetrySpec.model,
+              undefined,
+              telemetrySpec.soul,
+            ),
             maxIterations: 1,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
@@ -1091,7 +1088,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
+  /** The merger agent's sandbox (live soul + image-provided skills + optional auth). */
   protected prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
@@ -1104,9 +1101,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandbox(
     auth: MergerAuth = this.mountMergerAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
-    modelSlug?: string,
+    spec: Pick<WorkerSpec, "model" | "soul"> = mergerWorkerSpec(mergerModel()),
   ): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth, outcomeLanding, modelSlug));
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding, spec));
   }
 
   /**
@@ -1134,7 +1131,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
    * {@link SANDBOX_SKILLS_DIR} is DROPPED here too — the 2b image BAKES
    * `resolving-merge-conflicts` (+ its closure), so a runtime mount would SHADOW
-   * the baked skill. The merger soul finds the skill in the IMAGE, not a host mount.
+   * the image-provided skill. The merger finds the skill in the image, not a host mount.
    *
    * integ-cmr int-r2 (A-1): the merger is a TOP-LEVEL claude worker, so its claude
    * OAuth token is injected here as CLAUDE_CODE_OAUTH_TOKEN (symmetric with
@@ -1148,13 +1145,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandboxConfig(
     auth: MergerAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
-    modelSlug?: string,
+    spec: Pick<WorkerSpec, "model" | "soul"> = mergerWorkerSpec(mergerModel()),
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const model = modelSlug ?? mergerModel();
+    const model = spec.model;
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
@@ -1175,7 +1172,7 @@ export class RealFamilyBackend implements FamilyBackend {
     appendAgyAuthMount(mounts, auth.agyDir);
     appendAgySoulMount(
       mounts,
-      { model, soul: MERGER_SOUL },
+      spec,
       undefined,
       this.opts.soulsDir,
     );
@@ -2972,7 +2969,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
+   * The cmr worker's sandbox (live soul + image-provided skills and CLIs).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
    * double-mount. Judge identity credential is keyed by {@link WorkerSpec.model}
@@ -3371,7 +3368,7 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(target, body, "utf8");
   }
 
-  /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
+  /** The family ship worker's sandbox (live soul + image-provided skills and CLIs). */
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },

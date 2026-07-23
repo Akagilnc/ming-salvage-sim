@@ -23,7 +23,6 @@ import * as sc from "@ai-hero/sandcastle";
 import { discoverSubprojects } from "../../../src/familyDriver.js";
 
 import {
-  MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
   type MergerAuth,
@@ -260,7 +259,6 @@ export {
   vi,
   sc,
   discoverSubprojects,
-  MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
   MergerAuth,
