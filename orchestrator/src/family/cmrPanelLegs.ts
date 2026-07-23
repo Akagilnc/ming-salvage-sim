@@ -209,19 +209,9 @@ export type PanelLegsRoundResult = {
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
 };
 
-/** Stamped panel evidence for one court opening (#1117 / #1118). */
-export type PanelCourtEvidence = {
-  readonly openingId: string;
-  readonly cmrPass: IntegratedCmrPass;
-  readonly familyHeadAfter?: string;
-  readonly runId?: string;
-  readonly transports: ReadonlyArray<LegTransport>;
-  readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
-};
-
 /**
  * True when at least one transport is legal ADR 0141 review paper.
- * Used by the court-open gate: valid same-opening evidence → no reburn.
+ * Court-open gate: valid evidence → no reburn; absent → fan-out.
  */
 export function hasValidPanelLegTransports(
   transports: ReadonlyArray<LegTransport> | undefined | null,
@@ -233,180 +223,69 @@ export function hasValidPanelLegTransports(
 }
 
 /**
- * Mint a runner-owned panel court opening id.
- * Always includes a fresh UUID so process re-entry / missing runId never collides
- * with a prior opening (same pass+head still gets a new id → reburn).
+ * Normalize landing/ctx/durable transport cargo into {@link LegTransport} rows.
+ * Invalid rows are dropped (never invent legal paper).
  */
-export function mintPanelCourtOpeningId(input: {
-  readonly runId?: string;
-  readonly cmrPass: IntegratedCmrPass;
-}): string {
-  const runPart =
-    typeof input.runId === "string" && input.runId.trim().length > 0
-      ? input.runId.trim()
-      : "norun";
-  return `${runPart}:${input.cmrPass}:${globalThis.crypto.randomUUID()}`;
-}
-
-/**
- * Build stamped evidence from runner landing/ctx cargo when present and legal.
- * Production seed path for "landing already has valid transports" (#1118 AC).
- */
-export function panelCourtEvidenceFromLanding(input: {
-  readonly cmrPass: IntegratedCmrPass;
-  readonly familyHeadAfter?: string;
-  readonly runId?: string;
-  readonly panelCourtOpeningId?: string;
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
-}): PanelCourtEvidence | undefined {
-  const openingId = input.panelCourtOpeningId?.trim();
-  if (openingId === undefined || openingId.length === 0) return undefined;
-  const rows = input.panelLegTransports;
-  if (rows === undefined || rows.length === 0) return undefined;
-  const transports: LegTransport[] = [];
+export function normalizePanelLegTransportCargo(
+  rows:
+    | ReadonlyArray<{
+        readonly slug?: unknown;
+        readonly exitCode?: unknown;
+        readonly stdout?: unknown;
+      }>
+    | undefined
+    | null,
+): LegTransport[] {
+  if (rows === undefined || rows === null || rows.length === 0) return [];
+  const out: LegTransport[] = [];
   for (const row of rows) {
     if (typeof row.slug !== "string" || row.slug.trim().length === 0) continue;
     if (typeof row.exitCode !== "number" || !Number.isFinite(row.exitCode)) {
       continue;
     }
-    transports.push({
+    out.push({
       slug: row.slug.trim(),
       exitCode: row.exitCode,
       stdout: typeof row.stdout === "string" ? row.stdout : "",
     });
   }
-  if (!hasValidPanelLegTransports(transports)) return undefined;
-  return {
-    openingId,
-    cmrPass: input.cmrPass,
-    ...(input.familyHeadAfter !== undefined
-      ? { familyHeadAfter: input.familyHeadAfter }
-      : {}),
-    ...(input.runId !== undefined ? { runId: input.runId } : {}),
-    transports,
-    skippedLegs: [...(input.panelLegSkippedLegs ?? [])],
-  };
-}
-
-/**
- * #1117 / #1118 — lifecycle-scoped panel court session (one per family court
- * loop / process-held baton). Callers own the instance; invalidate on builder.
- */
-export type PanelCourtSession = {
-  /**
-   * Resolve opening + optional reusable evidence.
-   * Force reburn when: escalationAnswer, empty/invalid memo, pass/head/runId
-   * mismatch. Same pass+head with a new opening id always reburns after
-   * invalidate or escalationAnswer.
-   */
-  readonly resolve: (input: {
-    readonly cmrPass: IntegratedCmrPass;
-    readonly familyHeadAfter?: string;
-    readonly runId?: string;
-    readonly escalationAnswerPresent?: boolean;
-  }) => {
-    readonly openingId: string;
-    readonly existing: PanelCourtEvidence | undefined;
-  };
-  /** Install runner landing/ctx stamped evidence as the current memo (same opening). */
-  readonly seedFromLanding: (evidence: PanelCourtEvidence) => void;
-  readonly record: (evidence: PanelCourtEvidence) => void;
-  /** Drop memo so the next resolve mints a new opening (builder / head move). */
-  readonly invalidate: () => void;
-};
-
-export function createPanelCourtSession(): PanelCourtSession {
-  let memo: PanelCourtEvidence | undefined;
-  return {
-    resolve(input) {
-      const forceReburn =
-        input.escalationAnswerPresent === true ||
-        memo === undefined ||
-        memo.cmrPass !== input.cmrPass ||
-        (input.familyHeadAfter !== undefined &&
-          memo.familyHeadAfter !== input.familyHeadAfter) ||
-        (input.runId !== undefined &&
-          memo.runId !== undefined &&
-          memo.runId !== input.runId) ||
-        (input.runId !== undefined && memo.runId === undefined) ||
-        (input.runId === undefined && memo.runId !== undefined);
-      if (
-        !forceReburn &&
-        memo !== undefined &&
-        hasValidPanelLegTransports(memo.transports)
-      ) {
-        return { openingId: memo.openingId, existing: memo };
-      }
-      const openingId = mintPanelCourtOpeningId({
-        ...(input.runId !== undefined ? { runId: input.runId } : {}),
-        cmrPass: input.cmrPass,
-      });
-      return { openingId, existing: undefined };
-    },
-    seedFromLanding(evidence) {
-      if (
-        hasValidPanelLegTransports(evidence.transports) &&
-        evidence.openingId.trim().length > 0
-      ) {
-        memo = evidence;
-      }
-    },
-    record(evidence) {
-      memo = evidence;
-    },
-    invalidate() {
-      memo = undefined;
-    },
-  };
+  return out;
 }
 
 /**
  * #1117 / #1118 — one panel-evidence gate for first open and court resume.
  *
  * Mechanism is only {@link dispatchFamilyCmrPanelLegs} (scope is a parameter).
- * Reuse when caller supplies same-opening valid evidence; otherwise fan-out.
+ * When valid transports already land (ctx / durable cargo), do not reburn; when
+ * missing, fan-out and land transports or host skip reasons — never open a pure
+ * court on silent empty. Cargo ownership is the FamilyBackend durable store
+ * (production) or host landing/ctx — not optional test-only VerifyCmrInput seams.
  */
 export async function ensureFamilyCmrPanelEvidence(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
   readonly cmrPass?: IntegratedCmrPass;
-  readonly openingId: string;
-  readonly existing?: PanelCourtEvidence;
+  readonly existingTransports?:
+    | ReadonlyArray<{
+        readonly slug?: unknown;
+        readonly exitCode?: unknown;
+        readonly stdout?: unknown;
+      }>
+    | undefined;
   readonly dispatch: (spec: WorkerSpec) => Promise<WorkerResult>;
-}): Promise<PanelLegsRoundResult & { readonly openingId: string }> {
+}): Promise<PanelLegsRoundResult> {
   const legs = input.legs;
-  const existing = input.existing;
-  if (
-    existing !== undefined &&
-    existing.openingId === input.openingId &&
-    hasValidPanelLegTransports(existing.transports)
-  ) {
+  const existing = normalizePanelLegTransportCargo(input.existingTransports);
+  if (hasValidPanelLegTransports(existing)) {
     return {
-      openingId: input.openingId,
-      transports: existing.transports,
-      skippedLegs:
-        existing.skippedLegs.length > 0
-          ? existing.skippedLegs
-          : skippedLegsFromTransports(legs, existing.transports),
+      transports: existing,
+      skippedLegs: skippedLegsFromTransports(legs, existing),
     };
   }
-  const round = await dispatchFamilyCmrPanelLegs({
+  return dispatchFamilyCmrPanelLegs({
     legs,
     ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
     dispatch: input.dispatch,
   });
-  return {
-    openingId: input.openingId,
-    transports: round.transports,
-    skippedLegs: round.skippedLegs,
-  };
 }
 
 /**

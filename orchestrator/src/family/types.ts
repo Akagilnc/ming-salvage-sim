@@ -50,6 +50,24 @@ import type { PublicFailedCause, PublicRunResult } from "../publicResult.js";
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
 
+/**
+ * #1118 / #1119 — durable panel-leg 卷面 under ledgerDir (pass-keyed).
+ * Production cargo owner for "valid transports → no reburn"; head-scoped so
+ * stale cargo for a prior head never masquerades as the current opening.
+ */
+export type FamilyPanelLegEvidence = {
+  readonly familyHeadAfter?: string;
+  readonly panelLegTransports?: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
+};
+
 // ─────────────────────────── child slice ───────────────────────────
 
 /**
@@ -638,6 +656,26 @@ export interface FamilyBackend {
   prepareFamilyCmrPanelRound?(
     ctx: DispatchContext,
   ): FamilyCmrPanelRoundPrep | Promise<FamilyCmrPanelRoundPrep>;
+  /**
+   * #1118 / #1119 — read durable panel-leg transports / skip reasons for one
+   * integrated pass (ledgerDir truth; process temps are not recoverable).
+   * Head-scoped reuse is decided by {@link runVerifyCmr}.
+   */
+  readFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+  ):
+    | FamilyPanelLegEvidence
+    | undefined
+    | Promise<FamilyPanelLegEvidence | undefined>;
+  /**
+   * #1118 / #1119 — persist panel-leg transports and/or host skip reasons so
+   * resume can reuse valid 卷面 or observe degrade reasons without a silent
+   * empty landing.
+   */
+  writeFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): void | Promise<void>;
   /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.
