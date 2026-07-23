@@ -35,12 +35,6 @@ import type {
 export type { LegalRefuseReason };
 
 /**
- * Build a fresh review-leg prompt with the full reviewer soul prepended
- * (single-track CLI injection — no Claude-only agent definition).
- *
- * AC: 腿 prompt 头含 reviewer soul.
- */
-/**
  * Review legs dispatched by the judge are always fresh sessions.
  * Resume is illegal (negative AC: 续腿不合法).
  */

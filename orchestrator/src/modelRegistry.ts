@@ -289,8 +289,7 @@ export const POOL_DISPATCH_BINDINGS: Readonly<
   // #807: SuperGrok pool runs the real `grok` CLI (custom AgentProvider), not
   // sandcastle's `sc.pi()` (different product / flag contract / auth home).
   "grok-build": "grok",
-  cursor: "cursor",
-  // zai intentionally absent — no live registry slug after #905; no rewrite.
+  // cursor/zai intentionally absent — no live registry slug; no rewrite.
   "codex-5h": "codex",
   claude: "claudeCode",
 };

@@ -45,22 +45,22 @@ const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 describe("#955 r7 receipt maxRetries binds (slug, pool)", () => {
   const RESUME_CAPABLE_SLUG = "gpt-5.6-sol";
-  /** Registry pool that rewrites codex → cursor (not resume-capable). */
-  const NON_RESUME_POOL = "cursor" as const;
+  /** Empty pool: it must not rewrite the registry provider. */
+  const EMPTY_POOL = "cursor" as const;
 
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("registry truth: resume-capable slug + cursor pool → incapable provider", () => {
+  it("registry truth: resume-capable slug + empty cursor pool keeps its provider", () => {
     expect(resumeCapableForSlug(RESUME_CAPABLE_SLUG)).toBe(true);
-    expect(resolveModelSlugForPool(RESUME_CAPABLE_SLUG, NON_RESUME_POOL).provider).toBe(
-      "cursor",
+    expect(resolveModelSlugForPool(RESUME_CAPABLE_SLUG, EMPTY_POOL).provider).toBe(
+      "codex",
     );
-    expect(resumeCapableForSlug(RESUME_CAPABLE_SLUG, NON_RESUME_POOL)).toBe(false);
+    expect(resumeCapableForSlug(RESUME_CAPABLE_SLUG, EMPTY_POOL)).toBe(true);
   });
 
-  it("runStep entry: resume-capable slug + cursor billingPool → maxRetries=0", async () => {
+  it("runStep entry: empty cursor pool preserves the provider retry capability", async () => {
     class CaptureBackend extends RealBackend {
       public agentOptions: Array<Parameters<typeof sc.run>[0]> = [];
 
@@ -136,7 +136,7 @@ describe("#955 r7 receipt maxRetries binds (slug, pool)", () => {
         maxRetries: 2,
       });
 
-      // Under test: same slug, pool rewrites provider to non-resume-capable.
+      // Under test: same slug under an empty pool keeps its registry provider.
       await backend.runStep(
         coderSpec,
         {
@@ -144,11 +144,11 @@ describe("#955 r7 receipt maxRetries binds (slug, pool)", () => {
           base: "main",
           path: "/tmp/worktree/r7-cursor-pool",
         },
-        { billingPool: NON_RESUME_POOL },
+        { billingPool: EMPTY_POOL },
       );
       expect(backend.agentOptions[1]!.output).toMatchObject({
         tag: CODER_RECEIPT_TAG,
-        maxRetries: 0,
+        maxRetries: 2,
       });
     } finally {
       rmSync(home, { recursive: true, force: true });

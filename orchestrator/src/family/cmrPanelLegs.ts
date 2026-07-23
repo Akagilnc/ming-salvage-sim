@@ -4,7 +4,7 @@
  * Panel legs are isomorphic to the single-slice fresh reviewer path:
  *   - same WorkerSpec / dispatchWorker mechanism
  *   - sandcastle injects credentials for the top-level agent (no nested-CLI mounts)
- *   - reviewer soul text prepended to the leg prompt
+ *   - the selected reviewer soul loads through the provider instruction layer
  *   - independent-clone semantics preserved at the backend seam
  *   - cross-vendor family → distinct CLI host via {@link workerHostForModel}
  *

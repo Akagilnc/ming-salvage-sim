@@ -261,8 +261,12 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
 });
 
 describe("#905 residual opencode eviction + zai fail-closed", () => {
-  it("does not bind empty zai pool to cursor (no silent rewrite surface)", () => {
+  it("does not bind empty cursor/zai pools (no silent rewrite surface)", () => {
+    expect(POOL_DISPATCH_BINDINGS.cursor).toBeUndefined();
     expect(POOL_DISPATCH_BINDINGS.zai).toBeUndefined();
+    expect(resolveModelSlugForPool("gpt-5.6-sol", "cursor")).toEqual(
+      resolveModelSlug("gpt-5.6-sol"),
+    );
     // Non-pinned slug stays on its registry provider under zai — no rewrite.
     expect(resolveModelSlugForPool("sonnet", "zai")).toEqual(resolveModelSlug("sonnet"));
     expect(resolveModelSlugForPool("gpt-5.6-terra", "zai")).toEqual(

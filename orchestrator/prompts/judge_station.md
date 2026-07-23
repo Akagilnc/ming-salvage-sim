@@ -31,8 +31,7 @@ password. Finish inside the single iteration (`maxIterations=1`).
   legal). `converged` only on full withdraw (全撤). Never invent a second
   pre-review status token. Never dispatch fresh review legs on a plan beat.
 - Dispatch **fresh** review legs only after accepting construction (never
-  resume a prior leg session). Prepend the full `reviewer.md` soul text at
-  the head of every leg prompt. Fresh findings return here for disposition —
+  resume a prior leg session). Fresh findings return here for disposition —
   never straight to the fixer.
 
 ### Converged (no further fix rounds)
