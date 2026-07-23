@@ -500,19 +500,14 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
   });
 });
 
-// ─── test 5 (F8): early-exit re-entry maps an UNANSWERED parked child to escalated ─
+// ─── test 5 (F8) / #1125: unanswered park re-entry — no re-dispatch, ledger park ─
 //
-// #604 F8: when a family is RE-ENTERED and the ledger already carries an
-// unanswered `child_decision_parked` row, the runner early-exits BEFORE the wave
-// loop. That early-exit path used to map every non-merged child to
-// `{status:"skipped"}` (because the parked child isn't in the merged set),
-// disagreeing with the wave-loop parking path (`finalizeDecisionPark` →
-// `"escalated"`). The parked child must be reported `"escalated"` (carrying its
-// escalation payload from the ledger row) on BOTH paths, else the driver mis-reads
-// the parked child as skipped.
+// #1125 deleted the whole-family early-return. Unanswered parks are excluded from
+// wave dispatch and aggregated AFTER the wave loop (familyResultFromUnansweredParks):
+// parked child → escalated from ledger; never-run sibling → vocal skipped.
 
-describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parked child as escalated", () => {
-  it("re-entry with an unanswered child_decision_parked row → parked child is escalated (not skipped), sibling stays skipped", async () => {
+describe("#604 slice 5 (F8) / #1125 — unanswered park re-entry reports escalated without redispatch", () => {
+  it("re-entry with an unanswered child_decision_parked row → parked child is escalated (not skipped), sibling stays skipped, zero redispatch", async () => {
     // #11 escalates (decision); #12 is blocked_by #11 so it never runs.
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
@@ -537,8 +532,9 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
       (e) => e.event === "child_decision_parked",
     );
     expect(parkedRow?.childIssue).toBe(11);
+    const stepsAfterFirst = singleSliceBackend.runStepCalls.length;
 
-    // ── invocation 2 (re-entry): NO answer appended → the early-exit path fires ──
+    // ── invocation 2 (re-entry): NO answer → post-wave ledger park, no redispatch ──
     const second = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
@@ -548,34 +544,25 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
     });
 
     expect(second.status).toBe("parked");
-    // F8: the parked child maps to `escalated` (NOT skipped), carrying the
-    // escalation payload read from the child_decision_parked ledger row.
+    // Unanswered parked child maps to `escalated` (NOT skipped).
     const child11 = second.children.find((c) => c.issue === 11);
     expect(child11?.status).toBe("escalated");
     expect(child11?.escalation?.escalationKind).toBe("decision");
     expect(child11?.escalation?.reason).toBe(parkedRow?.reason);
-    // The never-run sibling #12 stays skipped.
+    // Never-run sibling #12 stays skipped.
     expect(second.children.find((c) => c.issue === 12)?.status).toBe("skipped");
-    // The family stop summary is a decision-gate park (answerable), not an
-    // A-class infra failure.
     expect(second.stopSummary?.reason).toBe("decision_gate_park");
+    // #1125: unanswered park does not re-enter runChild.
+    expect(singleSliceBackend.runStepCalls.length).toBe(stepsAfterFirst);
   });
 });
 
-// ─── #706: early-exit parked-child path pins ledger-merged sibling as already_done ─
-//
-// F8 above covers the unanswered parked child → escalated (and a never-run sibling
-// → skipped), but has no ledger-merged sibling. The early-exit branch at
-// runner.ts ~1048 maps `ledgerMerged` children to `"already_done"`; without a pin
-// that asserts the literal, mutating it back to `"merged"` leaves the suite green.
-// Scenario: re-entry with an unanswered `child_decision_parked` row AND a sibling
-// that merged in a prior invocation → the merged sibling must read `already_done`.
+// ─── #706 / #1125: post-wave park path pins ledger-merged sibling as already_done ─
 
-describe("#706 — early-exit parked-child path reports ledger-merged sibling as already_done", () => {
-  it("re-entry with unanswered parked child + prior-merged sibling → sibling is already_done", async () => {
-    // Seed durable ledger truth from a prior invocation: #10 merged, #11 parked
-    // unanswered. Re-entry hits the early-exit path (unanswered.length > 0) before
-    // the wave loop — no child is re-run this invocation.
+describe("#706 / #1125 — unanswered park re-entry reports ledger-merged sibling as already_done", () => {
+  it("re-entry with unanswered parked child + prior-merged sibling → sibling is already_done, zero redispatch", async () => {
+    // Seed durable ledger truth: #10 merged, #11 parked unanswered.
+    // #1125: wave excludes #11; post-wave aggregation parks without runStep.
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(
@@ -611,12 +598,200 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
 
     expect(result.status).toBe("parked");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
-    // #706 pin: early-exit ledgerMerged branch (runner.ts ~1048) must use the
-    // FamilyChildStatus contract literal — prior-run proven ⇒ already_done, not
-    // merged (this-invocation merge).
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("already_done");
-    // Early-exit: no wave work this invocation.
     expect(singleSliceBackend.runStepCalls).toHaveLength(0);
+  });
+});
+
+// ─── #1125: mixed answered + unanswered + new ticket ──────────────────────────
+
+describe("#1125 — unanswered park does not block answered rekindle or new tickets", () => {
+  it("mixed: unanswered 526/528 zero dispatch; answered 516 + new 1123 dispatch; family stays parked", async () => {
+    // #516 answered park rekindles; #1123 is a fresh ready child; #526/#528 stay
+    // unanswered and must NOT appear in the dispatch set.
+    class MultiChildBackend extends EscalatingChildBackend {
+      constructor() {
+        // never decision-escalates on first-run path (escalateIssue = -1)
+        super(-1);
+      }
+    }
+    const singleSliceBackend = new MultiChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 516,
+        reason: "answered later",
+        diagnosis: "was parked then answered",
+        sessionId: "sess-516",
+      } as FamilyLedgerEntry,
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        childIssue: 516,
+        answer: "field X is optional; proceed",
+        source: "human",
+      } as FamilyLedgerEntry,
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 526,
+        reason: "still open A",
+        diagnosis: "no answer yet for 526",
+      } as FamilyLedgerEntry,
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 528,
+        reason: "still open B",
+        diagnosis: "no answer yet for 528",
+      } as FamilyLedgerEntry,
+    );
+
+    // Seed single-slice resume residue for #516 so inject/resume can complete.
+    singleSliceBackend.childLedgers.set(516, [
+      {
+        step: "S2",
+        sessionId: "sess-516",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          escalate: STUCK,
+        },
+      } as PersistentLedgerEntry,
+    ]);
+
+    const epic: FamilyEpic = {
+      issue: 1125,
+      children: [
+        { issue: 516, blockedBy: [] },
+        { issue: 526, blockedBy: [] },
+        { issue: 528, blockedBy: [] },
+        { issue: 1123, blockedBy: [] },
+      ],
+    };
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic,
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-base",
+    });
+
+    const dispatchedIssues = new Set(
+      singleSliceBackend.runStepCalls.map((c) => c.issue),
+    );
+    expect(dispatchedIssues.has(516)).toBe(true);
+    expect(dispatchedIssues.has(1123)).toBe(true);
+    expect(dispatchedIssues.has(526)).toBe(false);
+    expect(dispatchedIssues.has(528)).toBe(false);
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.status).not.toBe("completed");
+    expect(result.status).not.toBe("failed");
+    expect(result.children.find((c) => c.issue === 526)?.status).toBe("escalated");
+    expect(result.children.find((c) => c.issue === 528)?.status).toBe("escalated");
+  });
+
+  it("NEGATIVE control: all unanswered → zero dispatch, parked + decision_gate_park (not completed/failed)", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 526,
+        reason: "open A",
+        diagnosis: "no answer",
+      } as FamilyLedgerEntry,
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 528,
+        reason: "open B",
+        diagnosis: "no answer",
+      } as FamilyLedgerEntry,
+    );
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 526, blockedBy: [] },
+          { issue: 528, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-all-unanswered",
+    });
+
+    expect(singleSliceBackend.runStepCalls).toHaveLength(0);
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.status).not.toBe("completed");
+    expect(result.status).not.toBe("failed");
+    expect(result.children.find((c) => c.issue === 526)?.status).toBe("escalated");
+    expect(result.children.find((c) => c.issue === 528)?.status).toBe("escalated");
+  });
+
+  it("residual skip logs issue + stable reason token", async () => {
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const singleSliceBackend = new EscalatingChildBackend(-1);
+      const familyBackend = new FakeFamilyBackend();
+      familyBackend.ledger.push(
+        {
+          status: "child_decision_parked",
+          event: "child_decision_parked",
+          escalationKind: "decision",
+          childIssue: 11,
+          reason: "open",
+          diagnosis: "no answer",
+        } as FamilyLedgerEntry,
+      );
+
+      const result = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 1125,
+          children: [
+            { issue: 11, blockedBy: [] },
+            { issue: 12, blockedBy: [11] },
+          ],
+        },
+        familyBackend,
+        singleSliceBackend,
+        familyBase: "family/1125-skip-log",
+      });
+
+      expect(result.status).toBe("parked");
+      expect(result.children.find((c) => c.issue === 12)?.status).toBe("skipped");
+      expect(
+        warnings.some(
+          (w) =>
+            w.includes("#12") &&
+            w.includes("skipped:") &&
+            w.includes("unanswered_sibling_park_residual"),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });
 
