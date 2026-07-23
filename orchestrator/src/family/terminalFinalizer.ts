@@ -1,42 +1,49 @@
 /**
  * #1125 owner A — sole family terminal finalizer (deep module).
  *
- * Owns: required ledger read (loud fail), epic-order child normalization,
- * A-class failure > B-class park selection, single public result/stopSummary,
- * durable authority write, progress emission after durable write.
+ * ## Terminal-state table (implementation checklist)
  *
- * Callers pass facts + terminal intent only — never prebuilt children, never
- * pre-selected status, never deferChildNormalize coordination flags.
+ * | Exit | Facts / intent | Durable in | Children | Priority | Durable write | Progress |
+ * | --- | --- | --- | --- | --- | --- | --- |
+ * | startup route/smoke | recorded=[], failed | empty ledger ok | normalize | fail | none (pre-work) | after build |
+ * | prior escalation replay | ledger escalated row | terminalChildren | cargo or normalize | failure vs park by kind/stop | none (read) | after build |
+ * | refetch fail | recorded=[] | live ledger | normalize | fail/park | none | after build |
+ * | reconcile/cycle | recorded results | live | normalize | fail | optional failure | after durable |
+ * | correctness/merge/wave quota | drained recorded | live | normalize once | fail > provider_degraded | none (re-enterable) | after build |
+ * | merger decision | drained recorded | live | normalize | sibling fail > park | decision[+failure] + terminalChildren | after durable |
+ * | child decision park (wave) | does NOT terminal — records child park only | child_decision_parked | n/a | n/a | child park row | none |
+ * | post-wave / finalize auto | recorded | live | normalize | fail > unanswered park > complete | failure when parks+fail | after durable |
+ * | resume tails (converged/shipped) | recorded already_done | live | normalize | complete/park | none | after build |
+ *
+ * Callers submit facts + discriminated intent only.
  */
 
 import { emitExitProgress } from "../progressBroadcast.js";
-import {
-  infraFailureStopSummary,
-  type StopSummary,
-} from "../stopSummary.js";
+import type { StopSummary } from "../stopSummary.js";
 import type { Escalation } from "../types.js";
+import type { PublicFailedCause } from "../publicResult.js";
+import type { VerifyCmrPhase } from "./verifyCmr.js";
+import type { FamilyStageFailureStatus } from "./familyTerminal.js";
 import {
   failedFamilyResult,
   type ChildSlice,
   type FamilyBackend,
   type FamilyChildEscalation,
   type FamilyChildResult,
+  type FamilyChildStatus,
   type FamilyEpic,
   type FamilyLedgerEntry,
   type FamilyRunResult,
   type FamilyRunStatus,
 } from "./types.js";
 import {
-  isValidChildDecisionParked,
   mergedSet,
   recordFamilyEscalated,
   unansweredChildEscalations,
 } from "./ledger.js";
-import type { VerifyCmrPhase } from "./verifyCmr.js";
-import type { FamilyStageFailureStatus } from "./familyTerminal.js";
-import type { PublicFailedCause } from "../publicResult.js";
 
-/** Machine-readable residual-skip reason tokens (log surface only). */
+// ─── skip tokens ────────────────────────────────────────────────────────────
+
 export type FamilySkipReason =
   | "not_scheduled_this_invocation"
   | "unanswered_sibling_park_residual"
@@ -44,6 +51,16 @@ export type FamilySkipReason =
   | "refetch_failed"
   | "reconcile_inconsistent"
   | "dependency_cycle_residual";
+
+const CHILD_STATUSES: ReadonlySet<string> = new Set([
+  "ran",
+  "merged",
+  "already_done",
+  "resumed",
+  "skipped",
+  "failed",
+  "escalated",
+]);
 
 function skippedChild(
   issue: number,
@@ -68,48 +85,113 @@ function escalationFromChildParkRow(
   };
 }
 
+// ─── schema A: strict terminalChildren validation ───────────────────────────
+
 /**
- * Encode terminal children for durable stopSummary.metadata.trackedStatus
- * (existing string[] field — no schema widen). Replay reconstructs cargo.
+ * Validate durable terminalChildren cargo (schema A). Malformed → throw (ADR 0005).
+ * Never returns undefined on bad input; never silently renormalizes.
  */
-export function encodeTerminalChildrenCargo(
-  children: ReadonlyArray<FamilyChildResult>,
-): ReadonlyArray<string> {
-  return children.map((c) =>
-    JSON.stringify({
-      issue: c.issue,
-      status: c.status,
-      ...(c.branch !== undefined ? { branch: c.branch } : {}),
-      ...(c.failureCause !== undefined ? { failureCause: c.failureCause } : {}),
-      ...(c.escalation !== undefined ? { escalation: c.escalation } : {}),
-    }),
-  );
-}
-
-export function decodeTerminalChildrenCargo(
-  tracked: ReadonlyArray<string> | undefined,
-): FamilyChildResult[] | undefined {
-  if (tracked === undefined || tracked.length === 0) return undefined;
-  const out: FamilyChildResult[] = [];
-  for (const raw of tracked) {
-    try {
-      const parsed = JSON.parse(raw) as FamilyChildResult;
-      if (
-        typeof parsed.issue === "number" &&
-        typeof parsed.status === "string"
-      ) {
-        out.push(parsed);
-      } else {
-        return undefined;
-      }
-    } catch {
-      return undefined;
-    }
+export function parseTerminalChildrenCargo(
+  value: unknown,
+  context: string,
+): ReadonlyArray<FamilyChildResult> {
+  if (value === undefined) {
+    throw new Error(
+      `${context}: terminalChildren missing on durable family terminal authority`,
+    );
   }
-  return out.length > 0 ? out : undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `${context}: terminalChildren must be an array (got ${typeof value})`,
+    );
+  }
+  const out: FamilyChildResult[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const raw = value[i];
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(
+        `${context}: terminalChildren[${i}] must be a non-null object`,
+      );
+    }
+    const row = raw as Record<string, unknown>;
+    if (
+      typeof row.issue !== "number" ||
+      !Number.isSafeInteger(row.issue) ||
+      row.issue <= 0
+    ) {
+      throw new Error(
+        `${context}: terminalChildren[${i}].issue must be a positive integer`,
+      );
+    }
+    if (typeof row.status !== "string" || !CHILD_STATUSES.has(row.status)) {
+      throw new Error(
+        `${context}: terminalChildren[${i}].status invalid: ${String(row.status)}`,
+      );
+    }
+    const status = row.status as FamilyChildStatus;
+    if (row.branch !== undefined && typeof row.branch !== "string") {
+      throw new Error(
+        `${context}: terminalChildren[${i}].branch must be string when present`,
+      );
+    }
+    if (
+      row.failureCause !== undefined &&
+      typeof row.failureCause !== "string"
+    ) {
+      throw new Error(
+        `${context}: terminalChildren[${i}].failureCause must be string when present`,
+      );
+    }
+    if (status === "failed" && row.failureCause === undefined) {
+      // failureCause optional for back-compat of in-memory results; allowed.
+    }
+    if (status === "escalated") {
+      if (
+        row.escalation === null ||
+        typeof row.escalation !== "object" ||
+        Array.isArray(row.escalation)
+      ) {
+        throw new Error(
+          `${context}: terminalChildren[${i}].escalation required object for escalated`,
+        );
+      }
+      const esc = row.escalation as Record<string, unknown>;
+      if (typeof esc.reason !== "string" || esc.reason.trim().length === 0) {
+        throw new Error(
+          `${context}: terminalChildren[${i}].escalation.reason required`,
+        );
+      }
+      if (
+        typeof esc.diagnosis !== "string" ||
+        esc.diagnosis.trim().length === 0
+      ) {
+        throw new Error(
+          `${context}: terminalChildren[${i}].escalation.diagnosis required`,
+        );
+      }
+      if (esc.escalationKind !== "decision" && esc.escalationKind !== "failure") {
+        throw new Error(
+          `${context}: terminalChildren[${i}].escalation.escalationKind invalid`,
+        );
+      }
+    }
+    out.push({
+      issue: row.issue,
+      status,
+      ...(typeof row.branch === "string" ? { branch: row.branch } : {}),
+      ...(typeof row.failureCause === "string"
+        ? { failureCause: row.failureCause }
+        : {}),
+      ...(row.escalation !== undefined
+        ? { escalation: row.escalation as FamilyChildEscalation }
+        : {}),
+    });
+  }
+  return out;
 }
 
-/** Epic-order remount: recorded > merged > admitted unanswered park > vocal skip. */
+// ─── normalize ──────────────────────────────────────────────────────────────
+
 export function remountDecisionParkChildren(opts: {
   readonly epicChildren: ReadonlyArray<ChildSlice>;
   readonly recordedResults: ReadonlyArray<FamilyChildResult>;
@@ -134,9 +216,7 @@ export function remountDecisionParkChildren(opts: {
   });
 }
 
-/**
- * Required ledger read + normalize. Throws on ledger failure (ADR 0005).
- */
+/** Required ledger read (throws) + epic-order normalize. */
 export async function normalizeTerminalChildren(opts: {
   readonly epicChildren: ReadonlyArray<ChildSlice>;
   readonly recordedResults: ReadonlyArray<FamilyChildResult>;
@@ -151,7 +231,7 @@ export async function normalizeTerminalChildren(opts: {
     | undefined;
 }> {
   const familyIssues = new Set(opts.epicChildren.map((c) => c.issue));
-  // ADR 0005: ledger authority — read errors fail loud (no catch-to-empty).
+  // ADR 0005: ledger authority — errors propagate (no catch-to-empty).
   const ledger = await opts.familyBackend.readFamilyLedger();
   const parkedRows = unansweredChildEscalations(ledger).filter((row) =>
     familyIssues.has(row.childIssue),
@@ -176,7 +256,8 @@ export async function normalizeTerminalChildren(opts: {
   };
 }
 
-/** Shared familyStopSummary is still owned by runner (head metadata helpers). */
+// ─── intent + finalizer ─────────────────────────────────────────────────────
+
 export type FamilyStopSummaryFn = (input: {
   readonly status: FamilyRunStatus;
   readonly stage?: FamilyStageFailureStatus;
@@ -196,8 +277,11 @@ export type FamilyStopSummaryFn = (input: {
   }>;
 }) => StopSummary;
 
+/**
+ * Discriminated terminal intent. Durable write is semantic of the intent kind
+ * for failure/park that must survive restart — not optional caller booleans.
+ */
 export type TerminalIntent =
-  /** Auto: failure children beat decision_gate_park barrier; else completed/failed from children. */
   | {
       readonly kind: "auto";
       readonly barrierStopSummary?: StopSummary;
@@ -205,9 +289,9 @@ export type TerminalIntent =
       readonly failedPhase?: VerifyCmrPhase;
       readonly residualSkipReason?: FamilySkipReason;
       readonly headMetadata?: StopSummary["metadata"];
-      readonly durableFailure?: boolean;
+      /** When true, failure that coexists with unanswered parks is durable. */
+      readonly persistFailureWithParks?: boolean;
     }
-  /** Explicit A-class failure terminal. */
   | {
       readonly kind: "failed";
       readonly cause: PublicFailedCause;
@@ -215,15 +299,13 @@ export type TerminalIntent =
       readonly escalation?: Escalation;
       readonly residualSkipReason?: FamilySkipReason;
       readonly headMetadata?: StopSummary["metadata"];
-      readonly durableFailure?: boolean;
-      /** Also keep a prior decision record then write failure authority. */
+      readonly persistDurable?: boolean;
       readonly durableDecisionThenFailure?: {
         readonly reason: string;
         readonly diagnosis?: string;
         readonly phase?: VerifyCmrPhase;
       };
     }
-  /** Explicit decision-gate park (or provider_degraded via stopReason override). */
   | {
       readonly kind: "parked";
       readonly parkReason: "decision_gate_park" | "provider_degraded";
@@ -233,10 +315,10 @@ export type TerminalIntent =
       readonly residualSkipReason?: FamilySkipReason;
       readonly fallbackHead?: string;
       readonly headMetadata?: StopSummary["metadata"];
-      readonly durableDecision?: boolean;
+      /** Family-level decision durable (merger). Child parks use ledger child rows. */
+      readonly persistFamilyDecision?: boolean;
       readonly durablePhase?: VerifyCmrPhase;
     }
-  /** Merger decision: select failure if real sibling failed (not merger issue). */
   | {
       readonly kind: "merger_decision";
       readonly mergerIssue: number;
@@ -245,13 +327,48 @@ export type TerminalIntent =
       readonly residualSkipReason?: FamilySkipReason;
       readonly headMetadata?: StopSummary["metadata"];
     }
-  /** Completed (all merged / already_done). */
   | {
       readonly kind: "completed";
       readonly residualSkipReason?: FamilySkipReason;
       readonly headMetadata?: StopSummary["metadata"];
       readonly stopSummaryOverride?: StopSummary;
     };
+
+async function writeDurableEscalation(
+  backend: FamilyBackend,
+  esc: {
+    readonly escalationKind: "decision" | "failure";
+    readonly phase?: VerifyCmrPhase;
+    readonly reason: string;
+    readonly diagnosis?: string;
+    readonly familyHeadAfter?: string;
+    readonly stopSummary: StopSummary;
+    readonly terminalChildren: ReadonlyArray<FamilyChildResult>;
+  },
+): Promise<void> {
+  if (backend.escalateFamily !== undefined) {
+    await backend.escalateFamily({
+      escalationKind: esc.escalationKind,
+      phase: esc.phase ?? "wave",
+      reason: esc.reason,
+      ...(esc.diagnosis !== undefined ? { diagnosis: esc.diagnosis } : {}),
+      ...(esc.familyHeadAfter !== undefined
+        ? { familyHeadAfter: esc.familyHeadAfter }
+        : {}),
+      stopSummary: esc.stopSummary,
+      terminalChildren: esc.terminalChildren,
+    });
+    return;
+  }
+  await recordFamilyEscalated(backend, {
+    escalationKind: esc.escalationKind,
+    phase: esc.phase ?? "wave",
+    reason: esc.reason,
+    familyHeadAfter: esc.familyHeadAfter,
+    stopSummary: esc.stopSummary,
+    terminalChildren: esc.terminalChildren,
+  });
+}
 
 export async function finalizeFamilyTerminal(opts: {
   readonly familyBackend: FamilyBackend;
@@ -264,25 +381,16 @@ export async function finalizeFamilyTerminal(opts: {
   readonly familyStopSummary: FamilyStopSummaryFn;
 }): Promise<FamilyRunResult> {
   const residual =
-    opts.intent.kind === "completed"
+    "residualSkipReason" in opts.intent
       ? opts.intent.residualSkipReason
-      : opts.intent.residualSkipReason;
+      : undefined;
   const normalized = await normalizeTerminalChildren({
     epicChildren: opts.epic.children,
     recordedResults: opts.recordedResults,
     familyBackend: opts.familyBackend,
     ...(residual !== undefined ? { residualSkipReason: residual } : {}),
   });
-
-  // Prefer durable cargo on pure replay of failed terminals (no live recorded).
-  let children = normalized.children;
-  if (
-    opts.recordedResults.length === 0 &&
-    opts.intent.kind === "failed"
-  ) {
-    // no special case
-  }
-
+  const children = normalized.children;
   const alreadyDone = children
     .filter((child) => child.status === "already_done")
     .map((child) => ({
@@ -297,7 +405,7 @@ export async function finalizeFamilyTerminal(opts: {
     readonly escalation?: Escalation;
     readonly stage?: FamilyStageFailureStatus;
     readonly failedPhase?: VerifyCmrPhase;
-    readonly durableFailure?: boolean;
+    readonly persistDurable?: boolean;
     readonly durableDecisionThenFailure?: {
       readonly reason: string;
       readonly diagnosis?: string;
@@ -306,10 +414,6 @@ export async function finalizeFamilyTerminal(opts: {
     readonly headMetadata?: StopSummary["metadata"];
     readonly barrierStopSummary?: StopSummary;
   }): Promise<FamilyRunResult> => {
-    const cargoMeta = {
-      ...(input.headMetadata ?? {}),
-      trackedStatus: encodeTerminalChildrenCargo(children),
-    };
     const stopSummary = opts.familyStopSummary({
       status: "failed",
       familyBase: opts.familyBase,
@@ -322,7 +426,7 @@ export async function finalizeFamilyTerminal(opts: {
       ...(input.failedPhase !== undefined
         ? { failedPhase: input.failedPhase }
         : {}),
-      headMetadata: cargoMeta,
+      headMetadata: input.headMetadata,
       ...(input.barrierStopSummary !== undefined &&
       input.barrierStopSummary.reason !== "decision_gate_park"
         ? { barrierStopSummary: input.barrierStopSummary }
@@ -330,65 +434,44 @@ export async function finalizeFamilyTerminal(opts: {
       admissionSkipped: opts.epic.admissionSkipped,
       alreadyDone,
     });
-    // Attach cargo onto stopSummary metadata (rebuild if helper dropped it).
-    const stopWithCargo: StopSummary = {
-      ...stopSummary,
-      metadata: {
-        ...(stopSummary.metadata ?? {}),
-        trackedStatus: encodeTerminalChildrenCargo(children),
-      },
-    };
 
-    const writeDurable = async (
-      esc: Parameters<NonNullable<FamilyBackend["escalateFamily"]>>[0],
-    ): Promise<void> => {
-      if (opts.familyBackend.escalateFamily !== undefined) {
-        await opts.familyBackend.escalateFamily(esc);
-        return;
-      }
-      await recordFamilyEscalated(opts.familyBackend, {
-        escalationKind: esc.escalationKind,
-        phase: esc.phase ?? "wave",
-        reason: esc.reason,
-        familyHeadAfter: esc.familyHeadAfter,
-        stopSummary: esc.stopSummary,
-      });
-    };
     if (input.durableDecisionThenFailure !== undefined) {
-      await writeDurable({
+      await writeDurableEscalation(opts.familyBackend, {
         escalationKind: "decision",
         phase: input.durableDecisionThenFailure.phase ?? "wave",
         reason: input.durableDecisionThenFailure.reason,
         diagnosis: input.durableDecisionThenFailure.diagnosis,
-        ...(opts.familyHead !== undefined
-          ? { familyHeadAfter: opts.familyHead }
-          : {}),
-        stopSummary: stopWithCargo,
+        familyHeadAfter: opts.familyHead,
+        stopSummary,
+        terminalChildren: children,
       });
-    }
-    if (
-      input.durableFailure === true ||
-      input.durableDecisionThenFailure !== undefined
-    ) {
-      await writeDurable({
+      await writeDurableEscalation(opts.familyBackend, {
         escalationKind: "failure",
-        phase: input.durableDecisionThenFailure?.phase ?? "wave",
+        phase: input.durableDecisionThenFailure.phase ?? "wave",
+        reason: input.durableDecisionThenFailure.reason,
+        familyHeadAfter: opts.familyHead,
+        stopSummary,
+        terminalChildren: children,
+      });
+    } else if (input.persistDurable === true) {
+      await writeDurableEscalation(opts.familyBackend, {
+        escalationKind: "failure",
+        phase: "wave",
         reason:
           input.escalationReason ??
-          input.durableDecisionThenFailure?.reason ??
+          input.escalation?.reason ??
           "family terminal failed",
-        ...(opts.familyHead !== undefined
-          ? { familyHeadAfter: opts.familyHead }
-          : {}),
-        stopSummary: stopWithCargo,
+        familyHeadAfter: opts.familyHead,
+        stopSummary,
+        terminalChildren: children,
       });
     }
 
     emitExitProgress({
       epic: opts.epicIssue,
       status: "failed",
-      stopReason: stopWithCargo.reason,
-      gateSummary: stopWithCargo.summary,
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
     });
 
     return failedFamilyResult({
@@ -408,7 +491,7 @@ export async function finalizeFamilyTerminal(opts: {
               },
             }
           : {}),
-      stopSummary: stopWithCargo,
+      stopSummary,
       children,
       ...(opts.epic.admissionSkipped !== undefined &&
       opts.epic.admissionSkipped.length > 0
@@ -422,11 +505,28 @@ export async function finalizeFamilyTerminal(opts: {
     readonly escalationReason: string;
     readonly escalation: Escalation;
     readonly parkedIssue?: number;
-    readonly durableDecision?: boolean;
+    readonly persistFamilyDecision?: boolean;
     readonly durablePhase?: VerifyCmrPhase;
     readonly fallbackHead?: string;
     readonly headMetadata?: StopSummary["metadata"];
+    /** Issues whose failed status is a park placeholder, not A-class failure. */
+    readonly ignoreFailedIssues?: ReadonlySet<number>;
   }): Promise<FamilyRunResult> => {
+    // A-class child failure always wins over park (ignore merger placeholders).
+    const realFail = children.some(
+      (c) =>
+        c.status === "failed" &&
+        !(input.ignoreFailedIssues?.has(c.issue) ?? false),
+    );
+    if (realFail) {
+      return await buildFailed({
+        cause: "child_execution_failed",
+        escalationReason: input.escalationReason,
+        escalation: input.escalation,
+        persistDurable: true,
+        headMetadata: input.headMetadata,
+      });
+    }
     const thisRunHead =
       typeof opts.familyHead === "string" && opts.familyHead.trim().length > 0
         ? opts.familyHead
@@ -439,16 +539,15 @@ export async function finalizeFamilyTerminal(opts: {
     const familyHead = thisRunHead ?? fallback;
     const stopSummary =
       input.parkReason === "provider_degraded"
-        ? {
-            reason: "provider_degraded" as const,
+        ? ({
+            reason: "provider_degraded",
             summary: input.escalationReason,
             repairHint:
               "wait for provider quota reset, then re-feed the family run",
-            metadata: {
-              ...(input.headMetadata ?? {}),
-              trackedStatus: encodeTerminalChildrenCargo(children),
-            },
-          }
+            ...(input.headMetadata !== undefined
+              ? { metadata: input.headMetadata }
+              : {}),
+          } satisfies StopSummary)
         : opts.familyStopSummary({
             status: "parked",
             familyBase: opts.familyBase,
@@ -458,49 +557,30 @@ export async function finalizeFamilyTerminal(opts: {
             decisionGatePark: true,
             admissionSkipped: opts.epic.admissionSkipped,
             alreadyDone,
-            headMetadata: {
-              ...(input.headMetadata ?? {}),
-              trackedStatus: encodeTerminalChildrenCargo(children),
-            },
+            headMetadata: input.headMetadata,
           });
-    const stopWithCargo: StopSummary = {
-      ...stopSummary,
-      metadata: {
-        ...(stopSummary.metadata ?? {}),
-        trackedStatus: encodeTerminalChildrenCargo(children),
-      },
-    };
 
-    if (input.durableDecision === true) {
-      if (opts.familyBackend.escalateFamily !== undefined) {
-        await opts.familyBackend.escalateFamily({
-          escalationKind: "decision",
-          phase: input.durablePhase ?? "wave",
-          reason: input.escalation.reason,
-          diagnosis: input.escalation.diagnosis,
-          ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-          stopSummary: stopWithCargo,
-        });
-      } else {
-        await recordFamilyEscalated(opts.familyBackend, {
-          escalationKind: "decision",
-          phase: input.durablePhase ?? "wave",
-          reason: input.escalation.reason,
-          ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-          stopSummary: stopWithCargo,
-        });
-      }
+    if (input.persistFamilyDecision === true) {
+      await writeDurableEscalation(opts.familyBackend, {
+        escalationKind: "decision",
+        phase: input.durablePhase ?? "wave",
+        reason: input.escalation.reason,
+        diagnosis: input.escalation.diagnosis,
+        familyHeadAfter: familyHead,
+        stopSummary,
+        terminalChildren: children,
+      });
     }
 
     emitExitProgress({
       epic: opts.epicIssue,
       ...(input.parkedIssue !== undefined ? { issue: input.parkedIssue } : {}),
       status: "parked",
-      stopReason: stopWithCargo.reason,
+      stopReason: stopSummary.reason,
       gateSummary:
         input.escalation.diagnosis ??
         input.escalation.reason ??
-        stopWithCargo.summary,
+        stopSummary.summary,
     });
 
     return {
@@ -508,7 +588,7 @@ export async function finalizeFamilyTerminal(opts: {
       familyBase: opts.familyBase,
       ...(familyHead !== undefined ? { familyHead } : {}),
       escalation: input.escalation,
-      stopSummary: stopWithCargo,
+      stopSummary,
       children,
       ...(opts.epic.admissionSkipped !== undefined &&
       opts.epic.admissionSkipped.length > 0
@@ -557,100 +637,110 @@ export async function finalizeFamilyTerminal(opts: {
         cause: opts.intent.cause,
         escalationReason: opts.intent.escalationReason,
         escalation: opts.intent.escalation,
-        durableFailure: opts.intent.durableFailure,
+        persistDurable: opts.intent.persistDurable,
         durableDecisionThenFailure: opts.intent.durableDecisionThenFailure,
         headMetadata: opts.intent.headMetadata,
       });
     case "parked":
-      // A-class child failure still wins over explicit park request when recorded
-      // results already show failed (quota / decision with concurrent fail).
-      if (normalized.hasRealChildFailure) {
-        return await buildFailed({
-          cause: "child_execution_failed",
-          escalationReason: opts.intent.escalationReason,
-          escalation: opts.intent.escalation,
-          durableFailure: true,
-          headMetadata: opts.intent.headMetadata,
-        });
-      }
-      return await buildParked(opts.intent);
+      return await buildParked({
+        parkReason: opts.intent.parkReason,
+        escalationReason: opts.intent.escalationReason,
+        escalation: opts.intent.escalation,
+        parkedIssue: opts.intent.parkedIssue,
+        persistFamilyDecision: opts.intent.persistFamilyDecision,
+        durablePhase: opts.intent.durablePhase,
+        fallbackHead: opts.intent.fallbackHead,
+        headMetadata: opts.intent.headMetadata,
+      });
     case "merger_decision": {
-      const mergerIntent = opts.intent;
+      const m = opts.intent;
       const hasRealSiblingFailure = children.some(
-        (c) => c.status === "failed" && c.issue !== mergerIntent.mergerIssue,
+        (c) => c.status === "failed" && c.issue !== m.mergerIssue,
       );
       if (hasRealSiblingFailure) {
         return await buildFailed({
           cause: "child_execution_failed",
-          escalationReason: mergerIntent.reason,
-          escalation: {
-            reason: mergerIntent.reason,
-            diagnosis: mergerIntent.diagnosis,
-          },
+          escalationReason: m.reason,
+          escalation: { reason: m.reason, diagnosis: m.diagnosis },
           durableDecisionThenFailure: {
-            reason: mergerIntent.reason,
-            diagnosis: mergerIntent.diagnosis,
+            reason: m.reason,
+            diagnosis: m.diagnosis,
             phase: "wave",
           },
-          headMetadata: mergerIntent.headMetadata,
+          headMetadata: m.headMetadata,
         });
       }
       return await buildParked({
         parkReason: "decision_gate_park",
-        escalationReason: mergerIntent.reason,
-        escalation: {
-          reason: mergerIntent.reason,
-          diagnosis: mergerIntent.diagnosis,
-        },
-        parkedIssue: mergerIntent.mergerIssue,
-        durableDecision: true,
+        escalationReason: m.reason,
+        escalation: { reason: m.reason, diagnosis: m.diagnosis },
+        parkedIssue: m.mergerIssue,
+        persistFamilyDecision: true,
         durablePhase: "wave",
-        headMetadata: mergerIntent.headMetadata,
+        headMetadata: m.headMetadata,
+        ignoreFailedIssues: new Set([m.mergerIssue]),
       });
     }
     case "auto": {
-      // Unique selector: real failed child > decision_gate_park barrier > stage fail > children completeness.
+      const intent = opts.intent;
       if (normalized.hasRealChildFailure) {
         return await buildFailed({
           cause: "child_execution_failed",
-          durableFailure: opts.intent.durableFailure === true,
-          headMetadata: opts.intent.headMetadata,
-          barrierStopSummary: opts.intent.barrierStopSummary,
-          failedPhase: opts.intent.failedPhase,
-          stage: opts.intent.failedStatus,
+          // Persist when parks coexist so replay does not re-park.
+          persistDurable:
+            intent.persistFailureWithParks === true ||
+            normalized.primaryUnansweredPark !== undefined,
+          headMetadata: intent.headMetadata,
+          barrierStopSummary: intent.barrierStopSummary,
+          failedPhase: intent.failedPhase,
+          stage: intent.failedStatus,
         });
       }
-      if (opts.intent.barrierStopSummary?.reason === "decision_gate_park") {
+      if (intent.barrierStopSummary?.reason === "decision_gate_park") {
         const park = normalized.primaryUnansweredPark;
         return await buildParked({
           parkReason: "decision_gate_park",
           escalationReason:
-            opts.intent.barrierStopSummary.summary ??
+            intent.barrierStopSummary.summary ??
             "family run parked on a decision gate",
           escalation: {
             reason:
-              opts.intent.barrierStopSummary.summary ??
+              intent.barrierStopSummary.summary ??
               "family run parked on a decision gate",
             diagnosis:
-              opts.intent.barrierStopSummary.repairHint ??
-              opts.intent.barrierStopSummary.summary,
+              intent.barrierStopSummary.repairHint ??
+              intent.barrierStopSummary.summary,
           },
           parkedIssue: park?.childIssue,
           fallbackHead: park?.familyHeadAfter,
-          headMetadata: opts.intent.headMetadata,
+          headMetadata: intent.headMetadata,
         });
       }
       if (
-        opts.intent.failedStatus !== undefined ||
-        opts.intent.failedPhase !== undefined ||
-        opts.intent.barrierStopSummary != null
+        intent.failedStatus !== undefined ||
+        intent.failedPhase !== undefined ||
+        intent.barrierStopSummary != null
       ) {
+        // Quota provider_degraded parks via barrier reason.
+        if (intent.barrierStopSummary?.reason === "provider_degraded") {
+          return await buildParked({
+            parkReason: "provider_degraded",
+            escalationReason: intent.barrierStopSummary.summary,
+            escalation: {
+              reason: intent.barrierStopSummary.summary,
+              diagnosis:
+                intent.barrierStopSummary.repairHint ??
+                intent.barrierStopSummary.summary,
+            },
+            headMetadata: intent.headMetadata,
+          });
+        }
         return await buildFailed({
           cause: "child_execution_failed",
-          stage: opts.intent.failedStatus,
-          failedPhase: opts.intent.failedPhase,
-          barrierStopSummary: opts.intent.barrierStopSummary,
-          headMetadata: opts.intent.headMetadata,
+          stage: intent.failedStatus,
+          failedPhase: intent.failedPhase,
+          barrierStopSummary: intent.barrierStopSummary,
+          headMetadata: intent.headMetadata,
         });
       }
       if (
@@ -667,7 +757,7 @@ export async function finalizeFamilyTerminal(opts: {
           children,
           admissionSkipped: opts.epic.admissionSkipped,
           alreadyDone,
-          headMetadata: opts.intent.headMetadata,
+          headMetadata: intent.headMetadata,
         });
         emitExitProgress({
           epic: opts.epicIssue,
@@ -689,33 +779,29 @@ export async function finalizeFamilyTerminal(opts: {
             : {}),
         };
       }
-      // Residual unanswered parks → decision park (post-wave).
       if (normalized.primaryUnansweredPark !== undefined) {
         const first = normalized.primaryUnansweredPark;
         const esc = escalationFromChildParkRow(first);
         return await buildParked({
           parkReason: "decision_gate_park",
           escalationReason: `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`,
-          escalation: {
-            reason: esc.reason,
-            diagnosis: esc.diagnosis,
-          },
+          escalation: { reason: esc.reason, diagnosis: esc.diagnosis },
           parkedIssue: first.childIssue,
           fallbackHead: first.familyHeadAfter,
-          headMetadata: opts.intent.headMetadata,
+          headMetadata: intent.headMetadata,
         });
       }
       return await buildFailed({
         cause: "child_execution_failed",
-        headMetadata: opts.intent.headMetadata,
+        headMetadata: intent.headMetadata,
       });
     }
   }
 }
 
 /**
- * Replay prior family escalation from ledger (sole prior-escalation terminal).
- * Uses durable stopSummary cargo when present.
+ * Replay prior family escalation. Requires terminalChildren on durable row
+ * when present; missing cargo + non-park failure throws (no silent renorm).
  */
 export async function replayPriorFamilyEscalation(opts: {
   readonly familyBackend: FamilyBackend;
@@ -730,60 +816,73 @@ export async function replayPriorFamilyEscalation(opts: {
     (opts.escalation.stopSummary == null ||
       opts.escalation.stopSummary.reason === "decision_gate_park");
   const publicStatus: FamilyRunStatus = pureDecisionPark ? "parked" : "failed";
-
-  const cargo = decodeTerminalChildrenCargo(
-    opts.escalation.stopSummary?.metadata?.trackedStatus,
-  );
   const familyHead =
     typeof opts.escalation.familyHeadAfter === "string" &&
     opts.escalation.familyHeadAfter.trim().length > 0
       ? opts.escalation.familyHeadAfter
       : undefined;
 
-  if (cargo !== undefined) {
+  // Schema A: failed authority MUST carry terminalChildren.
+  if (!pureDecisionPark) {
+    const children = parseTerminalChildrenCargo(
+      opts.escalation.terminalChildren,
+      "replay prior family failure authority",
+    );
     const stopSummary =
       opts.escalation.stopSummary ??
-      (publicStatus === "parked"
-        ? opts.familyStopSummary({
-            status: "parked",
-            familyBase: opts.familyBase,
-            familyHead,
-            children: cargo,
-            escalationReason:
-              opts.escalation.reason ?? "family escalation is not answered",
-            decisionGatePark: true,
-          })
-        : opts.familyStopSummary({
-            status: "failed",
-            familyBase: opts.familyBase,
-            familyHead,
-            children: cargo,
-            escalationReason:
-              opts.escalation.reason ?? "family escalation is not answered",
-          }));
+      opts.familyStopSummary({
+        status: "failed",
+        familyBase: opts.familyBase,
+        familyHead,
+        children,
+        escalationReason:
+          opts.escalation.reason ?? "family escalation is not answered",
+      });
     emitExitProgress({
       epic: opts.epicIssue,
-      status: publicStatus,
+      status: "failed",
       stopReason: stopSummary.reason,
       gateSummary: stopSummary.summary,
     });
-    if (publicStatus === "failed") {
-      return failedFamilyResult({
-        cause: "runner_internal_error",
+    return failedFamilyResult({
+      cause: "child_execution_failed",
+      familyBase: opts.familyBase,
+      ...(familyHead !== undefined ? { familyHead } : {}),
+      escalation: {
+        reason: opts.escalation.reason ?? "family escalation is not answered",
+        diagnosis:
+          opts.escalation.escalationKind === "failure"
+            ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
+            : "Prior family decision was recorded with a failed terminal; re-feed does not re-park.",
+      },
+      stopSummary,
+      children,
+    });
+  }
+
+  // Pure decision park: prefer cargo when present; else normalize live parks.
+  if (opts.escalation.terminalChildren !== undefined) {
+    const children = parseTerminalChildrenCargo(
+      opts.escalation.terminalChildren,
+      "replay prior family decision park",
+    );
+    const stopSummary =
+      opts.escalation.stopSummary ??
+      opts.familyStopSummary({
+        status: "parked",
         familyBase: opts.familyBase,
-        ...(familyHead !== undefined ? { familyHead } : {}),
-        escalation: {
-          reason:
-            opts.escalation.reason ?? "family escalation is not answered",
-          diagnosis:
-            opts.escalation.escalationKind === "failure"
-              ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-              : "Prior family decision was recorded with a failed terminal; re-feed does not re-park.",
-        },
-        stopSummary,
-        children: cargo,
+        familyHead,
+        children,
+        escalationReason:
+          opts.escalation.reason ?? "family escalation is not answered",
+        decisionGatePark: true,
       });
-    }
+    emitExitProgress({
+      epic: opts.epicIssue,
+      status: "parked",
+      stopReason: stopSummary.reason,
+      gateSummary: stopSummary.summary,
+    });
     return {
       status: "parked",
       familyBase: opts.familyBase,
@@ -794,13 +893,10 @@ export async function replayPriorFamilyEscalation(opts: {
           "Prior family decision escalation has no later valid escalation_answered ledger event.",
       },
       stopSummary,
-      children: cargo,
+      children,
     };
   }
 
-  // No durable cargo — normalize from live ledger (parks preserved; missing
-  // failed children may residual-skip; callers that need full cargo must have
-  // written trackedStatus on first terminal).
   return await finalizeFamilyTerminal({
     familyBackend: opts.familyBackend,
     epic: opts.epic,
@@ -809,37 +905,16 @@ export async function replayPriorFamilyEscalation(opts: {
     familyHead,
     recordedResults: [],
     familyStopSummary: opts.familyStopSummary,
-    intent:
-      publicStatus === "parked"
-        ? {
-            kind: "parked",
-            parkReason: "decision_gate_park",
-            escalationReason:
-              opts.escalation.reason ?? "family escalation is not answered",
-            escalation: {
-              reason:
-                opts.escalation.reason ?? "family escalation is not answered",
-              diagnosis:
-                "Prior family decision escalation has no later valid escalation_answered ledger event.",
-            },
-          }
-        : {
-            kind: "failed",
-            cause: "runner_internal_error",
-            escalationReason:
-              opts.escalation.reason ?? "family escalation is not answered",
-            escalation: {
-              reason:
-                opts.escalation.reason ?? "family escalation is not answered",
-              diagnosis:
-                opts.escalation.escalationKind === "failure"
-                  ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-                  : "Prior family decision was recorded with a failed terminal; re-feed does not re-park.",
-            },
-          },
+    intent: {
+      kind: "parked",
+      parkReason: "decision_gate_park",
+      escalationReason:
+        opts.escalation.reason ?? "family escalation is not answered",
+      escalation: {
+        reason: opts.escalation.reason ?? "family escalation is not answered",
+        diagnosis:
+          "Prior family decision escalation has no later valid escalation_answered ledger event.",
+      },
+    },
   });
 }
-
-// silence unused import if isValidChildDecisionParked not used
-void isValidChildDecisionParked;
-void infraFailureStopSummary;

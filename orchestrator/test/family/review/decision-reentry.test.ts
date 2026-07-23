@@ -147,6 +147,11 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
         escalationKind: "failure",
         reason: "family repair failed after exhausting retries",
         familyHeadAfter: "family-head-1",
+        terminalChildren: [{ issue: 11, status: "skipped" }],
+        stopSummary: {
+          reason: "infra_failure",
+          summary: "family repair failed after exhausting retries",
+        },
       } as FamilyLedgerEntry,
     ]);
 

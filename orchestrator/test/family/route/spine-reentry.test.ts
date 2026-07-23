@@ -276,6 +276,8 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         phase: "final",
         reason: "family base diverged from ledger",
         escalationKind: "failure",
+        // #1125 schema A — durable failure authority carries terminalChildren
+        terminalChildren: [{ issue: 10, status: "skipped" }],
       },
       {
         status: "escalation_answered",

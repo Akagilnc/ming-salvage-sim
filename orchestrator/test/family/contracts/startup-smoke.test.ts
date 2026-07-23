@@ -81,7 +81,18 @@ describe("family startup smoke gate (#685)", () => {
       async readFamilyLedger() {
         return [
           ...entries,
-          { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" },
+          {
+            status: "escalated",
+            event: "escalated",
+            escalationKind: "failure",
+            reason: "test stop",
+            // #1125 schema A — durable failure authority carries terminalChildren
+            terminalChildren: [{ issue: 847, status: "skipped" }],
+            stopSummary: {
+              reason: "infra_failure",
+              summary: "test stop",
+            },
+          },
         ];
       },
       async runFamilyVerify() { throw new Error("must not verify"); },
@@ -121,7 +132,17 @@ describe("family startup smoke gate (#685)", () => {
       async resolveMergeConflict() { throw new Error("must not resolve"); },
       async appendFamilyLedger(entry) { entries.push(entry); },
       async readFamilyLedger() {
-        return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];
+        return [
+          ...entries,
+          {
+            status: "escalated",
+            event: "escalated",
+            escalationKind: "failure",
+            reason: "test stop",
+            terminalChildren: [{ issue: 847, status: "skipped" }],
+            stopSummary: { reason: "infra_failure", summary: "test stop" },
+          },
+        ];
       },
       async runFamilyVerify() { throw new Error("must not verify"); },
     };

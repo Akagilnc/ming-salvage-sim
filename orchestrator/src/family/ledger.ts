@@ -230,6 +230,10 @@ export interface FamilyEscalatedRecord {
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** #1125 schema A — durable terminal children cargo. */
+  readonly terminalChildren?: ReadonlyArray<
+    import("./types.js").FamilyChildResult
+  >;
 }
 
 /** A PHASE-LEVEL append-only answer to a prior family decision escalation (#439). */
@@ -552,6 +556,8 @@ export async function recordFamilyEscalated(
               }
             : {}),
         }),
+      // #1125 schema A
+      terminalChildren: record.terminalChildren,
     }) as FamilyLedgerEntry,
   );
 }

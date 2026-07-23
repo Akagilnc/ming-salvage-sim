@@ -2768,26 +2768,15 @@ export async function runFamily(
       issues: ran.map((r) => r.issue),
     });
 
-    // ── #604 slice 5: a CHILD decision escalation PARKS the family (stop-wave) ───
-    // A child that returned `"escalated"` hit a product/design题. Record an
-    // INDEPENDENT `child_decision_parked` ledger row (bound to childIssue, carrying the
-    // child's sessionId for 原地 resume) and STOP: do NOT run the wave barrier or
-    // select a next wave (sub-decision ②). The `"ran"` siblings this wave already
-    // merged above stay durable; the un-answered child pauses the whole family
-    // until a later `escalation_answered` row reopens it (退出-重入, ADR 0062). The
-    // failure bucket never reaches here — runChild returned `"failed"` for it.
+    // ── #604 / #1125: child decision park records cargo but does NOT stop the
+    // family loop. Peers unblocked by merged siblings enter later waves.
+    // Terminal aggregation is sole finalizer after the wave loop ends.
     const escalatedChildren = ran.filter(
       (r): r is FamilyChildResult & { escalation: FamilyChildEscalation } =>
         r.status === "escalated" && r.escalation !== undefined,
     );
     if (escalatedChildren.length > 0) {
-      // #604 correctness r1 (P1-a ②): A-class failure优先于 B-class family park.
-      // A wave can carry BOTH a real `failed` child and a decision-escalated
-      // child. Do NOT finalize as decision_gate_park when a genuine failure
-      // exists (that would mask A-class incomplete). #1019: STILL durable-write
-      // `child_decision_parked` for escalated siblings so a later human answer
-      // can re-open them (flight5 #991/#992 had answers but no park rows).
-      const hasRealFailure = ran.some((r) => r.status === "failed");
+      // #1019: STILL durable-write child_decision_parked for answer re-open.
       for (const child of escalatedChildren) {
         await recordChildDecisionParked(familyBackend, {
           childIssue: child.issue,
@@ -2798,12 +2787,14 @@ export async function runFamily(
             : {}),
           ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
         });
+        // Exclude from further wave dispatch this invocation.
+        stillUnanswered.add(child.issue);
       }
-      if (!hasRealFailure) {
-        return await finalizeDecisionPark(escalatedChildren[0]!, childResults);
+      // A-class failure still fail-fasts (does not continue next waves).
+      if (ran.some((r) => r.status === "failed")) {
+        return await finalize();
       }
-      // A real failure is present: parks recorded above; finalize incomplete.
-      return await finalize();
+      // Park-only: continue wave barrier / next wave selection.
     }
 
     // ── verify-cmr hook: per-wave barrier (default = real runVerifyCmr) ────────
@@ -2913,7 +2904,7 @@ export async function runFamily(
           intent: {
             kind: "auto",
             residualSkipReason: "unanswered_sibling_park_residual",
-            durableFailure: unansweredNow.length > 0 && hasFailed,
+            persistFailureWithParks: unansweredNow.length > 0 && hasFailed,
           },
         }),
       );
