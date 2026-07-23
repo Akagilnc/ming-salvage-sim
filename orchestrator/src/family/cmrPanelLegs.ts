@@ -222,6 +222,14 @@ export function hasValidPanelLegTransports(
   return successfulLegsFromTransports(transports).length > 0;
 }
 
+/** Current court scope for durable panel-evidence identity (#1118 / #1119). */
+export type PanelLegEvidenceScope = {
+  readonly familyHeadAfter?: string;
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
+  readonly routeFingerprint: string;
+  readonly courtGeneration: number;
+};
+
 /**
  * Normalize landing/ctx/durable transport cargo into {@link LegTransport} rows.
  * Invalid rows are dropped (never invent legal paper).
@@ -250,6 +258,174 @@ export function normalizePanelLegTransportCargo(
     });
   }
   return out;
+}
+
+/**
+ * Normalize host skip rows into {@link CmrSkippedLeg}. Invalid rows dropped.
+ */
+export function normalizePanelLegSkippedCargo(
+  rows:
+    | ReadonlyArray<{
+        readonly slug?: unknown;
+        readonly reason?: unknown;
+      }>
+    | undefined
+    | null,
+): CmrSkippedLeg[] {
+  if (rows === undefined || rows === null || rows.length === 0) return [];
+  const out: CmrSkippedLeg[] = [];
+  for (const row of rows) {
+    if (typeof row.slug !== "string" || row.slug.trim().length === 0) continue;
+    if (typeof row.reason !== "string" || row.reason.trim().length === 0) continue;
+    out.push({ slug: row.slug.trim(), reason: row.reason.trim() });
+  }
+  return out;
+}
+
+/**
+ * Shape-safe parse of durable panel-leg evidence JSON.
+ * Malformed / wrong-shape → undefined (treat as no reusable evidence; fan-out).
+ * Never bare-casts arrays that callers later `.map`.
+ */
+export function parseFamilyPanelLegEvidence(
+  value: unknown,
+):
+  | {
+      readonly familyHeadAfter?: string;
+      readonly ledgerPhase?: "final" | "correctness_checkpoint";
+      readonly routeFingerprint?: string;
+      readonly courtGeneration?: number;
+      readonly panelLegTransports?: ReadonlyArray<LegTransport>;
+      readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
+    }
+  | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const rec = value as Record<string, unknown>;
+  const familyHeadAfter =
+    typeof rec.familyHeadAfter === "string" && rec.familyHeadAfter.trim().length > 0
+      ? rec.familyHeadAfter.trim()
+      : undefined;
+  const ledgerPhase =
+    rec.ledgerPhase === "final" || rec.ledgerPhase === "correctness_checkpoint"
+      ? rec.ledgerPhase
+      : undefined;
+  const routeFingerprint =
+    typeof rec.routeFingerprint === "string" && rec.routeFingerprint.length > 0
+      ? rec.routeFingerprint
+      : undefined;
+  const courtGeneration =
+    typeof rec.courtGeneration === "number" &&
+    Number.isFinite(rec.courtGeneration) &&
+    rec.courtGeneration >= 0
+      ? Math.floor(rec.courtGeneration)
+      : undefined;
+  // Wrong-type transports/skips (object, number, string) → treat as absent,
+  // not as cast-array-that-throws on .map.
+  const panelLegTransports = Array.isArray(rec.panelLegTransports)
+    ? normalizePanelLegTransportCargo(rec.panelLegTransports)
+    : undefined;
+  const panelLegSkippedLegs = Array.isArray(rec.panelLegSkippedLegs)
+    ? normalizePanelLegSkippedCargo(rec.panelLegSkippedLegs)
+    : undefined;
+  // Require at least one known field so garbage objects do not pass as evidence.
+  if (
+    familyHeadAfter === undefined &&
+    ledgerPhase === undefined &&
+    routeFingerprint === undefined &&
+    courtGeneration === undefined &&
+    panelLegTransports === undefined &&
+    panelLegSkippedLegs === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
+    ...(ledgerPhase !== undefined ? { ledgerPhase } : {}),
+    ...(routeFingerprint !== undefined ? { routeFingerprint } : {}),
+    ...(courtGeneration !== undefined ? { courtGeneration } : {}),
+    ...(panelLegTransports !== undefined && panelLegTransports.length > 0
+      ? { panelLegTransports }
+      : {}),
+    ...(panelLegSkippedLegs !== undefined && panelLegSkippedLegs.length > 0
+      ? { panelLegSkippedLegs }
+      : {}),
+  };
+}
+
+/**
+ * Durable evidence is admissible only when full court identity matches
+ * (head + barrier phase + route/leg fingerprint + generation) AND transports
+ * contain legal paper. Missing identity fields fail closed (no silent reuse).
+ */
+export function admissibleDurablePanelLegTransports(
+  evidence:
+    | {
+        readonly familyHeadAfter?: string;
+        readonly ledgerPhase?: string;
+        readonly routeFingerprint?: string;
+        readonly courtGeneration?: number;
+        readonly panelLegTransports?: ReadonlyArray<{
+          readonly slug?: unknown;
+          readonly exitCode?: unknown;
+          readonly stdout?: unknown;
+        }>;
+      }
+    | undefined
+    | null,
+  scope: PanelLegEvidenceScope,
+): ReadonlyArray<LegTransport> | undefined {
+  if (evidence === undefined || evidence === null) return undefined;
+  const durableHead =
+    typeof evidence.familyHeadAfter === "string"
+      ? evidence.familyHeadAfter.trim()
+      : "";
+  const currentHead =
+    typeof scope.familyHeadAfter === "string"
+      ? scope.familyHeadAfter.trim()
+      : "";
+  if (durableHead.length === 0 || currentHead.length === 0) return undefined;
+  if (durableHead !== currentHead) return undefined;
+  if (evidence.ledgerPhase !== scope.ledgerPhase) return undefined;
+  if (
+    typeof evidence.routeFingerprint !== "string" ||
+    evidence.routeFingerprint.length === 0 ||
+    evidence.routeFingerprint !== scope.routeFingerprint
+  ) {
+    return undefined;
+  }
+  if (
+    typeof evidence.courtGeneration !== "number" ||
+    !Number.isFinite(evidence.courtGeneration) ||
+    evidence.courtGeneration !== scope.courtGeneration
+  ) {
+    return undefined;
+  }
+  const transports = normalizePanelLegTransportCargo(
+    evidence.panelLegTransports,
+  );
+  if (!hasValidPanelLegTransports(transports)) return undefined;
+  return transports;
+}
+
+/**
+ * Active court generation from durable evidence (0 when absent).
+ * Builder soft-accept advances this; outer-gate writes stamp the same gen.
+ */
+export function courtGenerationFromDurableEvidence(
+  evidence: { readonly courtGeneration?: number } | undefined | null,
+): number {
+  if (
+    evidence !== undefined &&
+    evidence !== null &&
+    typeof evidence.courtGeneration === "number" &&
+    Number.isFinite(evidence.courtGeneration) &&
+    evidence.courtGeneration >= 0
+  ) {
+    return Math.floor(evidence.courtGeneration);
+  }
+  return 0;
 }
 
 /**

@@ -1,20 +1,19 @@
 /**
  * #1117 / #1118 — integrated court resume re-dispatches fresh panel legs.
  *
- * Load-bearing cases enter through runFamily (production spine) or
- * cmrSandboxConfig (real backend mount path). Durable cargo owner =
- * FamilyBackend.read/writeFamilyPanelLegEvidence — not optional
- * VerifyCmrInput test seams.
+ * Load-bearing cases enter through runFamily (production spine). Durable cargo
+ * owner = FamilyBackend.read/writeFamilyPanelLegEvidence with full court
+ * identity (phase + route fingerprint + generation + HEAD).
  *
  * Authority: #1118 AC; ADR 0130/0132/0141/0147.
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
+import { parseFamilyPanelLegEvidence } from "../../../src/family/cmrPanelLegs.js";
 import type {
   FamilyBackend,
   FamilyEpic,
@@ -42,6 +41,10 @@ import {
 } from "../../helpers/cmr-panel-leg-dispatch.js";
 import { completedJudge, judgeConverged } from "../../helpers/judge-fixtures.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import {
+  modelRouteFingerprint,
+  resolveActiveModelRoute,
+} from "../../../src/modelRoutes.js";
 
 const LEGAL_PANEL_STDOUT =
   "fixture panel leg review prose for ADR 0141 legal paper body.\n## Findings\nnone";
@@ -50,6 +53,30 @@ const EPIC: FamilyEpic = {
   issue: 1117,
   children: [{ issue: 1118, blockedBy: [] }],
 };
+
+function defaultRouteFingerprint(): string {
+  return modelRouteFingerprint(resolveActiveModelRoute());
+}
+
+function legalTransports(stdout: string = LEGAL_PANEL_STDOUT) {
+  return [
+    { slug: "gpt-5.6-sol", exitCode: 0, stdout },
+    { slug: "grok-4.5", exitCode: 0, stdout },
+  ];
+}
+
+function fullIdentityEvidence(
+  overrides: Partial<FamilyPanelLegEvidence> = {},
+): FamilyPanelLegEvidence {
+  return {
+    familyHeadAfter: FAMILY_HEAD,
+    ledgerPhase: "final",
+    routeFingerprint: defaultRouteFingerprint(),
+    courtGeneration: 0,
+    panelLegTransports: legalTransports(),
+    ...overrides,
+  };
+}
 
 /** Minimal child backend — children already merged; smoke only. */
 class ChildSmokeBackend implements Backend {
@@ -261,6 +288,16 @@ function parkLedger(familyHead: string): FamilyLedgerEntry[] {
   ];
 }
 
+function mergedOnlyLedger(): FamilyLedgerEntry[] {
+  return [
+    {
+      childIssue: 1118,
+      status: "merged",
+      childBranch: "feat/issue-1118",
+    },
+  ];
+}
+
 describe("#1118 runFamily resume panel evidence", () => {
   it("negative: empty durable + escalation answer → panel legs fan-out; judge gets transports", async () => {
     const backend = new ResumeSpineFamilyBackend({
@@ -279,44 +316,26 @@ describe("#1118 runFamily resume panel evidence", () => {
     for (const landing of backend.judgeLandings) {
       expect(landing?.panelLegTransports?.length).toBeGreaterThan(0);
     }
-    // Durable cargo written by production path (not test-injected VerifyCmrInput).
     const durable = backend.readFamilyPanelLegEvidence("completeness");
     expect(durable?.panelLegTransports?.length).toBeGreaterThan(0);
     expect(durable?.familyHeadAfter).toBe(FAMILY_HEAD);
+    expect(durable?.ledgerPhase).toBe("final");
+    expect(durable?.routeFingerprint).toBe(defaultRouteFingerprint());
   });
 
-  it("control: durable valid transports at same head → zero panel reburn; judge gets original 卷面", async () => {
-    const priorTransports = [
-      {
-        slug: "gpt-5.6-sol",
-        exitCode: 0,
-        stdout: "PRIOR durable completeness panel paper\n## Findings\nnone",
-      },
-      {
-        slug: "grok-4.5",
-        exitCode: 0,
-        stdout: "PRIOR durable completeness panel paper\n## Findings\nnone",
-      },
-    ];
-    // Park without escalation_answered so resume does not force reburn —
-    // control case is "landing already has valid transports".
+  it("control: full court identity match → zero panel reburn; judge gets original 卷面", async () => {
+    const priorTransports = legalTransports(
+      "PRIOR durable completeness panel paper\n## Findings\nnone",
+    );
     const backend = new ResumeSpineFamilyBackend({
-      seedLedger: [
-        {
-          childIssue: 1118,
-          status: "merged",
-          childBranch: "feat/issue-1118",
-        },
-      ],
+      seedLedger: mergedOnlyLedger(),
       seedEvidence: {
-        completeness: {
-          familyHeadAfter: FAMILY_HEAD,
+        completeness: fullIdentityEvidence({
           panelLegTransports: priorTransports,
-        },
-        correctness: {
-          familyHeadAfter: FAMILY_HEAD,
+        }),
+        correctness: fullIdentityEvidence({
           panelLegTransports: priorTransports,
-        },
+        }),
       },
     });
     await runFamily({
@@ -325,7 +344,6 @@ describe("#1118 runFamily resume panel evidence", () => {
       singleSliceBackend: new ChildSmokeBackend(),
       familyBase: "family/1118-no-reburn",
     });
-    // Both courts must reuse durable same-head transports (no reburn).
     expect(backend.panelDispatches).toEqual([]);
     expect(backend.judgeLandings.length).toBeGreaterThan(0);
     for (const landing of backend.judgeLandings) {
@@ -333,28 +351,77 @@ describe("#1118 runFamily resume panel evidence", () => {
     }
   });
 
-  it("stale durable head → reburn (never re-stamp old cargo as current head)", async () => {
-    const staleTransports = [
-      {
-        slug: "gpt-5.6-sol",
-        exitCode: 0,
-        stdout: "STALE head paper must not be reused\n## Findings\nnone",
-      },
-    ];
-    // No escalationAnswer — head provenance alone must reject stale cargo.
+  it("P1: checkpoint-scoped durable must not free-skip final (same HEAD)", async () => {
+    const checkpointPaper = legalTransports(
+      "CHECKPOINT-only correctness paper — must not serve final",
+    );
     const backend = new ResumeSpineFamilyBackend({
-      seedLedger: [
-        {
-          childIssue: 1118,
-          status: "merged",
-          childBranch: "feat/issue-1118",
-        },
-      ],
+      seedLedger: mergedOnlyLedger(),
       seedEvidence: {
-        completeness: {
+        // Completeness has no durable → will fan-out (ok).
+        // Correctness seeded as checkpoint-only at same HEAD → final must reburn.
+        correctness: fullIdentityEvidence({
+          ledgerPhase: "correctness_checkpoint",
+          panelLegTransports: checkpointPaper,
+        }),
+      },
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-checkpoint-vs-final",
+    });
+    expect(
+      backend.panelDispatches.filter((s) => s.startsWith("correctness:")).length,
+    ).toBeGreaterThan(0);
+    const correctnessLanding = backend.judgeLandings.find((l) =>
+      l?.panelLegTransports?.some((t) => t.slug === "gpt-5.6-sol"),
+    );
+    // Must not hand the pure court the checkpoint-only paper.
+    expect(correctnessLanding?.panelLegTransports).not.toEqual(checkpointPaper);
+  });
+
+  it("P1: same HEAD but route/legs fingerprint mismatch → fresh reburn", async () => {
+    const staleRosterPaper = legalTransports(
+      "OLD-roster paper — slug set no longer matches route",
+    );
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: mergedOnlyLedger(),
+      seedEvidence: {
+        completeness: fullIdentityEvidence({
+          routeFingerprint: "stale-route-fingerprint-not-current",
+          panelLegTransports: staleRosterPaper,
+        }),
+        correctness: fullIdentityEvidence({
+          routeFingerprint: "stale-route-fingerprint-not-current",
+          panelLegTransports: staleRosterPaper,
+        }),
+      },
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-roster-mismatch",
+    });
+    expect(backend.panelDispatches.length).toBeGreaterThan(0);
+    for (const landing of backend.judgeLandings) {
+      expect(landing?.panelLegTransports).not.toEqual(staleRosterPaper);
+    }
+  });
+
+  it("stale durable head → reburn (never re-stamp old cargo as current head)", async () => {
+    const staleTransports = legalTransports(
+      "STALE head paper must not be reused\n## Findings\nnone",
+    );
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: mergedOnlyLedger(),
+      seedEvidence: {
+        completeness: fullIdentityEvidence({
           familyHeadAfter: "head-old-stale",
           panelLegTransports: staleTransports,
-        },
+        }),
       },
     });
     await runFamily({
@@ -370,21 +437,13 @@ describe("#1118 runFamily resume panel evidence", () => {
     const completenessLanding = backend.judgeLandings[0];
     expect(completenessLanding?.panelLegTransports).not.toEqual(staleTransports);
     const durable = backend.readFamilyPanelLegEvidence("completeness");
-    // Production rewrite carries the CURRENT head, not the stale one.
     expect(durable?.familyHeadAfter).toBe(FAMILY_HEAD);
   });
 
   it("negative: all legs fail → skip reasons land on pure court (zero silent empty)", async () => {
-    // #1118: zero-success still opens pure judge with skip reasons (ADR 0132
-    // JudgeVerdictStatus sole closer) — not a runner early-park before judge.
+    // #1118: zero-success still opens pure judge with skip reasons (ADR 0132).
     const backend = new ResumeSpineFamilyBackend({
-      seedLedger: [
-        {
-          childIssue: 1118,
-          status: "merged",
-          childBranch: "feat/issue-1118",
-        },
-      ],
+      seedLedger: mergedOnlyLedger(),
       failAllPanelLegs: true,
     });
     await runFamily({
@@ -394,7 +453,6 @@ describe("#1118 runFamily resume panel evidence", () => {
       familyBase: "family/1118-zero-legs",
     });
     expect(backend.panelDispatches.length).toBeGreaterThan(0);
-    // Pure court still opens; skip reasons visible on landing + durable.
     expect(backend.judgeLandings.length).toBeGreaterThan(0);
     const withSkips = backend.judgeLandings.find(
       (l) => (l?.panelLegSkippedLegs?.length ?? 0) > 0,
@@ -410,71 +468,66 @@ describe("#1118 runFamily resume panel evidence", () => {
     ).toBe(true);
     const durable = backend.readFamilyPanelLegEvidence("completeness");
     expect(durable?.panelLegSkippedLegs?.length).toBeGreaterThan(0);
+    expect(durable?.ledgerPhase).toBe("final");
+    expect(durable?.routeFingerprint).toBe(defaultRouteFingerprint());
   });
 });
 
-describe("#1118 cmrSandboxConfig fix-findings env + readonly bind mount", () => {
-  it("sets ORCHESTRATOR_FIX_FINDINGS_PATH and mounts the file readonly", async () => {
-    const { RealFamilyBackend } = await import(
-      "../../../src/family/realFamilyBackend.js"
-    );
-    const { SANDBOX_FIX_FINDINGS_PATH_ENV } = await import(
-      "../../../src/realBackend.js"
-    );
-    const { cmrWorkerSpec } = await import(
-      "../../../src/family/dispatchFamilyWorker.js"
-    );
+describe("#1118 RealFamilyBackend durable evidence shape-safe parse", () => {
+  it("malformed / wrong-shape sidecar → undefined (fan-out), never throw on .map", async () => {
+    const { RealFamilyBackend, FAMILY_PANEL_LEG_EVIDENCE_PREFIX } =
+      await import("../../../src/family/realFamilyBackend.js");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname } = await import("node:path");
     const here = dirname(fileURLToPath(import.meta.url));
-    const soulsDir = join(here, "..", "..", "..", "image", "souls");
     const promptsDir = join(here, "..", "..", "..", "prompts");
-
-    class ConfigBackend extends RealFamilyBackend {
-      public config(fixFindings: {
-        path: string;
-        sandboxPath: string;
-      }): {
-        env: Record<string, string>;
-        mounts: ReadonlyArray<{
-          hostPath: string;
-          sandboxPath: string;
-          readonly?: boolean;
-        }>;
-      } {
-        return this.cmrSandboxConfig(
-          { codexAuthDir: "/tmp/cmr-codex-auth-1118" },
-          cmrWorkerSpec(),
-          undefined,
-          undefined,
-          fixFindings,
-        );
-      }
-    }
-
+    const soulsDir = join(here, "..", "..", "..", "image", "souls");
+    const ledgerDir = mkdtempSync(join(tmpdir(), "cmr-1118-ledger-"));
     const workingRepo = mkdtempSync(join(tmpdir(), "cmr-1118-repo-"));
-    const fixPath = join(workingRepo, ".orchestrator-fix-findings.json");
-    writeFileSync(fixPath, "{}\n", "utf8");
-    const backend = new ConfigBackend({
+    const backend = new RealFamilyBackend({
       workingRepo,
-      familyBase: "family/1118-sandbox",
-      ledgerDir: mkdtempSync(join(tmpdir(), "cmr-1118-ledger-")),
+      familyBase: "family/1118-parse",
+      ledgerDir,
       repo: "Akagilnc/ming-salvage-sim",
       base: "main",
       promptsDir,
       soulsDir,
       imageName: "ming-orchestrator-coder:latest",
     });
-    const cfg = backend.config({
-      path: fixPath,
-      sandboxPath: ".orchestrator-fix-findings.json",
+
+    // Wrong-shape: panelLegTransports is an object, not an array.
+    const path = join(
+      ledgerDir,
+      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-completeness.json`,
+    );
+    writeFileSync(
+      path,
+      JSON.stringify({
+        familyHeadAfter: FAMILY_HEAD,
+        ledgerPhase: "final",
+        routeFingerprint: "x",
+        courtGeneration: 0,
+        panelLegTransports: { slug: "not-an-array" },
+      }) + "\n",
+      "utf8",
+    );
+    const evidence = await backend.readFamilyPanelLegEvidence("completeness");
+    // Shape-safe: returns parsed identity without inventing a cast array.
+    expect(evidence?.panelLegTransports).toBeUndefined();
+    // Pure parser rejects non-object garbage.
+    expect(parseFamilyPanelLegEvidence(null)).toBeUndefined();
+    expect(parseFamilyPanelLegEvidence("not-json-object")).toBeUndefined();
+    expect(parseFamilyPanelLegEvidence([])).toBeUndefined();
+    // Wrong-type transports array elements are dropped; no throw.
+    const partial = parseFamilyPanelLegEvidence({
+      familyHeadAfter: FAMILY_HEAD,
+      panelLegTransports: [
+        { slug: "ok", exitCode: 0, stdout: "paper" },
+        { slug: 1, exitCode: "x" },
+      ],
     });
-    expect(cfg.env[SANDBOX_FIX_FINDINGS_PATH_ENV]).toBe(
-      ".orchestrator-fix-findings.json",
-    );
-    const mount = cfg.mounts.find(
-      (m) => m.sandboxPath === ".orchestrator-fix-findings.json",
-    );
-    expect(mount).toBeDefined();
-    expect(mount?.hostPath).toBe(fixPath);
-    expect(mount?.readonly).toBe(true);
+    expect(partial?.panelLegTransports).toEqual([
+      { slug: "ok", exitCode: 0, stdout: "paper" },
+    ]);
   });
 });

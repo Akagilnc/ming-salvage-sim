@@ -13,10 +13,12 @@
  * #294–#298 fill behaviour in, not re-shape these.
  */
 
+import type { LegTransport } from "../legPaper.js";
 import type {
   Backend,
   CleanupResult,
   CliMonitorSpawnSpec,
+  CmrSkippedLeg,
   DispatchContext,
   Escalation,
   EscalationAnswerPayload,
@@ -52,20 +54,28 @@ export type IntegratedCmrPass = "completeness" | "correctness";
 
 /**
  * #1118 / #1119 — durable panel-leg 卷面 under ledgerDir (pass-keyed).
- * Production cargo owner for "valid transports → no reburn"; head-scoped so
- * stale cargo for a prior head never masquerades as the current opening.
+ * Production cargo owner for "valid transports → no reburn".
+ *
+ * Court-generation scoped (not HEAD-only): reuse requires matching
+ * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, plus
+ * legal transports. Checkpoint evidence must not satisfy final; route/leg
+ * roster changes force reburn; builder soft-accept advances generation.
  */
 export type FamilyPanelLegEvidence = {
   readonly familyHeadAfter?: string;
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
+  /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
+  readonly ledgerPhase?: "final" | "correctness_checkpoint";
+  /** Route + declared-leg roster fingerprint ({@link modelRouteFingerprint}). */
+  readonly routeFingerprint?: string;
+  /**
+   * Court evidence generation. Cold resume of the same generation may no-reburn;
+   * builder-beat soft-accept advances generation so the outer gate reburns.
+   */
+  readonly courtGeneration?: number;
+  /** Sole transport row type: {@link LegTransport} (ADR 0141). */
+  readonly panelLegTransports?: ReadonlyArray<LegTransport>;
+  /** Sole skip row type: {@link CmrSkippedLeg}. */
+  readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
 };
 
 // ─────────────────────────── child slice ───────────────────────────

@@ -924,15 +924,22 @@ describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-
     public config(
       auth: CmrAuth,
       spec: ReturnType<typeof cmrWorkerSpec> = cmrWorkerSpec(),
+      fixFindingsLanding?: { path: string; sandboxPath: string },
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      return this.cmrSandboxConfig(auth, {
-        model: spec.model,
-        host: spec.host,
-      });
+      return this.cmrSandboxConfig(
+        auth,
+        {
+          model: spec.model,
+          host: spec.host,
+        },
+        undefined,
+        undefined,
+        fixFindingsLanding,
+      );
     }
   }
 
@@ -1015,6 +1022,27 @@ describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-
     const cfg = cfgBackend().config(auth);
     expect(cfg.env.OPENCLAW_SESSION).toBe("1");
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
+  });
+
+  it("#1118: fix-findings landing sets ORCHESTRATOR_FIX_FINDINGS_PATH + readonly mount", async () => {
+    const { SANDBOX_FIX_FINDINGS_PATH_ENV } = await import(
+      "../../../src/realBackend.js"
+    );
+    const fixPath = join(mkDir("cmr-fix-findings-"), ".orchestrator-fix-findings.json");
+    writeFileSync(fixPath, "{}\n", "utf8");
+    const cfg = cfgBackend().config(auth, cmrWorkerSpec(), {
+      path: fixPath,
+      sandboxPath: ".orchestrator-fix-findings.json",
+    });
+    expect(cfg.env[SANDBOX_FIX_FINDINGS_PATH_ENV]).toBe(
+      ".orchestrator-fix-findings.json",
+    );
+    const mount = cfg.mounts.find(
+      (m) => m.sandboxPath === ".orchestrator-fix-findings.json",
+    );
+    expect(mount).toBeDefined();
+    expect(mount?.hostPath).toBe(fixPath);
+    expect(mount?.readonly).toBe(true);
   });
 
 });

@@ -107,6 +107,7 @@ import {
   CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE,
   CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE,
   panelLegCompletedResult,
+  parseFamilyPanelLegEvidence,
 } from "./cmrPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
@@ -664,9 +665,9 @@ export class RealFamilyBackend implements FamilyBackend {
       );
     }
     try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed === null || typeof parsed !== "object") return undefined;
-      return parsed as FamilyPanelLegEvidence;
+      // Shape-safe parse — wrong-shape sidecar is "no reusable evidence",
+      // never a bare cast that later throws on .map (CLAUDE type-escape hatch).
+      return parseFamilyPanelLegEvidence(JSON.parse(raw) as unknown);
     } catch {
       return undefined;
     }
