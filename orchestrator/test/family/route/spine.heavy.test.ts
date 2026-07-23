@@ -284,6 +284,10 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         escalationKind: "failure",
         reason: "terminal review infrastructure failure",
         familyHeadAfter: "family-base-0",
+        // #1125 schema A — durable failure authority carries terminalChildren
+        terminalChildren: [
+          { issue: 10, status: "merged", branch: "feat/issue-10" },
+        ],
       },
     );
     let barrierCalls = 0;

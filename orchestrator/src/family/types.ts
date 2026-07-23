@@ -429,6 +429,12 @@ export interface FamilyLedgerEntry {
   readonly note?: string;
   /** Unified run-level/family-level stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /**
+   * #1125 schema A — strong-typed terminal children cargo on family
+   * escalated/failure authority rows. Not a generic metadata bag; exclusive
+   * durable carrier for cross-restart public children identity.
+   */
+  readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
   /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
   readonly ts?: string;
   /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
@@ -859,6 +865,11 @@ export interface FamilyEscalation {
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
+  /**
+   * #1125 schema A — terminal children cargo for durable authority + replay.
+   * Same shape as public FamilyRunResult.children.
+   */
+  readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
   /** Durable escalation semantic; every caller must declare the factual source. */
   readonly escalationKind: "decision" | "failure";
   /** Durable escalation phase; defaults to the final family gate. */

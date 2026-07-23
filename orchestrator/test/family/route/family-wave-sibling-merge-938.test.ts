@@ -18,7 +18,9 @@ import { describe, expect, it } from "vitest";
 
 import { mergeChild } from "../../../src/family/merger.js";
 import { runFamily } from "../../../src/family/runner.js";
+import { parseTerminalChildrenCargo } from "../../../src/family/terminalFinalizer.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
+import type { StopSummary } from "../../../src/stopSummary.js";
 import type {
   Backend,
   IssueMeta,
@@ -154,6 +156,9 @@ class RecordingFamilyBackend implements FamilyBackend {
         : {}),
       ...(escalation.stopSummary !== undefined
         ? { stopSummary: escalation.stopSummary }
+        : {}),
+      ...(escalation.terminalChildren !== undefined
+        ? { terminalChildren: escalation.terminalChildren }
         : {}),
     } as FamilyLedgerEntry);
   }
@@ -376,6 +381,45 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
   });
 });
 
+// ─── #1125 schema A: terminalChildren strict parse + trackedStatus isolation ─
+
+describe("#1125 schema A terminalChildren cargo", () => {
+  it("malformed / missing terminalChildren throws (ADR 0005 loud, no silent renorm)", () => {
+    expect(() =>
+      parseTerminalChildrenCargo(undefined, "test missing"),
+    ).toThrow(/terminalChildren missing/);
+    expect(() =>
+      parseTerminalChildrenCargo("not-array", "test type"),
+    ).toThrow(/must be an array/);
+    expect(() =>
+      parseTerminalChildrenCargo([{ issue: 1, status: "bogus" }], "test enum"),
+    ).toThrow(/status invalid/);
+    expect(() =>
+      parseTerminalChildrenCargo(
+        [{ issue: 1, status: "escalated" }],
+        "test esc shape",
+      ),
+    ).toThrow(/escalation required/);
+  });
+
+  it("trackedStatus on StopSummary remains git-status text only (not child cargo)", () => {
+    const stop: StopSummary = {
+      reason: "infra_failure",
+      summary: "example",
+      metadata: {
+        trackedStatus: [" M orchestrator/src/family/runner.ts"],
+      },
+    };
+    expect(stop.metadata?.trackedStatus).toEqual([
+      " M orchestrator/src/family/runner.ts",
+    ]);
+    // Cargo lives on terminalChildren, never steals trackedStatus slots.
+    expect(JSON.stringify(stop.metadata?.trackedStatus)).not.toMatch(
+      /"issue"\s*:/,
+    );
+  });
+});
+
 // ─── ID-010: trust merger worker; no host still-conflicted court / cap ───────
 
 describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
@@ -505,35 +549,85 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     );
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
 
-    // Second run: durable failure authority; backend must not re-dispatch.
-    class NoDispatchBackend extends OkChildBackend {
-      override async runStep(): Promise<StepOutput> {
-        throw new Error("dispatch forbidden on failure-authority replay");
-      }
-      override async prepareWorktree(): Promise<WorktreeHandle> {
-        throw new Error("dispatch forbidden on failure-authority replay");
-      }
-    }
-    const firstChildren = result.children;
-    const second = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic: {
-        issue: 938,
-        children: [
-          { issue: 10, blockedBy: [] },
-          { issue: 11, blockedBy: [] },
-        ],
-      },
-      familyBackend,
-      singleSliceBackend: new NoDispatchBackend(),
-      familyBase: "family/938-base",
-    });
-    expect(second.status).toBe("failed");
-    expect(second.stopSummary?.reason).not.toBe("decision_gate_park");
-    // Cargo from durable trackedStatus must match first terminal children.
-    expect(second.children.map((c) => ({ issue: c.issue, status: c.status }))).toEqual(
-      firstChildren.map((c) => ({ issue: c.issue, status: c.status })),
+    // Second run across a real persistence boundary (JSONL file, not shared mem).
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import(
+      "node:fs"
     );
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "1125-durable-replay-"));
+    const ledgerPath = join(dir, "family-ledger.jsonl");
+    try {
+      writeFileSync(
+        ledgerPath,
+        familyBackend.ledger.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      );
+      class DiskLedgerBackend implements FamilyBackend {
+        resolveLandingLiveHooks(input: {
+          prUrl: string;
+          convergedHeadOid: string;
+          familyBase: string;
+        }) {
+          return buildExplicitLandingLiveHooks({
+            prUrl: input.prUrl,
+            headOid: input.convergedHeadOid,
+            remoteBranchName: input.familyBase,
+          });
+        }
+        async mergeChildIntoFamilyBase(): Promise<MergeResult> {
+          throw new Error("no merge on replay");
+        }
+        async resolveMergeConflict(): Promise<MergeResult> {
+          throw new Error("no resolve on replay");
+        }
+        async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+          writeFileSync(ledgerPath, JSON.stringify(entry) + "\n", { flag: "a" });
+        }
+        async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+          const raw = readFileSync(ledgerPath, "utf8");
+          return raw
+            .split("\n")
+            .filter((l) => l.trim().length > 0)
+            .map((l) => JSON.parse(l) as FamilyLedgerEntry);
+        }
+        async runFamilyVerify(): Promise<{ ok: boolean }> {
+          return { ok: true };
+        }
+      }
+      class NoDispatchBackend extends OkChildBackend {
+        override async runStep(): Promise<StepOutput> {
+          throw new Error("dispatch forbidden on failure-authority replay");
+        }
+        override async prepareWorktree(): Promise<WorktreeHandle> {
+          throw new Error("dispatch forbidden on failure-authority replay");
+        }
+      }
+      const firstChildren = result.children;
+      const second = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 938,
+          children: [
+            { issue: 10, blockedBy: [] },
+            { issue: 11, blockedBy: [] },
+          ],
+        },
+        familyBackend: new DiskLedgerBackend(),
+        singleSliceBackend: new NoDispatchBackend(),
+        familyBase: "family/938-base",
+      });
+      expect(second.status).toBe("failed");
+      expect(result.status).toBe("failed");
+      expect(second.stopSummary?.reason).not.toBe("decision_gate_park");
+      if (second.status === "failed" && result.status === "failed") {
+        expect(second.cause).toBe(result.cause);
+      }
+      expect(
+        second.children.map((c) => ({ issue: c.issue, status: c.status })),
+      ).toEqual(firstChildren.map((c) => ({ issue: c.issue, status: c.status })));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {
