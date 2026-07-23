@@ -3169,7 +3169,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * runs on the driver / manual-smoke / e2e path).
    *
    * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
-   * retry cycles run there), under the WRITE (`coder`) soul (it
+   * retry cycles run there), under the dedicated WRITE (`ship`) soul (it
    * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
    * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
    * Completion is clean exit + legal sidecar / typed gate (#928); delivery cargo
@@ -3404,8 +3404,9 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors `cmrSandboxConfig`). No
-   * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
-   * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
+   * container, no I/O: a unit test asserts the mounts. The ship worker's
+   * `WorkerSpec.soul` selects the dedicated WRITE (`ship`) soul, live-mounted
+   * readonly; it commits the bump + pushes, with codex
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
    * (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
    */

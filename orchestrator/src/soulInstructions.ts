@@ -5,7 +5,7 @@ import { shellEscape } from "./shellEscape.js";
 
 export type { WorkerSoul } from "./types.js";
 export const SANDBOX_SOULS_DIR = "/home/agent/.orchestrator/souls";
-export const AGY_SOUL_RULES_FILE = "/home/agent/workspace/GEMINI.md";
+export const AGY_SOUL_RULES_FILE = "/home/agent/.gemini/GEMINI.md";
 
 const SOUL_FILE: Readonly<Record<WorkerSoul, string>> = {
   coder: "coder.md",

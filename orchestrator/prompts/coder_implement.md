@@ -3,20 +3,8 @@
 Runtime issue inputs are `ORCHESTRATOR_ISSUE_NUMBER` (or `ISSUE_NUMBER`) and
 `ORCHESTRATOR_REPO`.
 
-## Plan beat before construction (#1082 / ADR 0147)
-
-Your **first** out-beat is a **plan beat**, not implementation:
-
-1. Read landing file `.orchestrator-fix-findings.json` when present
-   (`builderBeat`, `fixPacketBody`, `builderPlanBody` are runner transports).
-2. If `builderBeat` is `"plan"` (or absent on first dispatch): emit **only**
-   proposed-cut prose — no commits. Cargo:
-   `beat:"plan"`, `planBody:"…"`, `committed:false`, `commitsAdded:0`.
-3. If `builderBeat` is `"after_plan_verdict"`: read `fixPacketBody` (judge
-   prose). 退回/索证 → re-plan (`beat:"plan"` again). 准 → construct
-   (`beat:"construct"`, then implement and commit as usual).
-4. Never start construction before a plan-phase judge `continue` has returned
-   (runner enforces this topologically; soul must not self-skip the plan beat).
+`.orchestrator-fix-findings.json`, when present, carries the runner transports
+`builderBeat`, `fixPacketBody`, and `builderPlanBody`.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
