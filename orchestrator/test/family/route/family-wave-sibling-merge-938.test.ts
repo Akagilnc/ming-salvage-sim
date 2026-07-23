@@ -85,6 +85,26 @@ class SiblingFailBackend extends OkChildBackend {
   }
 }
 
+/** Explicit S2 throw for named issues (A-class sibling failure with merger park). */
+class SiblingCrashBackend extends OkChildBackend {
+  constructor(private readonly failIssues: ReadonlySet<number>) {
+    super();
+  }
+  override async runStep(
+    spec: StepSpec,
+    worktree?: WorktreeHandle,
+  ): Promise<StepOutput> {
+    const issue =
+      worktree !== undefined
+        ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
+        : -1;
+    if (spec.id === "S2" && this.failIssues.has(issue)) {
+      throw new Error(`coder process crashed on #${issue}`);
+    }
+    return super.runStep(spec);
+  }
+}
+
 class RecordingFamilyBackend implements FamilyBackend {
   resolveLandingLiveHooks(input: {
     prUrl: string;
@@ -424,9 +444,9 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
   });
 
   it("POSITIVE: merger decision escalate attaches wave diagnostics for failed siblings", async () => {
-    // #10 decision-escalates on merge; #11 fails single-slice. Wave diagnostics
-    // for #11 are settled before the merge early-return and must ride the
-    // public escalated result (attachDiagnostics on that terminal).
+    // #10 decision-escalates on merge; #11 fails single-slice. Owner A: real
+    // sibling failure beats decision park → family failed (not decision_gate_park).
+    // Durable merger decision still written; diagnostics ride the failed terminal.
     const familyBackend = new ConflictOnceFamilyBackend(
       new Set([10]),
       false,
@@ -447,12 +467,16 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         ],
       },
       familyBackend,
-      singleSliceBackend: new SiblingFailBackend(new Set([11])),
+      singleSliceBackend: new SiblingCrashBackend(new Set([11])),
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("parked");
+    expect(result.status).toBe("failed");
+    expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
+    expect(familyBackend.escalationCalls[0]?.escalationKind).toBe("decision");
+    // Durable + public share one stopSummary object shape (reason/summary/…).
+    expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
     expect(result.diagnostics ?? []).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -461,6 +485,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         }),
       ]),
     );
+    expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {
@@ -533,6 +558,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
   it("POSITIVE: merger decision-escalate mid-wave exit keeps successful wave peer as ran (not skipped)", async () => {
     // #10 decision-escalates during merge; #11 already allSettled as ran in the
     // same wave. Early exit must drain #11 before mapping residual children.
+    // Durable stopSummary === public stopSummary (single normalize).
     const familyBackend = new ConflictOnceFamilyBackend(
       new Set([10]),
       false,
@@ -543,6 +569,17 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         phase: "wave",
       },
     );
+    // Preexisting unanswered park outside this wave's merge — must stay escalated.
+    familyBackend.ledger.push({
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      escalationKind: "decision",
+      childIssue: 12,
+      reason: "old park",
+      diagnosis: "old diagnosis",
+      sessionId: "old-sess-12",
+    } as FamilyLedgerEntry);
+
     const result = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
@@ -550,6 +587,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         children: [
           { issue: 10, blockedBy: [] },
           { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [] },
         ],
       },
       familyBackend,
@@ -559,11 +597,22 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
 
     expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
     const peer = result.children.find((c) => c.issue === 11);
     expect(peer?.status).toBe("ran");
     expect(peer?.status).not.toBe("skipped");
     expect(peer?.branch).toEqual(expect.stringMatching(/11/));
+    const oldPark = result.children.find((c) => c.issue === 12);
+    expect(oldPark?.status).toBe("escalated");
+    expect(oldPark?.escalation?.sessionId).toBe("old-sess-12");
+    // Durable + public share one stopSummary; children list on result holds cargo.
+    expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
+    expect(result.children.map((c) => ({ issue: c.issue, status: c.status }))).toEqual([
+      { issue: 10, status: "failed" },
+      { issue: 11, status: "ran" },
+      { issue: 12, status: "escalated" },
+    ]);
   });
 
   it("POSITIVE: merge-phase quota park mid-wave keeps successful wave peer as ran (not skipped)", async () => {

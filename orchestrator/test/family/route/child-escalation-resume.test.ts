@@ -1114,12 +1114,85 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
     expect(result.status).toBe("parked");
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.stopSummary?.reason).not.toBe("dependency_cycle");
-    // cause only on failed results
-    if (result.status === "failed") {
-      expect(result.cause).not.toBe("dependency_cycle");
-    }
     expect(result.children.find((c) => c.issue === 21)?.status).toBe("escalated");
     expect(result.children.find((c) => c.issue === 22)?.status).toBe("escalated");
+  });
+
+  it("quota park preserves preexisting unanswered park cargo (not skipped)", async () => {
+    // Shortest quota tracer: merge-phase QuotaWait after #10 succeeds single-slice;
+    // #11 is unanswered park. Normalizer must keep #11 escalated on quota park.
+    const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
+    class QuotaParkFamilyBackend extends FakeFamilyBackend {
+      override async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+        throw new QuotaWaitForResetError({
+          disposition: {
+            kind: "wait_for_reset",
+            pool: "zai",
+            resetAt,
+            reason: "quota limited (429); wait for reset",
+          },
+          applied: {
+            ledgerEntry: {
+              event: "quota_wait_for_reset",
+              pool: "zai",
+              resetAt: resetAt.toISOString(),
+              reason: "quota limited (429); wait for reset",
+              step: "S1",
+              workerPid: 0,
+              ts: "2026-07-14T12:00:00.000Z",
+            },
+          },
+          pool: "zai",
+        });
+      }
+    }
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new QuotaParkFamilyBackend();
+    familyBackend.ledger.push({
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      escalationKind: "decision",
+      childIssue: 11,
+      reason: "quota-old-park",
+      diagnosis: "still waiting answer",
+      sessionId: "quota-park-sess-11",
+    } as FamilyLedgerEntry);
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const result = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 1125,
+          children: [
+            { issue: 10, blockedBy: [] },
+            { issue: 11, blockedBy: [] },
+          ],
+        },
+        familyBackend,
+        singleSliceBackend,
+        familyBase: "family/1125-quota-park",
+        now: () => now,
+      });
+
+      expect(result.status).toBe("parked");
+      expect(result.stopSummary?.reason).toBe("provider_degraded");
+      const parkChild = result.children.find((c) => c.issue === 11);
+      expect(parkChild?.status).toBe("escalated");
+      expect(parkChild?.escalation?.reason).toBe("quota-old-park");
+      expect(parkChild?.escalation?.sessionId).toBe("quota-park-sess-11");
+      expect(
+        warnings.some((w) => w.includes("#11") && w.includes("skipped:")),
+      ).toBe(false);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("post-wave park prefers this-invocation familyHead over old park familyHeadAfter", async () => {
