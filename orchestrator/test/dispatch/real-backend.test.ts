@@ -506,9 +506,6 @@ describe("realBackend resolveModelSlug", () => {
       "claudeCode",
       "codex",
       "agy",
-      "copilot",
-      "cursor",
-      "pi",
       "grok",
     ]);
   });

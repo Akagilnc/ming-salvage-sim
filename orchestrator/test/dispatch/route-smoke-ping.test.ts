@@ -84,14 +84,9 @@ describe("#884 bare-ping pure helpers", () => {
     expect(barePingArgv("grok", "grok-4.5", prompt)).toMatchObject({
       file: "grok",
     });
-    // Sandcastle uses standalone `agent` binary for the cursor provider.
-    expect(barePingArgv("cursor", "composer", prompt)).toMatchObject({
-      file: "agent",
-      args: expect.arrayContaining(["-p", prompt]),
-    });
     // Never references docker / sandcastle / worktree plumbing.
     // (agy bare-ping intentionally uses --sandbox — that is the CLI flag, not docker.)
-    for (const p of ["codex", "claudeCode", "grok", "cursor"] as const) {
+    for (const p of ["codex", "claudeCode", "grok"] as const) {
       const built = barePingArgv(p, "m", prompt);
       expect(JSON.stringify(built)).not.toMatch(/docker|worktree/i);
     }
