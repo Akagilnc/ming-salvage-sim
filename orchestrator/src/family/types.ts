@@ -53,25 +53,23 @@ import type { PublicFailedCause, PublicRunResult } from "../publicResult.js";
 export type IntegratedCmrPass = "completeness" | "correctness";
 
 /**
- * #1118 / #1119 — durable panel-leg 卷面 under ledgerDir (pass-keyed).
+ * #1118 — durable panel-leg 卷面 under ledgerDir (pass-keyed).
  * Production cargo owner for "valid transports → no reburn".
  *
- * Court-generation scoped (not HEAD-only): reuse requires matching
- * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, plus
- * legal transports. Checkpoint evidence must not satisfy final; route/leg
- * roster changes force reburn; builder soft-accept advances generation.
+ * Reuse requires matching familyHeadAfter + ledgerPhase + panelLegsFingerprint
+ * (declared panel roster only) plus legal transports. Checkpoint must not
+ * satisfy final; declared panel roster change forces reburn. Builder soft-
+ * accept clears transports (no generation counter).
  */
 export type FamilyPanelLegEvidence = {
   readonly familyHeadAfter?: string;
   /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
   readonly ledgerPhase?: "final" | "correctness_checkpoint";
-  /** Route + declared-leg roster fingerprint ({@link modelRouteFingerprint}). */
-  readonly routeFingerprint?: string;
   /**
-   * Court evidence generation. Cold resume of the same generation may no-reburn;
-   * builder-beat soft-accept advances generation so the outer gate reburns.
+   * Declared panel-leg roster fingerprint for this court open only
+   * ({@link panelLegsRosterFingerprint}) — never full model-route slots.
    */
-  readonly courtGeneration?: number;
+  readonly panelLegsFingerprint?: string;
   /** Sole transport row type: {@link LegTransport} (ADR 0141). */
   readonly panelLegTransports?: ReadonlyArray<LegTransport>;
   /** Sole skip row type: {@link CmrSkippedLeg}. */

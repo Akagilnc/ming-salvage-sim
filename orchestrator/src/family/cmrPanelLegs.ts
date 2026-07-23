@@ -222,13 +222,42 @@ export function hasValidPanelLegTransports(
   return successfulLegsFromTransports(transports).length > 0;
 }
 
-/** Current court scope for durable panel-evidence identity (#1118 / #1119). */
+/** Current court scope for durable panel-evidence identity (#1118). */
 export type PanelLegEvidenceScope = {
   readonly familyHeadAfter?: string;
   readonly ledgerPhase: "final" | "correctness_checkpoint";
-  readonly routeFingerprint: string;
-  readonly courtGeneration: number;
+  /** Declared panel-leg roster only (not full model route). */
+  readonly panelLegsFingerprint: string;
 };
+
+/**
+ * Stable fingerprint of the declared panel-leg roster for this court open.
+ * Only slug/family/optional — never coder/ship/online worker slots.
+ */
+export function panelLegsRosterFingerprint(
+  legs: ReadonlyArray<{
+    readonly family: string;
+    readonly slug: string;
+    readonly optional?: true;
+  }>,
+): string {
+  const rows = legs
+    .map((leg) =>
+      leg.optional === true
+        ? ([leg.family, leg.slug, true] as const)
+        : ([leg.family, leg.slug] as const),
+    )
+    .sort((a, b) => {
+      const af = a[0] ?? "";
+      const bf = b[0] ?? "";
+      if (af !== bf) return af < bf ? -1 : 1;
+      const as = a[1] ?? "";
+      const bs = b[1] ?? "";
+      if (as !== bs) return as < bs ? -1 : 1;
+      return 0;
+    });
+  return JSON.stringify(rows);
+}
 
 /**
  * Normalize landing/ctx/durable transport cargo into {@link LegTransport} rows.
@@ -293,8 +322,7 @@ export function parseFamilyPanelLegEvidence(
   | {
       readonly familyHeadAfter?: string;
       readonly ledgerPhase?: "final" | "correctness_checkpoint";
-      readonly routeFingerprint?: string;
-      readonly courtGeneration?: number;
+      readonly panelLegsFingerprint?: string;
       readonly panelLegTransports?: ReadonlyArray<LegTransport>;
       readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
     }
@@ -311,15 +339,17 @@ export function parseFamilyPanelLegEvidence(
     rec.ledgerPhase === "final" || rec.ledgerPhase === "correctness_checkpoint"
       ? rec.ledgerPhase
       : undefined;
-  const routeFingerprint =
-    typeof rec.routeFingerprint === "string" && rec.routeFingerprint.length > 0
-      ? rec.routeFingerprint
-      : undefined;
-  const courtGeneration =
-    typeof rec.courtGeneration === "number" &&
-    Number.isFinite(rec.courtGeneration) &&
-    rec.courtGeneration >= 0
-      ? Math.floor(rec.courtGeneration)
+  // Accept both the current key and a one-release legacy alias if present.
+  const panelLegsFingerprintRaw =
+    typeof rec.panelLegsFingerprint === "string"
+      ? rec.panelLegsFingerprint
+      : typeof rec.routeFingerprint === "string"
+        ? rec.routeFingerprint
+        : undefined;
+  const panelLegsFingerprint =
+    typeof panelLegsFingerprintRaw === "string" &&
+    panelLegsFingerprintRaw.length > 0
+      ? panelLegsFingerprintRaw
       : undefined;
   // Wrong-type transports/skips (object, number, string) → treat as absent,
   // not as cast-array-that-throws on .map.
@@ -333,8 +363,7 @@ export function parseFamilyPanelLegEvidence(
   if (
     familyHeadAfter === undefined &&
     ledgerPhase === undefined &&
-    routeFingerprint === undefined &&
-    courtGeneration === undefined &&
+    panelLegsFingerprint === undefined &&
     panelLegTransports === undefined &&
     panelLegSkippedLegs === undefined
   ) {
@@ -343,8 +372,7 @@ export function parseFamilyPanelLegEvidence(
   return {
     ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
     ...(ledgerPhase !== undefined ? { ledgerPhase } : {}),
-    ...(routeFingerprint !== undefined ? { routeFingerprint } : {}),
-    ...(courtGeneration !== undefined ? { courtGeneration } : {}),
+    ...(panelLegsFingerprint !== undefined ? { panelLegsFingerprint } : {}),
     ...(panelLegTransports !== undefined && panelLegTransports.length > 0
       ? { panelLegTransports }
       : {}),
@@ -355,17 +383,17 @@ export function parseFamilyPanelLegEvidence(
 }
 
 /**
- * Durable evidence is admissible only when full court identity matches
- * (head + barrier phase + route/leg fingerprint + generation) AND transports
- * contain legal paper. Missing identity fields fail closed (no silent reuse).
+ * Durable evidence is admissible only when court identity matches
+ * (head + barrier phase + declared panel-leg roster) AND transports contain
+ * legal paper. Missing identity fields fail closed (no silent reuse).
+ * No self-authorizing generation counter.
  */
 export function admissibleDurablePanelLegTransports(
   evidence:
     | {
         readonly familyHeadAfter?: string;
         readonly ledgerPhase?: string;
-        readonly routeFingerprint?: string;
-        readonly courtGeneration?: number;
+        readonly panelLegsFingerprint?: string;
         readonly panelLegTransports?: ReadonlyArray<{
           readonly slug?: unknown;
           readonly exitCode?: unknown;
@@ -389,16 +417,9 @@ export function admissibleDurablePanelLegTransports(
   if (durableHead !== currentHead) return undefined;
   if (evidence.ledgerPhase !== scope.ledgerPhase) return undefined;
   if (
-    typeof evidence.routeFingerprint !== "string" ||
-    evidence.routeFingerprint.length === 0 ||
-    evidence.routeFingerprint !== scope.routeFingerprint
-  ) {
-    return undefined;
-  }
-  if (
-    typeof evidence.courtGeneration !== "number" ||
-    !Number.isFinite(evidence.courtGeneration) ||
-    evidence.courtGeneration !== scope.courtGeneration
+    typeof evidence.panelLegsFingerprint !== "string" ||
+    evidence.panelLegsFingerprint.length === 0 ||
+    evidence.panelLegsFingerprint !== scope.panelLegsFingerprint
   ) {
     return undefined;
   }
@@ -407,25 +428,6 @@ export function admissibleDurablePanelLegTransports(
   );
   if (!hasValidPanelLegTransports(transports)) return undefined;
   return transports;
-}
-
-/**
- * Active court generation from durable evidence (0 when absent).
- * Builder soft-accept advances this; outer-gate writes stamp the same gen.
- */
-export function courtGenerationFromDurableEvidence(
-  evidence: { readonly courtGeneration?: number } | undefined | null,
-): number {
-  if (
-    evidence !== undefined &&
-    evidence !== null &&
-    typeof evidence.courtGeneration === "number" &&
-    Number.isFinite(evidence.courtGeneration) &&
-    evidence.courtGeneration >= 0
-  ) {
-    return Math.floor(evidence.courtGeneration);
-  }
-  return 0;
 }
 
 /**
