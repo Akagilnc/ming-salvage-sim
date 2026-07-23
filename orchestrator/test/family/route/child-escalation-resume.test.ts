@@ -503,7 +503,7 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
 // ─── test 5 (F8) / #1125: unanswered park re-entry — no re-dispatch, ledger park ─
 //
 // #1125 deleted the whole-family early-return. Unanswered parks are excluded from
-// wave dispatch and aggregated AFTER the wave loop (familyResultFromUnansweredParks):
+// wave dispatch and aggregated AFTER the wave loop (buildDecisionParkTerminal):
 // parked child → escalated from ledger; never-run sibling → vocal skipped.
 
 describe("#604 slice 5 (F8) / #1125 — unanswered park re-entry reports escalated without redispatch", () => {
@@ -870,7 +870,8 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
   });
 
   it("pre-existing unanswered park + runnable sibling failed → failed (not decision_gate_park)", async () => {
-    // A-class failure wins over post-wave park (P1-a precedence).
+    // A-class failure wins over post-wave park (P1-a precedence), but unanswered
+    // park child remounts as escalated (F8 / #1125) — never skipped.
     class SiblingFailsBackend extends EscalatingChildBackend {
       constructor() {
         super(-1);
@@ -901,7 +902,8 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
       escalationKind: "decision",
       childIssue: 11,
       reason: "still open",
-      diagnosis: "no answer",
+      diagnosis: "no answer yet for design field",
+      sessionId: "park-sess-11",
     } as FamilyLedgerEntry);
 
     const warnings: string[] = [];
@@ -927,16 +929,19 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
       expect(result.status).toBe("failed");
       expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
       expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
-      // Non-post-wave finalize residual: unanswered #11 never ran → vocal skip.
-      expect(result.children.find((c) => c.issue === 11)?.status).toBe("skipped");
+      // Unanswered park cargo preserved as escalated (not skipped).
+      const child11 = result.children.find((c) => c.issue === 11);
+      expect(child11?.status).toBe("escalated");
+      expect(child11?.escalation?.escalationKind).toBe("decision");
+      expect(child11?.escalation?.reason).toBe("still open");
+      expect(child11?.escalation?.diagnosis).toBe("no answer yet for design field");
+      expect(child11?.escalation?.sessionId).toBe("park-sess-11");
+      // Must not emit skip warning for the unanswered park child.
       expect(
         warnings.some(
-          (w) =>
-            w.includes("#11") &&
-            w.includes("skipped:") &&
-            w.includes("not_scheduled_this_invocation"),
+          (w) => w.includes("#11") && w.includes("skipped:"),
         ),
-      ).toBe(true);
+      ).toBe(false);
     } finally {
       console.warn = originalWarn;
     }
@@ -974,13 +979,9 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
     // #10 merged this invocation → head advanced to "+10" (FakeFamilyBackend).
     expect(result.familyHead).toBe("+10");
     expect(result.familyHead).not.toBe("old-park-head");
-    // stopSummary metadata heads should track the same this-run head.
-    const reported =
-      result.stopSummary?.metadata?.heads?.reportedFamilyHead ??
-      result.stopSummary?.metadata?.heads?.actualFamilyHead;
-    if (reported !== undefined) {
-      expect(reported).toBe("+10");
-    }
+    // Hard-assert stopSummary heads (no conditional skip).
+    expect(result.stopSummary?.metadata?.heads?.reportedFamilyHead).toBe("+10");
+    expect(result.stopSummary?.metadata?.heads?.actualFamilyHead).toBe("+10");
   });
 });
 

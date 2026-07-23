@@ -222,85 +222,99 @@ function escalationFromChildParkRow(
 }
 
 /**
- * #1125 — post-wave aggregation when ledger still has unanswered
- * `child_decision_parked` rows for **current admitted epic children** only.
- * Unanswered → escalated from the park row; ledger-merged → already_done;
- * other never-run → vocal skip. Public status parked + decision_gate_park.
- * Prefer this-invocation familyHead; park-row familyHeadAfter is fallback only.
+ * #1125 / #604 — remount every epic child for a decision-park terminal (or for
+ * A-class failure residual when unanswered parks must stay escalated).
+ * Recorded results win; ledger-merged → already_done; parked escalations →
+ * escalated with payload (never skip); other residual → vocal skip.
  */
-function familyResultFromUnansweredParks(opts: {
-  readonly unanswered: ReadonlyArray<
-    FamilyLedgerEntry & { readonly childIssue: number }
-  >;
-  readonly epic: FamilyEpic;
-  readonly familyBase: string;
-  readonly familyHead?: string;
-  readonly childResults: ReadonlyArray<FamilyChildResult>;
+function remountDecisionParkChildren(opts: {
+  readonly epicChildren: ReadonlyArray<ChildSlice>;
+  readonly recordedResults: ReadonlyArray<FamilyChildResult>;
   readonly ledgerMerged: ReadonlySet<number>;
-}): FamilyRunResult {
-  const first = opts.unanswered[0]!;
-  const parkedByIssue = new Map<number, FamilyChildEscalation>();
-  for (const row of opts.unanswered) {
-    parkedByIssue.set(row.childIssue, escalationFromChildParkRow(row));
-  }
-  const recorded = new Map(opts.childResults.map((c) => [c.issue, c]));
-  const children: FamilyChildResult[] = opts.epic.children.map((c) => {
+  readonly parkedEscalations?: ReadonlyMap<number, FamilyChildEscalation>;
+}): FamilyChildResult[] {
+  const recorded = new Map(opts.recordedResults.map((c) => [c.issue, c]));
+  return opts.epicChildren.map((c) => {
     const rec = recorded.get(c.issue);
     if (rec !== undefined) return rec;
     if (opts.ledgerMerged.has(c.issue)) {
       return { issue: c.issue, status: "already_done" as const };
     }
-    const escalation = parkedByIssue.get(c.issue);
+    const escalation = opts.parkedEscalations?.get(c.issue);
     if (escalation !== undefined) {
       return { issue: c.issue, status: "escalated" as const, escalation };
     }
     return skippedChild(c.issue, "unanswered_sibling_park_residual");
   });
-  // #1125: prefer this-invocation head (sibling merges); only fall back to the
-  // park row when this run never advanced familyHead.
+}
+
+/**
+ * Single decision-park FamilyRunResult shape (#1125 / #604 F8). Fresh wave
+ * escalate and ledger post-wave park both feed this builder — no third terminal.
+ * Prefer this-invocation familyHead; optional fallbackHead only when this run
+ * never advanced HEAD.
+ */
+function buildDecisionParkTerminal(opts: {
+  readonly epic: FamilyEpic;
+  readonly familyBase: string;
+  readonly familyHead?: string;
+  readonly fallbackHead?: string;
+  readonly parkedIssue: number;
+  readonly escalation: FamilyChildEscalation;
+  readonly children: ReadonlyArray<FamilyChildResult>;
+  readonly escalationReason: string;
+}): FamilyRunResult {
   const thisRunHead =
     typeof opts.familyHead === "string" && opts.familyHead.trim().length > 0
       ? opts.familyHead
       : undefined;
-  const parkRowHead =
-    typeof first.familyHeadAfter === "string" &&
-    first.familyHeadAfter.trim().length > 0
-      ? first.familyHeadAfter
+  const fallback =
+    typeof opts.fallbackHead === "string" && opts.fallbackHead.trim().length > 0
+      ? opts.fallbackHead
       : undefined;
-  const familyHead = thisRunHead ?? parkRowHead;
-  const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
+  const familyHead = thisRunHead ?? fallback;
   const stopSummary = familyStopSummary({
     status: "parked",
     familyBase: opts.familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
-    children,
-    escalationReason,
+    children: opts.children,
+    escalationReason: opts.escalationReason,
     decisionGatePark: true,
   });
   emitExitProgress({
     epic: opts.epic.issue,
-    issue: first.childIssue,
+    issue: opts.parkedIssue,
     status: "parked",
     stopReason: stopSummary.reason,
-    gateSummary: first.diagnosis ?? first.reason ?? escalationReason,
+    gateSummary:
+      opts.escalation.diagnosis || opts.escalation.reason || opts.escalationReason,
   });
   return {
     status: "parked",
     familyBase: opts.familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
     escalation: {
-      reason: escalationReason,
-      diagnosis:
-        first.diagnosis ??
-        "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
+      reason: opts.escalationReason,
+      diagnosis: opts.escalation.diagnosis,
     },
     stopSummary,
-    children,
+    children: opts.children,
     ...(opts.epic.admissionSkipped !== undefined &&
     opts.epic.admissionSkipped.length > 0
       ? { admissionSkipped: opts.epic.admissionSkipped }
       : {}),
   };
+}
+
+/** Map unanswered ledger park rows → issue escalation map (shared remount input). */
+function parkedEscalationsFromRows(
+  unanswered: ReadonlyArray<FamilyLedgerEntry & { readonly childIssue: number }>,
+): Map<number, FamilyChildEscalation> {
+  const map = new Map<number, FamilyChildEscalation>();
+  for (const row of unanswered) {
+    map.set(row.childIssue, escalationFromChildParkRow(row));
+  }
+  return map;
 }
 
 function familyChildrenSnapshot(opts: {
@@ -2110,8 +2124,8 @@ export async function runFamily(
   //     the paused step IN PLACE (原 sessionId, 退出-重入 per ADR 0062).
   //   - UNANSWERED → #1125: do NOT early-return the whole family. Exclude those
   //     children from wave dispatch (stillUnanswered filter below) and aggregate
-  //     parked + decision_gate_park AFTER the wave loop via
-  //     familyResultFromUnansweredParks. Answered siblings and new tickets run.
+  //     parked + decision_gate_park AFTER the wave loop via the shared
+  //     buildDecisionParkTerminal. Answered siblings and new tickets run.
   const parkedChildAnswers = new Map<number, EscalationAnswerPayload>();
   const stillUnanswered = new Set(
     unansweredChildEscalations(initialFamilyLedger).map((e) => e.childIssue),
@@ -2358,58 +2372,28 @@ export async function runFamily(
     });
   };
 
-  // #604 slice 5: build the family result when a CHILD decision escalation parked
-  // the run. Every epic child gets a record (the parked child carries its
-  // `escalation`; already-merged children in `recorded` keep their status; the rest
-  // are `"skipped"`). Public family status is `"parked"` (answerable pause), NOT
-  // a stage-failure or child-execution failed terminal.
+  // #604 slice 5 / #1125: child decision escalate → shared decision-park terminal.
+  // Remount + result shape live in remountDecisionParkChildren / buildDecisionParkTerminal
+  // (same builder as post-wave ledger park — no third terminal).
   const finalizeDecisionPark = async (
     parked: FamilyChildResult & { escalation: FamilyChildEscalation },
     recordedResults: ReadonlyArray<FamilyChildResult>,
   ): Promise<FamilyRunResult> => {
-    const recorded = new Map(recordedResults.map((c) => [c.issue, c]));
-    // LEDGER-AWARE (不静默吞, runner.ts ~958-968): a child MERGED in a prior
-    // invocation is skipped by `selectWave`, so it is absent from this run's
-    // `recordedResults`. It must report "already_done": the durable ledger truth
-    // is present, but this invocation did not merge it. It must not be "skipped"
-    // — mirroring the early-exit park path (~900) and finalize().
     const ledgerMerged = await currentMerged(familyBackend);
-    const children: FamilyChildResult[] = epic.children.map((c) => {
-      const rec = recorded.get(c.issue);
-      if (rec !== undefined) return rec;
-      if (ledgerMerged.has(c.issue)) return { issue: c.issue, status: "already_done" as const };
-      return skippedChild(c.issue, "unanswered_sibling_park_residual");
+    const children = remountDecisionParkChildren({
+      epicChildren: epic.children,
+      recordedResults,
+      ledgerMerged,
     });
-    const escalationReason = `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`;
-    // #1007: shared dual-write helper (DELETE local park+terminal dup).
-    emitExitProgress({
-      issue: parked.issue,
-      epic: epic.issue,
-      status: "parked",
-      stopReason: "decision_gate_park",
-      gateSummary: parked.escalation.diagnosis || parked.escalation.reason,
-    });
-    return {
-      status: "parked",
+    return buildDecisionParkTerminal({
+      epic,
       familyBase,
       familyHead,
-      escalation: {
-        reason: escalationReason,
-        diagnosis: parked.escalation.diagnosis,
-      },
-      stopSummary: familyStopSummary({
-        status: "parked",
-        familyBase,
-        familyHead,
-        children,
-        escalationReason,
-        decisionGatePark: true,
-      }),
+      parkedIssue: parked.issue,
+      escalation: parked.escalation,
       children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
-    };
+      escalationReason: `child #${parked.issue} escalated a decision: ${parked.escalation.reason}`,
+    });
   };
 
   // ── #298 crash-window reconcile (the RESUME ENTRY, ADR 0022 decision 5) ─────
@@ -3072,24 +3056,47 @@ export async function runFamily(
   // ledger for **admitted epic children only** → public parked + decision_gate_park
   // without re-dispatching them. Admission-skipped parks (not in epic.children)
   // never decide family terminal. A-class genuine failure still wins over park
-  // (same precedence as in-wave finalizeDecisionPark / P1-a).
+  // (same precedence as in-wave finalizeDecisionPark / P1-a), but unanswered
+  // children remount as escalated (not skipped) so the park cargo is preserved.
   {
     const liveLedger = await familyBackend.readFamilyLedger();
     const unansweredNow = unansweredChildEscalations(liveLedger).filter((row) =>
       familyChildIssues.has(row.childIssue),
     );
     if (unansweredNow.length > 0) {
+      const parkedEscalations = parkedEscalationsFromRows(unansweredNow);
       if (childResults.some((r) => r.status === "failed")) {
+        // A-class: family stays failed via finalize. Remount unanswered parks
+        // into recorded childResults so finalize does not erase them as skipped.
+        const recorded = new Set(childResults.map((c) => c.issue));
+        for (const [issue, escalation] of parkedEscalations) {
+          if (recorded.has(issue)) continue;
+          childResults.push({
+            issue,
+            status: "escalated",
+            escalation,
+          });
+          recorded.add(issue);
+        }
         return await finalize();
       }
+      const first = unansweredNow[0]!;
+      const children = remountDecisionParkChildren({
+        epicChildren: epic.children,
+        recordedResults: childResults,
+        ledgerMerged: mergedSet(liveLedger),
+        parkedEscalations,
+      });
       return attachDiagnostics(
-        familyResultFromUnansweredParks({
-          unanswered: unansweredNow,
+        buildDecisionParkTerminal({
           epic,
           familyBase,
           familyHead,
-          childResults,
-          ledgerMerged: mergedSet(liveLedger),
+          fallbackHead: first.familyHeadAfter,
+          parkedIssue: first.childIssue,
+          escalation: parkedEscalations.get(first.childIssue)!,
+          children,
+          escalationReason: `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`,
         }),
       );
     }
