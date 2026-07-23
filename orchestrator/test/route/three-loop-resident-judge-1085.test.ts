@@ -39,7 +39,6 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-  ResumeState,
 } from "../../src/types.js";
 import type {
   FamilyBackend,
@@ -250,24 +249,17 @@ function makeScratchWorktree(): WorktreeHandle {
 class SliceHubBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
-  readonly landings: Array<WorkerLandingPayload | undefined> = [];
+  private judgeRound = 0;
   private s5Round = 0;
-  private s2Round = 0;
 
-  constructor(
-    private readonly worktree: WorktreeHandle,
-    private readonly opts?: {
-      readonly resumeState?: ResumeState;
-      readonly convergeOnPaper?: boolean;
-    },
-  ) {}
+  constructor(private readonly worktree: WorktreeHandle) {}
 
   async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   async findResumeState() {
-    return this.opts?.resumeState;
+    return undefined;
   }
   async runStep(): Promise<never> {
     throw new Error("runStep called directly");
@@ -296,7 +288,6 @@ class SliceHubBackend implements Backend {
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
-    this.landings.push(_landing);
 
     const openCourt = openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION);
     if (openCourt !== undefined) return openCourt;
@@ -310,60 +301,25 @@ class SliceHubBackend implements Backend {
           sessionId: "sess-coder-fix-1085",
         };
       }
-      this.s2Round += 1;
-      if (
-        process.env.ORCHESTRATOR_CODER_PLAN_PHASE === "1" &&
-        this.s2Round === 1
-      ) {
-        return {
-          kind: "completed",
-          output: {
-            kind: "coder",
-            beat: "plan",
-            planBody: "PLAN_SENTINEL",
-            committed: false,
-            commitsAdded: 0,
-          },
-          sessionId: "sess-coder-1085",
-        };
-      }
       return {
         kind: "completed",
-        output: {
-          kind: "coder",
-          beat: "construct",
-          committed: true,
-          commitsAdded: 1,
-        },
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
         sessionId: "sess-coder-1085",
       };
     }
 
-    if (spec.kind === "reviewer") {
-      return {
-        kind: "completed",
-        output: {
-          kind: "reviewer",
-          findingsCount: 0,
-          findings: [],
-          rawStdout: `REVIEW_PAPER_${spec.id}`,
-        },
-      };
-    }
-
-    if (spec.kind === "verify") {
-      const hasReviewPaper =
-        (_landing?.panelLegTransports?.length ?? 0) > 0;
-      const result = !hasReviewPaper
-        ? completedJudge(judgeContinue([]), OPEN_COURT_SESSION)
-        : this.opts?.convergeOnPaper === true
-          ? completedJudge(judgeConverged(), OPEN_COURT_SESSION)
-          : this.s5Round === 0
-          ? completedJudge(
-              judgeContinue([sampleFinding()]),
-              OPEN_COURT_SESSION,
-            )
-          : completedJudge(judgeConverged(), OPEN_COURT_SESSION);
+    if (spec.kind === "verify" || spec.kind === "reviewer") {
+      const scripts = [
+        completedJudge(
+          judgeContinue([sampleFinding()]),
+          OPEN_COURT_SESSION,
+        ),
+        completedJudge(judgeConverged(), OPEN_COURT_SESSION),
+      ];
+      const result =
+        scripts[this.judgeRound] ??
+        completedJudge(judgeConverged(), OPEN_COURT_SESSION);
+      this.judgeRound += 1;
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -385,7 +341,7 @@ describe("#1085 e2e ring1: per-slice builder beat always hits resident judge", (
     vi.stubEnv("ORCHESTRATOR_REPO", "test/repo");
   });
 
-  it("construction and each fix reach judge, fresh READ-ONLY leg, then the same judge", async () => {
+  it("S5 is never followed by a non-judge seat", async () => {
     vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
     const worktree = makeScratchWorktree();
     const backend = new SliceHubBackend(worktree);
@@ -394,150 +350,13 @@ describe("#1085 e2e ring1: per-slice builder beat always hits resident judge", (
     const sequence = backend.specs.map((s) => `${s.id}:${s.kind}`);
     for (let i = 0; i < sequence.length; i += 1) {
       if (sequence[i] === "S5:coder") {
-        expect(sequence.slice(i + 1, i + 4)).toEqual([
-          "S6:verify",
-          "S6:reviewer",
-          "S6:verify",
-        ]);
+        expect(sequence[i + 1]).toBe("S6:verify");
+        expect(sequence[i + 1]).not.toMatch(/:reviewer$/);
       }
       if (sequence[i] === "S2:coder") {
-        expect(sequence.slice(i + 1, i + 4)).toEqual([
-          "S3:verify",
-          "S3:reviewer",
-          "S3:verify",
-        ]);
+        expect(sequence[i + 1]).toBe("S3:verify");
       }
     }
-    const reviewerSpecs = backend.specs.filter((s) => s.kind === "reviewer");
-    expect(reviewerSpecs.length).toBeGreaterThanOrEqual(2);
-    for (const spec of reviewerSpecs) {
-      expect(spec).toMatchObject({
-        role: "reviewer",
-        session: "fresh",
-        contextRetention: "clean",
-        soul: "READ-ONLY",
-        promptFile: "reviewer_review.md",
-      });
-    }
-    const judgeLandings = backend.specs
-      .map((spec, index) => ({ spec, landing: backend.landings[index] }))
-      .filter(
-        ({ spec }) =>
-          spec.kind === "verify" && (spec.id === "S3" || spec.id === "S6"),
-      );
-    expect(
-      judgeLandings.filter(({ landing }) => landing?.panelLegTransports).length,
-    ).toBeGreaterThanOrEqual(2);
-  });
-
-  function reviewResumeLedger(
-    worktree: WorktreeHandle,
-    boundary: "requested" | "paper",
-  ): ResumeState {
-    const base: PersistentLedgerEntry[] = [
-      {
-        step: "S1",
-        event: "court_opened",
-        sessionId: OPEN_COURT_SESSION,
-        modelSlug: "gpt-5.6-sol",
-        reason: "court open",
-        prompt_hash: "open",
-        branchHEAD: "deadbeef",
-        ts: "2026-07-23T00:00:00.000Z",
-      },
-      {
-        step: "S2",
-        output: {
-          kind: "coder",
-          beat: "construct",
-          committed: true,
-          commitsAdded: 1,
-        },
-        sessionId: "sess-coder-1085",
-        modelSlug: "gpt-5.6-terra",
-        prompt_hash: "construct",
-        branchHEAD: "deadbeef",
-        ts: "2026-07-23T00:00:01.000Z",
-      },
-      {
-        step: "S3",
-        event: "single_review_requested",
-        forStep: "S3",
-        sessionId: OPEN_COURT_SESSION,
-        modelSlug: "gpt-5.6-sol",
-        prompt_hash: "request",
-        branchHEAD: "deadbeef",
-        ts: "2026-07-23T00:00:02.000Z",
-      },
-    ];
-    if (boundary === "paper") {
-      base.push({
-        step: "S3",
-        event: "single_review_paper_landed",
-        forStep: "S3",
-        panelLegTransports: [
-          { slug: "gpt-5.6-sol", exitCode: 0, stdout: "DURABLE_PAPER" },
-        ],
-        sessionId: "run-1085",
-        prompt_hash: "paper",
-        branchHEAD: "deadbeef",
-        ts: "2026-07-23T00:00:03.000Z",
-      });
-    }
-    return {
-      worktree,
-      stateDir: join(worktree.path, "..", ".ledger-1085"),
-      ledger: base,
-    };
-  }
-
-  it("resume after durable request runs the leg and judge without rebuilding construction", async () => {
-    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
-    const worktree = makeScratchWorktree();
-    const backend = new SliceHubBackend(worktree, {
-      resumeState: reviewResumeLedger(worktree, "requested"),
-      convergeOnPaper: true,
-    });
-    const result = await runOrchestrator({ issueNumber: 10851, backend });
-    expect(result.status).toBe("completed");
-    expect(backend.specs.map((s) => `${s.id}:${s.kind}`)).toEqual([
-      "S3:reviewer",
-      "S3:verify",
-    ]);
-  });
-
-  it("resume after durable paper re-lands it to the judge without rebuilding or rerunning the leg", async () => {
-    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
-    const worktree = makeScratchWorktree();
-    const backend = new SliceHubBackend(worktree, {
-      resumeState: reviewResumeLedger(worktree, "paper"),
-      convergeOnPaper: true,
-    });
-    const result = await runOrchestrator({ issueNumber: 10852, backend });
-    expect(result.status).toBe("completed");
-    expect(backend.specs.map((s) => `${s.id}:${s.kind}`)).toEqual([
-      "S3:verify",
-    ]);
-    expect(backend.landings[0]?.panelLegTransports?.[0]?.stdout).toBe(
-      "DURABLE_PAPER",
-    );
-  });
-
-  it("plan beat reaches the judge without a reviewer leg; construction then gets one", async () => {
-    vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
-    vi.stubEnv("ORCHESTRATOR_CODER_PLAN_PHASE", "1");
-    const backend = new SliceHubBackend(makeScratchWorktree());
-    const result = await runOrchestrator({ issueNumber: 1085, backend });
-    expect(result.status).toBe("completed");
-    const sequence = backend.specs.map((s) => `${s.id}:${s.kind}`);
-    const firstS2 = sequence.indexOf("S2:coder");
-    expect(sequence[firstS2 + 1]).toBe("S3:verify");
-    const secondS2 = sequence.indexOf("S2:coder", firstS2 + 1);
-    expect(sequence.slice(secondS2 + 1, secondS2 + 4)).toEqual([
-      "S3:verify",
-      "S3:reviewer",
-      "S3:verify",
-    ]);
   });
 });
 

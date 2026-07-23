@@ -664,27 +664,6 @@ export interface CourtDismissedEvent {
   readonly ts: string;
 }
 
-/** Durable runner-owned boundary between a construction receipt and its fresh review leg. */
-export interface SingleReviewRequestedEvent {
-  readonly event: "single_review_requested";
-  readonly forStep: "S3" | "S6";
-  readonly sessionId: string;
-  readonly modelSlug: string;
-  readonly ts: string;
-}
-
-/** Durable review paper; crash-resume re-lands it without re-running construction or the leg. */
-export interface SingleReviewPaperLandedEvent {
-  readonly event: "single_review_paper_landed";
-  readonly forStep: "S3" | "S6";
-  readonly panelLegTransports: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  readonly ts: string;
-}
-
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -697,9 +676,7 @@ export type LedgerBookkeepingEvent =
   | CoderAdvanceStayPutEvent
   | SessionContinuityLostEvent
   | CourtOpenedEvent
-  | CourtDismissedEvent
-  | SingleReviewRequestedEvent
-  | SingleReviewPaperLandedEvent;
+  | CourtDismissedEvent;
 
 /**
  * The structured output of any worker step.
@@ -1595,12 +1572,6 @@ export interface LedgerEntry {
   readonly reason?: string;
   /** Optional CMR route leg removed after smoke failure. */
   readonly droppedLeg?: string;
-  /** Runner-landed fresh review paper for a resident single-slice judge. */
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
   /**
    * Finding dispositions persisted at the judge verdict boundary (#925 / #952).
    *

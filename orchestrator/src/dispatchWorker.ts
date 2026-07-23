@@ -182,9 +182,6 @@ function writeFixFindingsLandingFile(
     // #925 F1: prior judge verdict rows must reach the worker via the same
     // fix-findings landing seam (session-loss / fresh-after-dead-session).
     (judgeSeat && priorJudgeVerdicts !== undefined) ||
-    (judgeSeat &&
-      landing?.panelLegTransports !== undefined &&
-      landing.panelLegTransports.length > 0) ||
     planPhaseLanding;
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
@@ -263,10 +260,6 @@ function writeFixFindingsLandingFile(
         // synthesises a narrative trajectory summary.
         ...(priorJudgeVerdicts !== undefined
           ? { priorJudgeVerdicts }
-          : {}),
-        ...(landing?.panelLegTransports !== undefined &&
-        landing.panelLegTransports.length > 0
-          ? { panelLegTransports: landing.panelLegTransports }
           : {}),
         // #1082 / ADR 0147: opaque plan-phase transport (runner never interprets).
         ...(landing?.builderPlanBody !== undefined
