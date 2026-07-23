@@ -222,7 +222,7 @@ describe("#1081 familyProcessRootDispatch forbidFreshRetry for resident judge", 
 
     const legSpec = cmrPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
-      "correctness",
+      { kind: "family", pass: "correctness" },
     );
     expect(legSpec.id).toBe("S3");
     expect(legSpec.kind).toBe("reviewer");

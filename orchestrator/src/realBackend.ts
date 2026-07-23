@@ -256,6 +256,7 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
+import { CODE_REVIEW_LEG_PROMPT_FILE } from "./family/cmrPanelLegs.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -1717,6 +1718,8 @@ export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
     ...Object.values(WORKER_PROMPT_FILES),
     // #1081: resident judge birth at slice dispatch (not a topology WORKER step).
     JUDGE_OPEN_COURT_PROMPT_FILE,
+    // #1126: Runner-owned single-slice /code-review legs (scope=single).
+    CODE_REVIEW_LEG_PROMPT_FILE,
   ]),
 ];
 

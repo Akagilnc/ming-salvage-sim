@@ -31,7 +31,11 @@ import type {
 } from "../types.js";
 import type { IntegratedCmrPass } from "./types.js";
 
+/** Family CMR panel-leg task prompt. */
 export const CMR_PANEL_LEG_PROMPT_FILE = "cmr_panel_leg.md";
+
+/** Single-slice per-slice /code-review leg task prompt (#1126). */
+export const CODE_REVIEW_LEG_PROMPT_FILE = "code_review_leg.md";
 
 /**
  * #1094 / #1126 — one panel-leg dispatch mechanism; scope is only a parameter.
@@ -48,47 +52,50 @@ export type ReviewLegScope =
       readonly pass: IntegratedCmrPass;
     };
 
-/** True when promptFile is the family panel-leg task source. */
-export function isCmrPanelLegPromptFile(promptFile: string): boolean {
-  return promptFile === CMR_PANEL_LEG_PROMPT_FILE;
+/** True when promptFile is a runner-owned review-panel leg task source. */
+export function isReviewPanelLegPromptFile(promptFile: string): boolean {
+  return (
+    promptFile === CMR_PANEL_LEG_PROMPT_FILE ||
+    promptFile === CODE_REVIEW_LEG_PROMPT_FILE
+  );
 }
 
-function normalizeReviewLegScope(
-  scope: IntegratedCmrPass | ReviewLegScope = "correctness",
-): ReviewLegScope {
-  return typeof scope === "string"
-    ? { kind: "family", pass: scope }
-    : scope;
+/** @deprecated Prefer {@link isReviewPanelLegPromptFile}. */
+export function isCmrPanelLegPromptFile(promptFile: string): boolean {
+  return isReviewPanelLegPromptFile(promptFile);
 }
 
 /**
  * Declarative WorkerSpec for one route-selected review leg.
  * Fresh / clean — never resume a prior leg session.
- * Family pass selects a CMR lens soul; single-slice uses READ-ONLY.
+ * Family pass selects a CMR lens soul + family task; single-slice uses
+ * READ-ONLY + per-slice /code-review task.
  */
 export function cmrPanelLegWorkerSpec(
   leg: WorkerCmrReviewLeg,
-  scope: IntegratedCmrPass | ReviewLegScope = "correctness",
+  scope: ReviewLegScope,
 ): WorkerSpec {
   const model = leg.slug;
-  const normalized = normalizeReviewLegScope(scope);
   return {
     // Family: seat remains the CMR court (S3). Single-slice: pin the requesting
     // judge seat. Per-leg job/log uniqueness is the monitor dispatchId substrate
     // (#1094 F1) — not a new StepId.
-    id: normalized.kind === "single" ? normalized.judgeStep : "S3",
+    id: scope.kind === "single" ? scope.judgeStep : "S3",
     kind: "reviewer",
     role: "reviewer",
     host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "clean",
-    promptFile: CMR_PANEL_LEG_PROMPT_FILE,
+    promptFile:
+      scope.kind === "single"
+        ? CODE_REVIEW_LEG_PROMPT_FILE
+        : CMR_PANEL_LEG_PROMPT_FILE,
     maxIter: 1,
     model,
     soul:
-      normalized.kind === "single"
+      scope.kind === "single"
         ? "READ-ONLY"
-        : normalized.pass === "completeness"
+        : scope.pass === "completeness"
           ? "cmr-completeness"
           : "cmr-correctness",
     toolchain: [],
@@ -223,37 +230,62 @@ export type PanelLegsRoundResult = {
 };
 
 /**
- * Runner-owned panel-leg fan-out for one family CMR court round (#1094).
- * Dispatches N first-class reviewer workers (parallel), then rebuilds
- * ADR 0141 transports for the pure judge court.
+ * Dispatch reply for one review-panel leg (#1126).
+ * Runner seat control is an explicit typed outcome — never a thrown Symbol.
  */
-export async function dispatchFamilyCmrPanelLegs(input: {
+export type ReviewPanelDispatchReply<TControl = never> =
+  | { readonly kind: "leg_result"; readonly result: WorkerResult }
+  | { readonly kind: "seat_control"; readonly control: TControl };
+
+/** Round outcome: transports, or the first seat-control signal. */
+export type ReviewPanelRoundOutcome<TControl = never> =
+  | ({ readonly kind: "round" } & PanelLegsRoundResult)
+  | { readonly kind: "seat_control"; readonly control: TControl };
+
+/**
+ * Runner-owned review-panel fan-out (#1094 / #1126).
+ * One mechanism for family CMR and single-slice /code-review; scope is required.
+ * Settles every leg first (#1094 F3), then either returns seat_control or
+ * rethrows one real rejection — never leaves sibling rejections unhandled.
+ *
+ * `dispatch` may return a bare {@link WorkerResult} (family path) or an explicit
+ * {@link ReviewPanelDispatchReply} when the runner must surface seat control.
+ */
+export async function dispatchReviewPanelLegs<TControl = never>(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
-  readonly cmrPass?: IntegratedCmrPass;
-  /** #1126: omit → family pass (cmrPass / correctness). */
-  readonly scope?: ReviewLegScope;
+  readonly scope: ReviewLegScope;
   readonly dispatch: (
     spec: WorkerSpec,
-  ) => Promise<WorkerResult>;
-}): Promise<PanelLegsRoundResult> {
+  ) => Promise<WorkerResult | ReviewPanelDispatchReply<TControl>>;
+}): Promise<ReviewPanelRoundOutcome<TControl>> {
   const legs = input.legs;
-  const scope: ReviewLegScope =
-    input.scope ??
-    { kind: "family", pass: input.cmrPass ?? "correctness" };
+  const scope = input.scope;
   if (legs.length === 0) {
-    return { transports: [], skippedLegs: [] };
+    return { kind: "round", transports: [], skippedLegs: [] };
   }
+  type SettledLeg =
+    | { readonly kind: "transport"; readonly transport: LegTransport }
+    | { readonly kind: "seat_control"; readonly control: TControl };
+
   // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
-  // park/relay throw. Settle every leg first, then rethrow one rejection.
+  // park/relay throw. Settle every leg first, then rethrow one rejection or
+  // surface the first typed seat_control.
   const settled = await Promise.allSettled(
-    legs.map(async (leg) => {
+    legs.map(async (leg): Promise<SettledLeg> => {
       const degraded = degradedTransportForNonRunnablePanelLeg(leg.slug);
       if (degraded !== undefined) {
-        return degraded;
+        return { kind: "transport", transport: degraded };
       }
       const spec = cmrPanelLegWorkerSpec(leg, scope);
-      const result = await input.dispatch(spec);
-      return legTransportFromPanelLegResult(leg.slug, result);
+      const raw = await input.dispatch(spec);
+      const reply = normalizeReviewPanelDispatchReply(raw);
+      if (reply.kind === "seat_control") {
+        return { kind: "seat_control", control: reply.control };
+      }
+      return {
+        kind: "transport",
+        transport: legTransportFromPanelLegResult(leg.slug, reply.result),
+      };
     }),
   );
   const rejection = settled.find(
@@ -262,14 +294,42 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   if (rejection !== undefined) {
     throw rejection.reason;
   }
-  const results = settled.map((row) => {
+  const rows = settled.map((row) => {
     if (row.status !== "fulfilled") {
-      throw new Error("dispatchFamilyCmrPanelLegs: unreachable rejected after gate");
+      throw new Error("dispatchReviewPanelLegs: unreachable rejected after gate");
     }
     return row.value;
   });
+  const control = rows.find(
+    (row): row is { kind: "seat_control"; control: TControl } =>
+      row.kind === "seat_control",
+  );
+  if (control !== undefined) {
+    return { kind: "seat_control", control: control.control };
+  }
+  const results = rows.map((row) => {
+    if (row.kind !== "transport") {
+      throw new Error("dispatchReviewPanelLegs: unreachable non-transport after control gate");
+    }
+    return row.transport;
+  });
   return {
+    kind: "round",
     transports: results,
     skippedLegs: skippedLegsFromTransports(legs, results),
   };
+}
+
+function normalizeReviewPanelDispatchReply<TControl>(
+  raw: WorkerResult | ReviewPanelDispatchReply<TControl>,
+): ReviewPanelDispatchReply<TControl> {
+  if (
+    raw !== null &&
+    typeof raw === "object" &&
+    "kind" in raw &&
+    (raw.kind === "leg_result" || raw.kind === "seat_control")
+  ) {
+    return raw;
+  }
+  return { kind: "leg_result", result: raw as WorkerResult };
 }
