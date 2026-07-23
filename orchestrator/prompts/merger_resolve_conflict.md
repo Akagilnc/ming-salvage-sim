@@ -1,12 +1,8 @@
 # Merger worker entrypoint — resolve one family-merge conflict
 
-Follow the worktree's `CLAUDE.md ## Skill routing`. The runner
-only schedules you: it attempted a deterministic `git merge --no-ff` of a reviewed
-child slice into the family base, hit a conflict, and left the markers in the
-working tree — resolve **this one in-progress merge** and return. The
-conflict-resolution method, the both-sides-preservation rule, the commit-don't-push
-rule, and the escalate-don't-guess policy all live in the soul + the
-`resolving-merge-conflicts` skill; do not restate or hand-write them here.
+The runner attempted a deterministic `git merge --no-ff` of a reviewed child
+slice into the family base, hit a conflict, and left the markers in the working
+tree. Resolve **this one in-progress merge** and return.
 
 ## Required output
 

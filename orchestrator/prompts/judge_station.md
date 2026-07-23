@@ -1,7 +1,5 @@
 # Judge station (S3 establish / S6 resume) — #925 / #1081–#1083 hub
 
-Follow the worktree's `CLAUDE.md`.
-
 ## Runtime inputs
 
 - Landing / fix-findings transport from the runner (`$ORCHESTRATOR_FIX_FINDINGS_PATH`

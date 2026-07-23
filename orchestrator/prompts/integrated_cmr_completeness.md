@@ -1,11 +1,10 @@
 # Integrated CMR completeness worker entrypoint
 
-Follow the worktree's `CLAUDE.md`. This is the runner-dispatched step5 completeness gate.
-The runner schedules panel legs first, then you as a pure court, and writes
+This is the runner-dispatched step5 completeness gate. The runner schedules
+panel legs first, then this court, and writes
 `.cmr-focus.md` plus `.cmr-route.json`.
 
-Do not run correctness. You judge the review surface from landed panel-leg
-prose; do not repair code, create fix commits, or spawn model CLIs.
+Judge the review surface from landed panel-leg prose.
 
 ## Pass scope
 
@@ -17,10 +16,8 @@ Do not run the correctness gate in this worker.
 
 The runner already dispatched the fresh panel-leg workers and landed their
 prose transports (see `$ORCHESTRATOR_FIX_FINDINGS_PATH` / fix-findings landing
-`panelLegTransports` when set). **You are a pure court** — read those prose
-verdicts as evidence, distill anchors and dispositions, and emit the typed
-judge receipt. Do **not** spawn model CLIs, invoke nested review backends, or
-re-dispatch a panel.
+`panelLegTransports` when set). Read those prose verdicts as evidence, distill
+anchors and dispositions, and emit the typed judge receipt.
 
 ## Required output
 

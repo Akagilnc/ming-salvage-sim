@@ -1440,7 +1440,8 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     );
     const command = backend.runOptions?.agent.buildPrintCommand({
       prompt: "TASK_SENTINEL",
-    } as never);
+      dangerouslySkipPermissions: false,
+    });
     expect(command?.command).toContain("agy");
     expect(command?.command).toContain("TASK_SENTINEL");
     expect(backend.config?.mounts).toContainEqual({

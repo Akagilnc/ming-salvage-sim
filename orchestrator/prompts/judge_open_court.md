@@ -1,7 +1,5 @@
 # Judge open court (resident slice birth) — #1081 / ADR 0147
 
-Follow the worktree's `CLAUDE.md`.
-
 ## Runtime inputs
 
 - Issue / repo env for live-fetch when the soul requires it at birth.

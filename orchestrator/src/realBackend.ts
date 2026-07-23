@@ -111,6 +111,7 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { agyPrintInvocation } from "./agyAgent.js";
+import { EXECUTABLE_SOUL_FILES } from "./soulInstructions.js";
 import {
   agentForSlug,
   appendAgySoulMount,
@@ -1784,15 +1785,7 @@ export function promptsDirError(
  * so landing/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
-export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
-  "coder.md",
-  "landing.md",
-  "fixer.md",
-  "merger.md",
-  "reviewer.md",
-  "ship.md",
-  "verify.md",
-];
+export const REQUIRED_SOUL_FILES = EXECUTABLE_SOUL_FILES;
 
 /**
  * Build the construction-time `soulsDir` validation error message, or
