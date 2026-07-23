@@ -13,6 +13,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { LegTransport } from "./legPaper.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { PublicFailedCause } from "./publicResult.js";
@@ -1041,20 +1042,15 @@ export interface WorkerLandingPayload {
   /**
    * #1094 — runner-dispatched family CMR panel-leg transports (ADR 0141).
    * Judge reads prose as court evidence; never spawns nested model CLIs.
+   * Sole row type: {@link LegTransport}.
    */
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
+  readonly panelLegTransports?: ReadonlyArray<LegTransport>;
   /**
    * #1117 / #1118 — host-mechanical panel-leg skip reasons landed with the
    * pure court so resume never supplies a silent empty landing when legs fail.
+   * Sole row type: {@link CmrSkippedLeg}.
    */
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
 }
 
 /**
@@ -1224,20 +1220,15 @@ export interface DispatchContext {
   /**
    * #1094 — host-observed panel-leg transports for the family judge court.
    * Runner dispatches legs first; judge receives prose only (pure court).
+   * Sole row type: {@link LegTransport}.
    */
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
+  readonly panelLegTransports?: ReadonlyArray<LegTransport>;
   /**
    * #1117 / #1118 — host skip reasons paired with panel transports (runtime
    * degrade evidence for the pure court; never a silent empty landing).
+   * Sole row type: {@link CmrSkippedLeg}.
    */
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */

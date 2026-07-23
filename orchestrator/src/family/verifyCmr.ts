@@ -74,6 +74,8 @@ import {
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
+  admissibleDurablePanelLegTransports,
+  courtGenerationFromDurableEvidence,
   ensureFamilyCmrPanelEvidence,
   hasValidPanelLegTransports,
   skippedLegsFromTransports,
@@ -2640,45 +2642,40 @@ async function runIntegratedCmrPass(input: {
     const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // Production cargo owner = FamilyBackend durable store (ledgerDir), plus any
     // in-process landing/ctx transports. Never optional VerifyCmrInput test seams.
-    // Force reburn when: human escalationAnswer, outer-gate after builder, or
-    // durable head does not match current family head (stale 卷面).
+    // Full court identity (phase + route/leg fingerprint + generation + head) —
+    // not HEAD-only — so checkpoint≠final, roster change, and builder refuse
+    // cannot silently reuse stale 卷面. forcePanelReburn / escalationAnswer still
+    // read generation so fan-out writes stamp the same (or advanced) gen.
     const durablePanelEvidence =
-      !forcePanelReburn &&
-      escalationAnswer === undefined &&
       typeof familyBackend.readFamilyPanelLegEvidence === "function"
         ? await familyBackend.readFamilyPanelLegEvidence(pass)
         : undefined;
-    const durableHead =
-      typeof durablePanelEvidence?.familyHeadAfter === "string"
-        ? durablePanelEvidence.familyHeadAfter.trim()
-        : "";
-    const currentHead =
-      typeof resolvedFamilyHeadAfter === "string"
-        ? resolvedFamilyHeadAfter.trim()
-        : "";
-    // Provenance: reuse only when cargo's own familyHeadAfter matches current head
-    // exactly — never re-stamp old transports with the current head/run.
-    const durableTransportsForHead =
-      durableHead.length > 0 &&
-      currentHead.length > 0 &&
-      durableHead === currentHead
-        ? durablePanelEvidence?.panelLegTransports
-        : undefined;
+    const courtGeneration =
+      courtGenerationFromDurableEvidence(durablePanelEvidence);
+    const panelEvidenceScope = {
+      ...(resolvedFamilyHeadAfter !== undefined
+        ? { familyHeadAfter: resolvedFamilyHeadAfter }
+        : {}),
+      ledgerPhase,
+      routeFingerprint,
+      courtGeneration,
+    };
+    const durableTransportsForCourt =
+      forcePanelReburn || escalationAnswer !== undefined
+        ? undefined
+        : admissibleDurablePanelLegTransports(
+            durablePanelEvidence,
+            panelEvidenceScope,
+          );
     const existingPanelTransports =
       refuseReopenLanding?.panelLegTransports ??
       dispatchCtx.panelLegTransports ??
-      durableTransportsForHead;
+      durableTransportsForCourt;
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep when reusing valid transports (no reburn).
     const willFanOut =
       frozenLegs.length > 0 &&
-      !hasValidPanelLegTransports(
-        existingPanelTransports?.map((t) => ({
-          slug: t.slug,
-          exitCode: t.exitCode,
-          stdout: t.stdout ?? "",
-        })),
-      );
+      !hasValidPanelLegTransports(existingPanelTransports);
     if (
       willFanOut &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
@@ -2782,7 +2779,11 @@ async function runIntegratedCmrPass(input: {
     };
     // Persist durable 卷面 under ledgerDir so resume reuses valid transports
     // (or observes host skip reasons) without process-temp injection seams.
+    // Stamp full court identity so reuse cannot cross phase/roster/generation.
+    // Pure-receive opens (frozenLegs empty) do not refresh durable — builder
+    // soft-accept advances generation; the outer-gate open rewrites transports.
     if (
+      !receivingBuilderBeat &&
       frozenLegs.length > 0 &&
       typeof familyBackend.writeFamilyPanelLegEvidence === "function" &&
       (panelLanding.panelLegTransports !== undefined ||
@@ -2792,6 +2793,9 @@ async function runIntegratedCmrPass(input: {
         ...(resolvedFamilyHeadAfter !== undefined
           ? { familyHeadAfter: resolvedFamilyHeadAfter }
           : {}),
+        ledgerPhase,
+        routeFingerprint,
+        courtGeneration,
         ...(panelLanding.panelLegTransports !== undefined
           ? { panelLegTransports: panelLanding.panelLegTransports }
           : {}),
@@ -3015,6 +3019,21 @@ async function runIntegratedCmrPass(input: {
     // panels. Permanent latch + zero outer-gate was the family/1080 defect.
     if (receivingBuilderBeat) {
       finalReviewRoundDisposition = "accepted";
+      // Advance court generation + clear transports so the outer-gate re-open
+      // cannot reuse pre-builder 卷面 when HEAD is unchanged (refuse/no-op).
+      // Structured lifecycle only — never parse judge/escalation free prose.
+      if (typeof familyBackend.writeFamilyPanelLegEvidence === "function") {
+        await familyBackend.writeFamilyPanelLegEvidence(pass, {
+          ...(postWorkerFamilyHead !== undefined
+            ? { familyHeadAfter: postWorkerFamilyHead }
+            : resolvedFamilyHeadAfter !== undefined
+              ? { familyHeadAfter: resolvedFamilyHeadAfter }
+              : {}),
+          ledgerPhase,
+          routeFingerprint,
+          courtGeneration: courtGeneration + 1,
+        });
+      }
       await familyBackend.appendFamilyLedger({
         status: "worker_dispatched",
         event: "worker_dispatched",
