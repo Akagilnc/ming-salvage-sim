@@ -1735,7 +1735,7 @@ describe("#686 R2 production seams", () => {
       POOL_DISPATCH_BINDINGS,
     } = await import("../../src/modelRegistry.js");
     expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("grok");
-    expect(POOL_DISPATCH_BINDINGS.cursor).toBe("cursor");
+    expect(POOL_DISPATCH_BINDINGS.cursor).toBeUndefined();
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
       "grok",
     );
@@ -1744,6 +1744,9 @@ describe("#686 R2 production seams", () => {
       "grok",
     );
     expect(resolveModelSlugForPool("grok-4.5").provider).toBe("grok");
+    expect(resolveModelSlugForPool("gpt-5.6-sol", "cursor")).toEqual(
+      resolveModelSlugForPool("gpt-5.6-sol"),
+    );
   });
 
   it("P1: monitor attribution follows the active billing pool after a relay", () => {

@@ -807,7 +807,7 @@ export interface WorkerSpec {
   readonly id: StepId;
   /** The work kind (drives result payload + skill routing). */
   readonly kind: WorkerKind;
-  /** Which soul to inject (v0.1 one image, two roles). */
+  /** Coarse scheduling role; {@link WorkerSpec.soul} is the instruction selector. */
   readonly role: StepRole;
   /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
   readonly host: WorkerHost;
