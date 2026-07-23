@@ -690,7 +690,7 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
   });
 });
 
-describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
+describe("RealFamilyBackend mergerSandbox soul loading (#291 F28 / ADR 0022)", () => {
   it("#905: merger sandbox has no opencode auth mount", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     expect(
@@ -699,18 +699,6 @@ describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)",
       ),
     ).toBe(false);
   });
-  // F28: the merger conflict fallback follows the "one mirror new soul" model —
-  // the merger soul must be selected the SAME way coder/reviewer are: activated
-  // via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only role.
-  // Before the fix mergerSandbox() injected NO env, so ORCHESTRATOR_SOUL was
-  // never set → the merger ran under whatever default soul the image entrypoint
-  // picked, not the merger soul. (Souls themselves are live-mounted per #372.)
-  it("injects ORCHESTRATOR_SOUL=merger via the same env mechanism as coder/reviewer", () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    const cfg = b.sandboxConfig();
-    expect(MERGER_SOUL).toBe("merger");
-  });
-
   it("mergerSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     const cfg = b.sandboxConfig();

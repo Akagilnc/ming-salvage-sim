@@ -10,11 +10,9 @@ export const AGY_SOUL_RULES_FILE = "/home/agent/.gemini/GEMINI.md";
 const SOUL_FILE: Readonly<Record<WorkerSoul, string>> = {
   coder: "coder.md",
   "READ-ONLY": "reviewer.md",
-  cmr: "cmr.md",
   ship: "ship.md",
   verify: "verify.md",
   fixer: "fixer.md",
-  cleanup: "cleanup.md",
   landing: "landing.md",
   merger: "merger.md",
 };

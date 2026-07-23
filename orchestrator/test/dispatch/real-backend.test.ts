@@ -872,7 +872,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       message = String(error?.message ?? error);
     }
     expect(message).toMatch(/missing required soul file\(s\):/);
-    expect(message).toMatch(/cmr\.md/);
+    expect(message).toMatch(/coder\.md/);
     expect(message).toMatch(/verify\.md/);
     expect(message).not.toMatch(/output_protocol\.md/);
     expect(message).toMatch(/All of \[/);

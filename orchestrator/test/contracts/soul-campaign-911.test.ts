@@ -174,7 +174,7 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     public cmrCfg() {
       return this.cmrSandboxConfig(
         { claudeToken: "tok", codexAuthDir: "/tmp/cmr-codex-911" },
-        { model: "gpt-5.6-sol", host: "codex" },
+        { model: "gpt-5.6-sol", soul: "verify", host: "codex" },
       );
     }
     public familyCoderCfg() {
