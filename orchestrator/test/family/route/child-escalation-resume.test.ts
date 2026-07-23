@@ -793,6 +793,195 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
       console.warn = originalWarn;
     }
   });
+
+  it("admission-skipped park outside epic.children must not force family parked", async () => {
+    // #528 is admission-skipped (not in epic.children) but still has an unanswered
+    // park row on the family ledger. Post-wave must NOT park the family for it.
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 516,
+        reason: "answered later",
+        diagnosis: "was parked then answered",
+        sessionId: "sess-516",
+      } as FamilyLedgerEntry,
+      {
+        status: "escalation_answered",
+        event: "escalation_answered",
+        childIssue: 516,
+        answer: "field X is optional; proceed",
+        source: "human",
+      } as FamilyLedgerEntry,
+      {
+        status: "child_decision_parked",
+        event: "child_decision_parked",
+        escalationKind: "decision",
+        childIssue: 528,
+        reason: "admission skipped park",
+        diagnosis: "still on ledger but not admitted this run",
+      } as FamilyLedgerEntry,
+    );
+    singleSliceBackend.childLedgers.set(516, [
+      {
+        step: "S2",
+        sessionId: "sess-516",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          escalate: STUCK,
+        },
+      } as PersistentLedgerEntry,
+    ]);
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 516, blockedBy: [] },
+          { issue: 1123, blockedBy: [] },
+        ],
+        admissionSkipped: [
+          {
+            issue: 528,
+            reason: "missing_ready_for_agent",
+            message: "family admission skipped child #528: missing ready-for-agent label",
+          },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-unadmitted-park",
+    });
+
+    const dispatched = new Set(singleSliceBackend.runStepCalls.map((c) => c.issue));
+    expect(dispatched.has(516)).toBe(true);
+    expect(dispatched.has(1123)).toBe(true);
+    expect(dispatched.has(528)).toBe(false);
+    // #528 is not an epic child — must not appear in children outcomes either.
+    expect(result.children.some((c) => c.issue === 528)).toBe(false);
+    expect(result.status).not.toBe("parked");
+    expect(result.status).toBe("completed");
+  });
+
+  it("pre-existing unanswered park + runnable sibling failed → failed (not decision_gate_park)", async () => {
+    // A-class failure wins over post-wave park (P1-a precedence).
+    class SiblingFailsBackend extends EscalatingChildBackend {
+      constructor() {
+        super(-1);
+      }
+      override async runStep(
+        spec: StepSpec,
+        worktree?: WorktreeHandle,
+      ): Promise<StepOutput | StepResult> {
+        const issue =
+          worktree !== undefined
+            ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
+            : -1;
+        this.runStepCalls.push({ issue, step: spec.id });
+        if (spec.id === "S2" && issue === 12) {
+          throw new Error("coder process crashed");
+        }
+        if (spec.role === "coder") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        return { kind: "judge", status: "converged" };
+      }
+    }
+    const singleSliceBackend = new SiblingFailsBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push({
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      escalationKind: "decision",
+      childIssue: 11,
+      reason: "still open",
+      diagnosis: "no answer",
+    } as FamilyLedgerEntry);
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      const result = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 1125,
+          children: [
+            { issue: 11, blockedBy: [] },
+            { issue: 12, blockedBy: [] },
+          ],
+        },
+        familyBackend,
+        singleSliceBackend,
+        familyBase: "family/1125-fail-masks-park",
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
+      expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
+      // Non-post-wave finalize residual: unanswered #11 never ran → vocal skip.
+      expect(result.children.find((c) => c.issue === 11)?.status).toBe("skipped");
+      expect(
+        warnings.some(
+          (w) =>
+            w.includes("#11") &&
+            w.includes("skipped:") &&
+            w.includes("not_scheduled_this_invocation"),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("post-wave park prefers this-invocation familyHead over old park familyHeadAfter", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push({
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      escalationKind: "decision",
+      childIssue: 11,
+      reason: "still open",
+      diagnosis: "no answer",
+      familyHeadAfter: "old-park-head",
+    } as FamilyLedgerEntry);
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-head-prefer",
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    // #10 merged this invocation → head advanced to "+10" (FakeFamilyBackend).
+    expect(result.familyHead).toBe("+10");
+    expect(result.familyHead).not.toBe("old-park-head");
+    // stopSummary metadata heads should track the same this-run head.
+    const reported =
+      result.stopSummary?.metadata?.heads?.reportedFamilyHead ??
+      result.stopSummary?.metadata?.heads?.actualFamilyHead;
+    if (reported !== undefined) {
+      expect(reported).toBe("+10");
+    }
+  });
 });
 
 // ─── test 7 (P1-b → #1019): missing resume degrades to fresh redispatch ────────
