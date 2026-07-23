@@ -93,13 +93,16 @@ describe("#911 container home environment dual-mount", () => {
       role: "coder";
       soul: "coder";
       model?: string;
-    }): {
+    }, reviewFixedPoint?: string): {
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+      env: Record<string, string>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-911", claudeToken: "tok", ghToken: "gho_test" },
         spec,
         911,
+        undefined,
+        reviewFixedPoint,
       );
     }
     public mount(issueNumber: number) {
@@ -126,6 +129,18 @@ describe("#911 container home environment dual-mount", () => {
     const cfg = makeBackend(home).config({ role: "coder", soul: "coder" });
     expect(cfg.mounts).toContainEqual(homeClaudeMount(homeEnvFile));
     expect(cfg.mounts).toContainEqual(soulsMount(soulsDir));
+  });
+
+  it("#1126 boxConfig injects WorktreeHandle.base as ORCHESTRATOR_REVIEW_FIXED_POINT", () => {
+    const home = mkdtempSync(join(tmpdir(), "rb-home-911-fp-"));
+    tempHomes.push(home);
+    const cfg = makeBackend(home).config(
+      { role: "coder", soul: "coder" },
+      "origin/codex/issue-1126-base",
+    );
+    expect(cfg.env.ORCHESTRATOR_REVIEW_FIXED_POINT).toBe(
+      "origin/codex/issue-1126-base",
+    );
   });
 
   it("mountAuth replaces AGENTS.md in the codex auth dir with the container home body", () => {

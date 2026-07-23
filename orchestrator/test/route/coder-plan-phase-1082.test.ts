@@ -35,7 +35,7 @@ import {
   OPEN_COURT_SESSION,
   openCourtWorkerResultIfMatch,
 } from "../helpers/judge-fixtures.js";
-import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 /** Fake path — fast pool forbids real git spawn; landing arg is still asserted. */
 const WORKTREE: WorktreeHandle = {
@@ -110,7 +110,7 @@ class PlanPhaseBackend implements Backend {
     if (isJudgeOpenCourtSpec(spec)) {
       return openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION)!;
     }
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "coder" && spec.id === "S2") {
       this.coderRound += 1;

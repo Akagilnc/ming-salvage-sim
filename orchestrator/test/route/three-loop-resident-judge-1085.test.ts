@@ -53,9 +53,9 @@ import type {
 } from "../../src/family/types.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 import {
-  completeCmrPanelLegWorker,
-  isCmrPanelLegWorker,
-} from "../helpers/cmr-panel-leg-dispatch.js";
+  completeReviewPanelLegWorker,
+  isReviewPanelLegWorker,
+} from "../helpers/review-panel-leg-dispatch.js";
 import {
   completedJudge,
   judgeContinue,
@@ -430,7 +430,7 @@ class FamilyHubBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) {
       this.dispatches.push({ spec, ctx });
       return panelLeg;
@@ -887,7 +887,7 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
     const panelsPerCorrectnessOpen: number[] = [];
     let pendingCorrectnessPanels = 0;
     for (const d of backend.dispatches) {
-      if (isCmrPanelLegWorker(d.spec) && d.ctx.cmrPass === "correctness") {
+      if (isReviewPanelLegWorker(d.spec) && d.ctx.cmrPass === "correctness") {
         pendingCorrectnessPanels += 1;
         continue;
       }
