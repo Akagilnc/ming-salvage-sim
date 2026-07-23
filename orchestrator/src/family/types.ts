@@ -554,10 +554,23 @@ export type FamilyCmrPanelRoundPrep =
 /**
  * #1119 — durable panel-leg evidence under the family ledgerDir (cold-start
  * resume truth). Survives process exit; temp worktree fix-findings do not.
- * Head-scoped: reuse only when familyHeadAfter still matches the current court.
+ *
+ * Court-generation scoped (not HEAD-only): reuse requires matching
+ * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, and
+ * legal transports. Builder soft-accept advances generation (clears transports)
+ * so post-fix outer gates cannot reuse pre-fix 卷面 when HEAD is unchanged.
  */
 export type FamilyPanelLegEvidence = {
   readonly familyHeadAfter?: string;
+  /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
+  readonly ledgerPhase?: "final" | "correctness_checkpoint";
+  /** Route + declared-leg roster fingerprint (modelRouteFingerprint). */
+  readonly routeFingerprint?: string;
+  /**
+   * Court evidence generation. Cold resume of the same generation may no-reburn;
+   * builder-beat soft-accept advances generation so the outer gate reburns.
+   */
+  readonly courtGeneration?: number;
   readonly panelLegTransports?: ReadonlyArray<{
     readonly slug: string;
     readonly exitCode: number;
