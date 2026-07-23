@@ -1,13 +1,6 @@
 # Integrated CMR correctness worker entrypoint
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/cmr_correctness.md
-```
-
-Then follow that soul (判官 soul; symlink → `verify.md`) and the
-worktree's `CLAUDE.md`. This is the runner-dispatched step6 correctness gate.
+Follow the worktree's `CLAUDE.md`. This is the runner-dispatched step6 correctness gate.
 The runner schedules panel legs first, then you as a pure court after step5
 completeness has passed, and writes `.cmr-focus.md` plus `.cmr-route.json`.
 

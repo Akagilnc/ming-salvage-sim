@@ -111,6 +111,7 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { agyPrintInvocation } from "./agyAgent.js";
+import { agySoulRulesMount } from "./soulInstructions.js";
 import {
   agentForSlug,
   resumeCapableForSlug,
@@ -726,7 +727,6 @@ export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
  * soul"). NOT an OS-level readonly mount — the reviewer's READ-ONLY stays a
  * prompt/soul soft constraint (ADR 0017 §4).
  */
-export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
 /** The issue number handed to the worker; prompt/soul live-fetch the issue via gh. */
 export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 /** A short alias for tools/skills that conventionally read ISSUE_NUMBER. */
@@ -784,6 +784,18 @@ export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0];
  */
 export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1" };
 
+export function soulsMount(soulsDir: string): {
+  hostPath: string;
+  sandboxPath: string;
+  readonly: true;
+} {
+  return {
+    hostPath: soulsDir,
+    sandboxPath: "/home/agent/.orchestrator/souls",
+    readonly: true,
+  };
+}
+
 /**
  * Build the souls mount spec. Hardcodes the sandbox path once.
  * ALWAYS returns readonly:true so container workers cannot mutate the host
@@ -792,14 +804,6 @@ export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1
  * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
  * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
  */
-export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: string; readonly: true } {
-  return {
-    hostPath: soulsDir,
-    sandboxPath: "/home/agent/.orchestrator/souls",
-    readonly: true,
-  };
-}
-
 /**
  * #911 — container home environment file (worker-facing CLAUDE.md).
  * Live-mounted at Claude's user config path; same freshness discipline as souls
@@ -1246,42 +1250,6 @@ export function checkOwnGitDir(
  *
  * Pure (a check on the role/soul pair): unit-tested without a container.
  */
-export function soulForStep(
-  spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
-): StepSoul {
-  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
-  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
-  // #1081 open-court birth uses role+soul "verify" (falls through expected arm).
-  if (
-    spec.soul === "verify" &&
-    isJudgeSeat({ id: spec.id })
-  ) {
-    return "verify";
-  }
-  const expected: StepSoul =
-    spec.role === "reviewer"
-      ? "READ-ONLY"
-      : spec.role === "verify"
-        ? "verify"
-        : spec.role === "fixer"
-          ? "fixer"
-          : spec.role === "cleanup"
-            ? "cleanup"
-            : spec.role === "landing"
-              ? "landing"
-              : "coder";
-  if (spec.soul !== expected) {
-    throw new Error(
-      `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
-        `but the StepSpec carries "${spec.soul}". v0.1 selects the role soul ` +
-        `(live-mounted at /home/agent/.orchestrator/souls per #372) by role ` +
-        `(#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
-        `a spec.soul that contradicts its role is misconfigured.`,
-    );
-  }
-  return expected;
-}
-
 // ── per-step session id extraction (#256 seam extension) ─────────────────────
 
 /** Minimal slice of Sandcastle's RunResult this Backend reads. */
@@ -2947,11 +2915,7 @@ export class RealBackend implements Backend {
    * baked image is now the single source of skills; souls are mounted live (#372).
    * The only other mounts are per-issue auth + outcome files.
    *
-   * ship-pre 256 r1: `soulForStep(spec)` selects the role's soul and
-   * injects it via {@link SANDBOX_SOUL_ENV} so the v0.1 one-image-two-roles
-   * profile activates the right one (#244 "role 决定注哪份 soul"); it throws on a
-   * spec whose `soul` contradicts its `role` → S8(error). Still a soul ENV
-   * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
+   * `spec.soul` is consumed directly by the provider-neutral invocation seam.
    */
   protected boxConfig(
     auth: {
@@ -2971,10 +2935,8 @@ export class RealBackend implements Backend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const soul = soulForStep(spec);
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
@@ -3012,11 +2974,18 @@ export class RealBackend implements Backend {
     }
     // #905: agy OAuth — same CMR seam (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
+    if (
+      typeof spec.model === "string" &&
+      modelFamilyForSlug(spec.model) === "agy" &&
+      typeof spec.soul === "string"
+    ) {
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, spec.soul as StepSoul));
+    }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
-    mounts.push(soulsMount(this.opts.soulsDir));
     // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
+    mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
       // #1012: host file must exist as a regular file before docker bind-mount
@@ -3349,7 +3318,7 @@ export class RealBackend implements Backend {
       // overrides the channel when the same model lives on multiple pools.
       // Effort comes from the registry row for `spec.model` only (#916: no
       // role/soul hard override of reasoning effort at dispatch).
-      agent: agentForSlug(spec.model, pool),
+      agent: agentForSlug(spec.model, pool, spec.soul),
       // #899 / ADR 0128 / #928: every selected seat is single-iteration
       // (maxIter:1). Sandcastle completionSignal forced off at
       // invokeSandcastleRun (`[]` — omit falls back to default password).
@@ -3408,7 +3377,7 @@ export class RealBackend implements Backend {
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
         // channel must match the fresh dispatch. Effort = registry row only (#916).
-        agent: agentForSlug(spec.model, pool),
+        agent: agentForSlug(spec.model, pool, spec.soul),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         branchStrategy: { type: "head" },
@@ -3472,7 +3441,6 @@ export class RealBackend implements Backend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
     return await this.invokeSandcastleRun(options);
   }
 

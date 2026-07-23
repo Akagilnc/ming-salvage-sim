@@ -406,7 +406,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       SANDBOX_CODEX_DIR,
       SANDBOX_AGY_DIR,
       SANDBOX_GROK_DIR,
-      SANDBOX_SOUL_ENV,
       SANDBOX_OUTCOME_PATH_ENV,
     } = await import("../../../src/realBackend.js");
 
@@ -449,7 +448,6 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
-      expect(codex.env[SANDBOX_SOUL_ENV]).toBe("READ-ONLY");
       expect(codex.env[SANDBOX_OUTCOME_PATH_ENV]).toBeUndefined();
 
       const agy = be.legConfig(

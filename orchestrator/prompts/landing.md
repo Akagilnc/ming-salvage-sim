@@ -1,7 +1,5 @@
 # Landing worker entrypoint (#941 / S12 — atomic rename+expand of docRelease)
 
-Soul: `landing` (`/home/agent/.orchestrator/souls/landing.md`)
-
 Invoke the baked **`/gstack-document-release`** skill on the current PR head
 branch (non-interactive / spawned session). Do not invent a parallel doc-writing
 method outside the skill. After you report `released:true`, the host Landing

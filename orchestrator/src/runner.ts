@@ -1383,7 +1383,7 @@ export function stepSpecsForRoute(
       model: route.slots.coderFix,
       // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
       maxIter: 1,
-      soul: "coder",
+      soul: "fixer",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S6: {

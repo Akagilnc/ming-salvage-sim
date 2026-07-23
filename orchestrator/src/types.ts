@@ -190,13 +190,8 @@ export interface StepSpec {
    * `"READ-ONLY"` = reviewer soul, soft-constraint READ-ONLY baked into soul
    * (not an OS-level readonly mount — same image, separate `run()` context).
    *
-   * CONSUMED by the real Backend (ship-pre 256 r1): `RealBackend.box()` selects
-   * the role's baked soul via `soulForStep(spec)` and injects it into the
-   * container (`ORCHESTRATOR_SOUL`) so the v0.1 one-image-two-roles profile
-   * activates the right one (#244 "role 决定注哪份 soul"; ADR 0017 §4). v0.1
-   * derives the soul from `role`; this field is the explicit declaration and is
-   * asserted to agree with the role (a contradiction is a misconfigured spec →
-   * S8(error)), so it is a validated contract field, not a dangling one.
+   * The worker invocation consumes this field directly and activates the
+   * selected live-mounted soul through the provider's native instruction layer.
    */
   readonly soul: StepSoul;
   /**

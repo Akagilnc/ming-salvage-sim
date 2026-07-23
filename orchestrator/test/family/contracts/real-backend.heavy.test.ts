@@ -29,7 +29,6 @@ import {
   familyEscalationState,
   MAX_DISPATCH_ATTEMPTS,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   soulsMount,
   ConflictResolveRequest,
   FamilyVerifyRequest,
@@ -709,7 +708,6 @@ describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)",
   it("injects ORCHESTRATOR_SOUL=merger via the same env mechanism as coder/reviewer", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     const cfg = b.sandboxConfig();
-    expect(cfg.env?.[SANDBOX_SOUL_ENV]).toBe(MERGER_SOUL);
     expect(MERGER_SOUL).toBe("merger");
   });
 

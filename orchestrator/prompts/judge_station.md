@@ -1,8 +1,6 @@
 # Judge station (S3 establish / S6 resume) — #925 / #1081–#1083 hub
 
-Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
-Follow that soul and the worktree's `CLAUDE.md`. Method lives in the soul /
-baked skills — this file does not restate it.
+Follow the worktree's `CLAUDE.md`.
 
 ## Runtime inputs
 

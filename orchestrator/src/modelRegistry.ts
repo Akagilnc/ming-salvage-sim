@@ -7,6 +7,10 @@ import {
   type ModelDataRegistryRow,
 } from "./modelDataConfig.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
+import {
+  withSoulInstructions,
+  type WorkerSoul,
+} from "./soulInstructions.js";
 
 /**
  * Pinned identity constants for seats / tests that name a default codex slug.
@@ -373,9 +377,13 @@ export function resumeCapableForSlug(
 export function agentForSlug(
   slug: string,
   pool?: BillingPoolDispatchId,
+  soul?: WorkerSoul,
 ): sc.AgentProvider {
   // Effort comes from the registry row for `slug` only — no call-site overlay
   // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
+  const agent = MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
+  return soul === undefined
+    ? agent
+    : withSoulInstructions(agent, entry.provider, soul);
 }

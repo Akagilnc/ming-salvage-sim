@@ -40,7 +40,6 @@ import {
   soulsDirError,
   REQUIRED_SOUL_FILES,
   resolveModelSlug,
-  soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -573,34 +572,6 @@ describe("realBackend agentForSlug", () => {
   });
   it("throws on an unknown slug (misconfigured StepSpec)", () => {
     expect(() => agentForSlug("gpt")).toThrow(/unknown model slug/);
-  });
-});
-
-// ─── soulForStep (ship-pre 256 r1, role→soul selection / contract fidelity) ───
-
-describe("realBackend soulForStep", () => {
-  it("selects the coder soul for a coder step (#244 'role 决定注哪份 soul')", () => {
-    expect(
-      soulForStep({ role: "coder", soul: "coder" }),
-    ).toBe("coder");
-  });
-
-  it("selects the READ-ONLY reviewer soul for a reviewer step", () => {
-    expect(
-      soulForStep({ role: "reviewer", soul: "READ-ONLY" }),
-    ).toBe("READ-ONLY");
-  });
-
-  it("throws when spec.soul contradicts the role's baked soul (dead-field guard)", () => {
-    // The StepSpec.soul field is consumed (not dangling): a reviewer step that
-    // carries the coder soul is a misconfigured spec — the baked reviewer image
-    // soul is selected by role, so a contradicting soul must not be shipped.
-    expect(() =>
-      soulForStep({ role: "reviewer", soul: "coder" }),
-    ).toThrow(/soul/i);
-    expect(() =>
-      soulForStep({ role: "coder", soul: "READ-ONLY" }),
-    ).toThrow(/soul/i);
   });
 });
 

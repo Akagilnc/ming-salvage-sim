@@ -39,7 +39,6 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 
 import {
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   soulsMount,
 } from "../../../src/realBackend.js";
 
@@ -272,7 +271,6 @@ export {
   familyEscalationState,
   MAX_DISPATCH_ATTEMPTS,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   soulsMount,
   ConflictResolveRequest,
   FamilyVerifyRequest,

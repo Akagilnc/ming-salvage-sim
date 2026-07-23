@@ -145,12 +145,10 @@ import {
   type FamilyWorkerAuthCore,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
-  soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   SANDBOX_OUTCOME_PATH_ENV,
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
@@ -163,6 +161,7 @@ import {
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
+import { agySoulRulesMount } from "../soulInstructions.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -556,6 +555,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return agentForSlug(
       spec.model,
       isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+      spec.soul,
     );
   }
 
@@ -1048,7 +1048,7 @@ export class RealFamilyBackend implements FamilyBackend {
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
             sandbox: this.mergerSandbox(auth, outcomeLanding, model),
-            agent: agentForSlug(model),
+            agent: agentForSlug(model, undefined, MERGER_SOUL),
             maxIterations: 1,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
@@ -1176,7 +1176,7 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const model = modelSlug ?? mergerModel();
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -1194,6 +1194,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // N3: mount agy OAuth when provisioned (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
+    if (modelFamilyForSlug(model) === "agy") {
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, MERGER_SOUL));
+    }
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1202,8 +1205,8 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // #372: souls mount live for merger worker (data files not baked).
     // Use shared helper (forces readonly:true, single hard-coded sandbox path).
-    mounts.push(soulsMount(this.opts.soulsDir));
     // #911: live-mount container home CLAUDE.md.
+    mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return {
       imageName: this.opts.imageName,
@@ -1937,14 +1940,8 @@ export class RealFamilyBackend implements FamilyBackend {
       readonly?: boolean;
     }>;
   } {
-    const soul = soulForStep({
-      id: spec.id,
-      role: spec.role,
-      soul: spec.soul,
-    });
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (ctx.familyIssue !== undefined) {
@@ -1976,6 +1973,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -2247,7 +2245,6 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
     return this.invokeSandcastleRun(options);
   }
 
@@ -2494,7 +2491,6 @@ export class RealFamilyBackend implements FamilyBackend {
   } {
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: "coder",
       [SANDBOX_REPO_ENV]: this.opts.repo,
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
@@ -2518,6 +2514,9 @@ export class RealFamilyBackend implements FamilyBackend {
     appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
+    if (modelFamilyForSlug(model) === "agy") {
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, "fixer"));
+    }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2731,14 +2730,8 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // #919 R8: pass id so isJudgeSeat (S3/S6 step/id only) is correct for family seats.
-    const soul = soulForStep({
-      id: spec.id,
-      role: spec.role,
-      soul: spec.soul,
-    });
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (onlineReviewLanding !== undefined) {
@@ -2775,6 +2768,9 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
+    if (modelFamilyForSlug(spec.model) === "agy") {
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
+    }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -3091,7 +3087,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // needing `--repo "$ORCHESTRATOR_REPO"`.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
@@ -3124,6 +3119,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -3326,7 +3322,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding),
+      sandbox: this.shipSandbox(auth, outcomeLanding, spec),
       // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
@@ -3393,8 +3389,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    spec?: WorkerSpec,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, spec));
   }
 
   /**
@@ -3440,6 +3437,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    spec?: WorkerSpec,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3451,7 +3449,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // with the other family worker sandboxes).
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
@@ -3478,6 +3475,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
+    if (spec !== undefined && modelFamilyForSlug(spec.model) === "agy") {
+      mounts.push(agySoulRulesMount(this.opts.soulsDir, spec.soul));
+    }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
