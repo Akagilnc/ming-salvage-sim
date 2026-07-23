@@ -54,6 +54,10 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
     expect(familyShipWorkerSpec(route).host).toBe("codex");
   });
 
+  it("routes the family coder-fix worker through the fixer soul", () => {
+    expect(familyCoderFixWorkerSpec().soul).toBe("fixer");
+  });
+
   it("legacy monitored dispatch confirms only after the physical launch", async () => {
     const events: string[] = [];
     const backend = {
