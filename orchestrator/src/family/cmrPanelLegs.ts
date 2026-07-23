@@ -207,11 +207,6 @@ export function degradedTransportForNonRunnablePanelLeg(
 export type PanelLegsRoundResult = {
   readonly transports: ReadonlyArray<LegTransport>;
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
-  /**
-   * #1117 / #1118 — true when this round actually dispatched (or degraded)
-   * legs; false when valid same-opening transports were reused (no reburn).
-   */
-  readonly dispatched: boolean;
 };
 
 /** Stamped panel evidence for one court opening (#1117 / #1118). */
@@ -238,84 +233,101 @@ export function hasValidPanelLegTransports(
 }
 
 /**
- * Normalize landing/ctx transport cargo into {@link LegTransport} rows.
- * Invalid rows are dropped (never invent legal paper).
+ * Mint a runner-owned panel court opening id.
+ * Always includes a fresh UUID so process re-entry / missing runId never collides
+ * with a prior opening (same pass+head still gets a new id → reburn).
  */
-export function normalizePanelLegTransportCargo(
-  rows:
-    | ReadonlyArray<{
-        readonly slug?: unknown;
-        readonly exitCode?: unknown;
-        readonly stdout?: unknown;
-      }>
-    | undefined
-    | null,
-): LegTransport[] {
-  if (rows === undefined || rows === null || rows.length === 0) return [];
-  const out: LegTransport[] = [];
+export function mintPanelCourtOpeningId(input: {
+  readonly runId?: string;
+  readonly cmrPass: IntegratedCmrPass;
+}): string {
+  const runPart =
+    typeof input.runId === "string" && input.runId.trim().length > 0
+      ? input.runId.trim()
+      : "norun";
+  return `${runPart}:${input.cmrPass}:${globalThis.crypto.randomUUID()}`;
+}
+
+/**
+ * Build stamped evidence from runner landing/ctx cargo when present and legal.
+ * Production seed path for "landing already has valid transports" (#1118 AC).
+ */
+export function panelCourtEvidenceFromLanding(input: {
+  readonly cmrPass: IntegratedCmrPass;
+  readonly familyHeadAfter?: string;
+  readonly runId?: string;
+  readonly panelCourtOpeningId?: string;
+  readonly panelLegTransports?: ReadonlyArray<{
+    readonly slug: string;
+    readonly exitCode: number;
+    readonly stdout: string | null | undefined;
+  }>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
+}): PanelCourtEvidence | undefined {
+  const openingId = input.panelCourtOpeningId?.trim();
+  if (openingId === undefined || openingId.length === 0) return undefined;
+  const rows = input.panelLegTransports;
+  if (rows === undefined || rows.length === 0) return undefined;
+  const transports: LegTransport[] = [];
   for (const row of rows) {
     if (typeof row.slug !== "string" || row.slug.trim().length === 0) continue;
     if (typeof row.exitCode !== "number" || !Number.isFinite(row.exitCode)) {
       continue;
     }
-    out.push({
+    transports.push({
       slug: row.slug.trim(),
       exitCode: row.exitCode,
       stdout: typeof row.stdout === "string" ? row.stdout : "",
     });
   }
-  return out;
-}
-
-/**
- * Mint a runner-owned panel court opening id.
- * `runId` missing → still unique per nonce (testable; never silently collides).
- */
-export function mintPanelCourtOpeningId(input: {
-  readonly runId?: string;
-  readonly cmrPass: IntegratedCmrPass;
-  readonly nonce: number;
-}): string {
-  const runPart =
-    typeof input.runId === "string" && input.runId.trim().length > 0
-      ? input.runId.trim()
-      : `norun-${input.nonce}`;
-  return `${runPart}:${input.cmrPass}:${input.nonce}`;
+  if (!hasValidPanelLegTransports(transports)) return undefined;
+  return {
+    openingId,
+    cmrPass: input.cmrPass,
+    ...(input.familyHeadAfter !== undefined
+      ? { familyHeadAfter: input.familyHeadAfter }
+      : {}),
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    transports,
+    skippedLegs: [...(input.panelLegSkippedLegs ?? [])],
+  };
 }
 
 /**
  * #1117 / #1118 — lifecycle-scoped panel court session (one per family court
- * loop). Not a module-global cache; callers own the instance and invalidate on
- * builder beat / leave scope when the court loop ends.
+ * loop / process-held baton). Callers own the instance; invalidate on builder.
  */
 export type PanelCourtSession = {
   /**
-   * Resolve opening identity + optional reusable evidence.
-   * Force-new when: escalationAnswer, after-builder invalidate (memo cleared),
-   * pass/head/runId mismatch, or empty memo.
+   * Resolve opening + optional reusable evidence.
+   * Force reburn when: escalationAnswer, empty/invalid memo, pass/head/runId
+   * mismatch. Same pass+head with a new opening id always reburns after
+   * invalidate or escalationAnswer.
    */
   readonly resolve: (input: {
     readonly cmrPass: IntegratedCmrPass;
     readonly familyHeadAfter?: string;
     readonly runId?: string;
     readonly escalationAnswerPresent?: boolean;
-    readonly forceNew?: boolean;
   }) => {
     readonly openingId: string;
     readonly existing: PanelCourtEvidence | undefined;
   };
+  /** Install runner landing/ctx stamped evidence as the current memo (same opening). */
+  readonly seedFromLanding: (evidence: PanelCourtEvidence) => void;
   readonly record: (evidence: PanelCourtEvidence) => void;
   /** Drop memo so the next resolve mints a new opening (builder / head move). */
   readonly invalidate: () => void;
 };
 
 export function createPanelCourtSession(): PanelCourtSession {
-  let nonce = 0;
   let memo: PanelCourtEvidence | undefined;
   return {
     resolve(input) {
-      const forceNew =
-        input.forceNew === true ||
+      const forceReburn =
         input.escalationAnswerPresent === true ||
         memo === undefined ||
         memo.cmrPass !== input.cmrPass ||
@@ -327,19 +339,25 @@ export function createPanelCourtSession(): PanelCourtSession {
         (input.runId !== undefined && memo.runId === undefined) ||
         (input.runId === undefined && memo.runId !== undefined);
       if (
-        !forceNew &&
+        !forceReburn &&
         memo !== undefined &&
         hasValidPanelLegTransports(memo.transports)
       ) {
         return { openingId: memo.openingId, existing: memo };
       }
-      nonce += 1;
       const openingId = mintPanelCourtOpeningId({
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         cmrPass: input.cmrPass,
-        nonce,
       });
       return { openingId, existing: undefined };
+    },
+    seedFromLanding(evidence) {
+      if (
+        hasValidPanelLegTransports(evidence.transports) &&
+        evidence.openingId.trim().length > 0
+      ) {
+        memo = evidence;
+      }
     },
     record(evidence) {
       memo = evidence;
@@ -354,8 +372,7 @@ export function createPanelCourtSession(): PanelCourtSession {
  * #1117 / #1118 — one panel-evidence gate for first open and court resume.
  *
  * Mechanism is only {@link dispatchFamilyCmrPanelLegs} (scope is a parameter).
- * Reuse only when existing stamp openingId matches the current opening and
- * carries legal ADR 0141 paper; otherwise fan-out again.
+ * Reuse when caller supplies same-opening valid evidence; otherwise fan-out.
  */
 export async function ensureFamilyCmrPanelEvidence(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
@@ -378,7 +395,6 @@ export async function ensureFamilyCmrPanelEvidence(input: {
         existing.skippedLegs.length > 0
           ? existing.skippedLegs
           : skippedLegsFromTransports(legs, existing.transports),
-      dispatched: false,
     };
   }
   const round = await dispatchFamilyCmrPanelLegs({
@@ -390,7 +406,6 @@ export async function ensureFamilyCmrPanelEvidence(input: {
     openingId: input.openingId,
     transports: round.transports,
     skippedLegs: round.skippedLegs,
-    dispatched: legs.length > 0,
   };
 }
 
@@ -409,7 +424,7 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   const legs = input.legs;
   const pass = input.cmrPass ?? "correctness";
   if (legs.length === 0) {
-    return { transports: [], skippedLegs: [], dispatched: false };
+    return { transports: [], skippedLegs: [] };
   }
   // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
   // park/relay throw. Settle every leg first, then rethrow one rejection.
@@ -439,6 +454,5 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   return {
     transports: results,
     skippedLegs: skippedLegsFromTransports(legs, results),
-    dispatched: true,
   };
 }
