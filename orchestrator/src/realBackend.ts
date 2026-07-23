@@ -259,6 +259,8 @@ import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   CODE_REVIEW_SPEC_LEG_PROMPT_FILE,
   CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE,
+  isReviewPanelLegPromptFile,
+  panelLegCompletedResult,
 } from "./family/reviewPanelLegs.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
@@ -3251,7 +3253,8 @@ export class RealBackend implements Backend {
       options,
       { requireSingleIter: true },
     );
-    const box = this.box(issueNumber, spec, options, worktree.base);
+    // Fixed point is review-panel-leg only (#1126 R3) — not every worker.
+    const box = this.box(issueNumber, spec, options);
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
     this.assertProviderAuth(spec.model, pool, box.providerAuth);
@@ -3312,7 +3315,8 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    const box = this.box(issueNumber, spec, options, worktree.base);
+    // Fixed point is review-panel-leg only (#1126 R3) — not every worker.
+    const box = this.box(issueNumber, spec, options);
     try {
       const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
       this.assertProviderAuth(spec.model, pool, box.providerAuth);
@@ -3394,12 +3398,78 @@ export class RealBackend implements Backend {
     return await this.invokeSandcastleRun(options);
   }
 
+  /**
+   * #1126 / #1094 — runner-owned review-panel legs (single Standards/Spec or
+   * family CMR panel). Thin raw-prose path: reuse preflight/box/sandbox/agent,
+   * inject ORCHESTRATOR_REVIEW_FIXED_POINT from worktree.base only here, return
+   * {@link panelLegCompletedResult}(stdout). Bypasses legacyDispatchWorker,
+   * judge/open-count SO, and fix-findings landing — legs keep judgeStep id
+   * (S3/S6) for monitor bookkeeping without hanging judge schema.
+   */
+  protected async runReviewPanelLegWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.worktree === undefined) {
+      throw new Error(
+        `dispatchWorker(review panel leg ${spec.id}): requires a worktree`,
+      );
+    }
+    const worktree = ctx.worktree;
+    const stepSpec: StepSpec = {
+      id: spec.id,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      model: spec.model,
+      maxIter: spec.maxIter,
+      soul: spec.soul,
+      toolchain: spec.toolchain,
+    };
+    const issueNumber = this.issueOf(worktree);
+    await this.preflightToolchain(stepSpec);
+    const box = this.box(issueNumber, stepSpec, undefined, worktree.base);
+    try {
+      const pool = isBillingPoolDispatchId(ctx.billingPool)
+        ? ctx.billingPool
+        : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
+      const result = await this.runAgentSandbox({
+        name: `${spec.id}-panel-leg`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+        cwd: worktree.path,
+        sandbox: box.sandbox,
+        agent: agentForSlug(spec.model, pool, spec.soul),
+        maxIterations: 1,
+        branchStrategy: { type: "head" },
+        promptFile: join(this.opts.promptsDir, spec.promptFile),
+        // No Output.object — ADR 0141 prose stdout is the legal paper.
+      });
+      const stdout =
+        typeof (result as { stdout?: unknown }).stdout === "string"
+          ? (result as { stdout: string }).stdout
+          : "";
+      return panelLegCompletedResult(stdout);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "failed",
+        reason: `panel leg ${spec.model}: ${reason}`,
+      };
+    } finally {
+      box.cleanup();
+    }
+  }
+
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
+    // #1126 R3: review-panel legs before legacy — keep judgeStep id, skip SO.
+    if (isReviewPanelLegPromptFile(spec.promptFile)) {
+      return this.runReviewPanelLegWorker(spec, ctx);
+    }
     return legacyDispatchWorker(this, spec, ctx, landing);
   }
 

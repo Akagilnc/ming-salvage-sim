@@ -572,7 +572,7 @@ replacement Actions and Sandcastle controls land.
 
 ## 领航员运维手册(2026-07-23,交接版)
 
-> 本章给接棒的 runner(人或 AI)。上文是机器的设计文;本章是**开机器的人**的操作规程。判卷法理真源=`image/souls/verify.md`(判前必重读,含裁 park/立票);宪法=容器全局 CLAUDE.md 三句话+一套机制(scope 是参数,无庭际分层);基本架构=**runner 按信封起容器、递信息;worker 永不起 worker;判官经 typed 判词向 runner 要腿**(法-码残差见 #1126:切片庭腿派发迁 runner 前,prompt 跟机器不跟法)。
+> 本章给接棒的 runner(人或 AI)。上文是机器的设计文;本章是**开机器的人**的操作规程。判卷法理真源=`image/souls/verify.md`(判前必重读,含裁 park/立票);宪法=容器全局 CLAUDE.md 三句话+一套机制(scope 是参数,无庭际分层);基本架构=**runner 按信封起容器、递信息;worker 永不起 worker;判官经 typed 判词向 runner 要腿**(切片庭与纯庭同源,#1126/#1094)。
 
 ### 点火
 
