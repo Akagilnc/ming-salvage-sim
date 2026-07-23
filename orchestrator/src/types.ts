@@ -121,9 +121,6 @@ export type HandoffStatus = "completed" | "parked" | "failed";
  * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
  * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
  *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — review/outcome
- *   discipline for the selected CMR gate. Blocking findings return to the runner;
- *   a separate `"coder"` worker creates any persistent repair commits.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
@@ -131,11 +128,9 @@ export type HandoffStatus = "completed" | "parked" | "failed";
 export type StepSoul =
   | "coder"
   | "READ-ONLY"
-  | "cmr"
   | "ship"
   | "verify"
   | "fixer"
-  | "cleanup"
   | "landing";
 
 /**

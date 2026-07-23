@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentForSlug,
-  agySoulMountForSlug,
+  appendAgySoulMount,
 } from "../../src/modelRegistry.js";
 import {
   AGY_SOUL_RULES_FILE,
@@ -56,14 +56,29 @@ describe("real providers load the selected soul outside the task prompt", () => 
     expect(rewritten.command).toContain("grok --prompt-file");
     expect(rewritten.command).toContain("--rules");
 
-    expect(agySoulMountForSlug("agy", undefined, "landing", "/sentinel/souls"))
-      .toEqual({
+    const mounts: Array<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }> = [];
+    appendAgySoulMount(
+      mounts,
+      { model: "agy", soul: "landing" },
+      undefined,
+      "/sentinel/souls",
+    );
+    expect(mounts).toEqual([{
         hostPath: "/sentinel/souls/landing.md",
         sandboxPath: AGY_SOUL_RULES_FILE,
         readonly: true,
-      });
-    expect(agySoulMountForSlug("agy", "claude", "landing", "/sentinel/souls"))
-      .toBeUndefined();
+      }]);
+    appendAgySoulMount(
+      mounts,
+      { model: "agy", soul: "landing" },
+      "claude",
+      "/sentinel/souls",
+    );
+    expect(mounts).toHaveLength(1);
   });
 
   it("keeps exceptional soul filenames centralized", () => {

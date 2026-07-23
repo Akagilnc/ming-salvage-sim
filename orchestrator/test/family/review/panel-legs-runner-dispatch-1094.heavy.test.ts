@@ -531,6 +531,7 @@ describe("#1094 R2 F1 — judge cmrSandboxConfig mounts OWN family credential on
       public cfg(auth: CmrAuth, model: string) {
         return this.cmrSandboxConfig(auth, {
           model,
+          soul: "verify",
           host: workerHostForModel(model),
         });
       }
@@ -643,7 +644,7 @@ describe("#1094 R3 F1 — relayed pool mounts the executing provider credential"
       public cfg(auth: CmrAuth, model: string, billingPool?: string) {
         return this.cmrSandboxConfig(
           auth,
-          { model, host: workerHostForModel(model) },
+          { model, soul: "verify", host: workerHostForModel(model) },
           undefined,
           billingPool !== undefined ? { billingPool } : undefined,
         );

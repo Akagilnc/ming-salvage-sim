@@ -130,7 +130,7 @@ import {
   unavailableProviderAuth,
   type ProviderAuthAvailability,
   resumeCapableForSlug,
-  agySoulMountForSlug,
+  appendAgySoulMount,
 } from "../modelRegistry.js";
 import {
   agentForSlug,
@@ -282,12 +282,6 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /**
- * #930: family integrated-cmr court soul = verify judge (same as single-slice
- * S3/S6). kind remains "cmr" for dispatch; traffic/soul is the convergence judge.
- */
-const CMR_SOUL: StepSoul = "verify";
-
-/**
  * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
  * DEDICATED ship soul (not the coder soul): the ship worker's discipline is
  * delivery via `gstack-ship` — stop at PR, deferred findings → tracker (issue /
@@ -418,14 +412,8 @@ export function mergerModel(route?: ResolvedModelRoute): string {
  * value alongside the step souls — it is deliberately NOT a {@link StepSoul},
  * because the merger is not an S0–S8 single-slice step driven by `soulForStep`
  * (which maps a step's `role` → "coder"/"READ-ONLY"). The merger has its own
- * activation path: it is injected into the sandbox via {@link SANDBOX_SOUL_ENV}
- * (`ORCHESTRATOR_SOUL`), the SAME env mechanism `RealBackend.box()` uses for
- * coder/reviewer — same image, same env var, a new soul value — so the v0.1
- * profile entrypoint activates the merger soul (with the `resolving-merge-conflicts`
- * skill), not whatever default soul it would otherwise pick. The merger soul's
- * CONTENT (the baked profile + `prompts/merger_resolve_conflict.md` behaviour) is
- * a production-image concern (it must be baked into the profile image); this
- * constant is the code-side selector that activates it.
+ * activation path is the same live-mounted, provider-native instruction seam as
+ * every other worker; it is not a child-runner step driven by `soulForStep`.
  */
 export const MERGER_SOUL = "merger";
 
@@ -1140,16 +1128,8 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The docker options the merger sandbox runs under — the SOUL-SELECTION seam
-   * (F28 / ADR 0022). Pure (no container, no I/O) so a unit test asserts the
-   * baked-soul env + skills-mount path without spinning a real sandbox, mirroring
-   * how {@link soulForStep} is the testable seam on the single-slice path.
-   *
-   * The merger soul is activated the SAME way coder/reviewer are in
-   * `RealBackend.box()`: by injecting {@link SANDBOX_SOUL_ENV} (`ORCHESTRATOR_SOUL`)
-   * — same env var, same image, a new soul value ({@link MERGER_SOUL}) — NOT by the
-   * prompt alone. Before this the sandbox set no env, so `ORCHESTRATOR_SOUL` was
-   * never set and the merger ran under the image's default soul (the F28 PARTIAL).
+   * The docker options the merger sandbox runs under. Pure (no container, no I/O)
+   * so tests can assert its live soul mount without spinning a real sandbox.
    *
    * #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
    * {@link SANDBOX_SKILLS_DIR} is DROPPED here too — the 2b image BAKES
@@ -1193,10 +1173,12 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // N3: mount agy OAuth when provisioned (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
-    const mergerSoulMount = agySoulMountForSlug(
-      model, undefined, MERGER_SOUL, this.opts.soulsDir,
+    appendAgySoulMount(
+      mounts,
+      { model, soul: MERGER_SOUL },
+      undefined,
+      this.opts.soulsDir,
     );
-    if (mergerSoulMount !== undefined) mounts.push(mergerSoulMount);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1968,13 +1950,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
-      const soulMount = agySoulMountForSlug(
-        spec.model,
-        isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
-        spec.soul,
-        this.opts.soulsDir,
-      );
-      if (soulMount !== undefined) mounts.push(soulMount);
+      appendAgySoulMount(mounts, spec, pool, this.opts.soulsDir);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -2518,13 +2494,12 @@ export class RealFamilyBackend implements FamilyBackend {
     appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
-    const fixerSoulMount = agySoulMountForSlug(
-      model,
+    appendAgySoulMount(
+      mounts,
+      { model, soul },
       isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
-      soul,
       this.opts.soulsDir,
     );
-    if (fixerSoulMount !== undefined) mounts.push(fixerSoulMount);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2776,13 +2751,12 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
-    const reviewSoulMount = agySoulMountForSlug(
-      spec.model,
+    appendAgySoulMount(
+      mounts,
+      spec,
       isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
-      spec.soul,
       this.opts.soulsDir,
     );
-    if (reviewSoulMount !== undefined) mounts.push(reviewSoulMount);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -3006,7 +2980,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected cmrSandbox(
     auth: CmrAuth,
-    spec: Pick<WorkerSpec, "model" | "host">,
+    spec: Pick<WorkerSpec, "model" | "soul" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -3086,7 +3060,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
-    spec: Pick<WorkerSpec, "model" | "host">,
+    spec: Pick<WorkerSpec, "model" | "soul" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -3131,10 +3105,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
-      const soulMount = agySoulMountForSlug(
-        spec.model, pool, CMR_SOUL, this.opts.soulsDir,
-      );
-      if (soulMount !== undefined) mounts.push(soulMount);
+      appendAgySoulMount(mounts, spec, pool, this.opts.soulsDir);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -3493,13 +3464,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
     if (spec !== undefined) {
-      const soulMount = agySoulMountForSlug(
-        spec.model,
+      appendAgySoulMount(
+        mounts,
+        spec,
         isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
-        spec.soul,
         this.opts.soulsDir,
       );
-      if (soulMount !== undefined) mounts.push(soulMount);
     }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());

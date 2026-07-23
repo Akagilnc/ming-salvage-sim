@@ -396,13 +396,17 @@ export function agentForSlug(
     : withSoulInstructions(agent, entry.provider, soul);
 }
 
-export function agySoulMountForSlug(
-  slug: string,
+export function appendAgySoulMount(
+  mounts: Array<{
+    hostPath: string;
+    sandboxPath: string;
+    readonly?: boolean;
+  }>,
+  spec: { readonly model: string; readonly soul: WorkerSoul },
   pool: BillingPoolDispatchId | undefined,
-  soul: WorkerSoul,
   soulsDir: string,
-) {
-  return resolveModelSlugForPool(slug, pool).provider === "agy"
-    ? agySoulRulesMount(soulsDir, soul)
-    : undefined;
+): void {
+  if (resolveModelSlugForPool(spec.model, pool).provider === "agy") {
+    mounts.push(agySoulRulesMount(soulsDir, spec.soul));
+  }
 }

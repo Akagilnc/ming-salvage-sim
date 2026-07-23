@@ -113,7 +113,7 @@ import {
 import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
-  agySoulMountForSlug,
+  appendAgySoulMount,
   resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
@@ -1825,9 +1825,6 @@ export function promptsDirError(
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
-  "cmr.md",
-  "cmr_completeness.md",
-  "cmr_correctness.md",
   "coder.md",
   "landing.md",
   "fixer.md",
@@ -1868,8 +1865,7 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. landing.md; ` +
-      `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
+      `must be present (every executable file under image/souls, incl. landing.md).`
     );
   }
   return undefined;
@@ -1944,8 +1940,7 @@ export interface RealBackendOptions {
    * /home/agent/.orchestrator/souls . #372: souls are mounted live (rather than
    * baked) so source edits take effect on next dispatch without a full image
    * layer change for data files. REQUIRED: souls are no longer baked into the image.
-   * #911: output_protocol.md removed (home env + dispatch prompts cover it);
-   * cmr_completeness/cmr_correctness are relative symlinks to verify.md.
+   * #911: output_protocol.md removed (home env + dispatch prompts cover it).
    */
   readonly soulsDir: string;
   /**
@@ -2975,15 +2970,14 @@ export class RealBackend implements Backend {
     // #905: agy OAuth — same CMR seam (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
     if (typeof spec.model === "string" && typeof spec.soul === "string") {
-      const soulMount = agySoulMountForSlug(
-        spec.model,
+      appendAgySoulMount(
+        mounts,
+        { model: spec.model, soul: spec.soul as StepSoul },
         isBillingPoolDispatchId(options?.billingPool)
           ? options.billingPool
           : undefined,
-        spec.soul as StepSoul,
         this.opts.soulsDir,
       );
-      if (soulMount !== undefined) mounts.push(soulMount);
     }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.

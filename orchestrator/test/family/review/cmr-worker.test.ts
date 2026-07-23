@@ -930,6 +930,7 @@ describe("#1094 cmrSandboxConfig — pure court (judge identity only; no nested-
     } {
       return this.cmrSandboxConfig(auth, {
         model: spec.model,
+        soul: spec.soul,
         host: spec.host,
       });
     }
