@@ -40,7 +40,7 @@ export function withSoulInstructions(
   provider: string,
   soul: WorkerSoul,
 ): sc.AgentProvider {
-  if (provider === "agy") return agent;
+  if (provider === "agy" || provider === "grok") return agent;
   const path = sandboxSoulPath(soul);
   return {
     ...agent,
@@ -48,13 +48,14 @@ export function withSoulInstructions(
       const command = agent.buildPrintCommand(options);
       const suffix =
         provider === "claudeCode"
-          ? ` --append-system-prompt-file ${shellEscape(path)}`
-          : provider === "grok"
-            ? ` --rules "$(cat ${shellEscape(path)})"`
-            : provider === "codex"
-              ? ` -c developer_instructions="$(cat ${shellEscape(path)})"`
-              : "";
-      return { ...command, command: `${command.command}${suffix}` };
+          ? `--append-system-prompt-file ${shellEscape(path)} `
+          : provider === "codex"
+            ? `-c developer_instructions="$(cat ${shellEscape(path)})" `
+            : "";
+      return {
+        ...command,
+        command: command.command.replace(/^([^ ]+ )/, `$1${suffix}`),
+      };
     },
   };
 }

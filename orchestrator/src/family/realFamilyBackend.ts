@@ -94,7 +94,6 @@ import {
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
 import {
-  buildJudgeReviewLegPrompt,
   judgeResultFromVerdict,
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
@@ -131,6 +130,7 @@ import {
   unavailableProviderAuth,
   type ProviderAuthAvailability,
   resumeCapableForSlug,
+  agySoulMountForSlug,
 } from "../modelRegistry.js";
 import {
   agentForSlug,
@@ -161,7 +161,6 @@ import {
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
-import { agySoulRulesMount } from "../soulInstructions.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -1194,9 +1193,10 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // N3: mount agy OAuth when provisioned (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
-    if (modelFamilyForSlug(model) === "agy") {
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, MERGER_SOUL));
-    }
+    const mergerSoulMount = agySoulMountForSlug(
+      model, undefined, MERGER_SOUL, this.opts.soulsDir,
+    );
+    if (mergerSoulMount !== undefined) mounts.push(mergerSoulMount);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1826,10 +1826,6 @@ export class RealFamilyBackend implements FamilyBackend {
               `(pinned review scope) — ${detail}`,
           };
         }
-        const reviewerSoul = readFileSync(
-          join(this.opts.soulsDir, "reviewer.md"),
-          "utf8",
-        );
         // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
         // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
         const promptTemplate = readFileSync(
@@ -1848,9 +1844,8 @@ export class RealFamilyBackend implements FamilyBackend {
           `CMR pass: ${passLabel}.\n` +
           `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
           `(or the assigned clone scope) and emit prose review on stdout.`;
-        const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
         const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
-        writeFileSync(promptPath, promptBody, "utf8");
+        writeFileSync(promptPath, taskBody, "utf8");
         const result = await this.runAgentSandbox({
           name: `family-cmr-panel-${spec.model}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1973,7 +1968,13 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
+      const soulMount = agySoulMountForSlug(
+        spec.model,
+        isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
+        spec.soul,
+        this.opts.soulsDir,
+      );
+      if (soulMount !== undefined) mounts.push(soulMount);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -2320,6 +2321,7 @@ export class RealFamilyBackend implements FamilyBackend {
               spec.model,
               ctx,
               outcomeLanding,
+              spec.soul,
             ),
             agent,
             maxIterations: spec.maxIter,
@@ -2473,9 +2475,10 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    soul: WorkerSpec["soul"] = "fixer",
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, soul),
     );
   }
 
@@ -2484,6 +2487,7 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    soul: WorkerSpec["soul"] = "fixer",
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2514,9 +2518,13 @@ export class RealFamilyBackend implements FamilyBackend {
     appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
-    if (modelFamilyForSlug(model) === "agy") {
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, "fixer"));
-    }
+    const fixerSoulMount = agySoulMountForSlug(
+      model,
+      isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
+      soul,
+      this.opts.soulsDir,
+    );
+    if (fixerSoulMount !== undefined) mounts.push(fixerSoulMount);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2768,9 +2776,13 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
-    if (modelFamilyForSlug(spec.model) === "agy") {
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
-    }
+    const reviewSoulMount = agySoulMountForSlug(
+      spec.model,
+      isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
+      spec.soul,
+      this.opts.soulsDir,
+    );
+    if (reviewSoulMount !== undefined) mounts.push(reviewSoulMount);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -3119,7 +3131,10 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, CMR_SOUL));
+      const soulMount = agySoulMountForSlug(
+        spec.model, pool, CMR_SOUL, this.opts.soulsDir,
+      );
+      if (soulMount !== undefined) mounts.push(soulMount);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -3322,7 +3337,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding, spec),
+      sandbox: this.shipSandbox(auth, outcomeLanding, spec, ctx?.billingPool),
       // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
@@ -3390,8 +3405,9 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
     spec?: WorkerSpec,
+    billingPool?: DispatchContext["billingPool"],
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding, spec));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, spec, billingPool));
   }
 
   /**
@@ -3438,6 +3454,7 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
     spec?: WorkerSpec,
+    billingPool?: DispatchContext["billingPool"],
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3475,8 +3492,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
-    if (spec !== undefined && modelFamilyForSlug(spec.model) === "agy") {
-      mounts.push(agySoulRulesMount(this.opts.soulsDir, spec.soul));
+    if (spec !== undefined) {
+      const soulMount = agySoulMountForSlug(
+        spec.model,
+        isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
+        spec.soul,
+        this.opts.soulsDir,
+      );
+      if (soulMount !== undefined) mounts.push(soulMount);
     }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());

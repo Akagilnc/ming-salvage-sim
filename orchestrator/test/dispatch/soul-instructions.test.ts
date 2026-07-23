@@ -1,39 +1,73 @@
 import { describe, expect, it } from "vitest";
-import type * as sc from "@ai-hero/sandcastle";
+import {
+  agentForSlug,
+  agySoulMountForSlug,
+} from "../../src/modelRegistry.js";
 import {
   AGY_SOUL_RULES_FILE,
   sandboxSoulPath,
   soulFileName,
-  withSoulInstructions,
 } from "../../src/soulInstructions.js";
 
-const base: sc.AgentProvider = {
-  name: "fake", env: {}, captureSessions: false,
-  buildPrintCommand: ({ prompt }) => ({ command: "agent", stdin: prompt }),
-  parseStreamLine: () => [],
-};
+const task = "TASK_SENTINEL";
+const commandFor = (
+  slug: string,
+  soul: Parameters<typeof agentForSlug>[2],
+  pool?: Parameters<typeof agentForSlug>[1],
+) => agentForSlug(slug, pool, soul)
+  .buildPrintCommand({ prompt: task } as never);
 
-describe("selected soul stays separate from the task prompt", () => {
-  it.each([
-    ["claudeCode", "--append-system-prompt-file /home/agent/.orchestrator/souls/fixer.md"],
-    ["grok", "--rules \"$(cat /home/agent/.orchestrator/souls/fixer.md)\""],
-    ["codex", "-c developer_instructions=\"$(cat /home/agent/.orchestrator/souls/fixer.md)\""],
-  ])("%s uses its native instruction channel", (provider, expected) => {
-    const command = withSoulInstructions(base, provider, "fixer")
-      .buildPrintCommand({ prompt: "TASK_SENTINEL" } as never);
-    expect(command.command).toContain(expected);
-    expect(command.stdin).toBe("TASK_SENTINEL");
+describe("real providers load the selected soul outside the task prompt", () => {
+  it("Codex places developer_instructions before exec, including resume", () => {
+    const agent = agentForSlug("gpt-5.6-terra", undefined, "fixer");
+    for (const resumeSession of [undefined, "session-1"]) {
+      const command = agent.buildPrintCommand({ prompt: task, resumeSession } as never);
+      expect(command.command).toContain(
+        `-c developer_instructions="$(cat ${sandboxSoulPath("fixer")})"`,
+      );
+      expect(command.command.indexOf("-c developer_instructions=")).toBeLessThan(
+        command.command.indexOf(" exec"),
+      );
+      expect(command.stdin).toBe(task);
+    }
   });
 
-  it("agy leaves the task prompt untouched for its GEMINI.md overlay", () => {
-    expect(withSoulInstructions(base, "agy", "fixer")
-      .buildPrintCommand({ prompt: "TASK_SENTINEL" } as never))
-      .toEqual({ command: "agent", stdin: "TASK_SENTINEL" });
-    expect(AGY_SOUL_RULES_FILE).toBe("/home/agent/.gemini/GEMINI.md");
+  it("Claude places append-system-prompt-file before its print prompt flags", () => {
+    const command = commandFor("opus", "verify");
+    expect(command.command).toMatch(
+      /^claude --append-system-prompt-file .*verify\.md --print/,
+    );
+    expect(command.stdin).toBe(task);
+  });
+
+  it("Grok places --rules inside the grok subprocess, before wait", () => {
+    const command = commandFor("grok-4.5", "READ-ONLY");
+    expect(command.command).toContain(
+      `--rules "$(cat ${sandboxSoulPath("READ-ONLY")})"`,
+    );
+    expect(command.command.indexOf("--rules")).toBeLessThan(
+      command.command.indexOf(") & grok_pid="),
+    );
+    expect(command.stdin).toBe(task);
+  });
+
+  it("pool rewrite and Agy overlay use the same resolved provider", () => {
+    const rewritten = commandFor("gpt-5.6-sol", "fixer", "grok-build");
+    expect(rewritten.command).toContain("grok --prompt-file");
+    expect(rewritten.command).toContain("--rules");
+
+    expect(agySoulMountForSlug("agy", undefined, "landing", "/sentinel/souls"))
+      .toEqual({
+        hostPath: "/sentinel/souls/landing.md",
+        sandboxPath: AGY_SOUL_RULES_FILE,
+        readonly: true,
+      });
+    expect(agySoulMountForSlug("agy", "claude", "landing", "/sentinel/souls"))
+      .toBeUndefined();
   });
 
   it("keeps exceptional soul filenames centralized", () => {
     expect(soulFileName("READ-ONLY")).toBe("reviewer.md");
-    expect(sandboxSoulPath("merger")).toContain("/merger.md");
+    expect(soulFileName("merger")).toBe("merger.md");
   });
 });

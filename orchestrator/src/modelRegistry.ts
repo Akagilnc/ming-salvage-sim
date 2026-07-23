@@ -8,6 +8,8 @@ import {
 } from "./modelDataConfig.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
 import {
+  agySoulRulesMount,
+  sandboxSoulPath,
   withSoulInstructions,
   type WorkerSoul,
 } from "./soulInstructions.js";
@@ -382,8 +384,25 @@ export function agentForSlug(
   // Effort comes from the registry row for `slug` only — no call-site overlay
   // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  const agent = MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
+  const agent =
+    entry.provider === "grok" && soul !== undefined
+      ? grokAgent(entry.model, {
+          ...(entry.options as GrokAgentOptions | undefined),
+          rulesFile: sandboxSoulPath(soul),
+        })
+      : MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
   return soul === undefined
     ? agent
     : withSoulInstructions(agent, entry.provider, soul);
+}
+
+export function agySoulMountForSlug(
+  slug: string,
+  pool: BillingPoolDispatchId | undefined,
+  soul: WorkerSoul,
+  soulsDir: string,
+) {
+  return resolveModelSlugForPool(slug, pool).provider === "agy"
+    ? agySoulRulesMount(soulsDir, soul)
+    : undefined;
 }
