@@ -98,16 +98,21 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
- *   coder → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
- *   ship → `gstack-ship`, merge → none; review-loop agents: verify/fixer/landing.
+ *   coder → `/tdd`, cmr → `ak-cross-m-review`, ship → `gstack-ship`,
+ *   merge → none; review-loop agents: verify/fixer/landing.
  *   Cleanup is the S11 host-deterministic endgame action, not an agent skill.
+ *
+ * Live `reviewer` kind = runner-owned review-panel legs (#1094 / #1126): skill
+ * is undefined; axis/lens method lives in soul + thin promptFile (never
+ * `/code-review`). Residual fixtures that still stamp historical skill metadata
+ * must not invent a second dispatch path.
  *
  * Production backends invoke these routed skills through the unified dispatch
  * seam. The legacy compatibility wrapper forwards only older child methods.
  */
 const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   coder: "/tdd",
-  reviewer: "/code-review",
+  reviewer: undefined,
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,

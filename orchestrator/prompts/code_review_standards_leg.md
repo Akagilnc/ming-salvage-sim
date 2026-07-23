@@ -13,7 +13,6 @@ Documented repo standards override the baseline. Baseline smells are judgement
 calls. Skip anything tooling already enforces. Under 400 words. Emit non-empty
 prose on stdout for the resident judge.
 
-Do not invoke `/code-review`. Do not spawn nested agents or review legs.
 Do not emit runner verdict, degradation, retry, or repair instructions.
 
 ## Smell baseline (Standards only)

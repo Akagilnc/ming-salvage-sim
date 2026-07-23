@@ -13,5 +13,4 @@ implemented but wrong. Quote the spec line for each finding. If no spec is
 available, say so briefly. Under 400 words. Emit non-empty prose on stdout for
 the resident judge.
 
-Do not invoke `/code-review`. Do not spawn nested agents or review legs.
 Do not emit runner verdict, degradation, retry, or repair instructions.

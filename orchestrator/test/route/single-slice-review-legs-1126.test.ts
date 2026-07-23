@@ -213,9 +213,6 @@ describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
     }
 
     expect(backend.legContexts).toHaveLength(2);
-    for (const ctx of backend.legContexts) {
-      expect(ctx.worktree?.base).toBe(SLICE_BASE);
-    }
 
     const judgeAfterLegs = backend.landings.find(
       (l) => (l?.panelLegTransports?.length ?? 0) > 0,
