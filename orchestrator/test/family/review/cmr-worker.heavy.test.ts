@@ -1444,7 +1444,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     expect(command?.command).toContain("TASK_SENTINEL");
     expect(backend.config?.mounts).toContainEqual({
       hostPath: join(realSoulsDir, "verify.md"),
-      sandboxPath: "/home/agent/workspace/GEMINI.md",
+      sandboxPath: "/home/agent/.gemini/GEMINI.md",
       readonly: true,
     });
   });
