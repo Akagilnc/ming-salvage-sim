@@ -182,11 +182,7 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
-import {
-  modelFamilyForSlug,
-  resumeCapableForSlug,
-} from "./modelRegistry.js";
-import { dispatchFamilyCmrPanelLegs } from "./family/cmrPanelLegs.js";
+import { resumeCapableForSlug } from "./modelRegistry.js";
 import {
   isStepId,
 } from "./types.js";
@@ -600,63 +596,6 @@ function executableLedgerEntries(
   return ledger.filter((entry) => !isBookkeepingEntry(entry));
 }
 
-function pendingSingleReviewFromLedger(
-  ledger: ReadonlyArray<LedgerEntry>,
-):
-  | {
-      readonly step: "S3" | "S6";
-      readonly sessionId: string;
-      readonly modelSlug?: string;
-      readonly transports?: NonNullable<LedgerEntry["panelLegTransports"]>;
-    }
-  | undefined {
-  for (let i = ledger.length - 1; i >= 0; i -= 1) {
-    const entry = ledger[i]!;
-    if (
-      entry.event === "single_review_paper_landed" &&
-      (entry.forStep === "S3" || entry.forStep === "S6")
-    ) {
-      for (let j = i - 1; j >= 0; j -= 1) {
-        const request = ledger[j]!;
-        if (
-          request.event === "single_review_requested" &&
-          request.forStep === entry.forStep &&
-          typeof request.sessionId === "string"
-        ) {
-          return {
-            step: entry.forStep,
-            sessionId: request.sessionId,
-            ...(typeof request.modelSlug === "string"
-              ? { modelSlug: request.modelSlug }
-              : {}),
-            transports: entry.panelLegTransports ?? [],
-          };
-        }
-      }
-    }
-    if (
-      entry.event === "single_review_requested" &&
-      (entry.forStep === "S3" || entry.forStep === "S6") &&
-      typeof entry.sessionId === "string"
-    ) {
-      return {
-        step: entry.forStep,
-        sessionId: entry.sessionId,
-        ...(typeof entry.modelSlug === "string"
-          ? { modelSlug: entry.modelSlug }
-          : {}),
-      };
-    }
-    if (
-      !isBookkeepingEntry(entry) &&
-      (entry.step === "S3" || entry.step === "S6")
-    ) {
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
 function latestAnswerAfter(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   index: number,
@@ -1063,17 +1002,6 @@ function planResume(
   const executableLedger = executableLedgerEntries(ledger);
   if (executableLedger.length === 0) {
     return { resumeStep: "S0", priorLedger: ledger as ReadonlyArray<LedgerEntry> };
-  }
-  const pendingSingleReview = pendingSingleReviewFromLedger(ledger);
-  if (pendingSingleReview !== undefined) {
-    return {
-      resumeStep: pendingSingleReview.step,
-      resumeSessionId: pendingSingleReview.sessionId,
-      ...(pendingSingleReview.modelSlug !== undefined
-        ? { resumeSessionModel: pendingSingleReview.modelSlug }
-        : {}),
-      priorLedger: ledger as ReadonlyArray<LedgerEntry>,
-    };
   }
 
   const lastEntry = executableLedger[executableLedger.length - 1]!;
@@ -4250,9 +4178,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
-          let singleReviewState = isJudgeSeat({ step })
-            ? pendingSingleReviewFromLedger(ledger)
-            : undefined;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -4406,7 +4331,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : {}),
                     }
                   : undefined;
-              let landingPayload: WorkerLandingPayload | undefined =
+              const landingPayload =
                 planLanding !== undefined || fixLanding !== undefined
                   ? { ...(fixLanding ?? {}), ...(planLanding ?? {}) }
                   : undefined;
@@ -4542,92 +4467,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {},
               );
-              if (
-                isJudgeSeat({ step }) &&
-                singleReviewState?.step === step
-              ) {
-                const judgeStep = step === "S3" ? "S3" : "S6";
-                if (singleReviewState.transports === undefined) {
-                  let reviewLegControl:
-                    | Exclude<SeatDispatchProtocolOutcome, { kind: "dispatched" }>
-                    | undefined;
-                  const reviewLegControlSignal = Symbol("review-leg-control");
-                  try {
-                    const {
-                      billingPool: _judgePool,
-                      resumeSessionId: _judgeResume,
-                      ...reviewLegCtx
-                    } = dispatchCtx;
-                    void _judgePool;
-                    void _judgeResume;
-                    const reviewRound = await dispatchFamilyCmrPanelLegs({
-                      legs: [
-                        {
-                          slug: workerSpec.model,
-                          family: modelFamilyForSlug(workerSpec.model),
-                        },
-                      ],
-                      scope: { kind: "single", judgeStep },
-                      dispatch: async (reviewSpec) => {
-                        const protocol = await dispatchSeatWithProtocol({
-                          step,
-                          wallStep: step,
-                          spec: reviewSpec,
-                          ctx: reviewLegCtx,
-                          retryOpts: durableMechanicalRetryOptions(step),
-                          capacityStateSummary:
-                            "fresh reviewer checkpoint at capacity; drift preserved",
-                          setMonitorHandle: (handle) => {
-                            stepMonitorHandle = handle;
-                          },
-                        });
-                        if (protocol.kind === "dispatched") return protocol.result;
-                        reviewLegControl = protocol;
-                        throw reviewLegControlSignal;
-                      },
-                    });
-                    const paperEntry: PersistentLedgerEntry = {
-                      step,
-                      event: "single_review_paper_landed",
-                      forStep: judgeStep,
-                      panelLegTransports: reviewRound.transports,
-                      runId,
-                      sessionId,
-                      prompt_hash: await hashPrompt(undefined, step, backend),
-                      branchHEAD: await resolveBranchHEAD(),
-                      ts: new Date().toISOString(),
-                    };
-                    if (stateDir === undefined) pendingEntries.push(paperEntry);
-                    else await backend.writeLedger(paperEntry, stateDir);
-                    ledger.push(paperEntry);
-                    singleReviewState = {
-                      ...singleReviewState,
-                      transports: reviewRound.transports,
-                    };
-                  } catch (err) {
-                    if (err !== reviewLegControlSignal) throw err;
-                  }
-                  if (reviewLegControl?.kind === "terminal") {
-                    return reviewLegControl.result;
-                  }
-                  if (reviewLegControl?.kind === "relay") {
-                    continue orchestratorStepLoop;
-                  }
-                  if (reviewLegControl?.kind === "stay_put_break") {
-                    return await errorTermination(
-                      step,
-                      new Error(
-                        `fresh reviewer ${step} stopped without a dispatch result`,
-                      ),
-                    );
-                  }
-                }
-                landingPayload = {
-                  ...(landingPayload ?? {}),
-                  panelLegTransports:
-                    singleReviewState?.transports ?? [],
-                };
-              }
               const seatProtocol = await dispatchSeatWithProtocol({
                 step,
                 wallStep: step,
@@ -4725,45 +4564,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (isJudgeSeat({ step }) && typeof stepSessionId === "string") {
               judgeSessionId = stepSessionId;
               judgeSessionModel = stepSpecs[step].model;
-            }
-            if (
-              isJudgeSeat({ step }) &&
-              output.kind === "judge" &&
-              output.status === "continue" &&
-              (output.findingDispositions?.length ?? 0) === 0 &&
-              !(
-                step === "S3" &&
-                shouldRunCoderPlanPhase() &&
-                scanCoderPlanPhase(ledger).planPhase
-              ) &&
-              singleReviewState === undefined
-            ) {
-              if (typeof judgeSessionId !== "string") {
-                throw new Error(
-                  `judge ${step} requested fresh review without a resumable session`,
-                );
-              }
-              const requestEntry: PersistentLedgerEntry = {
-                step,
-                event: "single_review_requested",
-                forStep: step === "S3" ? "S3" : "S6",
-                runId,
-                sessionId: judgeSessionId,
-                modelSlug: stepSpecs[step].model,
-                prompt_hash: await hashPrompt(undefined, step, backend),
-                branchHEAD: await resolveBranchHEAD(),
-                ts: new Date().toISOString(),
-              };
-              if (stateDir === undefined) pendingEntries.push(requestEntry);
-              else await backend.writeLedger(requestEntry, stateDir);
-              ledger.push(requestEntry);
-              singleReviewState = {
-                step: step === "S3" ? "S3" : "S6",
-                sessionId: judgeSessionId,
-                modelSlug: stepSpecs[step].model,
-              };
-              resumeSessionId = judgeSessionId;
-              continue;
             }
             break;
           }

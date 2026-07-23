@@ -46,16 +46,6 @@ export function cmrPanelLegPromptFile(pass: IntegratedCmrPass): string {
     : CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE;
 }
 
-export type ReviewLegScope =
-  | {
-      readonly kind: "single";
-      readonly judgeStep: "S3" | "S6";
-    }
-  | {
-      readonly kind: "family";
-      readonly pass: IntegratedCmrPass;
-    };
-
 /** True when promptFile is one of the pass-keyed panel-leg lens sources. */
 export function isCmrPanelLegPromptFile(promptFile: string): boolean {
   return (
@@ -71,27 +61,19 @@ export function isCmrPanelLegPromptFile(promptFile: string): boolean {
  */
 export function cmrPanelLegWorkerSpec(
   leg: WorkerCmrReviewLeg,
-  scope: IntegratedCmrPass | ReviewLegScope = "correctness",
+  pass: IntegratedCmrPass = "correctness",
 ): WorkerSpec {
   const model = leg.slug;
-  const normalizedScope: ReviewLegScope =
-    typeof scope === "string"
-      ? { kind: "family", pass: scope }
-      : scope;
   return {
-    id:
-      normalizedScope.kind === "single"
-        ? normalizedScope.judgeStep
-        : "S3",
+    // Seat remains the family CMR court (S3); per-leg job/log uniqueness is the
+    // monitor dispatchId substrate (#1094 F1) — not a new StepId.
+    id: "S3",
     kind: "reviewer",
     role: "reviewer",
     host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "clean",
-    promptFile:
-      normalizedScope.kind === "single"
-        ? "reviewer_review.md"
-        : cmrPanelLegPromptFile(normalizedScope.pass),
+    promptFile: cmrPanelLegPromptFile(pass),
     maxIter: 1,
     model,
     soul: "READ-ONLY",
@@ -234,15 +216,12 @@ export type PanelLegsRoundResult = {
 export async function dispatchFamilyCmrPanelLegs(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
   readonly cmrPass?: IntegratedCmrPass;
-  readonly scope?: ReviewLegScope;
   readonly dispatch: (
     spec: WorkerSpec,
   ) => Promise<WorkerResult>;
 }): Promise<PanelLegsRoundResult> {
   const legs = input.legs;
-  const scope: ReviewLegScope =
-    input.scope ??
-    { kind: "family", pass: input.cmrPass ?? "correctness" };
+  const pass = input.cmrPass ?? "correctness";
   if (legs.length === 0) {
     return { transports: [], skippedLegs: [] };
   }
@@ -254,7 +233,7 @@ export async function dispatchFamilyCmrPanelLegs(input: {
       if (degraded !== undefined) {
         return degraded;
       }
-      const spec = cmrPanelLegWorkerSpec(leg, scope);
+      const spec = cmrPanelLegWorkerSpec(leg, pass);
       const result = await input.dispatch(spec);
       return legTransportFromPanelLegResult(leg.slug, result);
     }),

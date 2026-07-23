@@ -14,7 +14,7 @@
  *
  * Builder beats (S2 / S5 — plan or construction, no envelope classification)
  * always dumb-relay to the resident judge. Builder and fresh reviewer never
- * connect directly; after receipt the judge asks Runner for the fresh review gate.
+ * connect directly; fresh review legs are the judge's post-receive outer gate.
  *
  * #1082 / ADR 0147: when `coderPlanPhase` is true, judge continue resumes the
  * same S2 builder (plan pre-review / construction) instead of S5 — 准/退/索证
@@ -77,7 +77,7 @@ export type BuilderBeatStep = "S2" | "S5";
  * #1083 / #1085 / ADR 0147 — single seam: every builder beat routes to the
  * resident judge. No envelope classification (committed / plan-only / refuse
  * cargo never forks this edge). Fresh reviewer is never the next step from a
- * builder beat — judge receives first, then may request Runner-owned fresh legs.
+ * builder beat — judge receives first, then may dispatch fresh legs.
  *
  * Consumers (audit):
  * - route() S2 / S5 cases
