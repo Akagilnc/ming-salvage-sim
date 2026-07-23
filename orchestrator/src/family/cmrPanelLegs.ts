@@ -207,11 +207,6 @@ export function degradedTransportForNonRunnablePanelLeg(
 export type PanelLegsRoundResult = {
   readonly transports: ReadonlyArray<LegTransport>;
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
-  /**
-   * #1117 / #1118 / #1119 — true when this round actually dispatched (or
-   * degraded) legs; false when valid prior transports were reused (no reburn).
-   */
-  readonly dispatched: boolean;
 };
 
 /**
@@ -225,6 +220,88 @@ export function hasValidPanelLegTransports(
     return false;
   }
   return successfulLegsFromTransports(transports).length > 0;
+}
+
+/** Current court scope for durable panel-evidence identity (#1119 P1). */
+export type PanelLegEvidenceScope = {
+  readonly familyHeadAfter?: string;
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
+  readonly routeFingerprint: string;
+  readonly courtGeneration: number;
+};
+
+/**
+ * #1119 — durable evidence is admissible only when full court identity matches
+ * (head + barrier phase + route/leg fingerprint + generation) AND transports
+ * contain legal paper. Missing identity fields fail closed (no silent reuse).
+ */
+export function admissibleDurablePanelLegTransports(
+  evidence:
+    | {
+        readonly familyHeadAfter?: string;
+        readonly ledgerPhase?: string;
+        readonly routeFingerprint?: string;
+        readonly courtGeneration?: number;
+        readonly panelLegTransports?: ReadonlyArray<{
+          readonly slug?: unknown;
+          readonly exitCode?: unknown;
+          readonly stdout?: unknown;
+        }>;
+      }
+    | undefined
+    | null,
+  scope: PanelLegEvidenceScope,
+): ReadonlyArray<LegTransport> | undefined {
+  if (evidence === undefined || evidence === null) return undefined;
+  const durableHead =
+    typeof evidence.familyHeadAfter === "string"
+      ? evidence.familyHeadAfter.trim()
+      : "";
+  const currentHead =
+    typeof scope.familyHeadAfter === "string"
+      ? scope.familyHeadAfter.trim()
+      : "";
+  if (durableHead.length === 0 || currentHead.length === 0) return undefined;
+  if (durableHead !== currentHead) return undefined;
+  if (evidence.ledgerPhase !== scope.ledgerPhase) return undefined;
+  if (
+    typeof evidence.routeFingerprint !== "string" ||
+    evidence.routeFingerprint.length === 0 ||
+    evidence.routeFingerprint !== scope.routeFingerprint
+  ) {
+    return undefined;
+  }
+  if (
+    typeof evidence.courtGeneration !== "number" ||
+    !Number.isFinite(evidence.courtGeneration) ||
+    evidence.courtGeneration !== scope.courtGeneration
+  ) {
+    return undefined;
+  }
+  const transports = normalizePanelLegTransportCargo(
+    evidence.panelLegTransports,
+  );
+  if (!hasValidPanelLegTransports(transports)) return undefined;
+  return transports;
+}
+
+/**
+ * Active court generation from durable evidence (0 when absent).
+ * Builder soft-accept advances this; outer-gate writes stamp the same gen.
+ */
+export function courtGenerationFromDurableEvidence(
+  evidence: { readonly courtGeneration?: number } | undefined | null,
+): number {
+  if (
+    evidence !== undefined &&
+    evidence !== null &&
+    typeof evidence.courtGeneration === "number" &&
+    Number.isFinite(evidence.courtGeneration) &&
+    evidence.courtGeneration >= 0
+  ) {
+    return Math.floor(evidence.courtGeneration);
+  }
+  return 0;
 }
 
 /**
@@ -285,15 +362,13 @@ export async function ensureFamilyCmrPanelEvidence(input: {
     return {
       transports: existing,
       skippedLegs: skippedLegsFromTransports(legs, existing),
-      dispatched: false,
     };
   }
-  const round = await dispatchFamilyCmrPanelLegs({
+  return dispatchFamilyCmrPanelLegs({
     legs,
     ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
     dispatch: input.dispatch,
   });
-  return { ...round, dispatched: legs.length > 0 };
 }
 
 /**
@@ -311,7 +386,7 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   const legs = input.legs;
   const pass = input.cmrPass ?? "correctness";
   if (legs.length === 0) {
-    return { transports: [], skippedLegs: [], dispatched: false };
+    return { transports: [], skippedLegs: [] };
   }
   // #1094 F3: Promise.all drops sibling rejections as unhandled after the first
   // park/relay throw. Settle every leg first, then rethrow one rejection.
@@ -341,6 +416,5 @@ export async function dispatchFamilyCmrPanelLegs(input: {
   return {
     transports: results,
     skippedLegs: skippedLegsFromTransports(legs, results),
-    dispatched: true,
   };
 }
