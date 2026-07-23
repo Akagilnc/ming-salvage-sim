@@ -73,7 +73,7 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
+import { dispatchReviewPanelLegs } from "./cmrPanelLegs.js";
 import { successfulLegsFromTransports } from "../legPaper.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
@@ -2675,13 +2675,13 @@ async function runIntegratedCmrPass(input: {
         };
       }
     }
-    const panelRound = await dispatchFamilyCmrPanelLegs({
+    const panelRoundOutcome = await dispatchReviewPanelLegs({
       legs: frozenLegs,
-      cmrPass: pass,
+      scope: { kind: "family", pass },
       // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
       // legs keep their own registry providers (or none).
-      dispatch: (legSpec) => {
+      dispatch: async (legSpec) => {
         // #1094 R3 F2: legs must NOT inherit the judge billingPool.
         // #1080 R3: panel legs are always fresh (cmrPanelLegWorkerSpec session:
         // "fresh") — strip the pure-court resumeSessionId so a transient leg
@@ -2707,6 +2707,12 @@ async function runIntegratedCmrPass(input: {
         );
       },
     });
+    if (panelRoundOutcome.kind !== "round") {
+      throw new Error(
+        "family CMR panel legs: unexpected seat_control (family dispatch returns WorkerResult only)",
+      );
+    }
+    const panelRound = panelRoundOutcome;
     // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
     // (not judge prose cargo). Empty array after a real fan-out still wins.
     const hostSkippedLegs = panelRound.skippedLegs;

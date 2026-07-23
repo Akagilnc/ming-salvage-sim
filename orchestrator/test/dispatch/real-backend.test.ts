@@ -713,6 +713,8 @@ describe("realBackend promptsDirError (F4)", () => {
         "judge_station.md",
         // #1081: resident judge open-court birth (not a topology WORKER step).
         "judge_open_court.md",
+        // #1126: Runner-owned single-slice /code-review legs.
+        "code_review_leg.md",
       ]),
     );
     // No duplicates.

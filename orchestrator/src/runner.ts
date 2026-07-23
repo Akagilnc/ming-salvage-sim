@@ -182,7 +182,7 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
-import { dispatchFamilyCmrPanelLegs } from "./family/cmrPanelLegs.js";
+import { dispatchReviewPanelLegs } from "./family/cmrPanelLegs.js";
 import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
@@ -4535,7 +4535,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result = seatProtocol.result;
               // #1126: empty continue (0 dispositions) after construction is the
               // typed request for Runner-owned fresh review legs — same #1094
-              // dispatchFamilyCmrPanelLegs mechanism, scope=single. No durable
+              // dispatchReviewPanelLegs mechanism, scope=single. No durable
               // ledger events; papers land back on this same judge session.
               if (
                 isJudgeSeat({ step }) &&
@@ -4551,66 +4551,53 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   scanCoderPlanPhase(ledger).planPhase;
                 if (!inPlanPhase) {
                   const judgeStep = step === "S3" ? "S3" : "S6";
-                  let reviewLegControl:
-                    | Exclude<
-                        SeatDispatchProtocolOutcome,
-                        { kind: "dispatched" }
-                      >
-                    | undefined;
-                  const reviewLegControlSignal = Symbol("review-leg-control");
-                  try {
-                    const {
-                      billingPool: _judgePool,
-                      resumeSessionId: _judgeResume,
-                      ...reviewLegCtx
-                    } = dispatchCtx;
-                    void _judgePool;
-                    void _judgeResume;
-                    const reviewRound = await dispatchFamilyCmrPanelLegs({
-                      legs: [
-                        {
-                          slug: workerSpec.model,
-                          family: modelFamilyForSlug(workerSpec.model),
-                        },
-                      ],
-                      scope: { kind: "single", judgeStep },
-                      dispatch: async (reviewSpec) => {
-                        const protocol = await dispatchSeatWithProtocol({
-                          step,
-                          wallStep: step,
-                          spec: reviewSpec,
-                          ctx: reviewLegCtx,
-                          retryOpts: durableMechanicalRetryOptions(step),
-                          capacityStateSummary:
-                            "fresh reviewer checkpoint at capacity; drift preserved",
-                          setMonitorHandle: (handle) => {
-                            stepMonitorHandle = handle;
-                          },
-                        });
-                        if (protocol.kind === "dispatched") {
-                          return protocol.result;
-                        }
-                        reviewLegControl = protocol;
-                        throw reviewLegControlSignal;
+                  const {
+                    billingPool: _judgePool,
+                    resumeSessionId: _judgeResume,
+                    ...reviewLegCtx
+                  } = dispatchCtx;
+                  void _judgePool;
+                  void _judgeResume;
+                  const reviewRound = await dispatchReviewPanelLegs({
+                    legs: [
+                      {
+                        slug: workerSpec.model,
+                        family: modelFamilyForSlug(workerSpec.model),
                       },
-                    });
-                    singleSlicePanelTransports = reviewRound.transports;
-                    if (typeof result.sessionId === "string") {
-                      resumeSessionId = result.sessionId;
-                      judgeSessionId = result.sessionId;
-                      judgeSessionModel = stepSpecs[step].model;
+                    ],
+                    scope: { kind: "single", judgeStep },
+                    dispatch: async (reviewSpec) => {
+                      const protocol = await dispatchSeatWithProtocol({
+                        step,
+                        wallStep: step,
+                        spec: reviewSpec,
+                        ctx: reviewLegCtx,
+                        retryOpts: durableMechanicalRetryOptions(step),
+                        capacityStateSummary:
+                          "fresh reviewer checkpoint at capacity; drift preserved",
+                        setMonitorHandle: (handle) => {
+                          stepMonitorHandle = handle;
+                        },
+                      });
+                      if (protocol.kind === "dispatched") {
+                        return {
+                          kind: "leg_result" as const,
+                          result: protocol.result,
+                        };
+                      }
+                      return {
+                        kind: "seat_control" as const,
+                        control: protocol,
+                      };
+                    },
+                  });
+                  if (reviewRound.kind === "seat_control") {
+                    if (reviewRound.control.kind === "terminal") {
+                      return reviewRound.control.result;
                     }
-                    continue;
-                  } catch (err) {
-                    if (err !== reviewLegControlSignal) throw err;
-                  }
-                  if (reviewLegControl?.kind === "terminal") {
-                    return reviewLegControl.result;
-                  }
-                  if (reviewLegControl?.kind === "relay") {
-                    continue orchestratorStepLoop;
-                  }
-                  if (reviewLegControl?.kind === "stay_put_break") {
+                    if (reviewRound.control.kind === "relay") {
+                      continue orchestratorStepLoop;
+                    }
                     return await errorTermination(
                       step,
                       new Error(
@@ -4618,6 +4605,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ),
                     );
                   }
+                  singleSlicePanelTransports = reviewRound.transports;
+                  if (typeof result.sessionId === "string") {
+                    resumeSessionId = result.sessionId;
+                    judgeSessionId = result.sessionId;
+                    judgeSessionModel = stepSpecs[step].model;
+                  }
+                  continue;
                 }
               }
             }

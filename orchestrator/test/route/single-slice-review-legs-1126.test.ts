@@ -13,7 +13,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { isCmrPanelLegPromptFile } from "../../src/family/cmrPanelLegs.js";
+import {
+  CODE_REVIEW_LEG_PROMPT_FILE,
+  isReviewPanelLegPromptFile,
+} from "../../src/family/cmrPanelLegs.js";
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
@@ -159,15 +162,17 @@ describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
     ]);
 
     const leg = backend.specs.find(
-      (s) => s.kind === "reviewer" && isCmrPanelLegPromptFile(s.promptFile),
+      (s) => s.kind === "reviewer" && isReviewPanelLegPromptFile(s.promptFile),
     );
     expect(leg).toMatchObject({
       role: "reviewer",
       session: "fresh",
       contextRetention: "clean",
-      promptFile: "cmr_panel_leg.md",
+      // #1126 CR R1: single-slice must get per-slice /code-review task, not Family CMR.
+      promptFile: CODE_REVIEW_LEG_PROMPT_FILE,
       soul: "READ-ONLY",
     });
+    expect(leg?.promptFile).not.toBe("cmr_panel_leg.md");
 
     const judgeSpecs = backend.specs.filter(
       (s) => s.id === "S3" && s.kind === "verify",
