@@ -1047,6 +1047,15 @@ export interface WorkerLandingPayload {
     readonly exitCode: number;
     readonly stdout: string | null | undefined;
   }>;
+  /**
+   * #1117 / #1118 / #1119 — host-mechanical panel-leg skip reasons landed with
+   * the pure court so resume never supplies a silent empty landing when legs
+   * fail (runtime degrade evidence; never silent empty after cold re-entry).
+   */
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
+  }>;
 }
 
 /**
@@ -1221,6 +1230,14 @@ export interface DispatchContext {
     readonly slug: string;
     readonly exitCode: number;
     readonly stdout: string | null | undefined;
+  }>;
+  /**
+   * #1117 / #1118 / #1119 — host skip reasons paired with panel transports
+   * (runtime degrade evidence for the pure court; never a silent empty landing).
+   */
+  readonly panelLegSkippedLegs?: ReadonlyArray<{
+    readonly slug: string;
+    readonly reason: string;
   }>;
 }
 
