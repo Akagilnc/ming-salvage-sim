@@ -1,390 +1,415 @@
 /**
  * #1117 / #1118 — integrated court resume re-dispatches fresh panel legs.
  *
- * All load-bearing cases go through runVerifyCmr (or cmrSandboxConfig) — not
- * orphan helper branches.
+ * Load-bearing cases enter through runFamily (production spine) or
+ * cmrSandboxConfig (real backend mount path). Durable cargo owner =
+ * FamilyBackend.read/writeFamilyPanelLegEvidence — not optional
+ * VerifyCmrInput test seams.
+ *
+ * Authority: #1118 AC; ADR 0130/0132/0141/0147.
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createPanelCourtSession } from "../../../src/family/cmrPanelLegs.js";
+import { runFamily } from "../../../src/family/runner.js";
+import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import type {
+  FamilyBackend,
+  FamilyEpic,
   FamilyEscalation,
   FamilyLedgerEntry,
+  FamilyPanelLegEvidence,
+  IntegratedCmrPass,
+  MergeRequest,
 } from "../../../src/family/types.js";
 import type {
+  Backend,
   DispatchContext,
+  IssueMeta,
+  PersistentLedgerEntry,
+  ResumeState,
+  StepOutput,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
+  WorktreeHandle,
 } from "../../../src/types.js";
+import {
+  completeCmrPanelLegWorker,
+  isCmrPanelLegWorker,
+} from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completedJudge, judgeConverged } from "../../helpers/judge-fixtures.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
 const LEGAL_PANEL_STDOUT =
-  "fixture panel leg review prose for ADR 0141 legal paper body.\n";
+  "fixture panel leg review prose for ADR 0141 legal paper body.\n## Findings\nnone";
+const FAMILY_HEAD = "head-parked-1118";
+const EPIC: FamilyEpic = {
+  issue: 1117,
+  children: [{ issue: 1118, blockedBy: [] }],
+};
 
-async function baseBackend(familyHead: string) {
-  const { buildExplicitLandingLiveHooks } = await import(
-    "../../../src/family/landing.js"
-  );
-  return {
-    ledger: [] as FamilyLedgerEntry[],
-    escalations: [] as FamilyEscalation[],
-    resolveLandingLiveHooks(input: {
-      prUrl: string;
-      convergedHeadOid: string;
-      familyBase: string;
-    }) {
-      return buildExplicitLandingLiveHooks({
-        prUrl: input.prUrl,
-        headOid: input.convergedHeadOid,
-        remoteBranchName: input.familyBase,
-      });
-    },
-    async mergeChildIntoFamilyBase() {
-      return { familyHead };
-    },
-    async resolveMergeConflict() {
-      throw new Error("unused");
-    },
-    async appendFamilyLedger(entry: FamilyLedgerEntry) {
-      this.ledger.push(entry);
-    },
-    async readFamilyLedger() {
-      return this.ledger;
-    },
-    async readFamilyHead() {
-      return familyHead;
-    },
-    async runFamilyVerify() {
-      return { ok: true };
-    },
-    async recordAborted() {},
-    async escalateFamily(esc: FamilyEscalation) {
-      this.escalations.push(esc);
-    },
-  };
+/** Minimal child backend — children already merged; smoke only. */
+class ChildSmokeBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
+  async findResumeState(): Promise<ResumeState | undefined> {
+    return undefined;
+  }
+  async resumeSession(): Promise<StepOutput> {
+    throw new Error("child must not run — already merged");
+  }
+  async fetchIssueMeta(n: number): Promise<IssueMeta> {
+    return {
+      number: n,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
+  }
+  async prepareWorktree(): Promise<WorktreeHandle> {
+    throw new Error("child must not run — already merged");
+  }
+  async runStep(): Promise<StepOutput> {
+    throw new Error("child must not run — already merged");
+  }
+  async writeLedger(
+    _e: PersistentLedgerEntry,
+    _d: string,
+  ): Promise<void> {}
 }
 
-describe("#1118 runVerifyCmr — panel resume / reuse / reburn", () => {
-  it("empty landing resume re-dispatches panels before pure judge", async () => {
-    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
-    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
-    );
-    const { skeletonReviewLoopWorkerResult } = await import(
-      "../../../src/reviewLoopOutcome.js"
-    );
+/**
+ * Family backend for #1118 spine: durable panel evidence + ledger park residue.
+ * Mirrors production RealFamilyBackend read/writeFamilyPanelLegEvidence.
+ */
+class ResumeSpineFamilyBackend implements FamilyBackend {
+  ledger: FamilyLedgerEntry[];
+  escalations: FamilyEscalation[] = [];
+  panelDispatches: string[] = [];
+  judgeLandings: Array<WorkerLandingPayload | undefined> = [];
+  private durable = new Map<IntegratedCmrPass, FamilyPanelLegEvidence>();
+  private readonly familyHead: string;
+  private readonly failAllPanelLegs: boolean;
 
-    const panelModels: string[] = [];
-    const judgeLandings: Array<WorkerLandingPayload | undefined> = [];
-    const familyHead = "head-empty-resume";
-    const backend = {
-      ...(await baseBackend(familyHead)),
-      ledger: [
-        {
-          status: "cmr_reviewed" as const,
-          event: "cmr_reviewed" as const,
-          phase: "final" as const,
-          cmrPass: "completeness" as const,
-          reason: "fresh completeness jury transports are missing",
-          familyHeadAfter: familyHead,
-          blockingFindingIdentityKeys: [] as string[],
-          sessionId: "judge-sess-parked",
-          judgeStatus: "escalate" as const,
-          stopSummary: {
-            reason: "decision_gate_park" as const,
-            summary: "fresh completeness jury transports are missing",
-            repairHint: "rerun jury",
-          },
-        },
-      ] as FamilyLedgerEntry[],
-      async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-        landing?: WorkerLandingPayload,
-      ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
-          expect(ctx.resumeSessionId).toBeUndefined();
-          expect(ctx.billingPool).toBeUndefined();
-          panelModels.push(spec.model ?? "?");
-          return (
-            completeCmrPanelLegWorker(spec, LEGAL_PANEL_STDOUT) ?? {
-              kind: "failed",
-              reason: "panel fixture missing",
-            }
-          );
-        }
-        if (spec.kind === "cmr") {
-          judgeLandings.push(landing);
-          expect((landing?.panelLegTransports?.length ?? 0) > 0).toBe(true);
-          return {
-            kind: "completed",
-            sessionId: "judge-sess-1",
-            output: {
-              kind: "judge",
-              status: "converged",
-              successfulLegs: ["gpt-5.6-sol", "grok-4.5"],
-              evidencePaths: ["cmr/review-summary.json"],
-            },
-          };
-        }
-        if (spec.kind === "ship") {
-          return {
-            kind: "completed",
-            output: {
-              kind: "ship",
-              branch: ctx.familyBase!,
-              pr: "https://github.com/test/repo/pull/1118",
-              prHead: familyHead,
-              status: "pr_opened",
-            },
-          };
-        }
-        return (
-          skeletonReviewLoopWorkerResult(spec.kind) ?? {
-            kind: "failed",
-            reason: `unexpected ${spec.kind}`,
-          }
-        );
-      },
-    };
+  constructor(opts: {
+    readonly familyHead?: string;
+    readonly seedLedger: FamilyLedgerEntry[];
+    readonly seedEvidence?: Partial<
+      Record<IntegratedCmrPass, FamilyPanelLegEvidence>
+    >;
+    readonly failAllPanelLegs?: boolean;
+  }) {
+    this.familyHead = opts.familyHead ?? FAMILY_HEAD;
+    this.ledger = [...opts.seedLedger];
+    this.failAllPanelLegs = opts.failAllPanelLegs === true;
+    if (opts.seedEvidence !== undefined) {
+      for (const [pass, ev] of Object.entries(opts.seedEvidence) as Array<
+        [IntegratedCmrPass, FamilyPanelLegEvidence]
+      >) {
+        this.durable.set(pass, ev);
+      }
+    }
+  }
 
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/1118-empty-resume",
-      familyBackend: backend,
-      familyHeadAfter: familyHead,
-      runId: "run-empty-resume",
-      escalationAnswer: {
-        event: "escalation_answered",
-        answer: "rerun jury",
-        source: "human",
-      },
+  readFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+  ): FamilyPanelLegEvidence | undefined {
+    return this.durable.get(pass);
+  }
+  writeFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): void {
+    this.durable.set(pass, evidence);
+  }
+
+  resolveLandingLiveHooks(input: {
+    prUrl: string;
+    convergedHeadOid: string;
+    familyBase: string;
+  }) {
+    return buildExplicitLandingLiveHooks({
+      prUrl: input.prUrl,
+      headOid: input.convergedHeadOid,
+      remoteBranchName: input.familyBase,
     });
-    expect(result.ok).toBe(true);
-    expect(panelModels.length).toBeGreaterThan(0);
-    expect(judgeLandings.length).toBeGreaterThan(0);
+  }
+  async mergeChildIntoFamilyBase(_c: MergeRequest) {
+    return { familyHead: this.familyHead };
+  }
+  async resolveMergeConflict(): Promise<{ familyHead: string }> {
+    throw new Error("unused — child already merged");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry) {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger() {
+    return this.ledger;
+  }
+  async readFamilyHead() {
+    return this.familyHead;
+  }
+  async runFamilyVerify() {
+    return { ok: true };
+  }
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    if (isCmrPanelLegWorker(spec)) {
+      expect(ctx.resumeSessionId).toBeUndefined();
+      expect(ctx.billingPool).toBeUndefined();
+      this.panelDispatches.push(`${ctx.cmrPass ?? "?"}:${spec.model}`);
+      if (this.failAllPanelLegs) {
+        return { kind: "failed", reason: `docker flake on ${spec.model}` };
+      }
+      return (
+        completeCmrPanelLegWorker(spec, LEGAL_PANEL_STDOUT) ?? {
+          kind: "failed",
+          reason: "panel fixture missing",
+        }
+      );
+    }
+    if (spec.kind === "cmr") {
+      this.judgeLandings.push(landing);
+      return completedJudge(
+        judgeConverged(),
+        ctx.cmrPass === "completeness"
+          ? "judge-session-completeness-parked"
+          : "judge-session-correctness-1",
+      );
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          pr: "https://github.com/test/repo/pull/1118",
+          prHead: this.familyHead,
+          status: "pr_opened",
+        },
+      };
+    }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
+    return { kind: "failed", reason: `unexpected ${spec.kind}` };
+  }
+  async recordAborted() {}
+  async escalateFamily(esc: FamilyEscalation) {
+    this.escalations.push(esc);
+  }
+}
+
+function parkLedger(familyHead: string): FamilyLedgerEntry[] {
+  return [
+    {
+      childIssue: 1118,
+      status: "merged",
+      childBranch: "feat/issue-1118",
+    },
+    {
+      status: "cmr_reviewed",
+      event: "cmr_reviewed",
+      phase: "final",
+      cmrPass: "completeness",
+      reason:
+        "fresh completeness jury transports are missing — no panelLegTransports",
+      familyHeadAfter: familyHead,
+      blockingFindingIdentityKeys: [],
+      sessionId: "judge-session-completeness-parked",
+      judgeStatus: "escalate",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary:
+          "fresh completeness jury transports are missing — no panelLegTransports",
+        repairHint:
+          "answer the family judge decision gate, then resume the family court in place",
+      },
+    },
+    {
+      status: "escalated",
+      event: "escalated",
+      phase: "final",
+      cmrPass: "completeness",
+      escalationKind: "decision",
+      reason:
+        "fresh completeness jury transports are missing — no panelLegTransports",
+      familyHeadAfter: familyHead,
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary:
+          "fresh completeness jury transports are missing — no panelLegTransports",
+        repairHint:
+          "answer the family judge decision gate, then resume the family court in place",
+      },
+    },
+    {
+      status: "escalation_answered",
+      event: "escalation_answered",
+      phase: "final",
+      answer: "rerun jury — re-dispatch fresh completeness panel legs",
+      source: "human",
+    },
+  ];
+}
+
+describe("#1118 runFamily resume panel evidence", () => {
+  it("negative: empty durable + escalation answer → panel legs fan-out; judge gets transports", async () => {
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: parkLedger(FAMILY_HEAD),
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-empty-resume",
+    });
+    expect(
+      backend.panelDispatches.some((s) => s.startsWith("completeness:")),
+    ).toBe(true);
+    expect(backend.judgeLandings.length).toBeGreaterThan(0);
+    for (const landing of backend.judgeLandings) {
+      expect(landing?.panelLegTransports?.length).toBeGreaterThan(0);
+    }
+    // Durable cargo written by production path (not test-injected VerifyCmrInput).
+    const durable = backend.readFamilyPanelLegEvidence("completeness");
+    expect(durable?.panelLegTransports?.length).toBeGreaterThan(0);
+    expect(durable?.familyHeadAfter).toBe(FAMILY_HEAD);
   });
 
-  it("stamped landing with valid transports reuses — no panel reburn through runVerifyCmr", async () => {
-    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
-    const { isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
-    );
-
-    let panelDispatchCount = 0;
-    const familyHead = "head-reuse";
-    // correctness_checkpoint = single court so reuse is not confounded by
-    // completeness→correctness pass mismatch reburn.
-    const openingId = "run-reuse:correctness:seeded-opening-id";
-    const stampedTransports = [
+  it("control: durable valid transports at same head → zero panel reburn; judge gets original 卷面", async () => {
+    const priorTransports = [
       {
         slug: "gpt-5.6-sol",
         exitCode: 0,
-        stdout: LEGAL_PANEL_STDOUT,
+        stdout: "PRIOR durable completeness panel paper\n## Findings\nnone",
       },
       {
         slug: "grok-4.5",
         exitCode: 0,
-        stdout: LEGAL_PANEL_STDOUT,
+        stdout: "PRIOR durable completeness panel paper\n## Findings\nnone",
       },
     ];
-    const backend = {
-      ...(await baseBackend(familyHead)),
-      async dispatchWorker(
-        spec: WorkerSpec,
-        _ctx: DispatchContext,
-        landing?: WorkerLandingPayload,
-      ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
-          panelDispatchCount += 1;
-          return {
-            kind: "failed",
-            reason: "must not reburn when stamped landing is valid",
-          };
-        }
-        if (spec.kind === "cmr") {
-          expect((landing?.panelLegTransports?.length ?? 0) > 0).toBe(true);
-          expect(landing?.panelCourtOpeningId).toBe(openingId);
-          return {
-            kind: "completed",
-            output: {
-              kind: "judge",
-              status: "converged",
-              successfulLegs: ["gpt-5.6-sol", "grok-4.5"],
-              evidencePaths: ["cmr/review-summary.json"],
-            },
-          };
-        }
-        return { kind: "failed", reason: `unexpected ${spec.kind}` };
-      },
-    };
-
-    const result = await runVerifyCmr({
-      phase: "correctness_checkpoint",
-      familyBase: "family/1118-reuse-landing",
-      familyBackend: backend,
-      familyHeadAfter: familyHead,
-      runId: "run-reuse",
-      panelCourtSession: createPanelCourtSession(),
-      stampedPanelLanding: {
-        panelCourtOpeningId: openingId,
-        panelLegTransports: stampedTransports,
+    // Park without escalation_answered so resume does not force reburn —
+    // control case is "landing already has valid transports".
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: [
+        {
+          childIssue: 1118,
+          status: "merged",
+          childBranch: "feat/issue-1118",
+        },
+      ],
+      seedEvidence: {
+        completeness: {
+          familyHeadAfter: FAMILY_HEAD,
+          panelLegTransports: priorTransports,
+        },
+        correctness: {
+          familyHeadAfter: FAMILY_HEAD,
+          panelLegTransports: priorTransports,
+        },
       },
     });
-    expect(result.ok).toBe(true);
-    expect(panelDispatchCount).toBe(0);
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-no-reburn",
+    });
+    // Both courts must reuse durable same-head transports (no reburn).
+    expect(backend.panelDispatches).toEqual([]);
+    expect(backend.judgeLandings.length).toBeGreaterThan(0);
+    for (const landing of backend.judgeLandings) {
+      expect(landing?.panelLegTransports).toEqual(priorTransports);
+    }
   });
 
-  it("same pass+head with escalationAnswer still reburns panels (process re-entry)", async () => {
-    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
-    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
-    );
-
-    let panelDispatchCount = 0;
-    const familyHead = "head-same";
-    const openingId = "run-reburn:correctness:old-opening";
-    const stampedTransports = [
+  it("stale durable head → reburn (never re-stamp old cargo as current head)", async () => {
+    const staleTransports = [
       {
         slug: "gpt-5.6-sol",
         exitCode: 0,
-        stdout: LEGAL_PANEL_STDOUT,
+        stdout: "STALE head paper must not be reused\n## Findings\nnone",
       },
     ];
-    const backend = {
-      ...(await baseBackend(familyHead)),
-      async dispatchWorker(
-        spec: WorkerSpec,
-        _ctx: DispatchContext,
-        landing?: WorkerLandingPayload,
-      ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
-          panelDispatchCount += 1;
-          return (
-            completeCmrPanelLegWorker(spec, LEGAL_PANEL_STDOUT) ?? {
-              kind: "failed",
-              reason: "panel fixture missing",
-            }
-          );
-        }
-        if (spec.kind === "cmr") {
-          expect(landing?.panelCourtOpeningId).not.toBe(openingId);
-          return {
-            kind: "completed",
-            output: {
-              kind: "judge",
-              status: "converged",
-              successfulLegs: ["gpt-5.6-sol", "grok-4.5"],
-              evidencePaths: ["cmr/review-summary.json"],
-            },
-          };
-        }
-        return { kind: "failed", reason: `unexpected ${spec.kind}` };
-      },
-    };
-
-    // Cold session + old stamped landing + escalationAnswer → reburn.
-    const result = await runVerifyCmr({
-      phase: "correctness_checkpoint",
-      familyBase: "family/1118-same-head-reburn",
-      familyBackend: backend,
-      familyHeadAfter: familyHead,
-      runId: "run-reburn",
-      panelCourtSession: createPanelCourtSession(),
-      stampedPanelLanding: {
-        panelCourtOpeningId: openingId,
-        panelLegTransports: stampedTransports,
-      },
-      escalationAnswer: {
-        event: "escalation_answered",
-        answer: "rerun jury — fresh panel required",
-        source: "human",
+    // No escalationAnswer — head provenance alone must reject stale cargo.
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: [
+        {
+          childIssue: 1118,
+          status: "merged",
+          childBranch: "feat/issue-1118",
+        },
+      ],
+      seedEvidence: {
+        completeness: {
+          familyHeadAfter: "head-old-stale",
+          panelLegTransports: staleTransports,
+        },
       },
     });
-    expect(result.ok).toBe(true);
-    expect(panelDispatchCount).toBeGreaterThan(0);
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-stale-head",
+    });
+    expect(
+      backend.panelDispatches.filter((s) => s.startsWith("completeness:"))
+        .length,
+    ).toBeGreaterThan(0);
+    const completenessLanding = backend.judgeLandings[0];
+    expect(completenessLanding?.panelLegTransports).not.toEqual(staleTransports);
+    const durable = backend.readFamilyPanelLegEvidence("completeness");
+    // Production rewrite carries the CURRENT head, not the stale one.
+    expect(durable?.familyHeadAfter).toBe(FAMILY_HEAD);
   });
 
-  it("process re-entry mints non-colliding opening ids (missing runId safe)", async () => {
-    const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
-    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
+  it("negative: all legs fail → skip reasons land on pure court (zero silent empty)", async () => {
+    // #1118: zero-success still opens pure judge with skip reasons (ADR 0132
+    // JudgeVerdictStatus sole closer) — not a runner early-park before judge.
+    const backend = new ResumeSpineFamilyBackend({
+      seedLedger: [
+        {
+          childIssue: 1118,
+          status: "merged",
+          childBranch: "feat/issue-1118",
+        },
+      ],
+      failAllPanelLegs: true,
+    });
+    await runFamily({
+      epic: EPIC,
+      familyBackend: backend,
+      singleSliceBackend: new ChildSmokeBackend(),
+      familyBase: "family/1118-zero-legs",
+    });
+    expect(backend.panelDispatches.length).toBeGreaterThan(0);
+    // Pure court still opens; skip reasons visible on landing + durable.
+    expect(backend.judgeLandings.length).toBeGreaterThan(0);
+    const withSkips = backend.judgeLandings.find(
+      (l) => (l?.panelLegSkippedLegs?.length ?? 0) > 0,
     );
-    const { skeletonReviewLoopWorkerResult } = await import(
-      "../../../src/reviewLoopOutcome.js"
-    );
-
-    const openingIds: string[] = [];
-    const familyHead = "head-collision";
-    const makeBackend = async () => ({
-      ...(await baseBackend(familyHead)),
-      async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-        landing?: WorkerLandingPayload,
-      ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
-          return (
-            completeCmrPanelLegWorker(spec, LEGAL_PANEL_STDOUT) ?? {
-              kind: "failed",
-              reason: "panel fixture missing",
-            }
-          );
-        }
-        if (spec.kind === "cmr") {
-          if (typeof landing?.panelCourtOpeningId === "string") {
-            openingIds.push(landing.panelCourtOpeningId);
-          }
-          return {
-            kind: "completed",
-            output: {
-              kind: "judge",
-              status: "converged",
-              successfulLegs: ["gpt-5.6-sol", "grok-4.5"],
-              evidencePaths: ["cmr/review-summary.json"],
-            },
-          };
-        }
-        if (spec.kind === "ship") {
-          return {
-            kind: "completed",
-            output: {
-              kind: "ship",
-              branch: ctx.familyBase!,
-              pr: "https://github.com/test/repo/pull/1118",
-              prHead: familyHead,
-              status: "pr_opened",
-            },
-          };
-        }
-        return (
-          skeletonReviewLoopWorkerResult(spec.kind) ?? {
-            kind: "failed",
-            reason: `unexpected ${spec.kind}`,
-          }
-        );
-      },
-    });
-
-    // Two cold process re-entries with NO runId — opening ids must not collide.
-    await runVerifyCmr({
-      phase: "correctness_checkpoint",
-      familyBase: "family/1118-opening-a",
-      familyBackend: await makeBackend(),
-      familyHeadAfter: familyHead,
-      // runId intentionally omitted
-    });
-    await runVerifyCmr({
-      phase: "correctness_checkpoint",
-      familyBase: "family/1118-opening-b",
-      familyBackend: await makeBackend(),
-      familyHeadAfter: familyHead,
-    });
-    expect(openingIds.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(openingIds).size).toBe(openingIds.length);
+    expect(withSkips).toBeDefined();
+    expect(
+      withSkips?.panelLegSkippedLegs?.every(
+        (leg) =>
+          typeof leg.slug === "string" &&
+          typeof leg.reason === "string" &&
+          /docker flake/i.test(leg.reason),
+      ),
+    ).toBe(true);
+    const durable = backend.readFamilyPanelLegEvidence("completeness");
+    expect(durable?.panelLegSkippedLegs?.length).toBeGreaterThan(0);
   });
 });
 

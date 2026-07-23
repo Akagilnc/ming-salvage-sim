@@ -1055,10 +1055,6 @@ export interface WorkerLandingPayload {
     readonly slug: string;
     readonly reason: string;
   }>;
-  /**
-   * #1117 / #1118 — runner-owned panel court opening id stamped on this landing.
-   */
-  readonly panelCourtOpeningId?: string;
 }
 
 /**
@@ -1242,10 +1238,6 @@ export interface DispatchContext {
     readonly slug: string;
     readonly reason: string;
   }>;
-  /**
-   * #1117 / #1118 — panel court opening id for this pure-court dispatch.
-   */
-  readonly panelCourtOpeningId?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */

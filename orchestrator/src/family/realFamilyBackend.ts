@@ -244,8 +244,10 @@ import type {
   FamilyBackend,
   FamilyEscalation,
   FamilyLedgerEntry,
+  FamilyPanelLegEvidence,
   FamilyVerifyRequest,
   FamilyVerifyResult,
+  IntegratedCmrPass,
   IntegratedCmrRequest,
   IntegratedCmrResult,
   MergeRequest,
@@ -258,6 +260,12 @@ import type { VerifyCmrPhase } from "./verifyCmr.js";
 export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
 /** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
+/**
+ * #1118 / #1119 — durable panel-leg evidence filename prefix under ledgerDir
+ * (sibling of the family ledger). Resume truth; not cleaned with process-temp
+ * worktree fix-findings.
+ */
+export const FAMILY_PANEL_LEG_EVIDENCE_PREFIX = "panel-leg-evidence";
 
 /** Re-export agy mount constants (canonical definitions live in realBackend). */
 export { SANDBOX_AGY_DIR, AGY_TOKEN_FILENAME } from "../realBackend.js";
@@ -629,6 +637,48 @@ export class RealFamilyBackend implements FamilyBackend {
       JSON.stringify(entry) + "\n",
       "utf8",
     );
+  }
+
+  /**
+   * #1118 / #1119 — durable panel evidence path under ledgerDir (per pass).
+   */
+  protected panelLegEvidencePath(pass: IntegratedCmrPass): string {
+    return join(
+      this.opts.ledgerDir,
+      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
+    );
+  }
+
+  async readFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+  ): Promise<FamilyPanelLegEvidence | undefined> {
+    const path = this.panelLegEvidencePath(pass);
+    let raw: string;
+    try {
+      raw = readFileSync(path, "utf8");
+    } catch (err) {
+      if (isFileNotFound(err)) return undefined;
+      throw new Error(
+        `readFamilyPanelLegEvidence: failed to read ${path} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed === null || typeof parsed !== "object") return undefined;
+      return parsed as FamilyPanelLegEvidence;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeFamilyPanelLegEvidence(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): Promise<void> {
+    mkdirSync(this.opts.ledgerDir, { recursive: true });
+    const path = this.panelLegEvidencePath(pass);
+    writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   }
 
   private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {
@@ -2441,18 +2491,10 @@ export class RealFamilyBackend implements FamilyBackend {
             undefined &&
           (landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs)!.length > 0
             ? {
+                // Sole host-mechanical skip alias (CmrSkippedLeg / ADR 0141).
+                // No dual-write runtimeSkipReasons — zero consumers.
                 skippedLegs:
                   landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
-                runtimeSkipReasons:
-                  landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
-              }
-            : {}),
-          ...((landing?.panelCourtOpeningId ?? ctx.panelCourtOpeningId) !==
-            undefined &&
-          (landing?.panelCourtOpeningId ?? ctx.panelCourtOpeningId)!.length > 0
-            ? {
-                panelCourtOpeningId:
-                  landing?.panelCourtOpeningId ?? ctx.panelCourtOpeningId,
               }
             : {}),
         },
