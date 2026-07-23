@@ -182,19 +182,23 @@ export type ApplyRelayBatonToRouteFn = (
 ) => ResolvedModelRoute;
 
 /**
- * #1125 — machine-readable residual-skip reason tokens (log surface only;
- * FamilyChildResult schema unchanged).
+ * #1125 — machine-readable skip reason tokens (log surface only;
+ * FamilyChildResult schema unchanged). Module-private: only runFamily
+ * settlement sites use this helper.
  */
-export type FamilySkipReason =
+type FamilySkipReason =
   | "not_scheduled_this_invocation"
-  | "unresolved_blocker"
-  | "unanswered_sibling_park_residual";
+  | "unanswered_sibling_park_residual"
+  | "startup_preflight_failed"
+  | "refetch_failed"
+  | "reconcile_inconsistent"
+  | "dependency_cycle_residual";
 
 /**
- * Shared vocal skip settlement (#1125 AC): every ticket-reachable residual
- * `status:"skipped"` must log `issue` + stable reason token.
+ * Shared vocal skip settlement (#1125 AC): every runFamily-reachable
+ * `status:"skipped"` must log `issue` + stable reason token matching the path.
  */
-export function skippedChild(
+function skippedChild(
   issue: number,
   reason: FamilySkipReason,
 ): FamilyChildResult {
@@ -218,10 +222,11 @@ function escalationFromChildParkRow(
 }
 
 /**
- * #1125 — post-wave (and former early-exit) aggregation when ledger still has
- * unanswered `child_decision_parked` rows. Unanswered → escalated from the park
- * row; ledger-merged → already_done; other never-run → vocal skip. Public
- * status is parked + decision_gate_park (zero re-dispatch required).
+ * #1125 — post-wave aggregation when ledger still has unanswered
+ * `child_decision_parked` rows for **current admitted epic children** only.
+ * Unanswered → escalated from the park row; ledger-merged → already_done;
+ * other never-run → vocal skip. Public status parked + decision_gate_park.
+ * Prefer this-invocation familyHead; park-row familyHeadAfter is fallback only.
  */
 function familyResultFromUnansweredParks(opts: {
   readonly unanswered: ReadonlyArray<
@@ -251,11 +256,18 @@ function familyResultFromUnansweredParks(opts: {
     }
     return skippedChild(c.issue, "unanswered_sibling_park_residual");
   });
-  const familyHead =
+  // #1125: prefer this-invocation head (sibling merges); only fall back to the
+  // park row when this run never advanced familyHead.
+  const thisRunHead =
+    typeof opts.familyHead === "string" && opts.familyHead.trim().length > 0
+      ? opts.familyHead
+      : undefined;
+  const parkRowHead =
     typeof first.familyHeadAfter === "string" &&
     first.familyHeadAfter.trim().length > 0
       ? first.familyHeadAfter
-      : opts.familyHead;
+      : undefined;
+  const familyHead = thisRunHead ?? parkRowHead;
   const escalationReason = `child #${first.childIssue} decision gate is not answered: ${first.reason ?? "(no reason recorded)"}`;
   const stopSummary = familyStopSummary({
     status: "parked",
@@ -1737,10 +1749,9 @@ export async function runFamily(
     ? admitRouteFromEnv()
     : { kind: "ready" as const, route: input.admittedRoute.route };
   if (admitted.kind === "stop") {
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
+    const children = input.epic.children.map((child) =>
+      skippedChild(child.issue, "startup_preflight_failed"),
+    );
     const diagnosis = admissionRouteFailureDiagnosis(admitted.escalation.diagnosis);
     const stopSummary = infraFailureStopSummary({
       summary: `${admitted.escalation.reason}: ${diagnosis}`,
@@ -1773,10 +1784,9 @@ export async function runFamily(
   if (input.admittedRoute === undefined && typeof singleSliceBackend.smokeModelRoute !== "function") {
     const reason =
       "route smoke executor is required before family dispatch; backend did not provide smokeModelRoute";
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
+    const children = input.epic.children.map((child) =>
+      skippedChild(child.issue, "startup_preflight_failed"),
+    );
     const stopSummary = infraFailureStopSummary({
       summary: reason,
       repairHint: "provide a real model×pipe smoke executor before dispatching family workers",
@@ -1814,10 +1824,9 @@ export async function runFamily(
     }
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
+    const children = input.epic.children.map((child) =>
+      skippedChild(child.issue, "startup_preflight_failed"),
+    );
     const stopSummary = infraFailureStopSummary({
       summary: `route smoke failed: ${reason}`,
       repairHint: "repair the selected model×pipe tool smoke before dispatching family workers",
@@ -1841,10 +1850,9 @@ export async function runFamily(
   modelRoute = degradation.route;
   const smokeFailure = routeSmokeFailure(modelRoute, Date.now(), undefined, currentCliVersions);
   if (smokeFailure !== undefined) {
-    const children = input.epic.children.map((child) => ({
-      issue: child.issue,
-      status: "skipped" as const,
-    }));
+    const children = input.epic.children.map((child) =>
+      skippedChild(child.issue, "startup_preflight_failed"),
+    );
     const stopSummary = infraFailureStopSummary({
       summary: smokeFailure,
       repairHint: "rerun the route smoke or repair the selected model×pipe",
@@ -2010,10 +2018,9 @@ export async function runFamily(
       epic = await input.refetchEpic();
     } catch (err) {
       const diagnosis = err instanceof Error ? err.message : String(err);
-      const children = input.epic.children.map((child) => ({
-        issue: child.issue,
-        status: "skipped" as const,
-      }));
+      const children = input.epic.children.map((child) =>
+        skippedChild(child.issue, "refetch_failed"),
+      );
       // Mirror familyDriver INITIAL: root open blocked_by → decision-gate park.
       // Detect by name to avoid a familyDriver↔runner import cycle.
       if (err instanceof Error && err.name === "FamilyRootBlockerError") {
@@ -2437,7 +2444,7 @@ export async function runFamily(
       const children: FamilyChildResult[] = epic.children.map((c) =>
         plan.merged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
-          : { issue: c.issue, status: "skipped" as const },
+          : skippedChild(c.issue, "reconcile_inconsistent"),
       );
       await recordFamilyEscalated(familyBackend, {
         escalationKind: "failure",
@@ -2646,7 +2653,7 @@ export async function runFamily(
             if (recorded !== undefined) return recorded;
             return merged.has(c.issue)
               ? { issue: c.issue, status: "already_done" as const }
-              : { issue: c.issue, status: "skipped" as const };
+              : skippedChild(c.issue, "dependency_cycle_residual");
           });
           const escalationReason = `dependency_cycle: ${err.cycle.map((n) => `#${n}`).join(" → ")}`;
           const stopSummary = familyStopSummary({
@@ -2787,7 +2794,7 @@ export async function runFamily(
         if (recorded !== undefined) return recorded;
         return ledgerMerged.has(child.issue)
           ? { issue: child.issue, status: "already_done" as const }
-          : { issue: child.issue, status: "skipped" as const };
+          : skippedChild(child.issue, "not_scheduled_this_invocation");
       });
     };
     // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
@@ -3062,12 +3069,19 @@ export async function runFamily(
   }
 
   // #1125: post-wave aggregation — unanswered child_decision_parked still on the
-  // ledger → public parked + decision_gate_park without re-dispatching them.
-  // Shares familyResultFromUnansweredParks with the former early-exit mapping.
+  // ledger for **admitted epic children only** → public parked + decision_gate_park
+  // without re-dispatching them. Admission-skipped parks (not in epic.children)
+  // never decide family terminal. A-class genuine failure still wins over park
+  // (same precedence as in-wave finalizeDecisionPark / P1-a).
   {
     const liveLedger = await familyBackend.readFamilyLedger();
-    const unansweredNow = unansweredChildEscalations(liveLedger);
+    const unansweredNow = unansweredChildEscalations(liveLedger).filter((row) =>
+      familyChildIssues.has(row.childIssue),
+    );
     if (unansweredNow.length > 0) {
+      if (childResults.some((r) => r.status === "failed")) {
+        return await finalize();
+      }
       return attachDiagnostics(
         familyResultFromUnansweredParks({
           unanswered: unansweredNow,
@@ -3116,7 +3130,7 @@ export async function runFamily(
     const children: FamilyChildResult[] = epic.children.map((c) =>
       ledgerMerged.has(c.issue)
         ? { issue: c.issue, status: "already_done" as const }
-        : { issue: c.issue, status: "skipped" as const },
+        : skippedChild(c.issue, "not_scheduled_this_invocation"),
     );
 
     // #941: single re-entry through landing Action (no host auto-merge courts).
@@ -3214,7 +3228,7 @@ export async function runFamily(
     const children: FamilyChildResult[] = epic.children.map((child) =>
       ledgerMerged.has(child.issue)
         ? { issue: child.issue, status: "already_done" as const }
-        : { issue: child.issue, status: "skipped" as const },
+        : skippedChild(child.issue, "not_scheduled_this_invocation"),
     );
     // #909: online-review 429 → park or apply baton + re-dispatch.
     const reviewBarrier = await runFamilyBarrierWithQuotaRelay({
@@ -3451,7 +3465,7 @@ export async function runFamily(
                   ? ("already_done" as const)
                   : ("merged" as const),
               }
-            : { issue: child.issue, status: "skipped" as const },
+            : skippedChild(child.issue, "not_scheduled_this_invocation"),
         );
         const reviewLoop = await runFamilyOnlineReviewLoop({
           familyBackend,
