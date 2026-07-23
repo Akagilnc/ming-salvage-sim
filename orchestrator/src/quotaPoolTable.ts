@@ -109,8 +109,6 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
       // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
       // relay lookup until a dedicated billing row exists.
       return "zai";
-    case "unknown":
-      return "grok-build";
     default:
       throw new Error(`unknown quota pool: ${pool}`);
   }
@@ -439,7 +437,10 @@ export function selectCapacityRelayBaton(
       (current !== undefined && entry.id === current.id),
   );
   const currentPool = input.pools.find(
-    (pool) => pool.id === input.currentPool && pool.status === "live",
+    (pool) =>
+      pool.id === input.currentPool &&
+      pool.status === "live" &&
+      isExecutableBillingPool(pool.id),
   );
   if (currentPool !== undefined) {
     const from = startIdx >= 0 ? startIdx + 1 : 0;

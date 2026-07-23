@@ -292,7 +292,7 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       expect.arrayContaining(["haiku-4.5", "sonnet-5", "haiku", "sonnet"]),
     );
     expect(billingPoolFromQuotaPool("claude")).toBe("claude");
-    expect(() => billingPoolFromQuotaPool("retired")).toThrow(/unknown quota pool/);
+    expect(() => billingPoolFromQuotaPool("unknown")).toThrow(/unknown quota pool/);
 
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → haiku-4.5 → sonnet-5",
@@ -439,6 +439,23 @@ describe("#787 capacity relay", () => {
       pool: "codex-5h",
     });
     expect(handoff.ledgerEntry?.trigger).toBe("capacity");
+
+    expect(
+      selectCapacityRelayBaton({
+        currentModelId: "terra@med",
+        currentPool: "zai",
+        rosterOrder: order,
+        pools: [
+          {
+            id: "zai",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["terra@med", "luna@med"],
+          },
+          ...pools,
+        ],
+      }),
+    ).toMatchObject({ modelId: "terra@med", pool: "codex-5h" });
   });
 
   it("#920: capacity relay picks the next same-pool roster entry without conflict filter", () => {
