@@ -203,11 +203,7 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     // inside the skill invocation, not as an outer Sandcastle multi-iter budget.
     maxIter: 1,
     model,
-    // The family ship worker runs under the dedicated "ship" soul (delivery
-    // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
-    // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the
-    // spec must not still declare the coder soul (CodeRabbit #384: unify the
-    // ship-worker soul contract).
+    // WorkerSpec.soul is the single runtime truth for the dedicated ship soul.
     soul: "ship",
     toolchain: [],
   };

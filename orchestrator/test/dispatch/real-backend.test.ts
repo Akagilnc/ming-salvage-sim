@@ -40,7 +40,6 @@ import {
   soulsDirError,
   REQUIRED_SOUL_FILES,
   resolveModelSlug,
-  soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
   SANDBOX_CODEX_DIR,
@@ -459,8 +458,6 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
   });
 });
 
-// ─── model slug → CLI (role decides soul/model) ──────────────────────────────
-
 describe("realBackend WORKER_IDLE_TIMEOUT_SECONDS (idle-timeout disable)", () => {
   it("is a far-future value that never fires in practice (sandcastle has no disable sentinel)", () => {
     // ONE WEEK in seconds. sandcastle multiplies idleTimeoutSeconds by 1e3, and the
@@ -509,9 +506,6 @@ describe("realBackend resolveModelSlug", () => {
       "claudeCode",
       "codex",
       "agy",
-      "copilot",
-      "cursor",
-      "pi",
       "grok",
     ]);
   });
@@ -573,34 +567,6 @@ describe("realBackend agentForSlug", () => {
   });
   it("throws on an unknown slug (misconfigured StepSpec)", () => {
     expect(() => agentForSlug("gpt")).toThrow(/unknown model slug/);
-  });
-});
-
-// ─── soulForStep (ship-pre 256 r1, role→soul selection / contract fidelity) ───
-
-describe("realBackend soulForStep", () => {
-  it("selects the coder soul for a coder step (#244 'role 决定注哪份 soul')", () => {
-    expect(
-      soulForStep({ role: "coder", soul: "coder" }),
-    ).toBe("coder");
-  });
-
-  it("selects the READ-ONLY reviewer soul for a reviewer step", () => {
-    expect(
-      soulForStep({ role: "reviewer", soul: "READ-ONLY" }),
-    ).toBe("READ-ONLY");
-  });
-
-  it("throws when spec.soul contradicts the role's baked soul (dead-field guard)", () => {
-    // The StepSpec.soul field is consumed (not dangling): a reviewer step that
-    // carries the coder soul is a misconfigured spec — the baked reviewer image
-    // soul is selected by role, so a contradicting soul must not be shipped.
-    expect(() =>
-      soulForStep({ role: "reviewer", soul: "coder" }),
-    ).toThrow(/soul/i);
-    expect(() =>
-      soulForStep({ role: "coder", soul: "READ-ONLY" }),
-    ).toThrow(/soul/i);
   });
 });
 
@@ -901,7 +867,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       message = String(error?.message ?? error);
     }
     expect(message).toMatch(/missing required soul file\(s\):/);
-    expect(message).toMatch(/cmr\.md/);
+    expect(message).toMatch(/coder\.md/);
     expect(message).toMatch(/verify\.md/);
     expect(message).not.toMatch(/output_protocol\.md/);
     expect(message).toMatch(/All of \[/);

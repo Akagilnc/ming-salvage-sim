@@ -1,12 +1,6 @@
 # Family-verify triage judge entrypoint (#1027 / ADR 0145)
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/verify.md
-```
-
-Then follow that soul (判官) and the worktree's `CLAUDE.md`. The runner only
+Follow the worktree's `CLAUDE.md`. The runner only
 schedules you; it does **zero** classification of the red — you are the sole
 brain (ADR 0145: no runner-side exit-code / prose classifier).
 

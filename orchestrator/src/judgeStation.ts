@@ -35,27 +35,6 @@ import type {
 export type { LegalRefuseReason };
 
 /**
- * Build a fresh review-leg prompt with the full reviewer soul prepended
- * (single-track CLI injection — no Claude-only agent definition).
- *
- * AC: 腿 prompt 头含 reviewer soul.
- */
-export function buildJudgeReviewLegPrompt(
-  reviewerSoulFullText: string,
-  legTaskBody: string,
-): string {
-  const soul = reviewerSoulFullText.trim();
-  const body = legTaskBody.trim();
-  if (soul.length === 0) {
-    throw new Error("buildJudgeReviewLegPrompt: reviewer soul text must be non-empty");
-  }
-  if (body.length === 0) {
-    throw new Error("buildJudgeReviewLegPrompt: leg task body must be non-empty");
-  }
-  return `${soul}\n\n---\n\n${body}`;
-}
-
-/**
  * Review legs dispatched by the judge are always fresh sessions.
  * Resume is illegal (negative AC: 续腿不合法).
  */

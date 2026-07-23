@@ -16,7 +16,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildJudgeReviewLegPrompt,
   isJudgeSeat,
   isLegalJudgeReviewLegSession,
   judgeContinueFromOpenCount,
@@ -235,19 +234,6 @@ function scriptToOutput(script: JudgeResultScript) {
 }
 
 describe("#925 pure: leg prompt + session mode", () => {
-  it("prepends full reviewer soul at leg prompt head (positive)", () => {
-    const soul = readFileSync(join(SOULS, "reviewer.md"), "utf8");
-    const prompt = buildJudgeReviewLegPrompt(soul, "Review the full diff.");
-    expect(prompt.startsWith(soul.trim())).toBe(true);
-    expect(prompt).toContain("Review the full diff.");
-    expect(prompt).toContain("---");
-  });
-
-  it("rejects empty soul or body (negative)", () => {
-    expect(() => buildJudgeReviewLegPrompt("", "task")).toThrow(/soul/);
-    expect(() => buildJudgeReviewLegPrompt("soul", "")).toThrow(/body/);
-  });
-
   it("review legs must be fresh — resume is illegal (negative)", () => {
     expect(judgeReviewLegSessionMode()).toBe("fresh");
     expect(isLegalJudgeReviewLegSession("fresh")).toBe(true);

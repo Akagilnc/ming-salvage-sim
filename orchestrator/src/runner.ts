@@ -89,7 +89,6 @@ import {
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
-  poolForModelRef,
 } from "./quotaProbe.js";
 import {
   parkOrRelayQuotaWall,
@@ -1383,7 +1382,7 @@ export function stepSpecsForRoute(
       model: route.slots.coderFix,
       // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
       maxIter: 1,
-      soul: "coder",
+      soul: "fixer",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S6: {
@@ -1898,9 +1897,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     modelRoute = admittedRec.route;
     // #686 P1: a coder-slot change must not inherit the prior resource-relay
     // pool — reselect from the new model's dispatch binding.
-    currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coder),
-    );
+    currentBillingPool = billingPoolForModelRef(modelRoute.slots.coder);
     stepSpecs = stepSpecsForRoute(modelRoute);
     // #924: model change invalidates the prior Sandcastle session — next
     // coder seat establishes a new session (cannot resume across providers).
@@ -2078,9 +2075,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderSessionId = undefined;
       coderSessionModel = undefined;
     }
-    currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coderFix),
-    );
+    currentBillingPool = billingPoolForModelRef(modelRoute.slots.coderFix);
 
     await persistAdvanceBookkeeping(
       {
@@ -2267,9 +2262,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     readonly currentPool: BillingPoolId;
     readonly pools: ReadonlyArray<BillingPoolEntry>;
   } => {
-    const inferredPool =
-      billingPoolForModelRef(input.modelRef) ??
-      billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const inferredPool = billingPoolForModelRef(input.modelRef);
+    if (inferredPool === undefined) {
+      throw new Error(`model ${input.modelRef} has no billing pool`);
+    }
     const configuredPools = resolveRelayPools(inferredPool, undefined);
     const confirmedPool =
       input.knownPool ??
