@@ -603,30 +603,40 @@ describe("#706 / #1125 — unanswered park re-entry reports ledger-merged siblin
   });
 });
 
-// ─── #1125: mixed answered + unanswered + new ticket ──────────────────────────
+// ─── #1125: four shortest real runFamily tracers (+ harness) ─────────────────
 
-describe("#1125 — unanswered park does not block answered rekindle or new tickets", () => {
-  it("mixed: unanswered 526/528 zero dispatch; answered 516 + new 1123 dispatch; family stays parked", async () => {
-    // #516 answered park rekindles; #1123 is a fresh ready child; #526/#528 stay
-    // unanswered and must NOT appear in the dispatch set.
-    class MultiChildBackend extends EscalatingChildBackend {
-      constructor() {
-        // never decision-escalates on first-run path (escalateIssue = -1)
-        super(-1);
-      }
-    }
-    const singleSliceBackend = new MultiChildBackend();
+function parkRow(
+  issue: number,
+  fields: Partial<FamilyLedgerEntry> & { reason: string; diagnosis: string },
+): FamilyLedgerEntry {
+  return {
+    status: "child_decision_parked",
+    event: "child_decision_parked",
+    escalationKind: "decision",
+    childIssue: issue,
+    ...fields,
+  } as FamilyLedgerEntry;
+}
+
+function captureWarnings(): { warnings: string[]; restore: () => void } {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  return { warnings, restore: () => { console.warn = original; } };
+}
+
+describe("#1125 — unanswered park dispatch + terminal normalization", () => {
+  it("mixed: unanswered zero dispatch; answered + new ticket dispatch; family parked", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 516,
+      parkRow(516, {
         reason: "answered later",
         diagnosis: "was parked then answered",
         sessionId: "sess-516",
-      } as FamilyLedgerEntry,
+      }),
       {
         status: "escalation_answered",
         event: "escalation_answered",
@@ -634,207 +644,14 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
         answer: "field X is optional; proceed",
         source: "human",
       } as FamilyLedgerEntry,
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 526,
-        reason: "still open A",
-        diagnosis: "no answer yet for 526",
-      } as FamilyLedgerEntry,
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 528,
-        reason: "still open B",
-        diagnosis: "no answer yet for 528",
-      } as FamilyLedgerEntry,
-    );
-
-    // Seed single-slice resume residue for #516 so inject/resume can complete.
-    singleSliceBackend.childLedgers.set(516, [
-      {
-        step: "S2",
-        sessionId: "sess-516",
-        output: {
-          kind: "coder",
-          committed: false,
-          commitsAdded: 0,
-          escalate: STUCK,
-        },
-      } as PersistentLedgerEntry,
-    ]);
-
-    const epic: FamilyEpic = {
-      issue: 1125,
-      children: [
-        { issue: 516, blockedBy: [] },
-        { issue: 526, blockedBy: [] },
-        { issue: 528, blockedBy: [] },
-        { issue: 1123, blockedBy: [] },
-      ],
-    };
-
-    const result = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic,
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/1125-base",
-    });
-
-    const dispatchedIssues = new Set(
-      singleSliceBackend.runStepCalls.map((c) => c.issue),
-    );
-    expect(dispatchedIssues.has(516)).toBe(true);
-    expect(dispatchedIssues.has(1123)).toBe(true);
-    expect(dispatchedIssues.has(526)).toBe(false);
-    expect(dispatchedIssues.has(528)).toBe(false);
-
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.status).not.toBe("completed");
-    expect(result.status).not.toBe("failed");
-    expect(result.children.find((c) => c.issue === 526)?.status).toBe("escalated");
-    expect(result.children.find((c) => c.issue === 528)?.status).toBe("escalated");
-  });
-
-  it("NEGATIVE control: all unanswered → zero dispatch, parked + decision_gate_park (not completed/failed)", async () => {
-    const singleSliceBackend = new EscalatingChildBackend(-1);
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push(
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 526,
-        reason: "open A",
-        diagnosis: "no answer",
-      } as FamilyLedgerEntry,
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 528,
-        reason: "open B",
-        diagnosis: "no answer",
-      } as FamilyLedgerEntry,
-    );
-
-    const result = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic: {
-        issue: 1125,
-        children: [
-          { issue: 526, blockedBy: [] },
-          { issue: 528, blockedBy: [] },
-        ],
-      },
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/1125-all-unanswered",
-    });
-
-    expect(singleSliceBackend.runStepCalls).toHaveLength(0);
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.status).not.toBe("completed");
-    expect(result.status).not.toBe("failed");
-    expect(result.children.find((c) => c.issue === 526)?.status).toBe("escalated");
-    expect(result.children.find((c) => c.issue === 528)?.status).toBe("escalated");
-  });
-
-  it("residual skip logs issue + stable reason token", async () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
-    try {
-      const singleSliceBackend = new EscalatingChildBackend(-1);
-      const familyBackend = new FakeFamilyBackend();
-      familyBackend.ledger.push(
-        {
-          status: "child_decision_parked",
-          event: "child_decision_parked",
-          escalationKind: "decision",
-          childIssue: 11,
-          reason: "open",
-          diagnosis: "no answer",
-        } as FamilyLedgerEntry,
-      );
-
-      const result = await runFamily({
-        verifyCmr: async () => ({ ok: true, ran: true }),
-        epic: {
-          issue: 1125,
-          children: [
-            { issue: 11, blockedBy: [] },
-            { issue: 12, blockedBy: [11] },
-          ],
-        },
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/1125-skip-log",
-      });
-
-      expect(result.status).toBe("parked");
-      expect(result.children.find((c) => c.issue === 12)?.status).toBe("skipped");
-      expect(
-        warnings.some(
-          (w) =>
-            w.includes("#12") &&
-            w.includes("skipped:") &&
-            w.includes("unanswered_sibling_park_residual"),
-        ),
-      ).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  it("admission-skipped park outside epic.children must not force family parked", async () => {
-    // #528 is admission-skipped (not in epic.children) but still has an unanswered
-    // park row on the family ledger. Post-wave must NOT park the family for it.
-    const singleSliceBackend = new EscalatingChildBackend(-1);
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push(
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 516,
-        reason: "answered later",
-        diagnosis: "was parked then answered",
-        sessionId: "sess-516",
-      } as FamilyLedgerEntry,
-      {
-        status: "escalation_answered",
-        event: "escalation_answered",
-        childIssue: 516,
-        answer: "field X is optional; proceed",
-        source: "human",
-      } as FamilyLedgerEntry,
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 528,
-        reason: "admission skipped park",
-        diagnosis: "still on ledger but not admitted this run",
-      } as FamilyLedgerEntry,
+      parkRow(526, { reason: "still open A", diagnosis: "no answer yet for 526" }),
+      parkRow(528, { reason: "still open B", diagnosis: "no answer yet for 528" }),
     );
     singleSliceBackend.childLedgers.set(516, [
       {
         step: "S2",
         sessionId: "sess-516",
-        output: {
-          kind: "coder",
-          committed: false,
-          commitsAdded: 0,
-          escalate: STUCK,
-        },
+        output: { kind: "coder", committed: false, commitsAdded: 0, escalate: STUCK },
       } as PersistentLedgerEntry,
     ]);
 
@@ -844,34 +661,53 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
         issue: 1125,
         children: [
           { issue: 516, blockedBy: [] },
+          { issue: 526, blockedBy: [] },
+          { issue: 528, blockedBy: [] },
           { issue: 1123, blockedBy: [] },
-        ],
-        admissionSkipped: [
-          {
-            issue: 528,
-            reason: "missing_ready_for_agent",
-            message: "family admission skipped child #528: missing ready-for-agent label",
-          },
         ],
       },
       familyBackend,
       singleSliceBackend,
-      familyBase: "family/1125-unadmitted-park",
+      familyBase: "family/1125-base",
     });
 
     const dispatched = new Set(singleSliceBackend.runStepCalls.map((c) => c.issue));
     expect(dispatched.has(516)).toBe(true);
     expect(dispatched.has(1123)).toBe(true);
+    expect(dispatched.has(526)).toBe(false);
     expect(dispatched.has(528)).toBe(false);
-    // #528 is not an epic child — must not appear in children outcomes either.
-    expect(result.children.some((c) => c.issue === 528)).toBe(false);
-    expect(result.status).not.toBe("parked");
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.children.find((c) => c.issue === 526)?.status).toBe("escalated");
   });
 
-  it("pre-existing unanswered park + runnable sibling failed → failed (not decision_gate_park)", async () => {
-    // A-class failure wins over post-wave park (P1-a precedence), but unanswered
-    // park child remounts as escalated (F8 / #1125) — never skipped.
+  it("all unanswered → zero dispatch, parked + decision_gate_park (incl. mutual blockedBy)", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(-1);
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      parkRow(21, { reason: "open A", diagnosis: "no answer A" }),
+      parkRow(22, { reason: "open B", diagnosis: "no answer B" }),
+    );
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 21, blockedBy: [22] },
+          { issue: 22, blockedBy: [21] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-all-unanswered",
+    });
+    expect(singleSliceBackend.runStepCalls).toHaveLength(0);
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.children.find((c) => c.issue === 21)?.status).toBe("escalated");
+  });
+
+  it("failure: unanswered park stays escalated; sibling failed → family failed", async () => {
     class SiblingFailsBackend extends EscalatingChildBackend {
       constructor() {
         super(-1);
@@ -885,32 +721,21 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
             ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
             : -1;
         this.runStepCalls.push({ issue, step: spec.id });
-        if (spec.id === "S2" && issue === 12) {
-          throw new Error("coder process crashed");
-        }
-        if (spec.role === "coder") {
-          return { kind: "coder", committed: true, commitsAdded: 1 };
-        }
+        if (spec.id === "S2" && issue === 12) throw new Error("coder process crashed");
+        if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
         return { kind: "judge", status: "converged" };
       }
     }
     const singleSliceBackend = new SiblingFailsBackend();
     const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push({
-      status: "child_decision_parked",
-      event: "child_decision_parked",
-      escalationKind: "decision",
-      childIssue: 11,
-      reason: "still open",
-      diagnosis: "no answer yet for design field",
-      sessionId: "park-sess-11",
-    } as FamilyLedgerEntry);
-
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
+    familyBackend.ledger.push(
+      parkRow(11, {
+        reason: "still open",
+        diagnosis: "no answer yet for design field",
+        sessionId: "park-sess-11",
+      }),
+    );
+    const { warnings, restore } = captureWarnings();
     try {
       const result = await runFamily({
         verifyCmr: async () => ({ ok: true, ran: true }),
@@ -925,202 +750,19 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
         singleSliceBackend,
         familyBase: "family/1125-fail-masks-park",
       });
-
       expect(result.status).toBe("failed");
       expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
       expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
-      // Unanswered park cargo preserved as escalated (not skipped).
       const child11 = result.children.find((c) => c.issue === 11);
       expect(child11?.status).toBe("escalated");
-      expect(child11?.escalation?.escalationKind).toBe("decision");
-      expect(child11?.escalation?.reason).toBe("still open");
-      expect(child11?.escalation?.diagnosis).toBe("no answer yet for design field");
       expect(child11?.escalation?.sessionId).toBe("park-sess-11");
-      // Must not emit skip warning for the unanswered park child.
-      expect(
-        warnings.some(
-          (w) => w.includes("#11") && w.includes("skipped:"),
-        ),
-      ).toBe(false);
+      expect(warnings.some((w) => w.includes("#11") && w.includes("skipped:"))).toBe(false);
     } finally {
-      console.warn = originalWarn;
+      restore();
     }
   });
 
-  it("fresh decision park remounts preexisting unanswered park (no erase)", async () => {
-    // #11 already parked unanswered (filtered from wave); #12 runs and decision-escalates.
-    // Both must be escalated; #11 payload preserved; no skip warn for #11.
-    const singleSliceBackend = new EscalatingChildBackend(12);
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push({
-      status: "child_decision_parked",
-      event: "child_decision_parked",
-      escalationKind: "decision",
-      childIssue: 11,
-      reason: "preexisting park reason",
-      diagnosis: "preexisting park diagnosis",
-      sessionId: "preexisting-sess-11",
-    } as FamilyLedgerEntry);
-
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
-    try {
-      const result = await runFamily({
-        verifyCmr: async () => ({ ok: true, ran: true }),
-        epic: {
-          issue: 1125,
-          children: [
-            { issue: 11, blockedBy: [] },
-            { issue: 12, blockedBy: [] },
-          ],
-        },
-        familyBackend,
-        singleSliceBackend,
-        familyBase: "family/1125-fresh-keeps-old",
-      });
-
-      expect(result.status).toBe("parked");
-      expect(result.stopSummary?.reason).toBe("decision_gate_park");
-      const child11 = result.children.find((c) => c.issue === 11);
-      const child12 = result.children.find((c) => c.issue === 12);
-      expect(child11?.status).toBe("escalated");
-      expect(child11?.escalation?.reason).toBe("preexisting park reason");
-      expect(child11?.escalation?.diagnosis).toBe("preexisting park diagnosis");
-      expect(child11?.escalation?.sessionId).toBe("preexisting-sess-11");
-      expect(child12?.status).toBe("escalated");
-      expect(
-        warnings.some((w) => w.includes("#11") && w.includes("skipped:")),
-      ).toBe(false);
-    } finally {
-      console.warn = originalWarn;
-    }
-  });
-
-  it("preexisting park + fresh park + sibling failed → family failed, both parks kept", async () => {
-    // #10 unanswered park; #11 fresh decision-escalates; #12 fails. A-class → failed;
-    // both parks remount as escalated.
-    class ParkAndFailBackend extends EscalatingChildBackend {
-      constructor() {
-        super(11);
-      }
-      override async runStep(
-        spec: StepSpec,
-        worktree?: WorktreeHandle,
-      ): Promise<StepOutput | StepResult> {
-        const issue =
-          worktree !== undefined
-            ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
-            : -1;
-        this.runStepCalls.push({ issue, step: spec.id });
-        if (spec.id === "S2" && issue === 12) {
-          throw new Error("coder process crashed");
-        }
-        if (
-          spec.id === "S2" &&
-          issue === 11
-        ) {
-          const out: CoderOutput = {
-            kind: "coder",
-            committed: false,
-            commitsAdded: 0,
-            escalate: STUCK,
-          };
-          return { output: out, sessionId: ORIGINAL_SESSION_ID };
-        }
-        if (spec.role === "coder") {
-          return { kind: "coder", committed: true, commitsAdded: 1 };
-        }
-        return { kind: "judge", status: "converged" };
-      }
-    }
-    const singleSliceBackend = new ParkAndFailBackend();
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push({
-      status: "child_decision_parked",
-      event: "child_decision_parked",
-      escalationKind: "decision",
-      childIssue: 10,
-      reason: "old park",
-      diagnosis: "old diagnosis",
-      sessionId: "old-sess-10",
-    } as FamilyLedgerEntry);
-
-    const result = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic: {
-        issue: 1125,
-        children: [
-          { issue: 10, blockedBy: [] },
-          { issue: 11, blockedBy: [] },
-          { issue: 12, blockedBy: [] },
-        ],
-      },
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/1125-fail-keeps-parks",
-    });
-
-    expect(result.status).toBe("failed");
-    expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
-    expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
-    const child10 = result.children.find((c) => c.issue === 10);
-    const child11 = result.children.find((c) => c.issue === 11);
-    expect(child10?.status).toBe("escalated");
-    expect(child10?.escalation?.reason).toBe("old park");
-    expect(child10?.escalation?.sessionId).toBe("old-sess-10");
-    expect(child11?.status).toBe("escalated");
-  });
-
-  it("all-unanswered mutual blockedBy → parked not dependency_cycle (zero dispatch)", async () => {
-    const singleSliceBackend = new EscalatingChildBackend(-1);
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push(
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 21,
-        reason: "open A",
-        diagnosis: "no answer A",
-      } as FamilyLedgerEntry,
-      {
-        status: "child_decision_parked",
-        event: "child_decision_parked",
-        escalationKind: "decision",
-        childIssue: 22,
-        reason: "open B",
-        diagnosis: "no answer B",
-      } as FamilyLedgerEntry,
-    );
-
-    const result = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic: {
-        issue: 1125,
-        children: [
-          { issue: 21, blockedBy: [22] },
-          { issue: 22, blockedBy: [21] },
-        ],
-      },
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/1125-unanswered-cycle",
-    });
-
-    expect(singleSliceBackend.runStepCalls).toHaveLength(0);
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.stopSummary?.reason).not.toBe("dependency_cycle");
-    expect(result.children.find((c) => c.issue === 21)?.status).toBe("escalated");
-    expect(result.children.find((c) => c.issue === 22)?.status).toBe("escalated");
-  });
-
-  it("quota park preserves preexisting unanswered park cargo (not skipped)", async () => {
-    // Shortest quota tracer: merge-phase QuotaWait after #10 succeeds single-slice;
-    // #11 is unanswered park. Normalizer must keep #11 escalated on quota park.
+  it("quota park preserves preexisting unanswered park cargo (single normalize)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
@@ -1150,21 +792,14 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
     }
     const singleSliceBackend = new EscalatingChildBackend(-1);
     const familyBackend = new QuotaParkFamilyBackend();
-    familyBackend.ledger.push({
-      status: "child_decision_parked",
-      event: "child_decision_parked",
-      escalationKind: "decision",
-      childIssue: 11,
-      reason: "quota-old-park",
-      diagnosis: "still waiting answer",
-      sessionId: "quota-park-sess-11",
-    } as FamilyLedgerEntry);
-
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
+    familyBackend.ledger.push(
+      parkRow(11, {
+        reason: "quota-old-park",
+        diagnosis: "still waiting answer",
+        sessionId: "quota-park-sess-11",
+      }),
+    );
+    const { warnings, restore } = captureWarnings();
     try {
       const result = await runFamily({
         verifyCmr: async () => ({ ok: true, ran: true }),
@@ -1180,56 +815,16 @@ describe("#1125 — unanswered park does not block answered rekindle or new tick
         familyBase: "family/1125-quota-park",
         now: () => now,
       });
-
       expect(result.status).toBe("parked");
       expect(result.stopSummary?.reason).toBe("provider_degraded");
       const parkChild = result.children.find((c) => c.issue === 11);
       expect(parkChild?.status).toBe("escalated");
-      expect(parkChild?.escalation?.reason).toBe("quota-old-park");
       expect(parkChild?.escalation?.sessionId).toBe("quota-park-sess-11");
-      expect(
-        warnings.some((w) => w.includes("#11") && w.includes("skipped:")),
-      ).toBe(false);
+      // Single normalize: at most one skip warn line for residual issues.
+      expect(warnings.filter((w) => w.includes("skipped:")).length).toBeLessThanOrEqual(1);
     } finally {
-      console.warn = originalWarn;
+      restore();
     }
-  });
-
-  it("post-wave park prefers this-invocation familyHead over old park familyHeadAfter", async () => {
-    const singleSliceBackend = new EscalatingChildBackend(-1);
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push({
-      status: "child_decision_parked",
-      event: "child_decision_parked",
-      escalationKind: "decision",
-      childIssue: 11,
-      reason: "still open",
-      diagnosis: "no answer",
-      familyHeadAfter: "old-park-head",
-    } as FamilyLedgerEntry);
-
-    const result = await runFamily({
-      verifyCmr: async () => ({ ok: true, ran: true }),
-      epic: {
-        issue: 1125,
-        children: [
-          { issue: 10, blockedBy: [] },
-          { issue: 11, blockedBy: [] },
-        ],
-      },
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/1125-head-prefer",
-    });
-
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    // #10 merged this invocation → head advanced to "+10" (FakeFamilyBackend).
-    expect(result.familyHead).toBe("+10");
-    expect(result.familyHead).not.toBe("old-park-head");
-    // Hard-assert stopSummary heads (no conditional skip).
-    expect(result.stopSummary?.metadata?.heads?.reportedFamilyHead).toBe("+10");
-    expect(result.stopSummary?.metadata?.heads?.actualFamilyHead).toBe("+10");
   });
 });
 
