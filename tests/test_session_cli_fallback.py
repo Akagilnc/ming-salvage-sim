@@ -960,9 +960,11 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         item for item in db.list_decree_dossiers(status="proposed")
         if item["pending_action_id"] == result.pending_action_id
     )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated",
-        content=content, registry=sess.registry,
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+        registry=sess.registry,
     )
 
     assert content.characters[appointee].faction == "阉党"

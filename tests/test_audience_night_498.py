@@ -380,6 +380,19 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         again = an.close_night(db2, state2, night_id=night["id"], content=content)
         assert again.get("already") is True
         assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+
+        # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
+        dossier = db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )[0]
+        db2.apply_dossier_verdicts(
+            state2,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+        assert db2.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == new_office
         db2.close()
     finally:
         for p in (path, f"{path}_agno.db"):
