@@ -788,28 +788,51 @@ def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monke
 
 
 def test_web_advance_without_edict_default_approves_into_one_dossier(game, monkeypatch):
-    """Web 结束回合把未表态拟旨送入与显式应允相同的幂等成案口。"""
-    import asyncio
-    import pytest
+    """Web 真实结束入口经生产 resolve/commit，把默认同意拟旨成唯一案卷并推进回合。"""
     import web_app
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession, ResolveResult
 
     db, state, content = game
     name = _active_minister_name(db, content)
+    turn_before = state.turn
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": name},
+        payload={
+            "text": "着户部清核辽饷。", "actor": name,
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        },
     )
-    def resolve_turn(**_kwargs):
-        db.commit_pending_actions(
-            state, kind_filter="directive", content=content,
-        )
-        return types.SimpleNamespace(awaiting=False, decisions=[])
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.content = content
+    session.registry = None
+    session.llm_config = None
+    session.agno_db = None
+    session.last_decree = ""
+    session.last_report = ""
+    session.deaths_this_turn = []
+    session.debuts_this_turn = []
+    session.auto_save = lambda _tag: None
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda *_args, **_kwargs: "奉旨清核辽饷",
+    )
+
+    def settle(st, game_db, *_args, **_kwargs):
+        st.next_period()
+        game_db.save_state(st)
+        return ResolveResult(awaiting=False, report="本月已结")
+
+    monkeypatch.setattr(session_mod, "resolve_directives", settle)
 
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None, resolve_turn=resolve_turn),
+        session=session,
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: [],
@@ -821,7 +844,7 @@ def test_web_advance_without_edict_default_approves_into_one_dossier(game, monke
     assert out["awaiting_decision"] is False
     dossiers = db.list_decree_dossiers()
     assert len([row for row in dossiers if row["pending_action_id"] > 0]) == 1
-    assert state.turn == 1
+    assert state.turn == turn_before + 1
 
 
 def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):

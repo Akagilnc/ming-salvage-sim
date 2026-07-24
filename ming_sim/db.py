@@ -7354,6 +7354,8 @@ class GameDB:
     _ROLLBACK_TABLE_PK = {
         "turn_directives": "id",
         "secret_orders": "id",
+        "decree_dossiers": "id",
+        "decree_dossier_decisions": "id",
         "characters": "name",
         "character_offices": "character_name",
         "consort_traits": "name",
@@ -8180,7 +8182,24 @@ class GameDB:
         self, items: Iterable[sqlite3.Row], undone_message_ids: Iterable[int],
     ) -> None:
         undone = {int(message_id) for message_id in undone_message_ids}
-        for item in items:
+        rollback_items = list(items)
+
+        def dependency_order(item: sqlite3.Row) -> int:
+            table = str(item["target_table"])
+            strategy = str(item["rollback_strategy"])
+            if strategy == "delete_inserted_row":
+                return {
+                    "decree_dossier_decisions": 0,
+                    "decree_dossiers": 1,
+                    "secret_orders": 2,
+                }.get(table, 1)
+            return {
+                "secret_orders": 0,
+                "decree_dossiers": 1,
+                "decree_dossier_decisions": 2,
+            }.get(table, 1)
+
+        for item in sorted(rollback_items, key=dependency_order):
             table = str(item["target_table"])
             strategy = str(item["rollback_strategy"])
             target_id = str(item["target_id"])
@@ -13351,28 +13370,51 @@ class GameDB:
         *,
         commit: bool = True,
     ) -> None:
-        self.conn.execute(
-            """
-            UPDATE secret_orders
-            SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (status, result, turn_closed, int(order_id)),
-        )
-        dossier = self.get_dossier_for_secret_order(int(order_id))
-        if dossier is not None and dossier["status"] != "closed":
-            if dossier["status"] == "promulgated":
-                self.transition_decree_dossier(
-                    int(dossier["id"]), "executing", commit=False,
-                )
-            self.record_dossier_execution(
-                int(dossier["id"]),
-                "fulfilled" if str(status) == "done" else "failed",
-                str(result), int(turn_closed),
-                close=True, commit=False,
+        def close_in_current_transaction() -> None:
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET status = ?, result = ?, turn_closed = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, result, turn_closed, int(order_id)),
             )
-        if commit:
-            self.conn.commit()
+            dossier = self.get_dossier_for_secret_order(int(order_id))
+            if dossier is not None and dossier["status"] != "closed":
+                if dossier["status"] == "promulgated":
+                    self.transition_decree_dossier(
+                        int(dossier["id"]), "executing", commit=False,
+                    )
+                self.record_dossier_execution(
+                    int(dossier["id"]),
+                    "fulfilled" if str(status) == "done" else "failed",
+                    str(result), int(turn_closed),
+                    close=True, commit=False,
+                )
+
+        if self.conn.in_transaction:
+            savepoint = "close_secret_order_axes"
+            self.conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                close_in_current_transaction()
+            except BaseException:
+                self.conn.execute(f"ROLLBACK TO {savepoint}")
+                self.conn.execute(f"RELEASE {savepoint}")
+                raise
+            else:
+                self.conn.execute(f"RELEASE {savepoint}")
+                if commit and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0:
+                    self.conn.commit()
+        elif commit:
+            with atomic(self):
+                close_in_current_transaction()
+        else:
+            self.conn.execute("BEGIN")
+            try:
+                close_in_current_transaction()
+            except BaseException:
+                self.conn.rollback()
+                raise
         tlog(f"[secret_order] close id={order_id} status={status}")
 
     def submit_secret_order_for_review(self, order_id: int, claim: str, year: int, period: int) -> bool:
