@@ -786,8 +786,8 @@ def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monke
     assert exc.value.detail == "结算中止，可重试。"
 
 
-def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monkeypatch):
-    """web 退朝无诏不得绕过待准驳拟旨。"""
+def test_web_advance_without_edict_default_approves_into_one_dossier(game, monkeypatch):
+    """Web 结束回合把未表态拟旨送入与显式应允相同的幂等成案口。"""
     import asyncio
     import pytest
     import web_app
@@ -798,49 +798,61 @@ def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monk
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
         payload={"text": "着户部清核辽饷。", "actor": name},
     )
+    def resolve_turn(**_kwargs):
+        db.commit_pending_actions(
+            state, kind_filter="directive", content=content,
+        )
+        return types.SimpleNamespace(awaiting=False, decisions=[])
+
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=types.SimpleNamespace(registry=None, resolve_turn=resolve_turn),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: [],
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    with pytest.raises(web_app.HTTPException) as exc:
-        web_app.api_advance_without_edict()
+    out = web_app.api_advance_without_edict()
 
-    assert exc.value.status_code == 400
-    assert "未处理拟旨" in str(exc.value.detail)
+    assert out["awaiting_decision"] is False
+    dossiers = db.list_decree_dossiers()
+    assert len([row for row in dossiers if row["pending_action_id"] > 0]) == 1
     assert state.turn == 1
 
 
-def test_web_advance_without_edict_refuses_existing_draft(game, monkeypatch):
-    """已有 draft/pending 圣旨草案时，web 退朝无诏不得直接丢弃推进。"""
+def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
+    """已有 draft 时 Web 结束回合走正常结算，而不是无诏快进。"""
     import asyncio
     import pytest
     import web_app
 
     db, state, content = game
     db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
+    calls = []
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=types.SimpleNamespace(
+            registry=None,
+            resolve_turn=lambda **_kwargs: (
+                calls.append("resolve")
+                or types.SimpleNamespace(awaiting=False, decisions=[])
+            ),
+        ),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    with pytest.raises(web_app.HTTPException) as exc:
-        web_app.api_advance_without_edict()
+    out = web_app.api_advance_without_edict()
 
-    assert exc.value.status_code == 400
-    assert "未处理拟旨" in str(exc.value.detail)
+    assert out["awaiting_decision"] is False
+    assert calls == ["resolve"]
     assert state.turn == 1
 
 

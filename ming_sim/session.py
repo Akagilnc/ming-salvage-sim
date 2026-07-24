@@ -2516,7 +2516,7 @@ class GameSession:
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
         has_default_approved_work = bool(
-            self.db.list_directives(self.state, statuses=("pending",))
+            self.db.list_directives(self.state, statuses=("pending", "draft"))
         ) or any(
             row.get("kind") == "directive"
             for row in self.db.list_pending_actions(self.state.turn)

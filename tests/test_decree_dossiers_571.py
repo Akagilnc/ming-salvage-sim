@@ -674,3 +674,78 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     terminal = db.get_dossier_for_secret_order(order_id)
     assert terminal["status"] == "closed"
     assert terminal["execution_outcome"] == "fulfilled"
+
+
+@pytest.mark.parametrize(
+    "action_type",
+    (
+        "extraordinary_summons", "summons", "inquiry",
+        "pressure_inquiry", "public_support",
+    ),
+)
+def test_dialogue_and_engine_commands_cannot_construct_dossiers(
+    game, action_type,
+):
+    db, state, _content = game
+    with pytest.raises(ValueError, match="action_type"):
+        db.create_decree_dossier(
+            state, action_type=action_type, decree_text="结构化命令",
+        )
+
+
+def test_secret_order_creation_fills_promulgation_slot_and_history(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    actor = _active_minister(db)
+    order_id = db.create_secret_order(state, actor, "密查仓储", "核清仓储", [])
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier["promulgation_decision"] == "promulgated"
+    assert dossier["promulgation_blocked_layer"] == "palace_rescript"
+    assert dossier["promulgation_reason"]
+    history = db.conn.execute(
+        "SELECT * FROM decree_dossier_decisions WHERE dossier_id=?",
+        (dossier["id"],),
+    ).fetchall()
+    assert len(history) == 1
+    assert history[0]["decision"] == "promulgated"
+    assert history[0]["blocked_layer"] == "palace_rescript"
+
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored = reopened.get_dossier_for_secret_order(order_id)
+        assert restored["promulgation_decision"] == "promulgated"
+        restored_history = reopened.conn.execute(
+            "SELECT * FROM decree_dossier_decisions WHERE dossier_id=?",
+            (dossier["id"],),
+        ).fetchall()
+        assert len(restored_history) == 1
+    finally:
+        reopened.close()
+
+
+def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="着核边饷",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices",
+        reason="依律封驳", legal_reason_code="statute-42",
+    )
+    db.record_dossier_decision(dossier_id, "hold")
+
+    current = db.get_decree_dossier(dossier_id)
+    assert current["legal_reason_code"] == ""
+    assert current["rescript_pending"] is False
+    history = db.conn.execute(
+        """
+        SELECT decision,rescript_action,legal_reason_code
+        FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id
+        """,
+        (dossier_id,),
+    ).fetchall()
+    assert [row["legal_reason_code"] for row in history] == [
+        "statute-42", "",
+    ]
+    assert history[1]["rescript_action"] == "hold"
