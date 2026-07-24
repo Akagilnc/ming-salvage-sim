@@ -577,6 +577,41 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
+  it("judge session service/network unavailable stays loud and never opens fresh", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend(
+        [
+          completedJudge(
+            judgeContinue([
+              sampleFinding("network-loud", "network.ts:1"),
+            ]),
+            OPEN_COURT_SESSION,
+          ),
+        ],
+        undefined,
+        {
+          judgeResumeFirstThrow: new Error(
+            "resumeSession failed: session service/network unavailable",
+          ),
+          judgeResumeThrowStep: "S6",
+        },
+      );
+
+      const result = await runOrchestrator({ issueNumber: 11283, backend });
+      expect(result.status).toBe("failed");
+      expect(
+        backend.ledgerWrites.some(
+          (entry) => entry.event === "session_continuity_lost",
+        ),
+      ).toBe(false);
+      expect(
+        backend.specs.some(
+          (spec) => spec.id === "S6" && spec.session === "fresh",
+        ),
+      ).toBe(false);
+    });
+  });
+
   it("judge continue is transported to S5 without runner findings-store judgment", async () => {
     await runReal(async () => {
       const live = sampleFinding("live", "live.ts:1");
@@ -607,6 +642,22 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
       const result = await runOrchestrator({ issueNumber: 11282, backend });
       expect(result.status).toBe("completed");
       expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
+      const authoredJudgeRow = backend.ledgerWrites.find(
+        (entry) =>
+          entry.step === "S3" &&
+          entry.output?.kind === "judge" &&
+          entry.output.status === "continue",
+      );
+      expect(authoredJudgeRow?.findingDispositions).toBeUndefined();
+      expect(
+        authoredJudgeRow?.output?.kind === "judge"
+          ? authoredJudgeRow.output.findingDispositions
+          : undefined,
+      ).toEqual([
+        duplicateTerminal,
+        duplicateTerminal,
+        { action: "live", identityKey: "live" },
+      ]);
     });
   });
 

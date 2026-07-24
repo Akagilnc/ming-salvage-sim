@@ -4794,8 +4794,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             step,
             round: judgeRound,
             verdict: output.status,
-            findingDispositions: output.findingDispositions,
-            findings: output.findings,
             cargoPointer:
               typeof output.fixPacketBody === "string" &&
               output.fixPacketBody.length > 0
@@ -4811,7 +4809,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             pendingBlockingFindings = [];
             pendingBlockingFindingIdentityKeys = [];
             pendingBlockingFindingCount = 0;
-            findingDispositions = [];
             pendingFixPacketBody =
               output.kind === "judge" && output.status === "continue"
                 ? output.fixPacketBody
@@ -4893,7 +4890,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // land on judge seats (S4 residual). Residual S4 still accepts dispositions
     // if a legacy path writes them.
     const stepFindingDispositions =
-      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
+      step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
