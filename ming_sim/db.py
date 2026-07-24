@@ -9461,6 +9461,9 @@ class GameDB:
     _DOSSIER_EXECUTION_OUTCOMES = frozenset({
         "executing", "fulfilled", "degraded", "failed", "transformed",
     })
+    _DOSSIER_MATERIALIZERS = frozenset({
+        "appointment", "assignment", "grant_allocation", "authorization",
+    })
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9468,13 +9471,11 @@ class GameDB:
         if explicit:
             if explicit not in cls._DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}:
                 raise ValueError(f"旨意 action_type 非法：{explicit}")
+            if explicit in {"military_order", "strategy_selection"}:
+                raise ValueError(f"结构化旨意尚无合法 materializer：{explicit}")
             return explicit
-        if payload.get("selected_strategy_id") or payload.get("selected_strategy"):
-            return "strategy_selection"
         if payload.get("authorization_id") or payload.get("authorized_scope"):
             return "authorization"
-        if payload.get("military_target_id") or payload.get("army_id"):
-            return "military_order"
         if payload.get("amount") is not None and (
             payload.get("account") or payload.get("target_account")
         ):
@@ -9674,6 +9675,24 @@ class GameDB:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self.conn.execute(
             f"SELECT * FROM decree_dossiers{where} ORDER BY id", params
+        ).fetchall()
+        return [self._dossier_row(row) for row in rows]
+
+    def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
+        """Only dossiers promulgated/effective this turn; never replay history."""
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT d.*
+            FROM decree_dossiers d
+            LEFT JOIN decree_dossier_decisions h ON h.dossier_id=d.id
+            WHERE d.status IN ('promulgated','executing')
+              AND (
+                    d.created_turn=?
+                 OR (h.turn=? AND h.decision='promulgated')
+              )
+            ORDER BY d.id
+            """,
+            (int(turn), int(turn)),
         ).fetchall()
         return [self._dossier_row(row) for row in rows]
 
@@ -9913,6 +9932,9 @@ class GameDB:
                     commit=False,
                 ):
                     raise ValueError("授权案卷载荷物化失败")
+            elif row["action_type"] == "assignment":
+                if not str(row.get("executor_id") or ""):
+                    raise ValueError("交办案卷缺少 executor")
             if bool(payload.get("immediate_terminal")):
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
@@ -10551,10 +10573,7 @@ class GameDB:
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 try:
                     payload_for_apply = dict(payload)
-                    stored_status = str(payload_for_apply.get("_directive_status") or "").strip()
-                    payload_for_apply["_directive_status"] = (
-                        stored_status if stored_status in {"draft", "pending"} else directive_status
-                    )
+                    payload_for_apply["_directive_status"] = directive_status
                     ok = self._apply_pending_action(
                         state, pa, payload_for_apply, content=content, registry=registry)
                     if ok:
@@ -10764,6 +10783,16 @@ class GameDB:
                 decree_text=text,
                 target_kind=str(payload.get("target_kind") or ""),
                 target_id=payload.get("target_id") or "",
+                executor_kind=(
+                    "character"
+                    if self._directive_dossier_action_type(payload) == "assignment"
+                    else ""
+                ),
+                executor_id=(
+                    payload.get("assignee_id") or payload.get("assignee") or ""
+                    if self._directive_dossier_action_type(payload) == "assignment"
+                    else ""
+                ),
                 source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
                 pending_action_id=int(pa["id"]),
                 directive_id=did,
