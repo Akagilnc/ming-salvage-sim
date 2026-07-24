@@ -997,6 +997,7 @@ def extract_draft_intent(
     has_pending_draft: bool = False,
     existing_draft_text: str = "",
     existing_candidates: Optional[List[Dict[str, Any]]] = None,
+    draft_count: int = 1,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -1009,6 +1010,37 @@ def extract_draft_intent(
     （target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
     多条→target_candidate="含糊"（交 session 追问哪一道，不静默新建第三道；#502 L7）。
     无候选时 target_candidate 恒空。"""
+    if draft_count > 1:
+        prompt = (
+            "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
+            f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
+            "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+            f'{{\"成品旨稿\": [\"第一道完整旨稿\", \"……共 {draft_count} 道\"]}}\n'
+            "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            "【皇帝】" + (player_message or "（无）") + "\n"
+            "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
+        )
+        raw = ""
+        try:
+            raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+        except Exception as exc:
+            _log(f"多旨稿抽取失败：{exc}")
+        obj = _loads_lenient(raw) or {}
+        values = obj.get("成品旨稿") if isinstance(obj, dict) else None
+        draft_texts = [
+            str(value).strip()
+            for value in (values if isinstance(values, list) else [])
+            if str(value).strip()
+        ]
+        if len(draft_texts) != draft_count or len(set(draft_texts)) != draft_count:
+            draft_texts = []
+        return {
+            "draft_action": "拟旨" if draft_texts else "无",
+            "draft_text": "",
+            "draft_texts": draft_texts,
+            "target_candidate": "",
+        }
+
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
     supplement_hint = (

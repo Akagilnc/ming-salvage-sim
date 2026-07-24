@@ -298,7 +298,8 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     """一句多旨经真实 session.chat 串行 classifier 后逐项暂存。"""
     db, state, content = game
     minister = _active_ch(db, content)
-    raw = json.dumps([
+    classified = json.dumps([
+        {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
         {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
         {
             "动作类型": "任免",
@@ -309,11 +310,32 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
             "官职": "陕西巡抚",
         },
     ], ensure_ascii=False)
-    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 0))
+    drafts = [
+        "着户部发帑十万两赈济陕西灾民。",
+        "着孙传庭巡抚陕西，整饬军政。",
+    ]
+    calls = []
+
+    def scripted_backend(*_args, **kwargs):
+        tag = kwargs.get("tag")
+        calls.append(tag)
+        if tag == "action_intent":
+            return classified, 0
+        if tag == "draft_intent":
+            return json.dumps({"成品旨稿": drafts}, ensure_ascii=False), 0
+        raise AssertionError(f"unexpected backend call: {tag}")
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", scripted_backend)
 
     class FakeAgent:
         def run(self, _msg):
-            return SimpleNamespace(content="臣拟请发帑赈陕西，并任孙传庭为陕西巡抚。", tools=[])
+            return SimpleNamespace(
+                content=(
+                    "臣拟两道：其一着户部发帑十万两赈济陕西灾民；"
+                    "其二着孙传庭巡抚陕西，整饬军政。"
+                ),
+                tools=[],
+            )
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -328,11 +350,19 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     sess._retrieve_memories_for_message = lambda message: message
     monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
 
-    sess.chat(minister.name, "拟旨赈灾，并任孙传庭为陕西巡抚。")
+    sess.chat(
+        minister.name,
+        "分别拟两道旨：一道发帑赈陕西，一道令孙传庭整饬陕西军政；并任孙传庭为陕西巡抚。",
+    )
 
     rows = db.list_pending_actions(int(state.turn), minister_name=minister.name)
-    assert [row["kind"] for row in rows] == ["directive", "office"]
-    office = json.loads(rows[1]["payload_json"] or "{}")
+    assert calls == ["action_intent", "draft_intent"]
+    assert [row["kind"] for row in rows] == ["directive", "directive", "office"]
+    assert len({int(row["id"]) for row in rows[:2]}) == 2
+    assert [
+        json.loads(row["payload_json"] or "{}")["text"] for row in rows[:2]
+    ] == drafts
+    office = json.loads(rows[2]["payload_json"] or "{}")
     assert office["name"] == "孙传庭"
     assert office["office"] == "陕西巡抚"
 
