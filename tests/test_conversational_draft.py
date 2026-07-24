@@ -370,7 +370,6 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
     assert "封存兵部辽饷册" in payload["content"]
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatch):
     """#413：自然语言下密令与按钮/前缀同形，先暂存候选，等待皇帝确认。"""
     db, state, content = game
@@ -394,6 +393,7 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
         player_message="你替朕下一道密令，暗查关宁诸将虚冒兵额，两月内回奏。",
         answer="臣领密旨，可先密访粮道账册，再核诸将营册，请陛下定夺。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["secret_order_id"] in (None, 0)
@@ -408,7 +408,6 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     assert "粮道账册" in payload["content"]
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game, monkeypatch):
     """#413/#405：隐秘差事即便不写“密令”二字，也要进入同一密令确认流。"""
     db, state, content = game
@@ -434,6 +433,7 @@ def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game,
         player_message="着锦衣卫暗查辽饷侵冒，三月内回奏，不可声张。",
         answer="臣领命，当暗调旧册，密访经手吏员，请陛下定夺。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert "secret_extract" in calls
@@ -541,7 +541,6 @@ def test_secret_order_chaban_query_does_not_stage_new_hidden_order(read_game, mo
     assert db.list_pending_actions(state.turn) == []
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; only explicit prefixes bypass classification")
 def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch):
     """“密令锦衣卫暗查…”这类省略“下/发”的祈使句也应识别为新密令。"""
     db, state, content = game
@@ -565,13 +564,13 @@ def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch
         answer="臣领旨。",
         has_directive=False,
         secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
     assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_private_investigation_language_stages_secret_order(game, monkeypatch):
     """无“密令”字样但具备祈使、私下、回奏语义时，应识别为新密令候选。"""
     db, state, content = game
@@ -595,13 +594,13 @@ def test_private_investigation_language_stages_secret_order(game, monkeypatch):
         answer="臣领旨。",
         has_directive=False,
         secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
     assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
     """“暗查…回奏…不可声张”本身就是密令语义，不应要求另有“派/命”等动词。"""
     db, state, content = game
@@ -626,6 +625,7 @@ def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
         answer="臣领旨。",
         has_directive=False,
         secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
@@ -635,7 +635,6 @@ def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
     ]
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
     """“派锦衣卫秘密调查…回奏”应进入新密令确认流，不能被关键词预筛漏掉。"""
     db, state, content = game
@@ -660,6 +659,7 @@ def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
         answer="臣领旨。",
         has_directive=False,
         secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
@@ -669,7 +669,6 @@ def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
     ]
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_split_secret_investigation_language_stages_secret_order(game, monkeypatch):
     """“秘密 + 派 + 调查 + 回奏”即便不是连续“秘密调查”，也应识别为新密令。"""
     db, state, content = game
@@ -694,6 +693,7 @@ def test_split_secret_investigation_language_stages_secret_order(game, monkeypat
         answer="臣领旨。",
         has_directive=False,
         secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
@@ -703,7 +703,6 @@ def test_split_secret_investigation_language_stages_secret_order(game, monkeypat
     ]
 
 
-@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):
     """已有 active 密令时，另下一道密令不能同轮再把旧密令也 stage 一次更新。"""
     db, state, content = game
@@ -739,6 +738,7 @@ def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, mo
         player_message="你替朕下一道密令，暗查粮道，两月内回奏。",
         answer="臣领旨，请陛下定夺。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "secret", "secret_action": "新建"},
     )
 
     assert out["pending_action_id"]
