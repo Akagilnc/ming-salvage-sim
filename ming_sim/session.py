@@ -1248,9 +1248,8 @@ class GameSession:
         """CLI 后端（无 function-calling）会话落地的【唯一真源】，session.chat 非流式路径与
         web streaming 路径共用，杜绝两边逻辑漂移（CMR F3 / codexC-1）。
 
-        做三件事：① 前缀「拟旨」→ pending directive；② 前缀/自然语言「密令」→ pending
-        secret_order 新建候选；③ 无前缀时让 LLM 判会话动作（更新/催办/提交核议/记进展/
-        调教妃嫔）并暂存。
+        做三件事：① 前缀「拟旨」→ pending directive；② 前缀「密令」→ pending
+        secret_order 新建候选；③ 无前缀时只按 LLM 结构化判词物化会话动作并暂存。
         入参 has_directive / secret_order_id 表示 agno 工具路径是否已产出（已产则不重复）。
         返回 {"directive": {id,text,status,notes}|None, "secret_order_id": int|None}。
 
@@ -1261,7 +1260,7 @@ class GameSession:
             _DRAFT_PREFIXES, _SECRET_PREFIXES,
             cli_backend_from_env, resolve_minister_actions,
             extract_confirmation_intent,
-            extract_directive_confirmation, _extract_secret_order,
+            extract_directive_confirmation,
         )
         from ming_sim.action_clusters import (
             EFFECT_ANSWER_EXISTING,
@@ -1482,68 +1481,6 @@ class GameSession:
             )
         if not out["secret_order_id"] and acts["secret_order"]:
             out["pending_action_id"] = _stage_secret_order_candidate(acts["secret_order"])
-
-        def _mentions_new_secret_order_request(text: str) -> bool:
-            if not text:
-                return False
-            explicit_secret = any(term in text for term in ("密令", "密旨", "密谕"))
-            if explicit_secret and any(token in text for token in (
-                "密令进展", "密旨进展", "密谕进展",
-                "密令状态", "密旨状态", "密谕状态",
-                "查一下密令", "查一查密令",
-                "问问密令", "奏报密令", "回报密令",
-                "查办得如何", "查办得怎样", "办得如何", "办得怎样",
-                "查到哪", "查得如何", "查得怎样",
-                "调查得如何", "调查得怎样", "调查到哪",
-            )):
-                return False
-            if explicit_secret and any(token in text for token in (
-                "下密令", "下密旨", "下密谕",
-                "发密令", "发密旨", "发密谕",
-                "下一道密令", "下一道密旨", "下一道密谕",
-                "另下一道", "新下一道",
-            )):
-                return True
-            if explicit_secret and re.search(r"(?:密令|密旨|密谕).{0,12}(?:暗查|密查|密访|侦缉|查办|调查)", text):
-                return True
-            if explicit_secret:
-                return any(
-                    verb in text and any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查办", "调查"))
-                    for verb in ("下", "发", "给", "交办", "传", "命", "着", "派", "遣")
-                )
-            covert_terms = ("暗查", "密查", "密访", "暗访", "侦缉", "私下", "密办", "查访", "秘密调查", "秘密查")
-            imperative_terms = ("着", "命", "令", "派", "遣", "让", "交办", "交")
-            investigation_terms = ("调查", "查办", "查访", "侦缉")
-            secrecy_or_return_terms = (
-                "不可声张", "不得声张", "别声张", "不要声张", "勿使", "不得外泄", "不可外泄",
-                "暗中", "秘密", "回奏", "奏报", "月内", "日内", "限期",
-            )
-            split_secret_investigation = (
-                any(term in text for term in ("秘密", "暗中"))
-                and any(term in text for term in imperative_terms)
-                and any(term in text for term in investigation_terms)
-            )
-            return (
-                (any(term in text for term in covert_terms) or split_secret_investigation)
-                and (
-                    any(term in text for term in imperative_terms)
-                    or any(term in text for term in ("暗查", "密查", "密访", "侦缉", "查访", "秘密调查", "秘密查"))
-                )
-                and any(term in text for term in secrecy_or_return_terms)
-            )
-
-        if (
-            not out.get("pending_action_id")
-            and not has_directive
-            and not out["secret_order_id"]
-            and not explicit_prefixed
-            and _mentions_new_secret_order_request(message_text)
-        ):
-            so = _extract_secret_order(
-                message_text, reply, minister_name, llm_config,
-                force_default_assignee=False,
-            )
-            out["pending_action_id"] = _stage_secret_order_candidate(so)
 
         # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
         import ming_sim.action_materialize  # noqa: F401 — install catalog

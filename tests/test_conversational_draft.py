@@ -69,6 +69,11 @@ def _run_conversational_draft(db, state, content, monkeypatch, *,
     out = GameSession.apply_cli_conversation_actions(
         sess, ch, player_message=player_message, answer=minister_reply,
         has_directive=False, secret_order_id=None,
+        preclassified_intent=(
+            {"kind": "draft"}
+            if canned.get("拟旨意图") == "拟旨"
+            else {"kind": "none"}
+        ),
     )
     return name, out
 
@@ -161,7 +166,8 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
                             {"拟旨意图": "拟旨"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="拟旨吧", answer=first_reply,
-        has_directive=False, secret_order_id=None)
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"})
 
     pend_after_first = db.list_pending_actions(state.turn)
     assert len(pend_after_first) == 1
@@ -183,7 +189,8 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     monkeypatch.setattr(cb, "_run_backend_for_config", canned_second)
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="再补一条，加上要监察御史同行", answer=second_reply,
-        has_directive=False, secret_order_id=None)
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"})
 
     pend_after_second = db.list_pending_actions(state.turn)
     # 仍只有一条（last-write-wins 原地更新）
@@ -363,6 +370,7 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
     assert "封存兵部辽饷册" in payload["content"]
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatch):
     """#413：自然语言下密令与按钮/前缀同形，先暂存候选，等待皇帝确认。"""
     db, state, content = game
@@ -400,6 +408,7 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     assert "粮道账册" in payload["content"]
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game, monkeypatch):
     """#413/#405：隐秘差事即便不写“密令”二字，也要进入同一密令确认流。"""
     db, state, content = game
@@ -532,6 +541,7 @@ def test_secret_order_chaban_query_does_not_stage_new_hidden_order(read_game, mo
     assert db.list_pending_actions(state.turn) == []
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; only explicit prefixes bypass classification")
 def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch):
     """“密令锦衣卫暗查…”这类省略“下/发”的祈使句也应识别为新密令。"""
     db, state, content = game
@@ -561,6 +571,7 @@ def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch
     assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_private_investigation_language_stages_secret_order(game, monkeypatch):
     """无“密令”字样但具备祈使、私下、回奏语义时，应识别为新密令候选。"""
     db, state, content = game
@@ -590,6 +601,7 @@ def test_private_investigation_language_stages_secret_order(game, monkeypatch):
     assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
     """“暗查…回奏…不可声张”本身就是密令语义，不应要求另有“派/命”等动词。"""
     db, state, content = game
@@ -623,6 +635,7 @@ def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
     ]
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
     """“派锦衣卫秘密调查…回奏”应进入新密令确认流，不能被关键词预筛漏掉。"""
     db, state, content = game
@@ -656,6 +669,7 @@ def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
     ]
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_split_secret_investigation_language_stages_secret_order(game, monkeypatch):
     """“秘密 + 派 + 调查 + 回奏”即便不是连续“秘密调查”，也应识别为新密令。"""
     db, state, content = game
@@ -689,6 +703,7 @@ def test_split_secret_investigation_language_stages_secret_order(game, monkeypat
     ]
 
 
+@pytest.mark.skip(reason="#513 removes prose-keyword routing; structured verdict owns routing")
 def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):
     """已有 active 密令时，另下一道密令不能同轮再把旧密令也 stage 一次更新。"""
     db, state, content = game
@@ -1050,6 +1065,7 @@ def test_draft_request_with_appointment_content_stages_directive_not_office(game
         player_message="帮我拟一道旨，授史可法为兵部尚书。",
         answer="奉天承运皇帝诏曰，授史可法为兵部尚书，总理部务，钦此。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
     )
 
     pending = db.list_pending_actions(state.turn)
@@ -1057,64 +1073,24 @@ def test_draft_request_with_appointment_content_stages_directive_not_office(game
     assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
 
 
-def test_draft_keyword_falls_back_when_classifier_returns_none(game, monkeypatch):
-    """并发分类器保守返 kind:none 时，明确拟旨关键词仍须走拟旨抽取兜底。"""
+def test_structured_verdict_alone_routes_natural_language_action(game, monkeypatch):
+    """#513：散文关键词不得覆盖结构化判词；只有判词决定候选暂存。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    called = []
-
-    def _draft(player_message, reply, **kwargs):
-        called.append(player_message)
-        return {
-            "draft_action": "拟旨",
-            "draft_text": "奉天承运皇帝诏曰，授史可法为兵部尚书，钦此。",
-        }
-
-    monkeypatch.setattr(cb, "extract_draft_intent", _draft)
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
-
-    sess = _fake_session(db, state)
-    GameSession.apply_cli_conversation_actions(
-        sess, ch,
-        player_message="帮我拟一道旨，授史可法为兵部尚书。",
-        answer="臣谨拟旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "none"},
+    monkeypatch.setattr(
+        cb,
+        "_run_backend_for_config",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("structured verdict must not be overridden by prose scanners")
+        ),
     )
 
-    pending = db.list_pending_actions(state.turn)
-    assert called == ["帮我拟一道旨，授史可法为兵部尚书。"]
-    assert [p["kind"] for p in pending] == ["directive"]
-    assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
-
-
-def test_draft_keyword_overrides_preclassified_appointment(game, monkeypatch):
-    """并发分类器误判 appointment 时，明确拟旨关键词仍须走拟旨抽取，不得被任免路径抢走。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    called = []
-
-    def _draft(player_message, reply, **kwargs):
-        called.append(player_message)
-        return {
-            "draft_action": "拟旨",
-            "draft_text": "奉天承运皇帝诏曰，授史可法为兵部尚书，钦此。",
-        }
-
-    monkeypatch.setattr(cb, "extract_draft_intent", _draft)
-    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
-        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
-        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
-
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
         sess, ch,
-        player_message="帮我拟一道圣旨，任命史可法为兵部尚书。",
-        answer="臣谨拟旨。",
+        player_message="朕方才只是引一句旧话：下密令拟旨；现命史可法署理兵部。",
+        answer="臣领命，请陛下定夺。",
         has_directive=False, secret_order_id=None,
         preclassified_intent={
             "kind": "appointment",
@@ -1125,9 +1101,8 @@ def test_draft_keyword_overrides_preclassified_appointment(game, monkeypatch):
     )
 
     pending = db.list_pending_actions(state.turn)
-    assert called == ["帮我拟一道圣旨，任命史可法为兵部尚书。"]
-    assert [p["kind"] for p in pending] == ["directive"]
-    assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
+    assert [p["kind"] for p in pending] == ["office"]
+    assert json.loads(pending[0]["payload_json"])["name"] == "史可法"
 
 
 def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
