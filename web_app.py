@@ -3571,6 +3571,7 @@ def api_advance_without_edict() -> Dict[str, Any]:
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
+    settlement_result = None
     try:
         # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
@@ -3581,15 +3582,17 @@ def api_advance_without_edict() -> Dict[str, Any]:
                 if action["kind"] == "directive"
             ]
             if game.directive_rows() or pending_directive_actions:
-                raise ValueError("尚有未处理拟旨，不能退朝无诏；请先准驳或处理草案。")
-            advance_without_edict(
-                game.state,
-                game.db,
-                content=game.content,
-                registry=getattr(game.session, "registry", None),
-                inflight_wait_s=0.0,
-            )
-            game.refresh_turn()
+                settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
+            else:
+                advance_without_edict(
+                    game.state,
+                    game.db,
+                    content=game.content,
+                    registry=getattr(game.session, "registry", None),
+                    inflight_wait_s=0.0,
+                )
+            if settlement_result is None or not settlement_result.awaiting:
+                game.refresh_turn()
     except ValueError as e:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
@@ -3603,6 +3606,13 @@ def api_advance_without_edict() -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "state": game.state_payload(),
+        "awaiting_decision": bool(
+            settlement_result is not None and settlement_result.awaiting
+        ),
+        "decisions": (
+            settlement_result.decisions
+            if settlement_result is not None and settlement_result.awaiting else []
+        ),
         "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
             game, turn_before, failed_before),
     }

@@ -1352,6 +1352,7 @@ class GameDB:
                 blocked_layer TEXT NOT NULL DEFAULT '',
                 rescript_action TEXT NOT NULL DEFAULT '',
                 reason TEXT NOT NULL DEFAULT '',
+                legal_reason_code TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
@@ -1769,6 +1770,8 @@ class GameDB:
             "decree_dossiers", "promulgation_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -9443,11 +9446,10 @@ class GameDB:
     _DOSSIER_ACTION_TYPES = frozenset({
         "policy", "appointment", "assignment", "military_order",
         "grant_allocation", "authorization", "strategy_selection",
-        "secret_order", "extraordinary_summons", "summons", "inquiry",
-        "pressure_inquiry", "approve_reject", "special_decree",
+        "secret_order", "approve_reject", "special_decree",
         "acting_appointment", "secret_authorization",
         "secret_investigation", "protection", "revoke_decree",
-        "public_support", "private_protection", "punishment",
+        "private_protection", "punishment",
         "pacification", "referral", "revoke_authority",
         "dismiss_assignment",
     })
@@ -9843,8 +9845,9 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO decree_dossier_decisions
-                (dossier_id,turn,decision,blocked_layer,rescript_action,reason)
-            VALUES (?,?,?,?,?,?)
+                (dossier_id,turn,decision,blocked_layer,rescript_action,reason,
+                 legal_reason_code)
+            VALUES (?,?,?,?,?,?,?)
             """,
             (
                 int(dossier_id), int(turn_row["turn"] if turn_row else 0),
@@ -9852,6 +9855,7 @@ class GameDB:
                 blocked_layer,
                 decision if decision in {"hold", "withdrawn"} else "",
                 str(reason or ""),
+                str(legal_reason_code or ""),
             ),
         )
         self._commit_dossier_write(commit)
@@ -9950,8 +9954,9 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO decree_dossier_decisions
-                        (dossier_id,turn,decision,rescript_action,reason)
-                    VALUES (?,?,'rejected','force_promulgated','批红强颁')
+                        (dossier_id,turn,decision,rescript_action,reason,
+                         legal_reason_code)
+                    VALUES (?,?,'rejected','force_promulgated','批红强颁','')
                     """,
                     (int(dossier_id), int(turn_row["turn"] if turn_row else 0)),
                 )
@@ -12922,7 +12927,7 @@ class GameDB:
                 origin_chat_message_ids=origin_chat_message_ids,
                 commit=False,
             )
-            self.create_decree_dossier(
+            dossier_id = self.create_decree_dossier(
                 state,
                 action_type="secret_order",
                 decree_text=content,
@@ -12943,6 +12948,26 @@ class GameDB:
                 due_turn=due_turn,
                 commit=False,
                 _issued_secret_order=True,
+            )
+            self.conn.execute(
+                """
+                UPDATE decree_dossiers
+                SET promulgation_decision='promulgated',
+                    promulgation_blocked_layer='palace_rescript',
+                    promulgation_reason='内批自动顺颁'
+                WHERE id=?
+                """,
+                (int(dossier_id),),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO decree_dossier_decisions
+                    (dossier_id,turn,decision,blocked_layer,rescript_action,
+                     reason,legal_reason_code)
+                VALUES (?,?,'promulgated','palace_rescript','',
+                        '内批自动顺颁','')
+                """,
+                (int(dossier_id), int(state.turn)),
             )
         tlog(f"[secret_order] create id={order_id} minister={minister_name} title={title[:20]}")
         return order_id
