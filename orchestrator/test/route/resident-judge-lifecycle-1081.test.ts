@@ -7,6 +7,10 @@
  * 2. runOrchestrator + scripted Backend — birth / resume / dismiss / fail-loud
  */
 
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -19,6 +23,7 @@ import {
 } from "../../src/judgeStation.js";
 import { runOrchestrator, sliceQuotaWaitPending } from "../../src/runner.js";
 import { CapacityRelayError } from "../../src/relayDispatch.js";
+import { resetRoutePresetsCacheForTests } from "../../src/modelRoutes.js";
 import type {
   Backend,
   DispatchContext,
@@ -574,6 +579,107 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
       );
       expect(freshReopenIndex).toBeGreaterThanOrEqual(0);
       expect(backend.ctxs[freshReopenIndex]?.resumeSessionId).toBeUndefined();
+    });
+  });
+
+  it("#1135 S6 judge model move records continuity loss and fresh-reopens with durable court cargo", async () => {
+    await runReal(async () => {
+      const routeDir = mkdtempSync(join(tmpdir(), "route-presets-1135-"));
+      try {
+        const presets = JSON.parse(
+          readFileSync(new URL("../../config/route-presets.json", import.meta.url), "utf8"),
+        ) as Record<string, { slots: Record<string, string> }>;
+        presets.normal!.slots.verify = "gpt-5.6-sol-high";
+        const routePath = join(routeDir, "route-presets.json");
+        writeFileSync(routePath, JSON.stringify(presets));
+        vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", routePath);
+        resetRoutePresetsCacheForTests();
+
+        const oldJudgeSession = "judge-sol-session";
+        const ownerAnswer = "owner: continue at S6";
+        const persisted = (
+          entry: Omit<PersistentLedgerEntry, "sessionId" | "prompt_hash" | "ts"> &
+            Partial<Pick<PersistentLedgerEntry, "sessionId">>,
+        ): PersistentLedgerEntry => ({
+          sessionId: "run-uuid",
+          prompt_hash: "h",
+          ts: "2026-07-25T00:00:00.000Z",
+          ...entry,
+        });
+        const priorLedger: PersistentLedgerEntry[] = [
+          persisted({
+            step: "S2",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          }),
+          persisted({
+            step: "S3",
+            sessionId: oldJudgeSession,
+            modelSlug: "gpt-5.6-sol",
+            output: judgeContinue([sampleFinding("prior-live", "prior.ts:1")]),
+          }),
+          persisted({
+            step: "S5",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          }),
+          persisted({
+            step: "S6",
+            sessionId: oldJudgeSession,
+            modelSlug: "gpt-5.6-sol",
+            output: judgeEscalate("owner decision required", "await answer"),
+          }),
+          persisted({
+            step: "S8",
+            handoffStatus: "parked",
+            escalationKind: "decision",
+          }),
+          persisted({
+            event: "escalation_answered",
+            step: "S6",
+            forStep: "S6",
+            answer: ownerAnswer,
+            source: "human",
+          }),
+        ];
+        const backend = new LifecycleBackend([completedJudge(judgeConverged())], undefined, {
+          resumeState: {
+            worktree: WORKTREE,
+            stateDir: "/resident/worktrees/.ledger-1135",
+            ledger: priorLedger,
+          },
+        });
+
+        const result = await runOrchestrator({ issueNumber: 1135, backend });
+        expect({
+          status: result.status,
+          lost: backend.ledgerWrites.filter(
+            (entry) => entry.event === "session_continuity_lost",
+          ),
+          specs: backend.specs,
+          ctx: backend.ctxs[0],
+        }).toMatchObject({
+          status: "completed",
+          lost: [{
+            step: "S6",
+            sessionId: oldJudgeSession,
+            fromModelId: "gpt-5.6-sol",
+            toModelId: "gpt-5.6-sol-high",
+          }],
+          specs: [{ id: "S6", model: "gpt-5.6-sol-high", session: "fresh" }],
+          ctx: {
+            worktree: WORKTREE,
+            escalationAnswer: { forStep: "S6", answer: ownerAnswer },
+            priorJudgeVerdicts: [{
+              step: "S3",
+              sessionId: oldJudgeSession,
+              status: "continue",
+            }],
+          },
+        });
+        expect(backend.ctxs[0]?.resumeSessionId).toBeUndefined();
+      } finally {
+        resetRoutePresetsCacheForTests();
+        rmSync(routeDir, { recursive: true, force: true });
+      }
     });
   });
 
