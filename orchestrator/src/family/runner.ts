@@ -109,6 +109,7 @@ import {
 import type { VerifyCmrPhase, VerifyCmrResult } from "./verifyCmr.js";
 import {
   finalizeFamilyTerminal,
+  isLegacyEscalationWithoutTerminalCargo,
   replayPriorFamilyEscalation,
 } from "./terminalFinalizer.js";
 function filled(value: string | undefined): string | undefined {
@@ -1450,10 +1451,7 @@ export async function runFamily(
     const { escalation, answer } = priorEscalation;
     if (escalation.escalationKind !== "decision" || answer === undefined) {
       const isLegacyCargoLess =
-        escalation.terminalStatus === undefined ||
-        escalation.terminalChildren === undefined ||
-        (escalation.terminalStatus === "failed" &&
-          escalation.terminalCause === undefined);
+        isLegacyEscalationWithoutTerminalCargo(escalation);
       if (isLegacyCargoLess) {
         const isDecisionPark =
           escalation.escalationKind === "decision" && answer === undefined;

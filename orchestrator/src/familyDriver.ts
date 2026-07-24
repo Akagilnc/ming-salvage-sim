@@ -97,6 +97,7 @@ import {
 import { runFamily } from "./family/runner.js";
 import {
   finalizeFamilyTerminal,
+  isLegacyEscalationWithoutTerminalCargo,
   replayPriorFamilyEscalation,
 } from "./family/terminalFinalizer.js";
 import {
@@ -1283,6 +1284,7 @@ export async function runFamilyDriver(
     if (
       prior !== undefined &&
       isCompleteFamilyEscalation(prior.escalation) &&
+      !isLegacyEscalationWithoutTerminalCargo(prior.escalation) &&
       (prior.escalation.escalationKind !== "decision" ||
         prior.answer === undefined)
     ) {
