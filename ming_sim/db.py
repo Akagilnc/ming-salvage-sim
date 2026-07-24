@@ -781,10 +781,24 @@ class GameDB:
                 office_title TEXT NOT NULL,
                 office_type TEXT NOT NULL,
                 source TEXT NOT NULL,
+                dossier_id INTEGER,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
             );
+
+            CREATE TABLE IF NOT EXISTS office_change_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character_name TEXT NOT NULL,
+                office_title TEXT NOT NULL,
+                office_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                dossier_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_office_change_records_dossier
+                ON office_change_records(dossier_id, id);
 
             CREATE TABLE IF NOT EXISTS office_slots (
                 office_title TEXT PRIMARY KEY,
@@ -1367,6 +1381,7 @@ class GameDB:
                 skill_id TEXT NOT NULL,
                 granted_by TEXT NOT NULL,
                 source_turn INTEGER NOT NULL,
+                dossier_id INTEGER,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name)
@@ -1763,6 +1778,8 @@ class GameDB:
             "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
+        self.ensure_column("character_offices", "dossier_id", "INTEGER")
+        self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2666,7 +2683,6 @@ class GameDB:
                 int(definition.get("corruption_risk", 0)),
             ),
         )
-
     def _record_character_office(
         self, name: str, office: str, office_type: str, source: str
     ) -> None:
@@ -2681,16 +2697,33 @@ class GameDB:
         self._ensure_office_type_parent(office_type)
         self.conn.execute(
             """
-            INSERT INTO character_offices (character_name, office_title, office_type, source)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO character_offices
+                (character_name, office_title, office_type, source, dossier_id)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(character_name) DO UPDATE SET
                 office_title = excluded.office_title,
                 office_type = excluded.office_type,
                 source = excluded.source,
+                dossier_id = excluded.dossier_id,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (name, office, office_type, source),
+            (
+                name, office, office_type, source,
+                int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
+            ),
         )
+        dossier_id = int(
+            getattr(self.conn, "_materializing_dossier_id", 0) or 0
+        )
+        if dossier_id > 0:
+            self.conn.execute(
+                """
+                INSERT INTO office_change_records
+                    (character_name,office_title,office_type,source,dossier_id)
+                VALUES (?,?,?,?,?)
+                """,
+                (name, office, office_type, source, dossier_id),
+            )
 
     def _ensure_event_parents(self) -> None:
         event_ids = {
@@ -9565,24 +9598,16 @@ class GameDB:
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
         explicit = str(payload.get("dossier_action_type") or "").strip()
-        if explicit:
-            if explicit not in DIRECTIVE_ACTION_TYPES:
-                raise ValueError(f"旨意 action_type 非法：{explicit}")
-            return explicit
-        if payload.get("authorization_id") or payload.get("authorized_scope"):
-            return "authorization"
-        if payload.get("amount") is not None and (
-            payload.get("account") or payload.get("target_account")
-        ):
-            return "grant_allocation"
-        if payload.get("assignee_id") or payload.get("assignee"):
-            return "assignment"
-        return "special_decree"
+        if not explicit:
+            raise ValueError("旨意缺少明确 action_type")
+        if explicit not in DIRECTIVE_ACTION_TYPES:
+            raise ValueError(f"旨意 action_type 非法：{explicit}")
+        return explicit
 
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
-        """机械旨意的唯一结构边界；不完整载荷明确降为叙事旨。"""
+        """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
         normalized = dict(payload)
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
@@ -9592,7 +9617,7 @@ class GameDB:
                 amount = 0
             account = str(normalized.get("account") or "").strip()
             if amount <= 0 or not account:
-                normalized["dossier_action_type"] = "special_decree"
+                raise ValueError("拨帑旨意缺少正数 amount 或 account")
             else:
                 normalized["amount"] = amount
                 normalized["account"] = account
@@ -9600,7 +9625,7 @@ class GameDB:
                     normalized.get("execution_surface") or "in_transit"
                 ).strip()
                 if surface not in {"immediate", "in_transit"}:
-                    normalized["dossier_action_type"] = "special_decree"
+                    raise ValueError("拨帑旨意 execution_surface 非法")
                 else:
                     normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
@@ -9618,7 +9643,7 @@ class GameDB:
                 action != "authorization" or bool(authorization_id)
             )
             if not complete:
-                normalized["dossier_action_type"] = "special_decree"
+                raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
             else:
                 normalized["assignee_id"] = assignee
                 normalized.pop("assignee", None)
@@ -9633,8 +9658,7 @@ class GameDB:
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
             if due_turn <= int(current_turn or 0):
-                normalized["dossier_action_type"] = "special_decree"
-                normalized.pop("due_turn", None)
+                raise ValueError("军令缺少有效未来 due_turn/deadline_months")
             else:
                 normalized["due_turn"] = due_turn
                 normalized.pop("deadline_months", None)
@@ -9649,8 +9673,7 @@ class GameDB:
             normalized["target_id"] = target_id
         else:
             normalized.pop("target_id", None)
-            if action not in {"", "policy", "special_decree"}:
-                normalized["dossier_action_type"] = "special_decree"
+            raise ValueError("旨意缺少 canonical target")
         return normalized
 
     def _commit_dossier_write(self, commit: bool) -> None:
@@ -10150,6 +10173,7 @@ class GameDB:
                     str(payload.get("character_id") or payload.get("assignee_id") or ""),
                     str(payload.get("skill_id") or payload.get("authorization_id") or ""),
                     granted_by=str(payload.get("granted_by") or "皇帝"),
+                    dossier_id=int(dossier_id),
                     commit=False,
                 ):
                     raise ValueError("授权案卷载荷物化失败")
@@ -11041,8 +11065,8 @@ class GameDB:
                 state,
                 action_type=self._directive_dossier_action_type(payload),
                 decree_text=text,
-                target_kind=str(payload.get("target_kind") or "policy"),
-                target_id=payload.get("target_id") or f"directive:{did}",
+                target_kind=str(payload.get("target_kind") or ""),
+                target_id=payload.get("target_id") or "",
                 executor_kind=(
                     "character"
                     if self._directive_dossier_action_type(payload) == "assignment"
@@ -11362,7 +11386,8 @@ class GameDB:
 
     def grant_skill(
         self, state: GameState, character_name: str, skill_id: str,
-        granted_by: str = "皇帝", *, commit: bool = True,
+        granted_by: str = "皇帝", *, dossier_id: Optional[int] = None,
+        commit: bool = True,
     ) -> bool:
         exists = self.conn.execute(
             """
@@ -11376,10 +11401,14 @@ class GameDB:
             return False
         self.conn.execute(
             """
-            INSERT INTO skill_grants (character_name, skill_id, granted_by, source_turn, active)
-            VALUES (?, ?, ?, ?, 1)
+            INSERT INTO skill_grants
+                (character_name, skill_id, granted_by, source_turn, dossier_id, active)
+            VALUES (?, ?, ?, ?, ?, 1)
             """,
-            (character_name, skill_id, granted_by, state.turn),
+            (
+                character_name, skill_id, granted_by, state.turn,
+                None if dossier_id is None else int(dossier_id),
+            ),
         )
         if commit:
             self.conn.commit()
@@ -11407,6 +11436,26 @@ class GameDB:
             (character_name,),
         ).fetchall()
         return [str(row["skill_id"]) for row in rows]
+
+    def list_office_effects_for_dossier(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        return [
+            dict(row) for row in self.conn.execute(
+                "SELECT * FROM office_change_records WHERE dossier_id=? ORDER BY id",
+                (int(dossier_id),),
+            ).fetchall()
+        ]
+
+    def list_skill_grants_for_dossier(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        return [
+            dict(row) for row in self.conn.execute(
+                "SELECT * FROM skill_grants WHERE dossier_id=? ORDER BY id",
+                (int(dossier_id),),
+            ).fetchall()
+        ]
 
     def add_directive(
         self,
@@ -11590,40 +11639,6 @@ class GameDB:
             (directive_id,),
         )
         self.conn.commit()
-
-    def withdraw_directive(self, state: GameState, directive_id: int) -> None:
-        """正式撤回成命：保留原旨行，并同步同源案卷结案。"""
-        dossier = self.get_dossier_for_directive(directive_id)
-        if dossier is None:
-            raise ValueError("未成案旨意不走撤回成命")
-        with atomic(self):
-            self.conn.execute(
-                "UPDATE turn_directives SET status='withdrawn',updated_at=CURRENT_TIMESTAMP "
-                "WHERE id=?",
-                (int(directive_id),),
-            )
-            if dossier["status"] == "proposed":
-                self.conn.execute(
-                    """
-                    UPDATE decree_dossiers
-                    SET status='closed',execution_outcome='failed',
-                        execution_note='撤回成命',closed_turn=?,
-                        interruption_reason='撤回成命',
-                        closed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-                    WHERE id=?
-                    """,
-                    (int(state.turn), int(dossier["id"])),
-                )
-            else:
-                if dossier["status"] == "promulgated":
-                    self.transition_decree_dossier(
-                        int(dossier["id"]), "executing", commit=False,
-                    )
-                if dossier["status"] != "closed":
-                    self.record_dossier_execution(
-                        int(dossier["id"]), "failed", "撤回成命", state.turn,
-                        close=True, commit=False,
-                    )
 
     def mark_directives_issued(self, state: GameState) -> None:
         self.conn.execute(

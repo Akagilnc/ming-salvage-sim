@@ -24,6 +24,12 @@ import threading
 import httpx
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
@@ -361,7 +367,7 @@ def test_asgi_write_decree_preview_does_not_close_night(web_game, monkeypatch):
             night = an.get_open_night(game.db)
             # 一条有效 draft（应允/默认同意路径）
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
             game.db.commit_pending_actions(game.state, kind_filter="directive")
             resp = await client.post("/api/decree/write", json={})
             return night, resp

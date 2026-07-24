@@ -17,6 +17,12 @@ from types import SimpleNamespace
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
@@ -626,7 +632,7 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -663,7 +669,7 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
@@ -717,7 +723,7 @@ def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -786,7 +792,7 @@ def test_mixed_directive_and_secret_rejection_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -820,7 +826,7 @@ def test_mixed_directive_and_secret_bare_doubuzhun_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
