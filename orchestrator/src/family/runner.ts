@@ -1495,6 +1495,7 @@ export async function runFamily(
         epicIssue: input.epic.issue,
         familyBase,
         escalation,
+        admissionSkipped: input.epic.admissionSkipped,
       });
     }
   }
@@ -2050,6 +2051,9 @@ export async function runFamily(
         stillUnanswered.add(child.issue);
       }
       if (ran.some((r) => r.status === "failed")) {
+        return await finalize();
+      }
+      if (!waveMergedAny) {
         return await finalize();
       }
     }
