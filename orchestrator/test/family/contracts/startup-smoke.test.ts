@@ -15,8 +15,9 @@ const familyBackend: FamilyBackend = {
   async appendFamilyLedger() {
     throw new Error("family backend should not run");
   },
+  // #1125: terminal normalizer reads ledger authority; empty is legal pre-work.
   async readFamilyLedger() {
-    throw new Error("family backend should not run");
+    return [];
   },
   async runFamilyVerify() {
     throw new Error("family backend should not run");
@@ -42,7 +43,13 @@ describe("family startup smoke gate (#685)", () => {
 
     expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/smoke executor/i);
-    expect(result.children).toEqual([{ issue: 686, status: "skipped" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 686,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
   });
 
   it("refuses before family work when route smoke fails", async () => {
@@ -66,7 +73,13 @@ describe("family startup smoke gate (#685)", () => {
 
     expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/route smoke failed/i);
-    expect(result.children).toEqual([{ issue: 687, status: "skipped" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 687,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
   });
 
   it("drops an optional smoke failure, records it durably, and echoes the effective lineup", async () => {
@@ -80,7 +93,26 @@ describe("family startup smoke gate (#685)", () => {
       async readFamilyLedger() {
         return [
           ...entries,
-          { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" },
+          {
+            status: "escalated",
+            event: "escalated",
+            escalationKind: "failure",
+            reason: "test stop",
+            terminalStatus: "failed",
+            terminalCause: "runner_internal_error",
+            // #1125 schema A — durable failure authority carries terminalChildren
+            terminalChildren: [
+              {
+                issue: 847,
+                status: "skipped",
+                reason: "startup_preflight_failed",
+              },
+            ],
+            stopSummary: {
+              reason: "infra_failure",
+              summary: "test stop",
+            },
+          },
         ];
       },
       async runFamilyVerify() { throw new Error("must not verify"); },
@@ -120,7 +152,25 @@ describe("family startup smoke gate (#685)", () => {
       async resolveMergeConflict() { throw new Error("must not resolve"); },
       async appendFamilyLedger(entry) { entries.push(entry); },
       async readFamilyLedger() {
-        return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];
+        return [
+          ...entries,
+          {
+            status: "escalated",
+            event: "escalated",
+            escalationKind: "failure",
+            reason: "test stop",
+            terminalStatus: "failed",
+            terminalCause: "runner_internal_error",
+            terminalChildren: [
+              {
+                issue: 847,
+                status: "skipped",
+                reason: "startup_preflight_failed",
+              },
+            ],
+            stopSummary: { reason: "infra_failure", summary: "test stop" },
+          },
+        ];
       },
       async runFamilyVerify() { throw new Error("must not verify"); },
     };

@@ -34,7 +34,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runFamilyDriver, type Sh } from "../../../src/familyDriver.js";
 import {
@@ -62,6 +62,7 @@ import type {
 } from "../../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import { panelLegCompletedResult } from "../../../src/family/cmrPanelLegs.js";
+import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const familyPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -282,6 +283,107 @@ class E2EFamilyBackend extends RealFamilyBackend {
 }
 
 describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
+  it("public driver quota terminal normalizes residual children exactly once", async () => {
+    const source = track(makeSourceRepo());
+    const home = track(mkdtempSync(join(tmpdir(), "quota-e2e-home-")));
+    const ledgerDir = track(mkdtempSync(join(tmpdir(), "quota-e2e-ledger-")));
+    const familyBase = "family/1125-quota";
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((...args) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    let backend: (E2EFamilyBackend & { readCalls: number; readsAtQuota: number }) | undefined;
+
+    const result = await runFamilyDriver({
+      epicIssue: 1125,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase,
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "img",
+      home,
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
+      familyBackendFactory: (clone, startHead) => {
+        writeFileSync(
+          join(ledgerDir, "family-ledger.jsonl"),
+          `${JSON.stringify({
+            status: "child_decision_parked",
+            event: "child_decision_parked",
+            escalationKind: "decision",
+            childIssue: 12,
+            reason: "awaiting owner",
+            diagnosis: "decision remains unanswered",
+            sessionId: "park-12",
+          })}\n`,
+        );
+        class QuotaBackend extends E2EFamilyBackend {
+          readCalls = 0;
+          readsAtQuota = 0;
+          override async readFamilyLedger() {
+            this.readCalls += 1;
+            return await super.readFamilyLedger();
+          }
+          override async mergeChildIntoFamilyBase(): Promise<never> {
+            this.readsAtQuota = this.readCalls;
+            throw new QuotaWaitForResetError({
+              disposition: {
+                kind: "wait_for_reset",
+                pool: "zai",
+                resetAt: new Date("2026-07-24T12:10:00.000Z"),
+                reason: "quota limited",
+              },
+              applied: {
+                ledgerEntry: {
+                  event: "quota_wait_for_reset",
+                  pool: "zai",
+                  resetAt: "2026-07-24T12:10:00.000Z",
+                  reason: "quota limited",
+                  step: "S1",
+                  workerPid: 0,
+                  ts: "2026-07-24T12:00:00.000Z",
+                },
+              },
+              pool: "zai",
+            });
+          }
+        }
+        backend = new QuotaBackend({
+          workingRepo: clone,
+          familyBase,
+          ledgerDir,
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: familyPromptsDir,
+          soulsDir: familySoulsDir,
+          imageName: "img",
+          familyBaseStartHead: startHead,
+        });
+        return backend;
+      },
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("provider_degraded");
+    expect(result.children.find((child) => child.issue === 12)?.status).toBe(
+      "escalated",
+    );
+    expect(result.children.find((child) => child.issue === 13)).toMatchObject({
+      status: "skipped",
+      reason: "not_scheduled_this_invocation",
+    });
+    expect(
+      warnings.filter((line) =>
+        line.includes("#13 skipped: not_scheduled_this_invocation"),
+      ),
+    ).toHaveLength(1);
+    expect(backend!.readCalls - backend!.readsAtQuota).toBe(1);
+  }, E2E_DRIVER_TEST_TIMEOUT_MS);
+
   it("schedules waves, REALLY merges each child onto the local family base, writes the ledger, and STOPS at the PR", async () => {
     const source = track(makeSourceRepo());
     const home = track(mkdtempSync(join(tmpdir(), "e2e-home-")));

@@ -9,10 +9,11 @@
  * A/B split (锁死):
  *   - `escalationKind:"failure"` (infra / retries exhausted) → the child stays
  *     `"failed"` — the CURRENT #293 behaviour, NO park/resume (A already exists).
- *   - `escalationKind:"decision"` (撞产品/设计题) → the NEW behaviour: runChild
- *     returns `status:"escalated"` (NOT failed); the wave loop STOPS (no other
- *     sibling in the wave keeps running) + records an INDEPENDENT `child_decision_parked`
- *     ledger event; the family returns `status:"escalated"`.
+ *   - `escalationKind:"decision"` (撞产品/设计题) → runChild returns
+ *     `status:"escalated"` (NOT failed); records an INDEPENDENT
+ *     `child_decision_parked` ledger event (#1125: does NOT stop the family
+ *     wave loop — peers unblocked by merged siblings may still run); after the
+ *     loop the family returns `status:"parked"`.
  *
  * Resume (退出-重入): a later `escalation_answered` ledger row bound to the SAME
  * childIssue re-opens the paused child — on re-entry the family runner re-runs
@@ -258,16 +259,14 @@ function epicWith(...childIssues: number[]): FamilyEpic {
   };
 }
 
-// ─── test 1: core — decision escalate → parked, wave stops, family escalated ────
+// ─── test 1: core — decision escalate → child_decision_parked + family parked ──
 
 describe("#604 slice 5 — child decision escalation parks the family (core)", () => {
-  it("child decision escalate → status:escalated (not failed), wave stops, child_decision_parked recorded, family escalated", async () => {
+  it("child decision escalate → status:escalated (not failed), child_decision_parked recorded, family parked", async () => {
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
 
-    // Dependency waves: #11 is wave 1; #12 is blocked_by #11 (wave 2). When #11
-    // parks in wave 1, wave 2 is never scheduled → the STOP-WAVE is unambiguous
-    // (no concurrency race: #12 could not have run before #11's escalation).
+    // #12 is blocked_by #11 — parks without merge, so #12 never becomes runnable.
     const epic: FamilyEpic = {
       issue: 604,
       children: [
@@ -283,10 +282,8 @@ describe("#604 slice 5 — child decision escalation parks the family (core)", (
       familyBase: "family/604-base",
     });
 
-    // The family run PARKS on the decision escalation, not verify_failed / incomplete.
     expect(result.status).toBe("parked");
 
-    // An INDEPENDENT child_decision_parked event was recorded, bound to the child issue.
     const childEscalated = familyBackend.ledger.filter(
       (e) => e.event === "child_decision_parked",
     );
@@ -294,21 +291,49 @@ describe("#604 slice 5 — child decision escalation parks the family (core)", (
     expect(childEscalated[0]?.childIssue).toBe(11);
     expect(childEscalated[0]?.escalationKind).toBe("decision");
 
-    // It is NOT the family's own `escalated` row (semantics kept distinct).
     expect(
       familyBackend.ledger.some((e) => e.event === "escalated"),
     ).toBe(false);
 
-    // The escalated child is NOT recorded as merged.
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
 
-    // STOP-WAVE: the downstream #12 (wave 2) did NOT get run — the family paused
-    // before selecting the next wave (sub-decision ②).
+    // #12 stays blocked by unmerged #11 — not scheduled.
     expect(
       singleSliceBackend.runStepCalls.some((c) => c.issue === 12 && c.step === "S2"),
     ).toBe(false);
-    // And #11 is reported as escalated (not failed) in the per-child outcomes.
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
+  });
+
+  it("#1125: child park does not stop peers unblocked by a merged sibling", async () => {
+    // Wave1: #10 merges, #11 parks. #12 depends only on #10 → next wave runs #12.
+    class ParkElevenBackend extends EscalatingChildBackend {
+      constructor() {
+        super(11);
+      }
+    }
+    const singleSliceBackend = new ParkElevenBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 1125,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [10] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/1125-park-continues",
+    });
+    expect(familyBackend.merges.some((m) => m.childIssue === 10)).toBe(true);
+    expect(
+      singleSliceBackend.runStepCalls.some((c) => c.issue === 12 && c.step === "S2"),
+    ).toBe(true);
+    expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
+    // Family still parks at end because #11 unanswered.
+    expect(result.status).toBe("parked");
   });
 });
 
@@ -500,19 +525,14 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
   });
 });
 
-// ─── test 5 (F8): early-exit re-entry maps an UNANSWERED parked child to escalated ─
+// ─── test 5 (F8) / #1125: unanswered park re-entry — no re-dispatch, ledger park ─
 //
-// #604 F8: when a family is RE-ENTERED and the ledger already carries an
-// unanswered `child_decision_parked` row, the runner early-exits BEFORE the wave
-// loop. That early-exit path used to map every non-merged child to
-// `{status:"skipped"}` (because the parked child isn't in the merged set),
-// disagreeing with the wave-loop parking path (`finalizeDecisionPark` →
-// `"escalated"`). The parked child must be reported `"escalated"` (carrying its
-// escalation payload from the ledger row) on BOTH paths, else the driver mis-reads
-// the parked child as skipped.
+// #1125 deleted the whole-family early-return. Unanswered parks are excluded from
+// wave dispatch and aggregated AFTER the wave loop (buildDecisionParkTerminal):
+// parked child → escalated from ledger; never-run sibling → vocal skipped.
 
-describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parked child as escalated", () => {
-  it("re-entry with an unanswered child_decision_parked row → parked child is escalated (not skipped), sibling stays skipped", async () => {
+describe("#604 slice 5 (F8) / #1125 — unanswered park re-entry reports escalated without redispatch", () => {
+  it("re-entry with an unanswered child_decision_parked row → parked child is escalated (not skipped), sibling stays skipped, zero redispatch", async () => {
     // #11 escalates (decision); #12 is blocked_by #11 so it never runs.
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
@@ -537,8 +557,9 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
       (e) => e.event === "child_decision_parked",
     );
     expect(parkedRow?.childIssue).toBe(11);
+    const stepsAfterFirst = singleSliceBackend.runStepCalls.length;
 
-    // ── invocation 2 (re-entry): NO answer appended → the early-exit path fires ──
+    // ── invocation 2 (re-entry): NO answer → post-wave ledger park, no redispatch ──
     const second = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
@@ -548,34 +569,25 @@ describe("#604 slice 5 (F8) — early-exit re-entry reports the unanswered parke
     });
 
     expect(second.status).toBe("parked");
-    // F8: the parked child maps to `escalated` (NOT skipped), carrying the
-    // escalation payload read from the child_decision_parked ledger row.
+    // Unanswered parked child maps to `escalated` (NOT skipped).
     const child11 = second.children.find((c) => c.issue === 11);
     expect(child11?.status).toBe("escalated");
     expect(child11?.escalation?.escalationKind).toBe("decision");
     expect(child11?.escalation?.reason).toBe(parkedRow?.reason);
-    // The never-run sibling #12 stays skipped.
+    // Never-run sibling #12 stays skipped.
     expect(second.children.find((c) => c.issue === 12)?.status).toBe("skipped");
-    // The family stop summary is a decision-gate park (answerable), not an
-    // A-class infra failure.
     expect(second.stopSummary?.reason).toBe("decision_gate_park");
+    // #1125: unanswered park does not re-enter runChild.
+    expect(singleSliceBackend.runStepCalls.length).toBe(stepsAfterFirst);
   });
 });
 
-// ─── #706: early-exit parked-child path pins ledger-merged sibling as already_done ─
-//
-// F8 above covers the unanswered parked child → escalated (and a never-run sibling
-// → skipped), but has no ledger-merged sibling. The early-exit branch at
-// runner.ts ~1048 maps `ledgerMerged` children to `"already_done"`; without a pin
-// that asserts the literal, mutating it back to `"merged"` leaves the suite green.
-// Scenario: re-entry with an unanswered `child_decision_parked` row AND a sibling
-// that merged in a prior invocation → the merged sibling must read `already_done`.
+// ─── #706 / #1125: post-wave park path pins ledger-merged sibling as already_done ─
 
-describe("#706 — early-exit parked-child path reports ledger-merged sibling as already_done", () => {
-  it("re-entry with unanswered parked child + prior-merged sibling → sibling is already_done", async () => {
-    // Seed durable ledger truth from a prior invocation: #10 merged, #11 parked
-    // unanswered. Re-entry hits the early-exit path (unanswered.length > 0) before
-    // the wave loop — no child is re-run this invocation.
+describe("#706 / #1125 — unanswered park re-entry reports ledger-merged sibling as already_done", () => {
+  it("re-entry with unanswered parked child + prior-merged sibling → sibling is already_done, zero redispatch", async () => {
+    // Seed durable ledger truth: #10 merged, #11 parked unanswered.
+    // #1125: wave excludes #11; post-wave aggregation parks without runStep.
     const singleSliceBackend = new EscalatingChildBackend(11);
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(
@@ -611,21 +623,10 @@ describe("#706 — early-exit parked-child path reports ledger-merged sibling as
 
     expect(result.status).toBe("parked");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
-    // #706 pin: early-exit ledgerMerged branch (runner.ts ~1048) must use the
-    // FamilyChildStatus contract literal — prior-run proven ⇒ already_done, not
-    // merged (this-invocation merge).
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("already_done");
-    // Early-exit: no wave work this invocation.
     expect(singleSliceBackend.runStepCalls).toHaveLength(0);
   });
 });
-
-// ─── test 7 (P1-b → #1019): missing resume degrades to fresh redispatch ────────
-//
-// #604 P1-b originally fail-closed when resume state was missing. #1019 owner AC
-// overturns that: answered park + dead/missing session → fresh re-dispatch with
-// answer text (keep committed worktree progress when present; never silent
-// terminal replay / fail-closed).
 
 describe("#604 r1 (P1-b) / #1019 — missing resume → fresh redispatch with answer", () => {
   it("answer present + findResumeState undefined → fresh S2 redispatch, can complete", async () => {

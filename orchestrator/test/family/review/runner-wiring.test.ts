@@ -1124,13 +1124,14 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("failed");
+    // #1125: finalize remounts in epic order (not run-order residual append).
     expect(result.children).toEqual([
+      { issue: 10, status: "already_done" },
       {
         issue: 11,
         status: "failed",
         failureCause: "dispatch threw: coder process crashed (after 6 dispatch attempts)",
       },
-      { issue: 10, status: "already_done" },
     ]);
     expect(result.stopSummary.summary).toContain("#11:failed");
     expect(result.stopSummary.summary).not.toContain("#10:already_done");

@@ -161,6 +161,14 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
       phase: "final",
       reason: "cmr needs human disposition",
       escalationKind: "decision",
+      terminalStatus: "parked",
+      terminalChildren: [
+        { issue: 10, status: "skipped", reason: "not_scheduled_this_invocation" },
+      ],
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: "cmr needs human disposition",
+      },
     });
     let refetched = 0;
 
@@ -198,6 +206,15 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         reason: "cmr needs human disposition",
         escalationKind: "decision",
         familyHeadAfter: "head-after-cmr-pause",
+        terminalStatus: "parked",
+        terminalChildren: [
+          { issue: 10, status: "already_done" },
+          { issue: 11, status: "skipped", reason: "not_scheduled_this_invocation" },
+        ],
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "cmr needs human disposition",
+        },
       },
     );
 
@@ -219,7 +236,11 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     expect(result.familyHead).toBe("head-after-cmr-pause");
     expect(result.children).toEqual([
       { issue: 10, status: "already_done" },
-      { issue: 11, status: "skipped" },
+      {
+        issue: 11,
+        status: "skipped",
+        reason: "not_scheduled_this_invocation",
+      },
     ]);
     expect(childBackend.ran).toEqual([]);
   });
@@ -276,6 +297,20 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         phase: "final",
         reason: "family base diverged from ledger",
         escalationKind: "failure",
+        terminalStatus: "failed",
+        terminalCause: "resume_state_invalid",
+        // #1125 schema A — durable failure authority carries terminalChildren
+        terminalChildren: [
+          {
+            issue: 10,
+            status: "skipped",
+            reason: "not_scheduled_this_invocation",
+          },
+        ],
+        stopSummary: {
+          reason: "infra_failure",
+          summary: "family base diverged from ledger",
+        },
       },
       {
         status: "escalation_answered",

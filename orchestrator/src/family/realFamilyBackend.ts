@@ -3510,6 +3510,9 @@ export class RealFamilyBackend implements FamilyBackend {
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
       stopSummary: escalation.stopSummary,
+      terminalChildren: escalation.terminalChildren,
+      terminalStatus: escalation.terminalStatus,
+      terminalCause: escalation.terminalCause,
     });
   }
 
