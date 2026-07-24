@@ -52,7 +52,8 @@
 2. `来源类型:"event_pool"`：邸报写明已浮现的候选事件。只填 `来源类型` 和 `编号`，且 `编号` 必须来自 input 的 `candidate_events`。
 
 **圣旨承诺 form①（每月 X 直到补齐）必须立承诺 issue**：若诏书含「今后每月/按月/逐月拨付 X，直到补齐欠饷/补足某条件」这类持续承诺，不要写成一次性钱粮，也不要只推进旧 issue；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，并显式带承诺字段：
-- `origin_ref`：指回本条诏书/旨意（如 `decree:turn-1:pay-guanning-arrears`），不能为空。
+- `origin_ref`：只能从 `extractor_context.decree_dossiers` 选择本承诺所属行的
+  `origin_ref`（格式 `dossier:<id>`）；不得自造 `decree:turn-*` 或按诏文猜绑。
 - `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：这是承诺专门标记，不能只靠 `来源类型:"decree"`。
 - `ongoing_effects`/`持续效果`：每{{TURN_UNIT}}固定动作，例如每{{TURN_UNIT}}从国库拨银补某军欠饷；人物安抚类承诺必须写每{{TURN_UNIT}}的 `人物变更.评定` 忠诚增量，不能只写停止条件。
 - `stop_condition`/`停止条件`：必须是 dict JSON，不要写成扁平字符串；key 带表前缀和英文 slug，比较算符写在 value 内，例如 `{"army.guanning.arrears":"<=0"}`，多军合计写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物忠诚写 `{"character.毛文龙.loyalty":">=65"}`。
@@ -61,7 +62,8 @@
 **圣旨承诺 form②（连续 N 月 / 半年为限）同样必须立承诺 issue**：若诏书含「连续 N 月」「连支 N 月」「半年为限」「暂拨 N 月」等硬时限持续承诺，写 `新立局势` 的承诺字段，并额外写 `end_turn`。立项公式是 `end_turn = turn + N`，必须严格大于当前 turn，不能写当前回合或过去回合；半年按 6 个{{TURN_UNIT}}计。form② 必须有 `ongoing_effects`，`stop_condition` 可留空；若同时含「直到补齐」条件，则 `stop_condition` 与 `end_turn` 都写，谁先到谁停。`解决效果`/`失败效果`仍留空 `{}`，到期由结算自动 expire 收尾，不由本档房写 `结案局势 resolved/failed`。
 
 **圣旨承诺 form③（未来一次性，X 月后复试/复核）也必须立承诺 issue**：若诏书含「三月后复试」「X 月后复核」「期满再议」「到期交皇帝裁断」等未来一次性承诺，不要写成普通 issue，也不要只写在人事备注里；写 `新立局势` 的 `来源类型:"decree"`、`类型:"initiative"`，显式带：
-- `origin_ref`：指回本条诏书/旨意，不能为空。
+- `origin_ref`：只能从 `extractor_context.decree_dossiers` 选择本承诺所属行的
+  `origin_ref`（格式 `dossier:<id>`），不能为空。
 - `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：复用承诺专门 marker，让到期扫描识别为到期待裁承诺。
 - `end_turn`：未来到期回合；立项公式是 `end_turn = turn + N`。
 - `ongoing_effects 可留空` / `持续效果` 可留 `{}`：form③ 无每{{TURN_UNIT}}固定动作，只是到期待裁。

@@ -663,7 +663,13 @@ def review_directives(session: GameSession) -> str:
             if lowered == "add" or raw == "新增":
                 text = input("指令内容：").strip()
                 if text:
-                    dv = session.add_directive(text)
+                    from ming_sim.cli_backend import capture_manual_directive_payload
+                    dv = session.add_directive(
+                        text,
+                        dossier_payload=capture_manual_directive_payload(
+                            text, session.llm_config,
+                        ),
+                    )
                     print(f"已新增草案 #{dv.id}。")
                 else:
                     print("指令为空，已取消。")

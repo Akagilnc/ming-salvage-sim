@@ -342,7 +342,13 @@ def test_recover_after_simulation_crash_can_resettle(saved_game, monkeypatch):
 
     sess = _recovery_session(db, state, content, monkeypatch)
     # 需要一条 draft 才能走正常 resolve_directives（fallthrough 路径）。
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess.resolve_turn(decree="补颁诏")
 
     assert result.awaiting is False
@@ -439,7 +445,13 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
     sess2 = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess2.resolve_turn(decree="补颁诏")
     assert result.awaiting is False
     assert state.turn == turn + 1
@@ -971,7 +983,13 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_boom)
 
     sess = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     with pytest.raises(SettlementAbort):
         sess.resolve_turn(decree="补颁诏")
 

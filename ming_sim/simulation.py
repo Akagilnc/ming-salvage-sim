@@ -435,6 +435,7 @@ def build_simulator_payload(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
+    decree_dossiers: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
@@ -512,6 +513,9 @@ def build_simulator_payload(
         "year": state.year,
         "period": state.period,
         "decree_text": decree_text,
+        # ADR 0051/0055: structured dossier rows are the source; decree_text is
+        # only a compatibility rendering derived by the settlement caller.
+        "decree_dossiers": decree_dossiers or [],
         "current_state": dict(state.metrics),
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
@@ -848,6 +852,16 @@ def build_extractor_shared_context(
     )
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    slim["decree_dossiers"] = [
+        {
+            "id": int(row["id"]),
+            "origin_ref": f"dossier:{int(row['id'])}",
+            "action_type": str(row["action_type"]),
+            "decree_text": str(row["decree_text"]),
+        }
+        for row in db.list_decree_dossiers_for_simulation(state.turn)
+        if row["action_type"] != "secret_order"
+    ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
     slim["_dedup_note"] = (
