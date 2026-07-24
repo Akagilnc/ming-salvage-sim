@@ -338,8 +338,12 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         if row["pending_action_id"] > 0
     )
     assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
-        published_id, secret_dossier_id, staged["id"],
+        published_id, staged["id"],
     ]
+    db.update_secret_order_progress(
+        secret_order_id, "密查仍在推进", state.year, state.period,
+    )
+    assert db.get_decree_dossier(secret_dossier_id)["status"] == "executing"
     assert seen["payload"]["decree_text"] == "不应作为真源"
     assert staged["status"] == "proposed"
 
@@ -750,6 +754,34 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             reopened.close()
     finally:
         session.db.close()
+
+
+def test_directive_freezes_at_dossier_birth_and_formal_withdrawal_closes_it(game):
+    db, state, _content = game
+    payload = {
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "river-works",
+    }
+    editable_id = db.add_directive(
+        state, None, "河工初稿", "手动新增", dossier_payload=payload,
+    )
+    db.update_directive_text(editable_id, "河工改稿")
+    db.delete_directive(editable_id)
+
+    directive_id = db.add_directive(
+        state, None, "着修河工", "手动新增", dossier_payload=payload,
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    with pytest.raises(ValueError):
+        db.update_directive_text(directive_id, "成案后改稿")
+    with pytest.raises(ValueError):
+        db.delete_directive(directive_id)
+
+    db.withdraw_directive(state, directive_id)
+    assert db.get_dossier_for_directive(directive_id)["status"] == "closed"
+    assert [
+        row["id"] for row in db.list_directives(state, statuses=("withdrawn",))
+    ] == [directive_id]
 
 
 def test_allocation_candidate_edit_preserves_mechanical_payload(game):
