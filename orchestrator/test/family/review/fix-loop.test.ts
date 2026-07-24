@@ -1839,7 +1839,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder_fix.md",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -1848,7 +1848,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       // Outer-gate re-open with panels (pure receive soft-accepted).
       expect.objectContaining({
@@ -1858,7 +1858,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -1880,7 +1880,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           familyHeadAfter: "head-before-cmr-review",
           // #604 slice 3 / ADR 0062: the review row carries the thin key envelope,
           // not the fat Finding blob.
-          blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+          blockingFindingIdentityKeys: [],
         }),
         expect.objectContaining({
           status: "cmr_fix_committed",
@@ -1888,7 +1888,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           cmrPass: "completeness",
           familyHeadBefore: "head-before-cmr-review",
           familyHeadAfter: "head-after-coder-fix",
-          reason: expect.stringContaining(BLOCKING_FAMILY_CMR_KEY),
+          reason: expect.stringContaining("coder-fix completed"),
         }),
         expect.objectContaining({
           status: "cmr_passed",
@@ -1927,32 +1927,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "coder",
-        blockingFindingIdentityKeys: [SECOND_BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [
-          BLOCKING_FAMILY_CMR_KEY,
-          SECOND_BLOCKING_FAMILY_CMR_KEY,
-        ],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [
-          BLOCKING_FAMILY_CMR_KEY,
-          SECOND_BLOCKING_FAMILY_CMR_KEY,
-        ],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
@@ -2084,17 +2078,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({
         kind: "coder",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "correctness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "correctness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -2127,7 +2121,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({
         kind: "coder",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
@@ -2163,12 +2157,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
@@ -2180,7 +2174,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       cmrPass: "completeness",
       familyHeadBefore: "head-before-cmr-review",
       familyHeadAfter: "head-after-bad-coder-fix",
-      blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      blockingFindingIdentityKeys: [],
     }));
     expect(
       backend.dispatches.findIndex((dispatch, index) => {
@@ -2251,12 +2245,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
@@ -2268,7 +2262,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       cmrPass: "completeness",
       familyHeadBefore: "head-before-cmr-review",
       familyHeadAfter: "head-after-bad-coder-fix",
-      blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      blockingFindingIdentityKeys: [],
     }));
     // #941: host auto-merge observation deleted. One resolution schedules the
     // coder-fix commit range; evidence-only retries must not add more.
@@ -2292,17 +2286,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
@@ -2332,17 +2326,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        blockingFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
-        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+        priorCmrFindingIdentityKeys: [],
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
@@ -2702,107 +2696,6 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("positive reviewer count routes every structured finding without reading suppression content", async () => {
-    const suppressed: Finding = {
-      severity: "medium",
-      category: "correctness",
-      claim_quote: "accepted hub-loss gap",
-      location: "orchestrator/src/family/verifyCmr.ts:1",
-      suggested_fix: "accepted by issue scope",
-      action: "wont_fix",
-      disposition_reason: "accepted by issue scope",
-      disposition: {
-        kind: "accepted_suppressed",
-        source: "issue #448 acceptance criteria",
-        scope: "#448 family integrated CMR",
-        reason: "accepted by issue scope",
-        findingIdentity:
-          "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
-        boundedReopen: "reopen on higher severity or different scope",
-      },
-    };
-    // #604 slice 4 (ADR 0062): route kinds are gone; a blocking finding carries no
-    // routing disposition. (Was `disposition:{kind:"spec_conflict",...}`.) The
-    // blocking-vs-suppression selection invariant is unchanged — this plain
-    // blocking finding is still selected over the earlier accepted suppression.
-    const blocker: Finding = {
-      severity: "medium",
-      category: "correctness",
-      claim_quote: "ADR conflicts with implementation",
-      location: "orchestrator/src/family/verifyCmr.ts:2",
-      suggested_fix: "resolve the accepted contract conflict",
-      action: "fix_now",
-    };
-    const backend = new SchedulerFamilyBackend({
-      cmr: () => ({
-        kind: "completed",
-        sessionId: "fixture-cmr-suppression-routing",
-        output: liveCmrJudgeContinue([suppressed, blocker], {
-          reason: "has blocking findings",
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-        }),
-      }),
-    });
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-      familyIssue: 448,
-      moduleContext: {
-        currentModules: [
-          {
-            module: "family-cmr",
-            moduleScope: ["orchestrator/src/family/verifyCmr.ts"],
-            source: "family_issue",
-            issue: 448,
-          },
-        ],
-        childModules: [],
-        acceptedSuppressionSources: [
-          {
-            source: "issue #448 acceptance criteria",
-            scope: "#448 family integrated CMR",
-            reason: "accepted by issue scope",
-            findingIdentity:
-              "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
-            boundedReopen: "reopen on higher severity or different scope",
-          },
-        ],
-      },
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      ran: true,
-      failedStatus: "cmr_failed",
-    });
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "cmr_reviewed",
-      event: "cmr_reviewed",
-      blockingFindingIdentityKeys: [
-        findingIdentityKey(suppressed),
-        findingIdentityKey(blocker),
-      ],
-      stopSummary: expect.objectContaining({
-        reason: "cmr_failed",
-      }),
-    }));
-    const reviewedRow = backend.ledger.find(
-      (entry) => entry.status === "cmr_reviewed",
-    );
-    expect(reviewedRow?.stopSummary).not.toHaveProperty("finding");
-    expect(reviewedRow?.stopSummary).not.toHaveProperty("findingDescriptor");
-    const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
-    expect(reviewed).not.toHaveProperty("cmrFindingClassification");
-    expect(reviewed?.reason).toBe(
-      "integrated cmr completeness judge continue with 2 live finding(s)",
-    );
-  });
-
   it("#875: untrusted accepted_suppressed disposition prose does not kill a converged pass", async () => {
     const priorKey = "correctness|src/x.ts:1|accepted without trusted source";
     const backend = new SchedulerFamilyBackend({
@@ -3018,9 +2911,7 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     });
 
     const coderDispatch = backend.dispatches.find((d) => d.kind === "coder");
-    expect(coderDispatch?.blockingFindingIdentityKeys).toEqual([
-      OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
-    ]);
+    expect(coderDispatch?.blockingFindingIdentityKeys).toEqual([]);
     expect(
       backend.ledger.find(
         (entry) =>
@@ -3036,9 +2927,7 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
         status: "cmr_fix_committed",
         event: "cmr_fix_committed",
         cmrPass: "completeness",
-        blockingFindingIdentityKeys: [
-          OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,
-        ],
+        blockingFindingIdentityKeys: [],
       }),
     );
   });

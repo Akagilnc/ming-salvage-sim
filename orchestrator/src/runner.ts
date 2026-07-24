@@ -168,7 +168,6 @@ import {
   shouldRunCoderPlanPhase,
 } from "./coderPlanPhase.js";
 import {
-  rebuildBlockingFromLedger,
   reviewerRawArtifactPointers,
 } from "./residualLedger.js";
 import {
@@ -1065,7 +1064,6 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1075,14 +1073,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             ) ??
-            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
+            continueRepairFromAnswer(answer, 0)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -3346,20 +3344,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
-    // prior ledger (judge continue + residual historical S4/reviewer open-count).
-    // Each projection replaces the pending blocker set; prose dispositions do
-    // not reopen findings. Terminal flips include refute→refuted and
-    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
-    // a crash/resume after S4 still hands the fixer host paths (materialised at
-    // landing).
-    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
-    pendingBlockingFindings = [...rebuiltBlocking.blocking];
-    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
-    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
-    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
-    findingDispositions = [...rebuiltBlocking.findingDispositions];
-    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
+    pendingFixPacketBody =
+      plan.lastOutput?.kind === "judge" &&
+      plan.lastOutput.status === "continue"
+        ? plan.lastOutput.fixPacketBody
+        : undefined;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
