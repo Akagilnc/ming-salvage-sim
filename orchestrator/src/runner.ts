@@ -4150,17 +4150,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 branchHEAD: await resolveBranchHEAD(),
                 ts: new Date().toISOString(),
               };
-              ledger.push({
-                step,
-                event: "session_continuity_lost",
-                reason: lostReason,
-                ...(typeof sessionModel === "string"
-                  ? { fromModelId: sessionModel }
-                  : {}),
-                toModelId: seatModel,
-                sessionId: resumeFor.sessionId,
-                ts: lostEntry.ts,
-              });
               try {
                 if (stateDir !== undefined) {
                   await backend.writeLedger(lostEntry, stateDir);
@@ -4168,8 +4157,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   pendingEntries.push(lostEntry);
                 }
               } catch (err) {
-                return await errorTermination(step, err instanceof Error ? err : new Error(String(err)));
+                const detail = err instanceof Error ? err.message : String(err);
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `record_persist_failed: session_continuity_lost: ${detail}`,
+                  ),
+                  { cause: "record_persist_failed" },
+                );
               }
+              ledger.push(lostEntry);
             }
             resumeFor = undefined;
           } else if (
