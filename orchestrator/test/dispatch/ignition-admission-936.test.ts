@@ -373,6 +373,10 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
 
   it("public family driver aggregates every planned child Coder-Rec before worksite", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((...args) => {
+      warnings.push(args.map(String).join(" "));
+    });
     let cloneCalls = 0;
     const sh = (_file: string, args: string[]): string => {
       const joined = args.join(" ");
@@ -415,6 +419,23 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(result.escalation?.diagnosis).toMatch(/2 errors/);
     expect(result.escalation?.diagnosis).toContain("issue #935");
     expect(result.escalation?.diagnosis).toContain("issue #936");
+    expect(result.children).toEqual([
+      {
+        issue: 935,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+      {
+        issue: 936,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
+    expect(
+      warnings.filter((line) =>
+        /family child #(935|936) skipped: startup_preflight_failed/.test(line),
+      ),
+    ).toHaveLength(2);
     expect(cloneCalls).toBe(0);
   });
 
@@ -847,6 +868,10 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         ].join("\n") + "\n",
         "utf8",
       );
+      const progress: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args) => {
+        progress.push(args.map(String).join(" "));
+      });
       const result = await runFamilyDriver({
         epicIssue: 934,
         sourceRepo: "/tmp/no-such-source",
@@ -873,6 +898,13 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(result.children).toEqual([{ issue: 936, status: "already_done" }]);
       expect(ghCalls).toBe(0);
       expect(cloneCalls).toBe(0);
+      expect(
+        progress.filter(
+          (line) =>
+            line.includes("[orchestrator:progress] terminal") &&
+            line.includes("epic #934"),
+        ),
+      ).toHaveLength(1);
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
