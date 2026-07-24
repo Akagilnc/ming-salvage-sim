@@ -284,10 +284,12 @@ class SliceHubBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-    _landing?: WorkerLandingPayload,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     const openCourt = openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION);
     if (openCourt !== undefined) return openCourt;
@@ -319,7 +321,13 @@ class SliceHubBackend implements Backend {
       const result =
         scripts[this.judgeRound] ??
         completedJudge(judgeConverged(), OPEN_COURT_SESSION);
-      this.judgeRound += 1;
+      const isContinue =
+        result.kind === "completed" &&
+        result.output?.kind === "judge" &&
+        result.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId

@@ -4537,17 +4537,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 break;
               }
               result = seatProtocol.result;
-              // #1126: empty continue (0 dispositions) after construction is the
-              // typed request for Runner-owned fresh review legs — same #1094
-              // dispatchReviewPanelLegs mechanism, scope=single. No durable
-              // ledger events; papers land back on this same judge session.
+              // #1126: after construction, Runner topology fans out fresh review
+              // legs on judge continue — same #1094 dispatchReviewPanelLegs
+              // mechanism, scope=single. No durable ledger events; papers land
+              // back on this same judge session.
               if (
                 isJudgeSeat({ step }) &&
                 result.kind === "completed" &&
                 result.output !== undefined &&
                 result.output.kind === "judge" &&
                 result.output.status === "continue" &&
-                (result.output.findingDispositions?.length ?? 0) === 0 &&
                 singleSlicePanelTransports === undefined
               ) {
                 const inPlanPhase =

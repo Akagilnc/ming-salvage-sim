@@ -34,6 +34,7 @@ import {
   quotaWallError,
 } from "./unified-worker-dispatch-937.shared.js";
 import { expectNoRelayFocusFile } from "../helpers/relayFocus.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -333,6 +334,8 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
     const backend = baseStayPutBackend(
       tmp,
       async (spec) => {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.id === "S2") {
           return {
             kind: "completed",
@@ -427,6 +430,8 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
     const backend = baseStayPutBackend(
       tmp,
       async (spec) => {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.id === "S2") {
           return {
             kind: "completed",

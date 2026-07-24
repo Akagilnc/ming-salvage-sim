@@ -24,6 +24,7 @@ import type {
   IssueMeta,
   LedgerEntry,
   PersistentLedgerEntry,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -34,6 +35,7 @@ import {
   judgeContinue,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/orchestrator/issue-926",
@@ -103,9 +105,12 @@ class AdvanceCoderBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     if (spec.kind === "coder") {
       this.coderModels.push(spec.model);
@@ -129,7 +134,9 @@ class AdvanceCoderBackend implements Backend {
       spec.id === "S6"
     ) {
       const script = this.judgeScripts[this.judgeIdx] ?? { kind: "converged" };
-      this.judgeIdx += 1;
+      if (script.kind !== "continue" || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeIdx += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId

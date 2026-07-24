@@ -1,8 +1,8 @@
 /**
  * #1126 — single-slice review legs are Runner-dispatched via the same #1094
- * panel-leg mechanism (scope is a parameter). Judge typed empty-continue is the
- * request; papers land back to the same judge session; judge worker fans out
- * zero nested CLIs.
+ * panel-leg mechanism (scope is a parameter). Runner topology dispatches legs
+ * after construction; papers land back to the same judge session; judge worker
+ * fans out zero nested CLIs.
  *
  * CR R2: Runner owns Standards + Spec as two same-model fresh workers (never one
  * worker that re-runs /code-review). Zero successful transports must park before
@@ -43,6 +43,7 @@ import {
   judgeConverged,
   OPEN_COURT_SESSION,
   openCourtWorkerResultIfMatch,
+  sampleFinding,
 } from "../helpers/judge-fixtures.js";
 
 const SLICE_BASE = "origin/codex/issue-1126-base";
@@ -153,7 +154,7 @@ class SliceReviewLegBackend implements Backend {
           : OPEN_COURT_SESSION;
       if (this.judgeVisits === 1) {
         return completedJudge(
-          judgeContinue([], {
+          judgeContinue([sampleFinding("construction review", "runner.ts:1")], {
             fixPacketBody: "request fresh review legs after construction",
           }),
           sessionId,

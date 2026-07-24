@@ -314,6 +314,44 @@ describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
     ).rejects.toBeInstanceOf(AdoptionPersistFailedError);
     expect(settled).toBe(3);
   });
+
+  it("returns fulfilled seat control only after every sibling settles", async () => {
+    let settled = 0;
+    const round = await dispatchReviewPanelLegs({
+      legs: [
+        { family: "codex", slug: "gpt-5.6-sol" },
+        { family: "claude", slug: "opus" },
+      ],
+      scope: { kind: "family", pass: "correctness" },
+      dispatch: async (spec) => {
+        settled += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return spec.model === "gpt-5.6-sol"
+          ? {
+              kind: "seat_control" as const,
+              control: { kind: "relay" as const },
+            }
+          : {
+              kind: "leg_result" as const,
+              result: {
+                kind: "completed" as const,
+                output: {
+                  kind: "reviewer" as const,
+                  findingsCount: 0,
+                  findings: [],
+                  rawStdout: "family panel review paper",
+                },
+              },
+            };
+      },
+    });
+
+    expect(settled).toBe(2);
+    expect(round).toEqual({
+      kind: "seat_control",
+      control: { kind: "relay" },
+    });
+  });
 });
 
 describe("#1094 R2 F8 — pass-distinct routing souls", () => {

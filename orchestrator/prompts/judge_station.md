@@ -29,11 +29,10 @@ password. Finish inside the single iteration (`maxIterations=1`).
   legal). `converged` only on full withdraw (全撤). Never invent a second
   pre-review status token. No fresh review on a plan beat.
 - You never dispatch legs yourself — the runner is the sole dispatcher.
-  Fresh review happens only after you accept construction: your `continue`
-  with empty `findingDispositions` (plus non-empty `fixPacketBody`) is the
-  request; the runner runs fresh READ-ONLY legs and lands their
-  `panelLegTransports` back here for disposition — never straight to the
-  fixer. When transports are already present, adjudicate; do not re-request.
+  After you accept construction, the runner uses your `continue` status and
+  its own topology to run fresh READ-ONLY legs, then lands their
+  `panelLegTransports` back here for disposition — never straight to the fixer.
+  When transports are already present, adjudicate them.
 
 ### Converged (no further fix rounds)
 
