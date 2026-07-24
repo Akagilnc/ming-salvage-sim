@@ -238,6 +238,63 @@ describe("#921 judge verdict three-state", () => {
     }
   });
 
+  it.each([
+    {
+      name: "durable terminal → live",
+      priorJudgeVerdicts: [
+        {
+          findingDispositions: [
+            {
+              action: "refute",
+              identityKey: "terminal-to-live",
+            },
+          ],
+        },
+      ],
+      findingDispositions: [
+        {
+          action: "live",
+          identityKey: "terminal-to-live",
+        },
+      ],
+      expected:
+        "illegal findings-store transition refuted → unrepaired (terminal status cannot re-flip)",
+    },
+    {
+      name: "same receipt terminal → live",
+      priorJudgeVerdicts: [],
+      findingDispositions: [
+        {
+          action: "suppress",
+          identityKey: "terminal-to-live",
+          evidence: "owner deferred",
+          groundTicket: 1128,
+        },
+        {
+          action: "live",
+          identityKey: "terminal-to-live",
+        },
+      ],
+      expected:
+        "illegal findings-store transition suppressed → unrepaired (terminal status cannot re-flip)",
+    },
+  ])("owning judge SO rejects $name", ({
+    priorJudgeVerdicts,
+    findingDispositions,
+    expected,
+  }) => {
+    const parsed = judgeStationReceiptSchema(priorJudgeVerdicts).safeParse({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "继续修",
+      findingDispositions,
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe(expected);
+    }
+  });
+
   it("owning judge SO accepts a new terminal transition from durable history", () => {
     const parsed = judgeStationReceiptSchema([
       {
