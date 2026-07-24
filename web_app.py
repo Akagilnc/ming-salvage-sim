@@ -3479,15 +3479,20 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
+        with _serialized_web_write(game):
+            pass
+        from ming_sim.cli_backend import capture_manual_directive_payload
+        dossier_payload = await asyncio.to_thread(
+            capture_manual_directive_payload,
+            request.text.strip(),
+            game.session.llm_config,
+        )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
         with _serialized_web_write(game):
-            from ming_sim.cli_backend import capture_manual_directive_payload
             dv = game.session.add_directive(
                 request.text.strip(), notes=request.notes,
-                dossier_payload=capture_manual_directive_payload(
-                    request.text.strip(), game.session.llm_config,
-                ),
+                dossier_payload=dossier_payload,
             )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
@@ -3509,7 +3514,17 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
     game = get_game()
     try:
         with _serialized_web_write(game):
-            game.session.update_directive(directive_id, text.strip())
+            pass
+        from ming_sim.cli_backend import capture_manual_directive_payload
+        dossier_payload = await asyncio.to_thread(
+            capture_manual_directive_payload,
+            text.strip(),
+            game.session.llm_config,
+        )
+        with _serialized_web_write(game):
+            game.session.update_directive(
+                directive_id, text.strip(), dossier_payload=dossier_payload,
+            )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}

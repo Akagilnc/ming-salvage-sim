@@ -147,6 +147,7 @@ def test_dossier_cannot_start_in_execution_state(game, status):
     with pytest.raises(ValueError):
         db.create_decree_dossier(
             state, action_type="appointment", decree_text="非法初态",
+            target_kind="character", target_id="invalid",
             status=status,
         )
 
@@ -185,10 +186,12 @@ def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
 def test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn(game):
     db, state, content = game
     first_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="今后每月赈济灾民"
+        state, action_type="policy", decree_text="今后每月赈济灾民",
+        target_kind="issue", target_id="relief",
     )
     second_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="今后每月修河"
+        state, action_type="policy", decree_text="今后每月修河",
+        target_kind="issue", target_id="river-works",
     )
     db.apply_dossier_verdicts(state, [
         {"dossier_id": first_id, "decision": "promulgated"},
@@ -224,6 +227,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         state,
         action_type="grant_allocation",
         decree_text="拨国库十两赈济",
+        target_kind="issue", target_id="relief",
         payload={
             "account": "国库", "amount": 10, "category": "赈济",
             "reason": "奉旨赈济", "execution_surface": "immediate",
@@ -289,6 +293,7 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
     actor = _active_minister(db)
     published_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="本月已颁之旨",
+        target_kind="issue", target_id="published-policy",
     )
     db.record_dossier_decision(published_id, "promulgated")
     secret_order_id = db.create_secret_order(
@@ -352,6 +357,7 @@ def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="持续办理",
+        target_kind="issue", target_id="ongoing-policy",
     )
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
@@ -493,6 +499,7 @@ def test_extractor_context_origin_ref_round_trips_to_commitment(game):
     db, state, content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="special_decree", decree_text="今后每月修河",
+        target_kind="issue", target_id="river-works",
     )
     db.record_dossier_decision(dossier_id, "promulgated")
     extractor_context = build_extractor_shared_context(
@@ -608,6 +615,7 @@ def test_dialogue_and_engine_action_types_cannot_create_dossiers(
     with pytest.raises(ValueError):
         db.create_decree_dossier(
             state, action_type=action_type, decree_text="非旨意动作",
+            target_kind="issue", target_id="not-a-decree",
         )
 
 
@@ -664,10 +672,42 @@ def test_legacy_secret_orders_restore_with_unique_resumable_dossiers(game):
         reopened.close()
 
 
+def test_legacy_secret_order_migration_ignores_free_text_progress(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    actor = _active_minister(db)
+    ids = []
+    for result, sim_note in (("", ""), ("任意说明", "另一段任意说明")):
+        ids.append(int(db.conn.execute(
+            """
+            INSERT INTO secret_orders
+                (turn_issued,year_issued,period_issued,minister_name,title,
+                 content,status,result,sim_note)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                state.turn, state.year, state.period, actor, "旧密令",
+                "相同结构化密令", "active", result, sim_note,
+            ),
+        ).lastrowid))
+    db.conn.commit()
+
+    restored = GameDB(db.path, content=content)
+    try:
+        assert [
+            restored.get_dossier_for_secret_order(order_id)["status"]
+            for order_id in ids
+        ] == ["promulgated", "promulgated"]
+    finally:
+        restored.close()
+
+
 def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="special_decree", decree_text="着核边饷",
+        target_kind="issue", target_id="frontier-pay",
     )
     db.record_dossier_decision(
         dossier_id, "rejected", blocked_layer="six_offices",
@@ -699,6 +739,7 @@ def test_interim_verdict_rejects_reserved_legal_reason_code(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="着核边饷",
+        target_kind="issue", target_id="frontier-pay",
     )
     with pytest.raises(ValueError):
         db.apply_dossier_verdicts(state, [{
@@ -765,7 +806,9 @@ def test_directive_freezes_at_dossier_birth_and_formal_withdrawal_closes_it(game
     editable_id = db.add_directive(
         state, None, "河工初稿", "手动新增", dossier_payload=payload,
     )
-    db.update_directive_text(editable_id, "河工改稿")
+    db.update_directive_text(
+        editable_id, "河工改稿", dossier_payload=payload,
+    )
     db.delete_directive(editable_id)
 
     directive_id = db.add_directive(
@@ -782,6 +825,70 @@ def test_directive_freezes_at_dossier_birth_and_formal_withdrawal_closes_it(game
     assert [
         row["id"] for row in db.list_directives(state, statuses=("withdrawn",))
     ] == [directive_id]
+
+
+def test_directive_edit_replaces_mechanical_payload_before_submission(game):
+    db, state, _content = game
+    before = state.metrics["国库"]
+    ten = {
+        "dossier_action_type": "grant_allocation",
+        "target_kind": "issue", "target_id": "relief",
+        "account": "国库", "amount": 10, "execution_surface": "immediate",
+    }
+    hundred = {**ten, "amount": 100}
+    directive_id = db.add_directive(
+        state, None, "拨十两赈济", "手动新增", dossier_payload=ten,
+    )
+
+    db.update_directive_text(
+        directive_id, "改拨百两赈济", dossier_payload=hundred,
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive_id)
+    assert json.loads(dossier["payload_json"])["amount"] == 100
+
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+    )
+    assert state.metrics["国库"] == before - 100
+
+
+def test_withdrawn_rescript_records_closed_turn(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="暂缓河工",
+        target_kind="issue", target_id="river-works",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回成命")
+    restored = GameDB(db.path, content=content)
+    try:
+        dossier = restored.get_decree_dossier(dossier_id)
+        assert dossier["status"] == "closed"
+        assert dossier["closed_turn"] == state.turn
+    finally:
+        restored.close()
+
+
+def test_secret_order_target_survives_restore_and_is_queryable(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    order_id = db.create_secret_order(
+        state, _active_minister(db), "密查仓储", "核清仓储", [],
+    )
+    restored = GameDB(db.path, content=content)
+    try:
+        matches = restored.list_decree_dossiers(
+            target_kind="secret_order", target_id=order_id,
+        )
+        assert [row["secret_order_id"] for row in matches] == [order_id]
+    finally:
+        restored.close()
 
 
 def test_allocation_candidate_edit_preserves_mechanical_payload(game):
@@ -823,6 +930,7 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
         state,
         action_type="assignment",
         decree_text="着查仓储",
+        target_kind="issue", target_id="granary-audit",
         executor_kind="character",
         executor_id=_active_minister(db),
         payload={"immediate_terminal": True},

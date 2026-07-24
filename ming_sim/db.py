@@ -9466,14 +9466,11 @@ class GameDB:
         ).fetchall()
         for row in rows:
             secret_status = str(row["status"] or "active")
-            has_progress = bool(str(row["result"] or "").strip()) or bool(
-                str(row["sim_note"] or "").strip()
-            )
             if secret_status in {"done", "completed"}:
                 status, outcome = "closed", "fulfilled"
             elif secret_status == "failed":
                 status, outcome = "closed", "failed"
-            elif secret_status in {"pending_review", "in-progress", "in_progress"} or has_progress:
+            elif secret_status in {"pending_review", "in-progress", "in_progress"}:
                 status, outcome = "executing", "executing"
             else:
                 status, outcome = "promulgated", ""
@@ -9489,17 +9486,17 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO decree_dossiers
-                    (action_type,executor_kind,executor_id,secret_order_id,
+                    (action_type,target_kind,target_id,executor_kind,executor_id,secret_order_id,
                      decree_text,payload_json,status,promulgation_decision,
                      promulgation_blocked_layer,promulgation_reason,due_turn,
                      execution_outcome,execution_note,closed_turn,
                      interruption_reason,created_turn,created_year,created_period)
                 VALUES
-                    ('secret_order','character',?,?,?,?,?,'promulgated',
+                    ('secret_order','secret_order',?,'character',?,?,?,?,?,'promulgated',
                      'palace_rescript','内批自动顺颁',?,?,?,?,?,?,?,?)
                 """,
                 (
-                    str(row["minister_name"] or ""), int(row["id"]),
+                    int(row["id"]), str(row["minister_name"] or ""), int(row["id"]),
                     str(row["content"] or row["title"] or ""),
                     json.dumps(payload, ensure_ascii=False), status,
                     int(row["due_turn"] or 0), outcome, note, closed_turn,
@@ -9686,6 +9683,10 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        canonical_target_kind = str(target_kind or "").strip()
+        canonical_target_id = str(target_id or "").strip()
+        if not canonical_target_kind or not canonical_target_id:
+            raise ValueError("案卷 target_kind/target_id 必须完整")
         if status not in self._DOSSIER_STATUSES:
             raise ValueError(f"案卷 status 非法：{status}")
         if status != "proposed" and not (
@@ -9728,7 +9729,7 @@ class GameDB:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                action, str(target_kind or ""), str(target_id or ""),
+                action, canonical_target_kind, canonical_target_id,
                 str(executor_kind or ""), str(executor_id or ""),
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
@@ -9938,13 +9939,14 @@ class GameDB:
             SET status=?,promulgation_decision=?,rescript_pending=?,
                 promulgation_blocked_layer=?,promulgation_reason=?,
                 legal_reason_code=?,held_turn=?,updated_at=CURRENT_TIMESTAMP,
+                closed_turn=CASE WHEN ?='closed' THEN ? ELSE closed_turn END,
                 closed_at=CASE WHEN ?='closed' THEN CURRENT_TIMESTAMP ELSE closed_at END
             WHERE id=?
             """,
             (
                 status, promulgation, pending, blocked_layer, slot_reason,
                 slot_legal_reason, held_turn,
-                status, int(dossier_id),
+                status, current_turn, status, int(dossier_id),
             ),
         )
         self.conn.execute(
@@ -11512,18 +11514,26 @@ class GameDB:
         ).fetchone()
         return int(row["n"]) if row else 0
 
-    def update_directive_text(self, directive_id: int, text: str) -> None:
+    def update_directive_text(
+        self, directive_id: int, text: str, *,
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> None:
         if self.get_dossier_for_directive(directive_id) is not None:
             raise ValueError("已成案旨意不得编辑")
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET text = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (text, directive_id),
-        )
-        self.conn.commit()
+        payload = dict(dossier_payload or {})
+        if not all(str(payload.get(key) or "").strip() for key in (
+            "dossier_action_type", "target_kind", "target_id",
+        )):
+            raise ValueError("旨意编辑须提供完整结构化动作与目标")
+        with atomic(self):
+            self.conn.execute(
+                """
+                UPDATE turn_directives
+                SET text=?,dossier_payload_json=?,updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (text, json.dumps(payload, ensure_ascii=False), directive_id),
+            )
 
     def update_directive(
         self,
@@ -13132,6 +13142,8 @@ class GameDB:
                 state,
                 action_type="secret_order",
                 decree_text=content,
+                target_kind="secret_order",
+                target_id=order_id,
                 executor_kind="character",
                 executor_id=minister_name,
                 source_chat_turn_id=source_chat_turn_id,

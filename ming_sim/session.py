@@ -1687,7 +1687,10 @@ class GameSession:
                     )
                 elif _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
-                    self.db.update_directive_text(did, draft_res["draft_text"])
+                    self.db.update_directive_text(
+                        did, draft_res["draft_text"],
+                        dossier_payload=semantic_payload,
+                    )
                     out["directive"] = {
                         "id": did,
                         "text": draft_res["draft_text"],
@@ -2238,9 +2241,14 @@ class GameSession:
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)
 
-    def update_directive(self, directive_id: int, text: str) -> None:
+    def update_directive(
+        self, directive_id: int, text: str, *,
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> None:
         self._refuse_if_settling()
-        self.db.update_directive_text(directive_id, text)
+        self.db.update_directive_text(
+            directive_id, text, dossier_payload=dossier_payload,
+        )
 
     def delete_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()
