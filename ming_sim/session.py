@@ -2253,8 +2253,6 @@ class GameSession:
         # （resolve_turn / advance_without_edict）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
         # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
         # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
@@ -2311,9 +2309,6 @@ class GameSession:
             if ctx is not None and ctx.get("extracted") is not None:
                 # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
                 # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。
-                if self.pending_count() > 0:
-                    raise ValueError(
-                        f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
                 # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
                 if (decree or "").strip() or (cheat_directive or "").strip():
                     from ming_sim.token_stats import tlog
@@ -2361,8 +2356,6 @@ class GameSession:
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
         # 收夜已交本夜已应允；此处交剩余未应允 default-agree。
@@ -2443,9 +2436,6 @@ class GameSession:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
         # 与 resolve_turn 同守门（cmr S7 r8/r9 对称面）：暂停期大臣新拟的 pending 旨
         # 未核定不得推进——phase2（重放或重抽）随 next_period 会把它孤儿在旧回合。
-        if self.pending_count() > 0:
-            raise ValueError(
-                f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
         ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)

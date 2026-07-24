@@ -358,6 +358,34 @@ def test_authorization_materializes_only_after_batch_verdict(game):
     assert db.active_skill_grants(minister)
 
 
+def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
+    db, state, content = game
+    assignee = _active_minister(db)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=assignee,
+        payload={
+            "text": "着其查核仓场", "actor": assignee,
+            "assignee": assignee, "target_kind": "issue", "target_id": "warehouse",
+        },
+    )
+    db.commit_pending_actions(state, content=content)
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    assert dossier["action_type"] == "assignment"
+    assert dossier["executor_id"] == assignee
+
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+
+    db.set_character_status(state, assignee, "dead", reason="病故")
+    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
+
+
 def test_real_resolve_entry_feeds_dossiers_without_future_judge(
     game, monkeypatch,
 ):
@@ -365,6 +393,10 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
 
     db, state, content = game
     actor = _active_minister(db)
+    published_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="本月已颁之旨",
+    )
+    db.record_dossier_decision(published_id, "promulgated")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=actor,
         payload={
@@ -404,7 +436,7 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         content=content,
     )
 
-    dossier = db.list_decree_dossiers()[-1]
-    assert seen["payload"]["decree_dossiers"][0]["id"] == dossier["id"]
-    assert seen["payload"]["decree_text"] == "拨国库十两赈济"
-    assert dossier["status"] == "proposed"
+    assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [published_id]
+    assert seen["payload"]["decree_text"] == "本月已颁之旨"
+    staged = db.list_decree_dossiers()[-1]
+    assert staged["status"] == "proposed"

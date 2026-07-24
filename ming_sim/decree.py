@@ -332,7 +332,7 @@ def resolve_directives(
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
 
-    dossier_payload = db.list_decree_dossiers()
+    dossier_payload = db.list_decree_dossiers_for_simulation(state.turn)
     if dossier_payload:
         # #571 only supplies the durable list. S5/S14 own future verdicts and
         # full input replacement; compatibility prose is derived, never truth.

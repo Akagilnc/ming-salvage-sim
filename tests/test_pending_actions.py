@@ -2355,8 +2355,8 @@ def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
     assert title == "原标题"  # 真表未动
 
 
-def test_front_half_done_directive_confirmation_preserves_pending_status(game, monkeypatch):
-    """恢复窗应允 directive 不即时 commit，但终端提交时仍进入 later 准/驳 pending。"""
+def test_front_half_done_directive_confirmation_commits_without_second_review(game, monkeypatch):
+    """恢复窗应允 directive 终端提交后直接成案，不回旧准驳 pending。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -2382,5 +2382,5 @@ def test_front_half_done_directive_confirmation_preserves_pending_status(game, m
         "SELECT status, text FROM turn_directives WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "draft"
     assert row["text"] == "着户部清核辽饷。"
