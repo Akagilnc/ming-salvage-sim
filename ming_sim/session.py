@@ -1444,10 +1444,16 @@ class GameSession:
             return out
         active_orders = self.db.get_active_secret_orders_for_minister(minister_name)
         is_consort = getattr(character, "office_type", "") == "后宫"
-        if intent is None and not explicit_prefixed and not active_orders and not is_consort:
+        from ming_sim.cli_backend import cli_backend_active, cli_backend_parallel_safe
+        if (
+            intent is None
+            and not explicit_prefixed
+            and cli_backend_active(llm_config)
+            and not cli_backend_parallel_safe(llm_config)
+        ):
             # 非并发安全 CLI runner（agy/claude）不在回话同时启动 classifier；
-            # fresh action 又没有既有密令/调教 extractor 可承接，故回话完成后
-            # 串行跑同一结构化判词缝，避免自然语言新动作静默丢失。
+            # 故回话完成后串行跑同一结构化判词缝。是否串行只由实际 runtime
+            # route 决定，不能让既有密令/妃嫔等业务状态吞掉 fresh action。
             from ming_sim.cli_backend import classify_cli_action_intent
 
             has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
