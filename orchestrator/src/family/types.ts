@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  PanelLegEvidenceCargo,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -574,7 +575,7 @@ export type FamilyCmrPanelRoundPrep =
  * (`cmr_fix_committed` boundary) so cold crash before pure receive cannot
  * reuse pre-builder 卷面; soft-accept may advance again as belt-and-suspenders.
  */
-export type FamilyPanelLegEvidence = {
+export type FamilyPanelLegEvidence = PanelLegEvidenceCargo & {
   readonly familyHeadAfter?: string;
   /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
   readonly ledgerPhase?: "final" | "correctness_checkpoint";
@@ -586,15 +587,6 @@ export type FamilyPanelLegEvidence = {
    * after refuse/no-op reburn even if HEAD is unchanged.
    */
   readonly courtGeneration?: number;
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
 };
 
 /**

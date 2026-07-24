@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  admissibleDurablePanelLegTransports,
+  admissibleDurablePanelLegEvidence,
   courtGenerationFromDurableEvidence,
 } from "../../../src/family/cmrPanelLegs.js";
 import {
@@ -98,7 +98,23 @@ describe("#1119 identity + pending helpers", () => {
   };
 
   it.each([
-    { name: "full match", evidence: base, scope, ok: true },
+    { name: "matching transports", evidence: base, scope, ok: true },
+    {
+      name: "matching runtime skips",
+      evidence: {
+        ...base,
+        panelLegTransports: undefined,
+        panelLegSkippedLegs: [{ slug: "grok-4.5", reason: "quota exhausted" }],
+      },
+      scope,
+      ok: true,
+    },
+    {
+      name: "matching identity but no landed cargo",
+      evidence: { ...base, panelLegTransports: undefined },
+      scope,
+      ok: false,
+    },
     {
       name: "checkpoint≠final",
       evidence: { ...base, ledgerPhase: "correctness_checkpoint" as const },
@@ -118,7 +134,7 @@ describe("#1119 identity + pending helpers", () => {
       ok: false,
     },
   ])("$name", ({ evidence, scope: s, ok }) => {
-    expect(admissibleDurablePanelLegTransports(evidence, s) !== undefined).toBe(
+    expect(admissibleDurablePanelLegEvidence(evidence, s) !== undefined).toBe(
       ok,
     );
   });
@@ -211,6 +227,8 @@ class FileLedgerBackend implements FamilyBackend {
     kind: "pure" | "panels";
     refuseKeys?: readonly string[];
     hasPreBuilder?: boolean;
+    transports?: WorkerLandingPayload["panelLegTransports"];
+    skippedLegs?: WorkerLandingPayload["panelLegSkippedLegs"];
   }> = [];
   familyHead = HEAD;
   private opens = 0;
@@ -348,6 +366,8 @@ class FileLedgerBackend implements FamilyBackend {
         hasPreBuilder: landing?.panelLegTransports?.some((t) =>
           (t.stdout ?? "").includes("PRE-BUILDER"),
         ),
+        transports: landing?.panelLegTransports,
+        skippedLegs: landing?.panelLegSkippedLegs,
       });
       if (ctx.cmrPass === "completeness") {
         this.opens += 1;
@@ -520,5 +540,40 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     // First completeness open on B is panel-backed reuse (not pure re-receive).
     expect(b.judgeLandings[0]?.kind).toBe("panels");
     expect(b.judgeLandings[0]?.hasPreBuilder).toBeFalsy();
+    expect(b.judgeLandings[0]?.transports).toEqual(mid?.panelLegTransports);
+  });
+
+  it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
+    const dir = tmp("1119-skips-");
+    const skippedLegs = [
+      { slug: "gpt-5.6-sol", reason: "provider quota exhausted" },
+    ];
+    const b = new FileLedgerBackend(
+      dir,
+      "none",
+      {
+        familyHeadAfter: HEAD,
+        ledgerPhase: "final",
+        routeFingerprint: ROUTE_FP,
+        courtGeneration: 0,
+        panelLegSkippedLegs: skippedLegs,
+      },
+      {
+        forceFirstContinue: false,
+      },
+    );
+
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-skips",
+      familyBackend: b,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+
+    expect(
+      b.panelDispatches.filter((d) => d.startsWith("completeness:")).length,
+    ).toBe(0);
+    expect(b.judgeLandings[0]?.skippedLegs).toEqual(skippedLegs);
   });
 });

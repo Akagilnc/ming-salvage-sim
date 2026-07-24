@@ -17,6 +17,7 @@ import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { PublicFailedCause } from "./publicResult.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+import type { LegTransport } from "./legPaper.js";
 // Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
 import type {
   JudgeFindingDisposition,
@@ -947,7 +948,12 @@ export interface OnlineReviewLandingSnapshot {
   readonly checkRunsEmptyMeans?: "converged" | "pending";
 }
 
-export interface WorkerLandingPayload {
+export interface PanelLegEvidenceCargo {
+  readonly panelLegTransports?: ReadonlyArray<LegTransport>;
+  readonly panelLegSkippedLegs?: ReadonlyArray<CmrSkippedLeg>;
+}
+
+export interface WorkerLandingPayload extends PanelLegEvidenceCargo {
   /**
    * ADR 0138 / #978: sole coder-fix packet body — judge continue
    * `fixPacketBody` transported verbatim. Missing/empty is fail-loud at the
@@ -1038,24 +1044,6 @@ export interface WorkerLandingPayload {
     readonly mergedHeadOid: string;
     readonly convergedHeadOid: string;
   };
-  /**
-   * #1094 — runner-dispatched family CMR panel-leg transports (ADR 0141).
-   * Judge reads prose as court evidence; never spawns nested model CLIs.
-   */
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  /**
-   * #1117 / #1118 / #1119 — host-mechanical panel-leg skip reasons landed with
-   * the pure court so resume never supplies a silent empty landing when legs
-   * fail (runtime degrade evidence; never silent empty after cold re-entry).
-   */
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
 }
 
 /**
@@ -1065,7 +1053,7 @@ export interface WorkerLandingPayload {
  * control envelope carries only identity keys + counts + opaque搬运 payloads
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
-export interface DispatchContext {
+export interface DispatchContext extends PanelLegEvidenceCargo {
   /**
    * Ephemeral identity for one invocation of the orchestrator runner. Unlike
    * `stateDir`, this is freshly minted on every run, including a same-issue
@@ -1222,23 +1210,6 @@ export interface DispatchContext {
    * at dispatch. Not a worktree file; injected via env into the worker.
    */
   readonly relayBrief?: string;
-  /**
-   * #1094 — host-observed panel-leg transports for the family judge court.
-   * Runner dispatches legs first; judge receives prose only (pure court).
-   */
-  readonly panelLegTransports?: ReadonlyArray<{
-    readonly slug: string;
-    readonly exitCode: number;
-    readonly stdout: string | null | undefined;
-  }>;
-  /**
-   * #1117 / #1118 / #1119 — host skip reasons paired with panel transports
-   * (runtime degrade evidence for the pure court; never a silent empty landing).
-   */
-  readonly panelLegSkippedLegs?: ReadonlyArray<{
-    readonly slug: string;
-    readonly reason: string;
-  }>;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */

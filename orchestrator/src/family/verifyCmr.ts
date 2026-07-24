@@ -74,13 +74,12 @@ import {
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
-  admissibleDurablePanelLegTransports,
+  admissibleDurablePanelLegEvidence,
   courtGenerationFromDurableEvidence,
   ensureFamilyCmrPanelEvidence,
-  hasValidPanelLegTransports,
+  landedPanelLegEvidence,
   skippedLegsFromTransports,
 } from "./cmrPanelLegs.js";
-import { successfulLegsFromTransports } from "../legPaper.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2708,29 +2707,24 @@ async function runIntegratedCmrPass(input: {
       routeFingerprint,
       courtGeneration,
     };
-    const durableTransportsForCourt = admissibleDurablePanelLegTransports(
+    const durableEvidenceForCourt = admissibleDurablePanelLegEvidence(
       durablePanelEvidence,
       panelEvidenceScope,
     );
     // #1119: pure builder-receive never carries panel transports — even when
     // durable invalidation lagged the cmr_fix_committed write (two-write
     // crash window). Builder cargo = refuse keys/records only (ADR 0147).
-    const existingPanelTransports = receivingBuilderBeat
+    const existingPanelEvidence = receivingBuilderBeat
       ? undefined
-      : (refuseReopenLanding?.panelLegTransports ??
-        dispatchCtx.panelLegTransports ??
-        durableTransportsForCourt);
+      : (landedPanelLegEvidence(refuseReopenLanding) ??
+        landedPanelLegEvidence(dispatchCtx) ??
+        durableEvidenceForCourt);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
-    // Skip prep when reusing valid transports (no reburn).
+    // Skip prep whenever either official cargo class already landed (no reburn).
     const willFanOut =
       frozenLegs.length > 0 &&
-      !hasValidPanelLegTransports(
-        existingPanelTransports?.map((t) => ({
-          slug: t.slug,
-          exitCode: t.exitCode,
-          stdout: t.stdout ?? "",
-        })),
-      );
+      existingPanelEvidence?.panelLegTransports === undefined &&
+      existingPanelEvidence?.panelLegSkippedLegs === undefined;
     if (
       willFanOut &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
@@ -2778,8 +2772,8 @@ async function runIntegratedCmrPass(input: {
     const panelRound = await ensureFamilyCmrPanelEvidence({
       legs: frozenLegs,
       cmrPass: pass,
-      ...(existingPanelTransports !== undefined
-        ? { existingTransports: existingPanelTransports }
+      ...(existingPanelEvidence !== undefined
+        ? { existingEvidence: existingPanelEvidence }
         : {}),
       // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
@@ -2812,28 +2806,20 @@ async function runIntegratedCmrPass(input: {
         );
       },
     });
-    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
-    // (not judge prose cargo). Empty array after a real fan-out still wins.
+    // Preserve landed runtime skips verbatim. After a fresh fan-out, derive the
+    // same host-mechanical reasons once and hand them to the judge as evidence.
     const hostSkippedLegs =
-      panelRound.skippedLegs.length > 0
-        ? panelRound.skippedLegs
-        : skippedLegsFromTransports(frozenLegs, panelRound.transports);
-    // #1094 R3 F3: pure court with declared legs but ZERO successful transports
-    // must not converge — escalate (decision park) with skippedLegs reasons.
-    // One or more successful legs → optional-leg degrade still never blocks.
-    // #1118 / #1119: never open a silent empty landing — park with runtime skip.
-    const successfulPanelLegs = successfulLegsFromTransports(
-      panelRound.transports,
-    );
-    // Canonical landing cargo for transports + host skip reasons (shared by the
-    // zero-success durable write and the pure-judge open path).
+      panelRound.panelLegSkippedLegs ??
+      skippedLegsFromTransports(
+        frozenLegs,
+        panelRound.panelLegTransports ?? [],
+      );
+    // Canonical landing cargo for transports + host skip reasons.
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
-      panelLegTransports: panelRound.transports.map((t) => ({
-        slug: t.slug,
-        exitCode: t.exitCode,
-        stdout: t.stdout,
-      })),
+      ...(panelRound.panelLegTransports !== undefined
+        ? { panelLegTransports: panelRound.panelLegTransports }
+        : {}),
       ...(hostSkippedLegs.length > 0
         ? {
             panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
@@ -2868,51 +2854,6 @@ async function runIntegratedCmrPass(input: {
           ? { panelLegSkippedLegs: panelLanding.panelLegSkippedLegs }
           : {}),
       });
-    }
-    if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
-      const reason = `family integrated cmr ${pass}: zero successful panel legs`;
-      const diagnosis =
-        hostSkippedLegs.length > 0
-          ? hostSkippedLegs
-              .map((leg) => `${leg.slug}: ${leg.reason}`)
-              .join("; ")
-          : "all declared panel legs failed or produced no legal review paper";
-      reviewRoundResult = {
-        kind: "escalated",
-        escalation: { reason, diagnosis },
-      };
-      const stopSummary = decisionGateParkStopSummary({
-        summary: `${reason} — ${diagnosis}`,
-        repairHint:
-          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
-        heads:
-          resolvedFamilyHeadAfter !== undefined
-            ? { actualFamilyHead: resolvedFamilyHeadAfter }
-            : undefined,
-      });
-      await persistFinalReviewRound("accepted", async () => {
-        await recordCmrReviewed(familyBackend, {
-          phase: ledgerPhase,
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          blockingFindingIdentityKeys: [],
-          judgeStatus: "escalate",
-          stopSummary,
-        });
-        await familyBackend.escalateFamily?.({
-          reason,
-          diagnosis,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          stopSummary,
-          escalationKind: "decision",
-        });
-      });
-      return {
-        result: { ok: false, ran: true },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        resolvedRoute: activeRoute,
-      };
     }
     // Land transports + host skip reasons so the pure court never sees a silent
     // empty fix-findings file (production deadlock: cold resume without evidence).
