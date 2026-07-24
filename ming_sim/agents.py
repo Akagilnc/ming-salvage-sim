@@ -451,27 +451,6 @@ def create_season_simulator_agent(
     )
 
 
-def create_promulgation_judge_agent(
-    llm_config: LLMConfig, agno_db: SqliteDb,
-) -> Agent:
-    """ADR 0055 interim promulgation judge; one typed batch per settlement."""
-    del agno_db
-    cfg = _llm_for_role(llm_config, "simulator")
-    return Agent(
-        name="颁布判官",
-        id="promulgation-judge",
-        model=create_chat_model(cfg, temperature=0.1, max_tokens=cfg.max_tokens),
-        instructions=[
-            _ctx().game_world_prompt,
-            "你是月末颁布判官。逐案判断顺颁或打回，不得遗漏。"
-            "只返回 JSON object：{\"verdicts\":[{\"dossier_id\":整数,"
-            "\"decision\":\"promulgated|rejected\"}]}。不得添加散文。",
-        ],
-        add_history_to_context=False,
-        markdown=False,
-    )
-
-
 def create_score_extractor_module_agent(
     llm_config: LLMConfig,
     agno_db: SqliteDb,

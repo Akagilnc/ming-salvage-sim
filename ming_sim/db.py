@@ -1310,6 +1310,8 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'proposed'
                     CHECK(status IN ('proposed','promulgated','executing','closed')),
                 promulgation_decision TEXT NOT NULL DEFAULT '',
+                promulgation_blocked_layer TEXT NOT NULL DEFAULT '',
+                promulgation_reason TEXT NOT NULL DEFAULT '',
                 rescript_pending INTEGER NOT NULL DEFAULT 0,
                 legal_reason_code TEXT NOT NULL DEFAULT '',
                 stigma_json TEXT NOT NULL DEFAULT '[]',
@@ -1346,6 +1348,7 @@ class GameDB:
                 dossier_id INTEGER NOT NULL,
                 turn INTEGER NOT NULL,
                 decision TEXT NOT NULL,
+                blocked_layer TEXT NOT NULL DEFAULT '',
                 rescript_action TEXT NOT NULL DEFAULT '',
                 reason TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1759,6 +1762,12 @@ class GameDB:
             "decree_dossiers", "execution_note", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "decree_dossiers", "closed_turn", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "decree_dossiers", "promulgation_blocked_layer", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossiers", "promulgation_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -9446,13 +9455,12 @@ class GameDB:
         "executing": frozenset({"closed"}),
         "closed": frozenset(),
     }
-    _DOSSIER_NO_EXECUTION_SURFACE = frozenset({
-        "authorization", "approve_reject",
+    _PROMULGATION_BLOCKED_LAYERS = frozenset({
+        "", "cabinet_drafting", "palace_rescript", "six_offices",
     })
-
-    @classmethod
-    def _dossier_has_execution_surface(cls, action_type: object) -> bool:
-        return str(action_type or "") not in cls._DOSSIER_NO_EXECUTION_SURFACE
+    _DOSSIER_EXECUTION_OUTCOMES = frozenset({
+        "executing", "fulfilled", "degraded", "failed", "transformed",
+    })
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9684,13 +9692,11 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            action_row = self.conn.execute(
-                "SELECT action_type FROM decree_dossiers WHERE id=?",
-                (int(dossier_id),),
-            ).fetchone()
-            if action_row is None or self._dossier_has_execution_surface(
-                action_row["action_type"]
-            ):
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict) or not payload.get("immediate_terminal"):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
                 raise ValueError("直达结案仍须填写执行格")
@@ -9704,15 +9710,23 @@ class GameDB:
 
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
-        legal_reason_code: str = "", commit: bool = True,
+        blocked_layer: str = "", legal_reason_code: str = "", commit: bool = True,
     ) -> None:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
         decision = str(decision or "").strip()
         if decision not in {"promulgated", "rejected", "hold", "withdrawn"}:
             raise ValueError(f"案卷判决非法：{decision}")
+        blocked_layer = str(blocked_layer or "")
+        if blocked_layer not in self._PROMULGATION_BLOCKED_LAYERS:
+            raise ValueError(f"颁布关口非法：{blocked_layer}")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
+        slot_reason = str(reason or "")
+        if decision in {"hold", "withdrawn"}:
+            if not blocked_layer:
+                blocked_layer = str(row.get("promulgation_blocked_layer") or "")
+            slot_reason = str(row.get("promulgation_reason") or "")
         if row["status"] != "proposed":
             raise ValueError("只有 proposed 案卷可写颁布/批红判决")
         if decision == "promulgated":
@@ -9731,12 +9745,14 @@ class GameDB:
             """
             UPDATE decree_dossiers
             SET status=?,promulgation_decision=?,rescript_pending=?,
+                promulgation_blocked_layer=?,promulgation_reason=?,
                 legal_reason_code=?,updated_at=CURRENT_TIMESTAMP,
                 closed_at=CASE WHEN ?='closed' THEN CURRENT_TIMESTAMP ELSE closed_at END
             WHERE id=?
             """,
             (
-                status, promulgation, pending, str(legal_reason_code or ""),
+                status, promulgation, pending, blocked_layer, slot_reason,
+                str(legal_reason_code or ""),
                 status, int(dossier_id),
             ),
         )
@@ -9746,12 +9762,13 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO decree_dossier_decisions
-                (dossier_id,turn,decision,rescript_action,reason)
-            VALUES (?,?,?,?,?)
+                (dossier_id,turn,decision,blocked_layer,rescript_action,reason)
+            VALUES (?,?,?,?,?,?)
             """,
             (
                 int(dossier_id), int(turn_row["turn"] if turn_row else 0),
                 promulgation if decision != "hold" else "rejected",
+                blocked_layer,
                 decision if decision in {"hold", "withdrawn"} else "",
                 str(reason or ""),
             ),
@@ -9766,9 +9783,9 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        if row["status"] == "promulgated" and self._dossier_has_execution_surface(
-            row["action_type"]
-        ):
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+        immediate = isinstance(payload, dict) and bool(payload.get("immediate_terminal"))
+        if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
             raise ValueError("执行中案卷须先填写执行格再结案")
@@ -9787,15 +9804,15 @@ class GameDB:
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        immediate = (
-            row["status"] == "promulgated"
-            and not self._dossier_has_execution_surface(row["action_type"])
+        outcome = str(outcome or "").strip()
+        if outcome not in self._DOSSIER_EXECUTION_OUTCOMES:
+            raise ValueError(f"执行 outcome 非法：{outcome}")
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+        immediate = row["status"] == "promulgated" and bool(
+            isinstance(payload, dict) and payload.get("immediate_terminal")
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
-        outcome = str(outcome or "").strip()
-        if not outcome:
-            raise ValueError("执行 outcome 不能为空")
         self.conn.execute(
             """
             UPDATE decree_dossiers
@@ -9896,9 +9913,9 @@ class GameDB:
                     commit=False,
                 ):
                     raise ValueError("授权案卷载荷物化失败")
-            if not self._dossier_has_execution_surface(row["action_type"]):
+            if bool(payload.get("immediate_terminal")):
                 self.record_dossier_execution(
-                    dossier_id, "completed", "颁布即终局", state.turn,
+                    dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
                 )
             else:
@@ -9961,7 +9978,7 @@ class GameDB:
                         (result, int(state.turn), int(order_id)),
                     )
             self.record_dossier_execution(
-                dossier_id, "interrupted", reason, state.turn,
+                dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
             )
         self._commit_dossier_write(commit)
@@ -12949,7 +12966,9 @@ class GameDB:
                     int(dossier["id"]), "executing", commit=False,
                 )
             self.record_dossier_execution(
-                int(dossier["id"]), str(status), str(result), int(turn_closed),
+                int(dossier["id"]),
+                "fulfilled" if str(status) == "done" else "failed",
+                str(result), int(turn_closed),
                 close=True, commit=False,
             )
         if commit:
