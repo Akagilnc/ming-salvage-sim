@@ -1382,6 +1382,7 @@ class GameDB:
                 source TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'draft',
                 notes TEXT NOT NULL DEFAULT '',
+                dossier_payload_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(event_id) REFERENCES events(id),
@@ -1758,6 +1759,8 @@ class GameDB:
         # 会连带删掉同 actor 同回合的无关 draft）。0=未 commit / 非 directive。
         self.ensure_column(
             "pending_actions", "committed_directive_id", "INTEGER NOT NULL DEFAULT 0")
+        self.ensure_column(
+            "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -9466,12 +9469,17 @@ class GameDB:
         "executing", "fulfilled", "degraded", "failed", "transformed",
     })
     _DOSSIER_IMMEDIATE_TERMINAL_ACTIONS = frozenset({
-        "grant_allocation", "authorization", "dismiss_assignment",
+        "authorization", "dismiss_assignment",
     })
 
     @classmethod
-    def _dossier_has_execution_surface(cls, action_type: object) -> bool:
-        return str(action_type or "") not in cls._DOSSIER_IMMEDIATE_TERMINAL_ACTIONS
+    def _dossier_has_execution_surface(
+        cls, action_type: object, payload: Optional[Dict[str, object]] = None,
+    ) -> bool:
+        action = str(action_type or "")
+        if action == "grant_allocation":
+            return str((payload or {}).get("execution_surface") or "") != "immediate"
+        return action not in cls._DOSSIER_IMMEDIATE_TERMINAL_ACTIONS
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9509,6 +9517,13 @@ class GameDB:
             else:
                 normalized["amount"] = amount
                 normalized["account"] = account
+                surface = str(
+                    normalized.get("execution_surface") or "in_transit"
+                ).strip()
+                if surface not in {"immediate", "in_transit"}:
+                    normalized["dossier_action_type"] = "special_decree"
+                else:
+                    normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
         elif action in {"assignment", "authorization"}:
             assignee = str(
@@ -9771,8 +9786,10 @@ class GameDB:
             LEFT JOIN decree_dossier_decisions h ON h.dossier_id=d.id
             WHERE (
                     d.status='proposed'
-                AND d.created_turn=?
-                AND d.promulgation_decision=''
+                AND (
+                       (d.created_turn=? AND d.promulgation_decision='')
+                    OR (d.promulgation_decision='rejected' AND d.rescript_pending=0)
+                )
             ) OR (
                     d.status IN ('promulgated','executing')
                 AND (
@@ -9790,7 +9807,7 @@ class GameDB:
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
         row = self.conn.execute(
-            "SELECT status,action_type,execution_outcome FROM decree_dossiers WHERE id=?",
+            "SELECT status,action_type,payload_json,execution_outcome FROM decree_dossiers WHERE id=?",
             (int(dossier_id),),
         ).fetchone()
         if row is None:
@@ -9801,7 +9818,8 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            if self._dossier_has_execution_surface(row["action_type"]):
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
                 raise ValueError("直达结案仍须填写执行格")
@@ -9828,10 +9846,12 @@ class GameDB:
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
         slot_reason = str(reason or "")
+        slot_legal_reason = str(legal_reason_code or "")
         if decision in {"hold", "withdrawn"}:
             if not blocked_layer:
                 blocked_layer = str(row.get("promulgation_blocked_layer") or "")
             slot_reason = str(row.get("promulgation_reason") or "")
+            slot_legal_reason = str(row.get("legal_reason_code") or "")
         if row["status"] != "proposed":
             raise ValueError("只有 proposed 案卷可写颁布/批红判决")
         if decision == "promulgated":
@@ -9857,7 +9877,7 @@ class GameDB:
             """,
             (
                 status, promulgation, pending, blocked_layer, slot_reason,
-                str(legal_reason_code or ""),
+                slot_legal_reason,
                 status, int(dossier_id),
             ),
         )
@@ -9877,7 +9897,7 @@ class GameDB:
                 blocked_layer,
                 decision if decision in {"hold", "withdrawn"} else "",
                 str(reason or ""),
-                str(legal_reason_code or ""),
+                slot_legal_reason,
             ),
         )
         self._commit_dossier_write(commit)
@@ -9890,7 +9910,8 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        immediate = not self._dossier_has_execution_surface(row["action_type"])
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+        immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
@@ -9917,7 +9938,10 @@ class GameDB:
             raise ValueError("executing 是非终态，必须以 close=False 记录")
         immediate = (
             row["status"] == "promulgated"
-            and not self._dossier_has_execution_surface(row["action_type"])
+            and not self._dossier_has_execution_surface(
+                row["action_type"],
+                json.loads(str(row.get("payload_json") or "{}")),
+            )
         )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
@@ -9957,9 +9981,9 @@ class GameDB:
             if decision == "force_promulgated":
                 if (
                     row["promulgation_decision"] != "rejected"
-                    or not row["rescript_pending"]
+                    or row["status"] != "proposed"
                 ):
-                    raise ValueError("强颁只可承接打回＋批红待抉择组合态")
+                    raise ValueError("强颁只可承接同一打回/留中案卷")
                 turn_row = self.conn.execute(
                     "SELECT turn FROM game_state WHERE id=1"
                 ).fetchone()
@@ -10036,7 +10060,7 @@ class GameDB:
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
-            if not self._dossier_has_execution_surface(row["action_type"]):
+            if not self._dossier_has_execution_surface(row["action_type"], payload):
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
@@ -10239,7 +10263,7 @@ class GameDB:
             existing_payload = self.conn.execute(
                 "SELECT payload_json FROM pending_actions WHERE id=?", (int(row["id"]),),
             ).fetchone()
-            merged = self._merge_underscore_control_keys(
+            merged = self._merge_directive_payload(
                 existing_payload["payload_json"] if existing_payload else "{}", payload or {})
             self.conn.execute(
                 "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
@@ -10295,7 +10319,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return 0
-        merged = self._merge_underscore_control_keys(row["payload_json"], payload)
+        merged = self._merge_directive_payload(row["payload_json"], payload)
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
             (json.dumps(merged, ensure_ascii=False),
@@ -10321,6 +10345,28 @@ class GameDB:
                 if str(k).startswith("_") and k not in merged:
                     merged[k] = v
         return merged
+
+    def _merge_directive_payload(
+        self, existing_json: object, new_payload: Dict[str, object],
+    ) -> Dict[str, object]:
+        """改草保留未修改的机械字段；显式新值覆盖后统一校验。"""
+        try:
+            old = json.loads(existing_json or "{}")
+        except (ValueError, TypeError) as exc:
+            raise ValueError("既有旨稿结构化载荷损坏") from exc
+        if not isinstance(old, dict):
+            raise ValueError("既有旨稿结构化载荷必须为对象")
+        merged = {**old, **dict(new_payload or {})}
+        requested = str(merged.get("dossier_action_type") or "")
+        normalized = self._normalize_directive_dossier_payload(
+            merged, content=self.content,
+            current_turn=int(self.conn.execute(
+                "SELECT turn FROM game_state WHERE id=1"
+            ).fetchone()["turn"]),
+        )
+        if requested and normalized.get("dossier_action_type") != requested:
+            raise ValueError("旨稿机械载荷不完整或非法，拒绝改草")
+        return normalized
 
     def clear_directive_needs_clarification(self, candidate_id: int) -> int:
         """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
@@ -10876,10 +10922,15 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO turn_directives
-                (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-                VALUES (?, ?, ?, NULL, ?, '', ?, '大臣拟旨', ?, ?)
+                (turn, year, period, event_id, actor, skill_id, text, source, status,
+                 notes,dossier_payload_json)
+                VALUES (?, ?, ?, NULL, ?, '', ?, '大臣拟旨', ?, ?, ?)
                 """,
-                (state.turn, state.year, state.period, actor, text, status, f"由{actor}拟旨入档"),
+                (
+                    state.turn, state.year, state.period, actor, text, status,
+                    f"由{actor}拟旨入档",
+                    json.dumps(payload, ensure_ascii=False),
+                ),
             )
             did = int(cur.lastrowid)
             # 回填本暂存产生的 draft 行 id，供 undo_chat_turn 精确删除（BUG 3）；turn_directives
@@ -11276,17 +11327,15 @@ class GameDB:
             cursor = self.conn.execute(
                 """
                 INSERT INTO turn_directives
-                (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (turn, year, period, event_id, actor, skill_id, text, source, status,
+                 notes,dossier_payload_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (state.turn, state.year, state.period, event.id if event else None,
-                 actor or None, skill_id, text, source, status, notes),
+                 actor or None, skill_id, text, source, status, notes,
+                 json.dumps(dossier_payload or {}, ensure_ascii=False)),
             )
             directive_id = int(cursor.lastrowid)
-            if status == "draft":
-                self._ensure_directive_dossier(
-                    state, directive_id, text, dossier_payload, commit=False,
-                )
         return directive_id
 
     def _ensure_directive_dossier(
@@ -11341,14 +11390,23 @@ class GameDB:
                 (directive_id,),
             )
             row = self.conn.execute(
-                "SELECT text,status FROM turn_directives WHERE id=?",
+                "SELECT status FROM turn_directives WHERE id=?",
                 (int(directive_id),),
             ).fetchone()
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
-            if row["status"] == "draft":
+
+    def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
+        """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
+        with atomic(self):
+            for row in self.list_directives(state, statuses=("draft",)):
+                try:
+                    payload = json.loads(row["dossier_payload_json"] or "{}")
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"旨稿#{row['id']} 结构化载荷损坏") from exc
                 self._ensure_directive_dossier(
-                    self.load_state(), directive_id, str(row["text"]), commit=False,
+                    state, int(row["id"]), str(row["text"]),
+                    payload if isinstance(payload, dict) else {}, commit=False,
                 )
 
     def reject_directive(self, directive_id: int) -> None:

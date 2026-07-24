@@ -1665,7 +1665,8 @@ class GameSession:
                     "target_id": draft_res.get("target_id") or "",
                 }
                 for _field in (
-                    "amount", "account", "assignee", "authorization_id",
+                    "amount", "account", "execution_surface",
+                    "assignee", "authorization_id",
                     "deadline_months",
                 ):
                     if draft_res.get(_field) not in (None, ""):
@@ -2385,6 +2386,7 @@ class GameSession:
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None))
+        self.db.ensure_dossiers_for_draft_directives(self.state)
         if committed_directives and recovered_source is None and (decree or "").strip():
             # 外部传入的 decree 早于本次 auto-commit 出来的对话草案；若继续使用，会把新 draft
             # 标为 issued 却不进诏书正文/extractor 输入。强制按当前 draft 集重拟。
