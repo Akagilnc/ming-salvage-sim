@@ -2221,35 +2221,19 @@ class GameSession:
         self._refuse_if_settling()
         self.db.reject_directive(directive_id)
 
-    def add_directive(self, text: str, notes: str = "") -> DirectiveView:
+    def add_directive(
+        self, text: str, notes: str = "",
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> DirectiveView:
         self._refuse_if_settling()
-        from ming_sim.cli_backend import extract_draft_intent
-
-        captured = extract_draft_intent(
-            "请据此拟旨", text, llm_config=self.llm_config,
-        )
-        if captured.get("draft_action") != "拟旨":
-            raise ValueError("旨意结构化抽取不完整，请澄清动作与目标")
-        dossier_payload = {
-            "dossier_action_type": captured.get("dossier_action_type"),
-            "target_kind": captured.get("target_kind"),
-            "target_id": captured.get("target_id"),
-        }
-        for field in (
-            "amount", "account", "execution_surface", "assignee",
-            "authorization_id", "deadline_months",
-        ):
-            if captured.get(field) not in (None, ""):
-                dossier_payload[field] = captured[field]
-        normalized = self.db._normalize_directive_dossier_payload(
-            dossier_payload, content=self.content, current_turn=int(self.state.turn),
-        )
-        requested = str(dossier_payload.get("dossier_action_type") or "")
-        if not requested or normalized.get("dossier_action_type") != requested:
-            raise ValueError("旨意结构化抽取不完整，请澄清动作与目标")
+        payload = dict(dossier_payload or {})
+        if not all(str(payload.get(key) or "").strip() for key in (
+            "dossier_action_type", "target_kind", "target_id",
+        )):
+            raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
         directive_id = self.db.add_directive(
             self.state, None, text, "手动新增", notes=notes,
-            dossier_payload=normalized,
+            dossier_payload=payload,
         )
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)

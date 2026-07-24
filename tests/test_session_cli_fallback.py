@@ -20,6 +20,7 @@ import pytest
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def _result():
@@ -956,15 +957,8 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     ).fetchone() is None
 
     db.commit_pending_actions(state, content=content, registry=sess.registry)
-    dossier = next(
-        item for item in db.list_decree_dossiers(status="proposed")
-        if item["pending_action_id"] == result.pending_action_id
-    )
-    db.apply_dossier_verdicts(
-        state,
-        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
-        content=content,
-        registry=sess.registry,
+    promulgate_proposed_appointments(
+        db, state, content, registry=sess.registry,
     )
 
     assert content.characters[appointee].faction == "阉党"
