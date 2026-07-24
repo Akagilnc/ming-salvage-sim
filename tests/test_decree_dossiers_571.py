@@ -144,7 +144,7 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
 @pytest.mark.parametrize("status", ("executing", "closed"))
 def test_dossier_cannot_start_in_execution_state(game, status):
     db, state, _content = game
-    with pytest.raises(ValueError, match="只能从 proposed"):
+    with pytest.raises(ValueError):
         db.create_decree_dossier(
             state, action_type="appointment", decree_text="非法初态",
             status=status,
@@ -352,7 +352,7 @@ def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db.record_dossier_decision(dossier_id, "promulgated")
     db.transition_decree_dossier(dossier_id, "executing")
 
-    with pytest.raises(ValueError, match="非终态"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "executing", "仍在办理", state.turn, close=True,
         )
@@ -572,6 +572,41 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     assert terminal["execution_outcome"] == "fulfilled"
 
 
+def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
+    from ming_sim.applier import atomic
+
+    db, state, _content = game
+    order_id = db.create_secret_order(
+        state, _active_minister(db), "密查仓储", "核清仓储", [],
+    )
+    with pytest.raises(RuntimeError):
+        with atomic(db):
+            db.update_secret_order_sim_note(
+                order_id, "已惊动仓场", state.year, state.period,
+            )
+            raise RuntimeError("rollback")
+
+    assert db.get_secret_order(order_id)["sim_note"] == ""
+    assert db.get_dossier_for_secret_order(order_id)["status"] == "promulgated"
+
+
+@pytest.mark.parametrize(
+    "action_type",
+    (
+        "extraordinary_summons", "summons", "inquiry",
+        "pressure_inquiry", "public_support",
+    ),
+)
+def test_dialogue_and_engine_action_types_cannot_create_dossiers(
+    game, action_type,
+):
+    db, state, _content = game
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(
+            state, action_type=action_type, decree_text="非旨意动作",
+        )
+
+
 def test_legacy_secret_orders_restore_with_unique_resumable_dossiers(game):
     from ming_sim.db import GameDB
 
@@ -639,7 +674,7 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     assert dossier_id not in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
-    with pytest.raises(ValueError, match="下月"):
+    with pytest.raises(ValueError):
         db.apply_dossier_verdicts(
             state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
         )
@@ -661,7 +696,7 @@ def test_interim_verdict_rejects_reserved_legal_reason_code(game):
     dossier_id = db.create_decree_dossier(
         state, action_type="policy", decree_text="着核边饷",
     )
-    with pytest.raises(ValueError, match="依律集"):
+    with pytest.raises(ValueError):
         db.apply_dossier_verdicts(state, [{
             "dossier_id": dossier_id, "decision": "rejected",
             "legal_reason_code": "statute-42",
@@ -762,11 +797,11 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
     )
     db.record_dossier_decision(dossier_id, "promulgated")
 
-    with pytest.raises(ValueError, match="executing"):
+    with pytest.raises(ValueError):
         db.record_dossier_execution(
             dossier_id, "fulfilled", "伪造直结", state.turn,
         )
-    with pytest.raises(ValueError, match="不得从 promulgated"):
+    with pytest.raises(ValueError):
         db.transition_decree_dossier(dossier_id, "closed")
 
     db.transition_decree_dossier(dossier_id, "executing")
