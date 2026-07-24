@@ -47,7 +47,7 @@ class MaterializeCtx:
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
-    各 handler 内部保留既有互斥/关键词/串行抽取语义；编排层不再出现
+    各 handler 内部保留既有互斥/结构化判词/串行抽取语义；编排层不再出现
     secret/cultivate/draft/appointment 字面量分叉。
     同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
     """
@@ -162,15 +162,6 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
         )
 
 
-def _mentions_draft_request(text: str) -> bool:
-    if not text:
-        return False
-    return any(
-        token in text
-        for token in ("拟旨", "拟一道旨", "起草", "草拟", "拟诏", "圣旨", "这道旨", "道旨")
-    )
-
-
 def _materialize_draft(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_draft_intent
 
@@ -190,12 +181,10 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 break
     has_committed_directive = committed_draft is not None
     has_existing_draft = has_pending_directive or has_committed_directive
-    draft_keyword_requested = _mentions_draft_request(ctx.player_message)
     if not (
         (intent is not None and intent_kind == "draft")
         or has_pending_directive
         or has_committed_directive
-        or draft_keyword_requested
     ):
         return
 
@@ -221,8 +210,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
 
     if intent is not None and intent_kind == "draft" and not has_existing_draft:
         draft_res = {"draft_action": "拟旨", "draft_text": ctx.reply, "target_candidate": ""}
-    elif intent is not None and not has_existing_draft and not draft_keyword_requested:
-        draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
     else:
         draft_res = extract_draft_intent(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
