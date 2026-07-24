@@ -1130,6 +1130,59 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
     ).toBe(false);
   });
 
+  it("resident legacy decision without terminal cargo resumes through the family fallback", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const source = makeSourceRepo();
+    const startSha = git(source, "rev-parse", "HEAD");
+    const ledgerDir = track(
+      mkdtempSync(join(tmpdir(), "family-legacy-decision-resident-")),
+    );
+    writeFileSync(
+      join(ledgerDir, FAMILY_LEDGER_FILENAME),
+      `${JSON.stringify({
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "legacy family decision still needs an answer",
+        familyHeadAfter: startSha,
+      } satisfies FamilyLedgerEntry)}\n`,
+      "utf8",
+    );
+    writeFileSync(join(ledgerDir, "family-base-start-head"), `${startSha}\n`, "utf8");
+
+    const result = await runFamilyDriver({
+      epicIssue: 1006,
+      sourceRepo: source,
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/1006",
+      base: "main",
+      promptsDir: familyPromptsDir,
+      familyPromptsDir,
+      soulsDir: familySoulsDir,
+      ledgerDir,
+      imageName: "ming-orchestrator-coder:test",
+      sh: makeSh(),
+      singleSliceBackendFactory: (clone) => new TrackingChildBackend(clone),
+      familyBackendFactory: (clone, startHead) =>
+        controlledFamilyBackend(
+          clone,
+          startHead,
+          ledgerDir,
+          "ming-orchestrator-coder:test",
+        ),
+      baselineFullTestRunner: async () => ({
+        ok: true,
+        exitCode: 0,
+        output: "green",
+        failedTests: [],
+      }),
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+  });
+
   it("#1017 C1: resident without child progress still fail-closes baseline red", async () => {
     // Empty productive progress: resident worksite + empty-ish ledger must keep
     // fresh-style baseline fail-closed (gate is still pre-fan-out admission).

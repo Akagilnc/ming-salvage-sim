@@ -205,6 +205,17 @@ function parseTerminalChildrenCargo(
   }
   return out;
 }
+
+/** Legacy escalation rows predate every schema-A terminal replay field. */
+export function isLegacyEscalationWithoutTerminalCargo(
+  entry: FamilyLedgerEntry,
+): boolean {
+  return (
+    entry.terminalStatus === undefined &&
+    entry.terminalChildren === undefined &&
+    entry.terminalCause === undefined
+  );
+}
 // ─── normalize ──────────────────────────────────────────────────────────────
 function remountDecisionParkChildren(opts: {
   readonly epicChildren: ReadonlyArray<ChildSlice>;
