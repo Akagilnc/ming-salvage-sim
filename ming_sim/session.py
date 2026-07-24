@@ -2223,7 +2223,34 @@ class GameSession:
 
     def add_directive(self, text: str, notes: str = "") -> DirectiveView:
         self._refuse_if_settling()
-        directive_id = self.db.add_directive(self.state, None, text, "手动新增", notes=notes)
+        from ming_sim.cli_backend import extract_draft_intent
+
+        captured = extract_draft_intent(
+            "请据此拟旨", text, llm_config=self.llm_config,
+        )
+        if captured.get("draft_action") != "拟旨":
+            raise ValueError("旨意结构化抽取不完整，请澄清动作与目标")
+        dossier_payload = {
+            "dossier_action_type": captured.get("dossier_action_type"),
+            "target_kind": captured.get("target_kind"),
+            "target_id": captured.get("target_id"),
+        }
+        for field in (
+            "amount", "account", "execution_surface", "assignee",
+            "authorization_id", "deadline_months",
+        ):
+            if captured.get(field) not in (None, ""):
+                dossier_payload[field] = captured[field]
+        normalized = self.db._normalize_directive_dossier_payload(
+            dossier_payload, content=self.content, current_turn=int(self.state.turn),
+        )
+        requested = str(dossier_payload.get("dossier_action_type") or "")
+        if not requested or normalized.get("dossier_action_type") != requested:
+            raise ValueError("旨意结构化抽取不完整，请澄清动作与目标")
+        directive_id = self.db.add_directive(
+            self.state, None, text, "手动新增", notes=notes,
+            dossier_payload=normalized,
+        )
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)
 
