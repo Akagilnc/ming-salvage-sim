@@ -74,7 +74,6 @@ import {
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
-  classifyPanelRoundPapers,
   dispatchReviewPanelLegs,
   omitJudgeBoundDispatchFields,
 } from "./reviewPanelLegs.js";
@@ -2707,53 +2706,7 @@ async function runIntegratedCmrPass(input: {
       );
     }
     const panelRound = panelRoundOutcome;
-    // #1094 F4 / R3 F3: host-mechanical paper class is authoritative (SSOT in
-    // reviewPanelLegs). Zero success → decision park; ≥1 success → degrade OK.
-    const papers = classifyPanelRoundPapers({
-      declared: frozenLegs,
-      transports: panelRound.transports,
-      courtLabel: `family integrated cmr ${pass}`,
-    });
-    const hostSkippedLegs = papers.skippedLegs;
-    if (papers.kind === "zero_success") {
-      const { reason, diagnosis } = papers;
-      reviewRoundResult = {
-        kind: "escalated",
-        escalation: { reason, diagnosis },
-      };
-      const stopSummary = decisionGateParkStopSummary({
-        summary: `${reason} — ${diagnosis}`,
-        repairHint:
-          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
-        heads:
-          resolvedFamilyHeadAfter !== undefined
-            ? { actualFamilyHead: resolvedFamilyHeadAfter }
-            : undefined,
-      });
-      await persistFinalReviewRound("accepted", async () => {
-        await recordCmrReviewed(familyBackend, {
-          phase: ledgerPhase,
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          blockingFindingIdentityKeys: [],
-          judgeStatus: "escalate",
-          stopSummary,
-        });
-        await familyBackend.escalateFamily?.({
-          reason,
-          diagnosis,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          stopSummary,
-          escalationKind: "decision",
-        });
-      });
-      return {
-        result: { ok: false, ran: true },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        resolvedRoute: activeRoute,
-      };
-    }
+    const hostSkippedLegs = panelRound.skippedLegs;
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       panelLegTransports: panelRound.transports.map((t) => ({

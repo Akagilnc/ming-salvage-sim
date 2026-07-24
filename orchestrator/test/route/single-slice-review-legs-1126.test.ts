@@ -57,7 +57,7 @@ function makeScratchWorktree(): WorktreeHandle {
   };
 }
 
-type PanelLegMode = "ok" | "fail";
+type PanelLegMode = "ok" | "mixed";
 
 class SliceReviewLegBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
@@ -110,8 +110,10 @@ class SliceReviewLegBackend implements Backend {
 
     if (isReviewPanelLegWorker(spec)) {
       this.legContexts.push(ctx);
-      if (this.panelLegMode === "fail") {
-        // Completed but empty stdout → ADR 0141 absent paper (not process crash).
+      if (
+        this.panelLegMode === "mixed" &&
+        spec.promptFile === CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE
+      ) {
         return {
           kind: "completed",
           output: {
@@ -119,6 +121,15 @@ class SliceReviewLegBackend implements Backend {
             findingsCount: 0,
             findings: [],
             rawStdout: "",
+          },
+        };
+      }
+      if (this.panelLegMode === "mixed") {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: "spec leg unavailable",
+            diagnosis: "transport exited non-zero",
           },
         };
       }
@@ -239,23 +250,24 @@ describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
     ).toHaveLength(2);
   });
 
-  it("zero successful panel legs park before judge — never M6 contract_drift", async () => {
+  it("settled empty and failed axis transports reach the judge unchanged", async () => {
     vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
-    const backend = new SliceReviewLegBackend(makeScratchWorktree(), "fail");
+    const backend = new SliceReviewLegBackend(makeScratchWorktree(), "mixed");
     const result = await runOrchestrator({ issueNumber: 1126, backend });
 
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary?.reason).not.toBe("contract_drift");
-    expect(result.stopSummary?.summary ?? "").toMatch(/zero successful|panel leg/i);
-
-    const reviewers = panelReviewers(backend.specs);
-    expect(reviewers.length).toBeGreaterThanOrEqual(1);
-
+    expect(result.status).toBe("completed");
     expect(
       backend.specs.filter((s) => s.id === "S3" && s.kind === "verify"),
-    ).toHaveLength(1);
-    expect(
-      backend.landings.some((l) => (l?.panelLegTransports?.length ?? 0) > 0),
-    ).toBe(false);
+    ).toHaveLength(2);
+    const judgeLanding = backend.landings.find(
+      (landing) => landing?.panelLegTransports?.length === 2,
+    );
+    expect(judgeLanding?.panelLegTransports).toEqual([
+      expect.objectContaining({ exitCode: 0, stdout: "" }),
+      expect.objectContaining({
+        exitCode: 1,
+        stdout: "spec leg unavailable: transport exited non-zero",
+      }),
+    ]);
   });
 });

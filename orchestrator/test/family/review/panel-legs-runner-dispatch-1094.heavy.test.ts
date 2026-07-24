@@ -84,7 +84,7 @@ describe("#1094 reviewPanelLegWorkerSpec — fresh reviewer worker per route leg
 });
 
 describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
-  it("successful legs are transport-present; failed legs are skipped not silent success", () => {
+  it("only absent or non-zero transports are skipped", () => {
     const ok: WorkerResult = {
       kind: "completed",
       output: {
@@ -130,11 +130,8 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
       { family: "grok", slug: "grok-4.5" },
     ];
 
-    expect(successfulLegsFromTransports(transports)).toEqual(["gpt-5.6-sol"]);
     const skipped = skippedLegsFromTransports(declared, transports);
-    expect(skipped.map((s) => s.slug).sort()).toEqual(
-      ["agy", "grok-4.5", "opus"].sort(),
-    );
+    expect(skipped.map((s) => s.slug)).toEqual(["opus"]);
     expect(skipped.every((s) => s.reason.length > 0)).toBe(true);
   });
 });
@@ -187,7 +184,7 @@ describe("#1094 family CMR round dispatches N leg workers then the judge", () =>
     expect(round.skippedLegs).toEqual([
       {
         slug: "opus",
-        reason: expect.stringMatching(/opus.*quota exhausted/i),
+        reason: "panel leg opus failed (exit 1)",
       },
     ]);
     expect(successfulLegsFromTransports(round.transports)).not.toContain("opus");
@@ -402,7 +399,10 @@ describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the f
     expect(dispatched).toBe(1);
     expect(successfulLegsFromTransports(round.transports)).toEqual(["opus"]);
     expect(round.skippedLegs.map((s) => s.slug)).toContain("gpt-5.5");
-    expect(round.skippedLegs.find((s) => s.slug === "gpt-5.5")!.reason).toMatch(
+    expect(round.skippedLegs.find((s) => s.slug === "gpt-5.5")!.reason).toBe(
+      "panel leg gpt-5.5 failed (exit 1)",
+    );
+    expect(round.transports.find((t) => t.slug === "gpt-5.5")?.stdout).toMatch(
       /CMR-leg-only|not a live worker/i,
     );
   });
@@ -957,8 +957,8 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
   });
 });
 
-describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
-  it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
+describe("#1094 R3 F3 — settled panel transports reach the family judge", () => {
+  it("all failed legs still reach the judge and its typed verdict decides", async () => {
     const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
@@ -971,6 +971,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     );
 
     let judgeDispatched = 0;
+    let judgeTransports: DispatchContext["panelLegTransports"];
     const backend = {
       ledger: [] as FamilyLedgerEntry[],
       escalations: [] as FamilyEscalation[],
@@ -1015,7 +1016,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
         }
         if (spec.kind === "cmr") {
           judgeDispatched += 1;
-          // Would have converged on empty evidence — host must not reach here.
+          judgeTransports = ctx.panelLegTransports;
           return {
             kind: "completed",
             output: legacyCmrScriptToWorkerOutput({
@@ -1035,21 +1036,17 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       },
     };
 
-    const result = await runVerifyCmr({
+    await runVerifyCmr({
       phase: "final",
       familyBase: "family/1094-r3-f3",
       familyBackend: backend,
     });
 
-    expect(result.ok).toBe(false);
-    expect(judgeDispatched).toBe(0);
-    expect(
-      backend.ledger.some((e) => e.status === "cmr_passed"),
-    ).toBe(false);
-    expect(backend.escalations.length).toBeGreaterThan(0);
-    expect(backend.escalations[0]?.escalationKind).toBe("decision");
-    expect(backend.escalations[0]?.reason).toMatch(/zero successful panel legs/i);
-    expect(backend.escalations[0]?.diagnosis).toMatch(/docker flake/i);
+    expect(judgeDispatched).toBe(2);
+    expect(judgeTransports).toHaveLength(3);
+    expect(judgeTransports?.every((transport) => transport.exitCode !== 0)).toBe(
+      true,
+    );
   });
 });
 
